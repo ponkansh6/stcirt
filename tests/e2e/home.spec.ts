@@ -6,7 +6,7 @@ test("home page displays five-question exam briefing and secondary aggregate sta
   await page.goto("/");
 
   await expect(page.locator("h1")).toHaveText("5問検定");
-  await expect(page.getByText("全5問", { exact: true })).toBeVisible();
+  await expect(page.getByRole("listitem").filter({ hasText: "全5問" })).toBeVisible();
   await expect(page.getByText("順番に出題")).toBeVisible();
   await expect(page.getByText("回答を記録します")).toBeVisible();
   await expect(page.getByRole("link", { name: "検定を開始する" })).toBeVisible();

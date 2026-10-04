@@ -159,7 +159,9 @@ test("keeps the selected answer and resends only after an explicit retry action"
   await page.goto("/answer");
   await page.getByRole("button", { name: /Option 1C/ }).click();
   await page.getByRole("button", { name: "回答を確定する" }).click();
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(
+    page.locator('p[role="alert"]').filter({ hasText: "回答を記録できませんでした" }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: /Option 1C.*選択中/ })).toBeDisabled();
   await expect(page.getByRole("link", { name: "ホームへ戻る" })).toHaveAttribute("href", "/");
   await page.getByRole("button", { name: "回答を再送する" }).click();
