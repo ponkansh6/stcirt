@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #f7f5f0;
+  --color-text: #253746;
+  --color-surface: #fffefa;
+  --color-surface-2: #eeeae1;
+  --color-muted: #59626b;
+  --color-border: #938d81;
+  --color-primary: #253746;
+  --color-primary-hover: #192b39;
+  --color-on-primary: #ffffff;
+  --color-accent: #74520d;
+  --color-success: #2b664b;
+  --color-error: #9b3129;
+  --color-warning: #74520d;
+
+  --shadow-card: 0 4px 12px -2px oklch(0 0 0 / 0.05), 0 2px 6px -1px oklch(0 0 0 / 0.03);
+  --shadow-raise: 0 10px 25px -5px oklch(0 0 0 / 0.08), 0 8px 10px -6px oklch(0 0 0 / 0.05);
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --radius-card: 1rem;
+
+  --animate-rise: rise 0.3s var(--ease-out-soft) forwards;
+  --animate-pop: pop 0.25s var(--ease-out-soft) forwards;
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.92);
+    }
+    70% {
+      transform: scale(1.03);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  --font-sans:
+    var(--font-geist, ui-sans-serif), "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+    "Yu Gothic Medium", Meiryo, system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #20272c;
+    --color-text: #f2efe7;
+    --color-surface: #292f33;
+    --color-surface-2: #343a3d;
+    --color-muted: #c0c0b9;
+    --color-border: #85837b;
+    --color-primary: #d5b35c;
+    --color-primary-hover: #e1c879;
+    --color-on-primary: #25313a;
+    --color-accent: #e1c879;
+    --color-success: #8bc5a0;
+    --color-error: #f09a8e;
+    --color-warning: #e1c879;
+
+    --shadow-card: 0 4px 20px -2px oklch(0 0 0 / 0.3);
+    --shadow-raise: 0 12px 30px -4px oklch(0 0 0 / 0.5);
+  }
+}
+
+/* Gold is reserved for small editorial details, never for body copy. */
+[aria-labelledby="exam-briefing"] li span {
+  color: var(--color-accent);
+}
+
+/* Keep keyboard focus distinct from the control edge on both light and dark surfaces. */
+:focus-visible {
+  outline: 3px solid var(--color-accent) !important;
+  outline-offset: 3px;
+}
+
+body {
+  @apply bg-bg text-text font-sans antialiased leading-relaxed;
+}

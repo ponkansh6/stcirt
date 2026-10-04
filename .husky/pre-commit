@@ -1,0 +1,48 @@
+#!/bin/sh
+# ============================================================================
+# pre-commit — 秒単位 / staged スコープ / 自動修正
+#   責務: コミットを綺麗に保つ + 秘密情報を履歴に入れない
+#   ここに置かないもの: 全テスト / E2E / build / coverage → pre-push
+# ============================================================================
+set -eu
+
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+
+# pnpm ラッパーは 1 呼び出し約 0.48s。oxlint 本体 0.07s の 7 倍になるため
+# ローカル bin を直接叩く。フラグは package.json の scripts と一致させること
+# （CI は package.json 経由で走るので、乖離があれば CI 側で顕在化する）。
+PATH="$ROOT/node_modules/.bin:$PATH"
+export PATH
+
+# --- 1. 自動修正 + staged スコープ検証 --------------------------------------
+# oxfmt --write / secretlint / vitest related を staged ファイルにのみ適用。
+# lint-staged が unstaged 変更を退避し、修正結果を自動で再ステージするので
+# 整形差分が「次のコミット」に漏れない。
+lint-staged
+
+# --- 2. リポジトリ全体の静的ゲート（整形後の内容に対して） ------------------
+# oxlint 0.07s / tsgo 0.58s。並列化しても 30ms 程度しか縮まないので逐次のまま。
+oxlint --nextjs-plugin --react-plugin --react-perf-plugin
+tsgo --noEmit
+
+# --- 3. 非ブロッキング advisory ---------------------------------------------
+bash scripts/check-spec-update.sh
+
+if [ -n "$(git diff --name-only -- src)" ]; then
+  printf '\n[warn] src/ に未ステージの変更があります。コミット漏れに注意してください。\n'
+  printf '       pre-push の HEAD type-check で blocking 検証されます。\n\n'
+fi
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+HAS_PKG=0
+HAS_LOCK=0
+if printf '%s\n' "$STAGED" | grep -qx 'package.json';   then HAS_PKG=1;  fi
+if printf '%s\n' "$STAGED" | grep -qx 'pnpm-lock.yaml'; then HAS_LOCK=1; fi
+if [ $((HAS_PKG + HAS_LOCK)) -eq 1 ]; then
+  printf '\n[warn] package.json と pnpm-lock.yaml の片方だけが staged です。\n'
+  printf '       依存を変更したら両方を同じコミットに含めてください。\n'
+  printf '       pre-push の lockfile-sync で blocking 検証されます。\n\n'
+fi
+
+exit 0

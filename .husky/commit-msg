@@ -1,0 +1,31 @@
+#!/bin/sh
+# ============================================================================
+# commit-msg — Conventional Commits の最小検証（依存なし・約 5ms）
+#   commitlint は依存追加 + node 起動 1s が乗るため採用しない。
+# ============================================================================
+set -eu
+
+SUBJECT=$(sed -n '1p' "$1")
+
+case "$SUBJECT" in
+  "Merge "*|"Revert "*|fixup!*|squash!*|"") exit 0 ;;
+esac
+
+PATTERN='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+'
+
+if ! printf '%s' "$SUBJECT" | grep -qE "$PATTERN"; then
+  printf '\n[commit-msg] Conventional Commits 形式ではありません。\n'
+  printf '  受け取った件名: %s\n\n' "$SUBJECT"
+  printf '  形式: <type>(<scope>)!: <subject>\n'
+  printf '  type: feat fix docs style refactor perf test build ci chore revert\n'
+  printf '  例:   feat(answer): 難易度を上げて再作成するアクションを追加\n\n'
+  exit 1
+fi
+
+# 件名長は advisory に留める。日本語件名は文字数が伸びやすく、
+# AGENTS.md が --no-verify を禁じている以上、ここで詰ませてはならない。
+if [ "${#SUBJECT}" -gt 72 ]; then
+  printf '\n[warn] 件名が %s 文字です。72 文字以内が読みやすいです。\n\n' "${#SUBJECT}"
+fi
+
+exit 0

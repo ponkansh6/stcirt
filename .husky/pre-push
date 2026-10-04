@@ -1,0 +1,217 @@
+#!/bin/sh
+# ============================================================================
+# pre-push — 分単位 / push 差分スコープ / 「壊れたものを push させない」
+#
+#   Phase 1（常時・並列）: preflight | unit+coverage | production build
+#   Phase 2（条件付き）  : E2E
+#   Phase 3（条件付き）  : 本番スキーマ drift（advisory のみ）
+#
+# 設計原則:
+#   - vitest は 1 回だけ回す（--coverage 版は素の run より +2.3s しか違わない）
+#   - pnpm ラッパーを挟まない（1 呼び出し約 0.48s）
+#   - 独立な検査は並列。ログはジョブごとに分離し、失敗したものだけ全文表示
+#   - 環境/ネットワーク依存の検査は blocking にしない（push 可否の根拠にならない）
+# ============================================================================
+set -eu
+
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+PATH="$ROOT/node_modules/.bin:$PATH"
+export PATH
+
+# 中断された check-head-typecheck.sh の worktree 残骸を掃除
+git worktree prune >/dev/null 2>&1 || true
+
+# ---------------------------------------------------------------------------
+# 0. push 対象 ref の解決
+#    git は stdin に "<local ref> <local sha> <remote ref> <remote sha>" を
+#    ref ごとに 1 行渡す。remote sha が正しい比較起点。
+#
+#    旧実装の `git merge-base --fork-point origin/main HEAD` は reflog 依存で、
+#    fresh clone / gc 後に失敗する。そのときフォールバックの `rev-parse HEAD` が
+#    空 diff を生み、coverage と build が無言でスキップされていた。
+# ---------------------------------------------------------------------------
+is_zero() { case "$1" in *[!0]*) return 1 ;; *) return 0 ;; esac; }
+
+TIP=""
+CHANGED=""
+SAW_REF=0
+
+while read -r _lref lsha _rref rsha; do
+  SAW_REF=1
+  [ -n "${lsha:-}" ] || continue
+  # ref 削除 push（local sha がゼロ）は検証対象なし。
+  # 旧実装ではここが check-head-typecheck.sh に渡り、worktree add が
+  # exit 128 で落ちて `git push origin :branch` が常に失敗していた。
+  if is_zero "$lsha"; then continue; fi
+
+  TIP="$lsha"
+  if [ -n "${rsha:-}" ] && ! is_zero "$rsha"; then
+    BASE="$rsha"                                              # 既存 ref への追記
+  else
+    BASE=$(git merge-base "$lsha" origin/main 2>/dev/null || echo "")  # 新規 ref
+  fi
+
+  if [ -n "$BASE" ]; then
+    FILES=$(git diff --name-only "$BASE" "$lsha" 2>/dev/null || echo "")
+  else
+    FILES=$(git ls-tree -r --name-only "$lsha" 2>/dev/null || echo "")
+  fi
+  CHANGED=$(printf '%s\n%s' "$CHANGED" "$FILES")
+done
+
+if [ "$SAW_REF" = "1" ] && [ -z "$TIP" ]; then
+  echo "[pre-push] ref 削除のみの push です。検証をスキップします。"
+  exit 0
+fi
+
+if [ -z "$TIP" ]; then                       # stdin なし（手動実行など）
+  TIP=$(git rev-parse HEAD)
+  BASE=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
+  if [ -n "$BASE" ]; then
+    CHANGED=$(git diff --name-only "$BASE" HEAD)
+  else
+    CHANGED=$(git ls-tree -r --name-only HEAD)
+  fi
+fi
+
+CHANGED=$(printf '%s\n' "$CHANGED" | sed '/^$/d' | sort -u)
+
+# ---------------------------------------------------------------------------
+# 1. 実行フェーズの決定
+# ---------------------------------------------------------------------------
+changed_match() { printf '%s\n' "$CHANGED" | grep -qE "$1"; }
+
+NEED_TEST=0; NEED_BUILD=0; NEED_E2E=0; NEED_DRIFT=0
+if changed_match '^(src/|tests/|vitest\.config\.ts$|tsconfig\.json$|package\.json$)'; then
+  NEED_TEST=1
+fi
+if changed_match '^(src/|next\.config\.ts$|postcss\.config\.|tsconfig\.json$|package\.json$|vercel\.json$)'; then
+  NEED_BUILD=1
+fi
+if changed_match '^(src/app/|src/components/|src/lib/api/|src/lib/db/|tests/e2e/|playwright\.config\.ts$|next\.config\.ts$|package\.json$)'; then
+  NEED_E2E=1
+fi
+if changed_match '^src/lib/db/(schema\.ts$|migrations/)'; then
+  NEED_DRIFT=1
+fi
+
+N_CHANGED=$(printf '%s\n' "$CHANGED" | grep -c . || true)
+printf '[pre-push] tip=%s  changed=%s files\n' "$(git rev-parse --short "$TIP")" "$N_CHANGED"
+printf '[pre-push] plan: preflight=1 unit+coverage=%s build=%s e2e=%s drift=%s\n\n' \
+  "$NEED_TEST" "$NEED_BUILD" "$NEED_E2E" "$NEED_DRIFT"
+
+if changed_match '^src/' && ! changed_match '^tests/'; then
+  printf '[warn] src/ が変更されていますが tests/ は未更新です。テスト追加を検討してください。\n\n'
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Phase 1 — 並列実行
+#    3 ジョブは互いに独立。preflight は read-only、vitest は coverage/ のみ、
+#    build は .next/ のみに書く。E2E（next dev）だけは .next/ を共有するので
+#    Phase 1 には入れず、Phase 2 で単独実行する。
+# ---------------------------------------------------------------------------
+LOG_PRE=$(mktemp); LOG_TEST=$(mktemp); LOG_BUILD=$(mktemp)
+trap 'rm -f "$LOG_PRE" "$LOG_TEST" "$LOG_BUILD"' EXIT INT TERM
+
+report() {   # report <name> <rc> <log>
+  if [ "$2" -eq 0 ]; then
+    printf '  OK    %s\n' "$1"
+  else
+    printf '\n===== FAILED: %s (exit %s) =====\n' "$1" "$2"
+    cat "$3"
+    printf '===== end: %s =====\n\n' "$1"
+  fi
+}
+
+echo "[pre-push] Phase 1: preflight / unit+coverage / build を並列実行中..."
+
+(
+  set -e
+  bash scripts/check-head-typecheck.sh "$TIP"
+  bash scripts/check-lockfile-sync.sh
+  oxfmt --check .
+  oxlint --nextjs-plugin --react-plugin --react-perf-plugin
+  bash scripts/check-security.sh
+  bash scripts/check-spec-refs.sh
+) >"$LOG_PRE" 2>&1 &
+PID_PRE=$!
+
+PID_TEST=""
+if [ "$NEED_TEST" = "1" ]; then
+  ( set -e; vitest run --coverage; node scripts/check-coverage-tiers.mjs ) >"$LOG_TEST" 2>&1 &
+  PID_TEST=$!
+fi
+
+PID_BUILD=""
+if [ "$NEED_BUILD" = "1" ]; then
+  ( set -e; NEXT_BUILD=1 next build --turbopack ) >"$LOG_BUILD" 2>&1 &
+  PID_BUILD=$!
+fi
+
+FAIL=0
+RC=0; wait "$PID_PRE" || RC=$?
+report "preflight (head-typecheck/lockfile/format/lint/security/spec-refs)" "$RC" "$LOG_PRE"
+[ "$RC" -eq 0 ] || FAIL=1
+
+if [ -n "$PID_TEST" ]; then
+  RC=0; wait "$PID_TEST" || RC=$?
+  report "unit tests + coverage tiers" "$RC" "$LOG_TEST"
+  [ "$RC" -eq 0 ] || FAIL=1
+else
+  echo "  SKIP  unit tests + coverage (src/ tests/ に変更なし)"
+fi
+
+if [ -n "$PID_BUILD" ]; then
+  RC=0; wait "$PID_BUILD" || RC=$?
+  report "production build" "$RC" "$LOG_BUILD"
+  [ "$RC" -eq 0 ] || FAIL=1
+else
+  echo "  SKIP  production build (ビルド対象に変更なし)"
+fi
+
+if [ "$FAIL" -ne 0 ]; then
+  echo ""
+  echo "[pre-push] Phase 1 で失敗しました。E2E は実行せず中断します。"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Phase 2 — E2E（UI / API / DB 層に影響がある場合のみ）
+#    進捗を見たいので前面実行。並列にすると Phase 1 と CPU/メモリを奪い合い、
+#    E2E 単体 37s が 58s に伸びる（実測）ため単独で回す。
+# ---------------------------------------------------------------------------
+if [ "$NEED_E2E" = "1" ]; then
+  echo ""
+  echo "[pre-push] Phase 2: E2E (Playwright)"
+  # HTML reporter の既定は open='on-failure'。stdin が TTY のときだけ
+  # レポートサーバを起動して hook をハングさせうるので明示的に無効化する。
+  PLAYWRIGHT_HTML_OPEN=never playwright test
+  echo "  OK    e2e"
+else
+  echo "  SKIP  e2e (UI / API / DB 層に変更なし)"
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Phase 3 — 本番スキーマ drift（advisory のみ）
+#    「push しようとしているコード」ではなく「本番 DB の状態」を見る検査。
+#    ネットワークと .env.local の有無に依存し開発者ごとに挙動が変わるため、
+#    push をブロックしない。CI 側（secrets あり）を blocking の正とする。
+# ---------------------------------------------------------------------------
+if [ "$NEED_DRIFT" = "1" ] && [ -f "$ROOT/.env.local" ]; then
+  echo ""
+  echo "[pre-push] Phase 3: 本番スキーマ drift (advisory)"
+  T_URL=$(grep -E '^TURSO_DATABASE_URL=' "$ROOT/.env.local" | head -1 | cut -d= -f2-)
+  T_TOK=$(grep -E '^TURSO_AUTH_TOKEN='  "$ROOT/.env.local" | head -1 | cut -d= -f2-)
+  if [ -n "$T_URL" ] && [ -n "$T_TOK" ]; then
+    if ! TURSO_DATABASE_URL="$T_URL" TURSO_AUTH_TOKEN="$T_TOK" bash scripts/check-prod-schema.sh; then
+      printf '\n[warn] 本番スキーマに drift の可能性があります。\n'
+      printf '       デプロイ前に `pnpm exec drizzle-kit push` を検討してください。\n'
+      printf '       ネットワーク/認証に依存するため push はブロックしません。\n\n'
+    fi
+  fi
+fi
+
+echo ""
+echo "[pre-push] すべてのゲートを通過しました。"
+exit 0

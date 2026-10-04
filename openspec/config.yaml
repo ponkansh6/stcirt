@@ -1,0 +1,53 @@
+schema: spec-driven
+
+# Project context — shown to AI when creating artifacts
+context: |
+  ## 技術スタック
+  - Framework: Next.js 16 (App Router, Turbopack)
+  - Language: TypeScript (strict mode)
+  - Runtime: Node 24+, Package Manager: pnpm 11.9.0
+  - UI: React 19, Tailwind CSS v4
+  - Database: Drizzle ORM + Turso (libSQL)
+  - Testing: Vitest, Playwright
+  - Lint/Format: Oxlint, Oxfmt, Prettier
+  - Pre-commit: Husky + lint-staged
+
+  ## プロジェクト構造
+  - src/app/ — App Router pages/layouts (RSC + Client Components)
+  - src/app/page.tsx — Home: today's JST stats + start learning button
+  - src/app/answer/page.tsx — Answer session runner
+  - src/app/api/questions/next/route.ts — Sequential question retrieval
+  - src/app/api/answers/route.ts — Answer submission
+  - src/components/ — UI components (Button, ChoiceButton, ResultBanner, etc.)
+  - src/lib/ — Utilities (db, api, shuffle, choice-label, date, constants)
+  - src/types/ — TypeScript type definitions
+  - tests/ — Test suites (unit, e2e)
+
+  ## ドメイン知識
+  - 保存済みクイズを ID 昇順で順次出題
+  - 出題カーソルは解答記録成功後に進める
+  - 解答結果は Turso データベース (`answer_logs`) に永続化
+  - ホーム画面に本日の JST 統計を表示
+
+  ## コーディング規約
+  - TypeScript strict mode、any 禁止
+  - React 関数コンポーネント、明示的な戻り値の型
+  - Tailwind CSS v4 でスタイリング
+  - サーバーコンポーネント優先、クライアントコンポーネントは "use client" を明示
+  - import パスは @/ (src/) エイリアスを使用
+
+# Per-artifact rules
+rules:
+  proposal:
+    - Write in Japanese or English based on request language
+    - Include "Purpose", "Requirements" with concrete scenarios
+    - Include "Data Model" section when adding/modifying data structures
+    - Keep proposals under 1000 words
+  tasks:
+    - Break tasks into chunks of max 2 hours
+    - Each task must have a clear acceptance criterion
+    - Prefer small, independent PRs over monolithic changes
+  spec:
+    - Each requirement must have at least one Scenario
+    - Data models should reference actual TypeScript types
+    - UI specifications should reference component names

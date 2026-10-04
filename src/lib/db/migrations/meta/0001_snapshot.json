@@ -1,0 +1,358 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "27f904ce-9a93-4e13-bfe0-95ffdaa256b4",
+  "prevId": "edef72a9-6b0b-4d1c-8ba3-b572f9b68f66",
+  "tables": {
+    "answer_logs": {
+      "name": "answer_logs",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "question_id": {
+          "name": "question_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "selected_index": {
+          "name": "selected_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "is_correct": {
+          "name": "is_correct",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "answered_at": {
+          "name": "answered_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "answer_logs_question_id_idx": {
+          "name": "answer_logs_question_id_idx",
+          "columns": ["question_id"],
+          "isUnique": false
+        },
+        "answer_logs_answered_at_idx": {
+          "name": "answer_logs_answered_at_idx",
+          "columns": ["answered_at"],
+          "isUnique": false
+        },
+        "answer_logs_question_answered_at_idx": {
+          "name": "answer_logs_question_answered_at_idx",
+          "columns": ["question_id", "\"answered_at\" desc"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "answer_logs_question_id_questions_id_fk": {
+          "name": "answer_logs_question_id_questions_id_fk",
+          "tableFrom": "answer_logs",
+          "tableTo": "questions",
+          "columnsFrom": ["question_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "exam_answer_logs": {
+      "name": "exam_answer_logs",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "question_id": {
+          "name": "question_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "selected_index": {
+          "name": "selected_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "is_correct": {
+          "name": "is_correct",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "answered_at": {
+          "name": "answered_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "exam_answer_logs_question_id_idx": {
+          "name": "exam_answer_logs_question_id_idx",
+          "columns": ["question_id"],
+          "isUnique": false
+        },
+        "exam_answer_logs_answered_at_idx": {
+          "name": "exam_answer_logs_answered_at_idx",
+          "columns": ["answered_at"],
+          "isUnique": false
+        },
+        "exam_answer_logs_question_answered_at_idx": {
+          "name": "exam_answer_logs_question_answered_at_idx",
+          "columns": ["question_id", "\"answered_at\" desc"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "exam_answer_logs_question_id_exam_questions_id_fk": {
+          "name": "exam_answer_logs_question_id_exam_questions_id_fk",
+          "tableFrom": "exam_answer_logs",
+          "tableTo": "exam_questions",
+          "columnsFrom": ["question_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "exam_questions": {
+      "name": "exam_questions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "question_key": {
+          "name": "question_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "question": {
+          "name": "question",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "choices": {
+          "name": "choices",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "correct_index": {
+          "name": "correct_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "explanation": {
+          "name": "explanation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "exam_questions_question_key_unique": {
+          "name": "exam_questions_question_key_unique",
+          "columns": ["question_key"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "knowledge": {
+      "name": "knowledge",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_text": {
+          "name": "source_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "questions": {
+      "name": "questions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "knowledge_id": {
+          "name": "knowledge_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "question": {
+          "name": "question",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "choices": {
+          "name": "choices",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "correct_index": {
+          "name": "correct_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "explanation": {
+          "name": "explanation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "questions_knowledge_id_unique": {
+          "name": "questions_knowledge_id_unique",
+          "columns": ["knowledge_id"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "questions_knowledge_id_knowledge_id_fk": {
+          "name": "questions_knowledge_id_knowledge_id_fk",
+          "tableFrom": "questions",
+          "tableTo": "knowledge",
+          "columnsFrom": ["knowledge_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {
+      "answer_logs_question_answered_at_idx": {
+        "columns": {
+          "\"answered_at\" desc": {
+            "isExpression": true
+          }
+        }
+      },
+      "exam_answer_logs_question_answered_at_idx": {
+        "columns": {
+          "\"answered_at\" desc": {
+            "isExpression": true
+          }
+        }
+      }
+    }
+  }
+}
