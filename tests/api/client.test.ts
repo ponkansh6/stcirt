@@ -26,6 +26,13 @@ describe("api client", () => {
     await expect(fetchNextQuestion()).rejects.toThrow("Storage unavailable");
   });
 
+  it("uses the request fallback when an error response is not JSON", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response("Service unavailable", { status: 503 }),
+    );
+    await expect(fetchNextQuestion()).rejects.toThrow("Failed to fetch next question: status 503");
+  });
+
   it("submits answers and returns feedback", async () => {
     const result = { isCorrect: true, correctIndex: 0, explanation: null };
     const fetchSpy = vi
