@@ -49,6 +49,8 @@ jobs:
 
   build-e2e:
     runs-on: ubuntu-latest
+    env:
+      TURSO_DATABASE_URL: file:/tmp/stcirt-ci.db
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -56,11 +58,10 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: "pnpm" }
       - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
       - run: pnpm build
         env:
           NEXT_BUILD: "1"
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
@@ -70,6 +71,3 @@ jobs:
       # E2E は現状ローカルの pre-push でしか走っていない。
       # 環境非依存の最終防衛線として CI にも置く。
       - run: pnpm test:e2e
-        env:
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
