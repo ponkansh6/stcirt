@@ -62,6 +62,21 @@ export const examQuestions = sqliteTable("exam_questions", {
     .default(sql`(unixepoch())`),
 });
 
+export const examParticipants = sqliteTable("exam_participants", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  normalizedName: text("normalized_name").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const participantRateLimits = sqliteTable("participant_rate_limits", {
+  fingerprint: text("fingerprint").primaryKey(),
+  attempts: integer("attempts").notNull(),
+  windowStartedAt: integer("window_started_at", { mode: "timestamp" }).notNull(),
+});
+
 export const examAnswerLogs = sqliteTable(
   "exam_answer_logs",
   {
@@ -69,6 +84,9 @@ export const examAnswerLogs = sqliteTable(
     questionId: integer("question_id")
       .notNull()
       .references(() => examQuestions.id, { onDelete: "cascade" }),
+    participantId: integer("participant_id").references(() => examParticipants.id, {
+      onDelete: "set null",
+    }),
     selectedIndex: integer("selected_index").notNull(),
     isCorrect: integer("is_correct", { mode: "number" }).notNull().$type<0 | 1>(),
     answeredAt: integer("answered_at", { mode: "timestamp" })
@@ -77,6 +95,7 @@ export const examAnswerLogs = sqliteTable(
   },
   (t) => ({
     questionIdIdx: index("exam_answer_logs_question_id_idx").on(t.questionId),
+    participantIdIdx: index("exam_answer_logs_participant_id_idx").on(t.participantId),
     answeredAtIdx: index("exam_answer_logs_answered_at_idx").on(t.answeredAt),
     questionAnsweredAtIdx: index("exam_answer_logs_question_answered_at_idx").on(
       t.questionId,

@@ -7,11 +7,13 @@ export async function recordAnswer(input: {
   questionId: number;
   selectedIndex: number;
   isCorrect: boolean;
+  participantId?: number;
 }) {
   await db.insert(examAnswerLogs).values({
     questionId: input.questionId,
     selectedIndex: input.selectedIndex,
     isCorrect: input.isCorrect ? 1 : 0,
+    participantId: input.participantId ?? null,
   });
 }
 

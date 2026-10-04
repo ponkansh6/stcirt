@@ -15,23 +15,50 @@ describe("useQuizSession hook", () => {
     explanation: "API grading fields are ignored by the session UI.",
   };
 
+  const participant = { id: 7, name: "参加者" };
+  const sessionResult = { participant, expiresAt: "2030-01-01T00:00:00.000Z" };
+
+  function questionFetch(url: string) {
+    const match = url.match(/afterId=(\d+)/);
+    const id = match ? Number(match[1]) + 1 : 1;
+    return { ok: true, json: async () => question(id) };
+  }
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("loads and holds the first five questions in ascending cursor order", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      const match = url.match(/afterId=(\d+)/);
-      const id = match ? Number(match[1]) + 1 : 1;
-      return { ok: true, json: async () => question(id) };
+  it("checks the participant session before showing login and loads questions only after explicit start", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && !init?.method) {
+        return { ok: true, json: async () => ({ participant: null }) };
+      }
+      if (url === "/api/participants/session" && init?.method === "POST") {
+        return { ok: true, json: async () => sessionResult };
+      }
+      return questionFetch(url);
     });
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("login"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/participants/session");
+
+    await act(async () => result.current.login("参加者", "0123"));
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ name: "参加者", pin: "0123" }),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    act(() => result.current.start());
     await waitFor(() => expect(result.current.phase.kind).toBe("question"));
 
-    expect(fetchMock).toHaveBeenCalledTimes(5);
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/participants/session",
+      "/api/participants/session",
       "/api/questions/next",
       "/api/questions/next?afterId=1",
       "/api/questions/next?afterId=2",
@@ -46,12 +73,17 @@ describe("useQuizSession hook", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
+        if (url === "/api/participants/session") {
+          return { ok: true, json: async () => ({ participant: { id: 7, name: "参加者" } }) };
+        }
         const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
         return id <= 2 ? { ok: true, json: async () => question(id) } : { status: 404, ok: false };
       }),
     );
 
     const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => result.current.start());
     await waitFor(() => expect(result.current.phase.kind).toBe("shortage"));
     expect(result.current.quiz?.question).toEqual(question(1));
   });
@@ -59,6 +91,8 @@ describe("useQuizSession hook", () => {
   it("keeps acquired questions and retries only the missing suffix after a network error", async () => {
     let failed = false;
     const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
       const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
       if (id === 3 && !failed) {
         failed = true;
@@ -69,13 +103,15 @@ describe("useQuizSession hook", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => result.current.start());
     await waitFor(() => expect(result.current.phase.kind).toBe("error"));
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
 
     act(() => result.current.retry());
     await waitFor(() => expect(result.current.phase.kind).toBe("question"));
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-    expect(fetchMock.mock.calls.slice(3).map(([url]) => url)).toEqual([
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(fetchMock.mock.calls.slice(4).map(([url]) => url)).toEqual([
       "/api/questions/next?afterId=2",
       "/api/questions/next?afterId=3",
       "/api/questions/next?afterId=4",
@@ -84,6 +120,8 @@ describe("useQuizSession hook", () => {
 
   it("confirms an answer, records it, and advances without exposing grading data", async () => {
     const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
       if (url.includes("/api/questions/next")) {
         const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
         return { ok: true, json: async () => question(id) };
@@ -93,6 +131,8 @@ describe("useQuizSession hook", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => result.current.start());
     await waitFor(() => expect(result.current.phase.kind).toBe("question"));
     expect(result.current.quiz?.question.id).toBe(1);
 
@@ -110,6 +150,8 @@ describe("useQuizSession hook", () => {
   it("retains a failed selection and resends it only after explicit retry", async () => {
     let answerFailed = true;
     const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
       if (url.includes("/api/questions/next")) {
         const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
         return { ok: true, json: async () => question(id) };
@@ -123,6 +165,8 @@ describe("useQuizSession hook", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => result.current.start());
     await waitFor(() => expect(result.current.phase.kind).toBe("question"));
     act(() => result.current.select(2));
     await act(async () => result.current.confirm());
@@ -138,6 +182,8 @@ describe("useQuizSession hook", () => {
 
   it("completes after five successful records and does not repost completed answers", async () => {
     const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
       if (url.includes("/api/questions/next")) {
         const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
         return { ok: true, json: async () => question(id) };
@@ -147,6 +193,8 @@ describe("useQuizSession hook", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => result.current.start());
     await waitFor(() => expect(result.current.phase.kind).toBe("question"));
     for (let index = 0; index < 5; index += 1) {
       act(() => result.current.select(0));
@@ -167,6 +215,8 @@ describe("useQuizSession hook", () => {
 
   it("restart clears the session and fetches the first five questions again", async () => {
     const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
       if (url === "/api/answers") {
         return { ok: true, json: async () => answerResult };
       }
@@ -176,6 +226,8 @@ describe("useQuizSession hook", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => result.current.start());
     await waitFor(() => expect(result.current.phase.kind).toBe("question"));
     act(() => result.current.select(1));
     await act(async () => result.current.confirm());
@@ -195,5 +247,81 @@ describe("useQuizSession hook", () => {
       "/api/questions/next?afterId=3",
       "/api/questions/next?afterId=4",
     ]);
+  });
+
+  it("retains the selected answer through a 401, reauthenticates, and waits for explicit resend", async () => {
+    let answerCalls = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && !init?.method) {
+        return { ok: true, json: async () => ({ participant }) };
+      }
+      if (url === "/api/participants/session" && init?.method === "POST") {
+        return { ok: true, json: async () => sessionResult };
+      }
+      if (url === "/api/answers") {
+        answerCalls += 1;
+        if (answerCalls === 1) {
+          return { ok: false, status: 401, json: async () => ({ message: "Session expired" }) };
+        }
+        return { ok: true, json: async () => answerResult };
+      }
+      return questionFetch(url);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => result.current.start());
+    await waitFor(() => expect(result.current.phase.kind).toBe("question"));
+    act(() => result.current.select(2));
+    await act(async () => result.current.confirm());
+
+    expect(result.current.phase).toMatchObject({
+      kind: "error",
+      selectedIndex: 2,
+      authenticationRequired: true,
+    });
+    expect(result.current.access).toEqual({ kind: "reauthentication", participant });
+    await act(async () => result.current.login("参加者", "0123"));
+    expect(result.current.phase).toMatchObject({ kind: "error", selectedIndex: 2 });
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(answerCalls).toBe(1);
+    expect(result.current.recordedCount).toBe(0);
+
+    await act(async () => result.current.resendAnswer());
+    expect(answerCalls).toBe(2);
+    expect(result.current.recordedCount).toBe(1);
+    expect(result.current.quiz?.question.id).toBe(2);
+  });
+
+  it("deletes the session and clears quiz progress when switching participant", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && !init?.method) {
+        return { ok: true, json: async () => ({ participant }) };
+      }
+      if (url === "/api/participants/session" && init?.method === "DELETE") {
+        return { ok: true, json: async () => ({ ok: true }) };
+      }
+      if (url === "/api/answers") return { ok: true, json: async () => answerResult };
+      return questionFetch(url);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => result.current.start());
+    await waitFor(() => expect(result.current.phase.kind).toBe("question"));
+    act(() => result.current.select(0));
+    await act(async () => result.current.confirm());
+    expect(result.current.recordedCount).toBe(1);
+
+    await act(async () => result.current.switchParticipant());
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/participants/session",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(result.current.access).toEqual({ kind: "login" });
+    expect(result.current.phase).toEqual({ kind: "ready" });
+    expect(result.current.recordedCount).toBe(0);
+    expect(result.current.quiz).toBeUndefined();
   });
 });

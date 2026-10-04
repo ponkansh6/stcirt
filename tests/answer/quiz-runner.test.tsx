@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import QuizRunner from "@/app/answer/quiz-runner";
 
 const mockUseQuizSession = vi.hoisted(() => vi.fn());
@@ -18,6 +18,7 @@ const question = {
 
 function session(phase: object, overrides: Record<string, unknown> = {}) {
   return {
+    access: { kind: "ready", participant: { id: 7, name: "参加者" } },
     phase,
     quiz: question,
     questionIndex: 0,
@@ -25,6 +26,9 @@ function session(phase: object, overrides: Record<string, unknown> = {}) {
     select: vi.fn(),
     confirm: vi.fn(),
     retry: vi.fn(),
+    login: vi.fn(async () => {}),
+    start: vi.fn(),
+    switchParticipant: vi.fn(async () => {}),
     resendAnswer: vi.fn(),
     restart: vi.fn(),
     ...overrides,
@@ -38,6 +42,89 @@ describe("QuizRunner", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "loading" }));
     render(<QuizRunner />);
     expect(screen.getByRole("status")).toHaveTextContent("全5問を準備しています");
+  });
+
+  it("shows the participant-switching state", () => {
+    mockUseQuizSession.mockReturnValue(session({ kind: "ready" }));
+    const { rerender } = render(<QuizRunner />);
+
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "ready" },
+        { access: { kind: "switching", participant: { id: 7, name: "参加者" } } },
+      ),
+    );
+    rerender(<QuizRunner />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("参加状態を切り替えています…");
+  });
+
+  it("collects name and a four digit PIN, clears the PIN after submit, then waits for explicit start", async () => {
+    const login = vi.fn(async () => {});
+    const start = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "ready" }, { access: { kind: "login" }, login, start }),
+    );
+    const { rerender } = render(<QuizRunner />);
+    fireEvent.change(screen.getByLabelText("お名前"), { target: { value: "田中" } });
+    const pinInput = screen.getByLabelText("4桁PIN") as HTMLInputElement;
+    fireEvent.change(pinInput, { target: { value: "0a12345" } });
+    expect(pinInput).toHaveValue("0123");
+    fireEvent.click(screen.getByRole("button", { name: "はじめる" }));
+    await waitFor(() => expect(login).toHaveBeenCalledWith("田中", "0123"));
+    expect(pinInput).toHaveValue("");
+    expect(start).not.toHaveBeenCalled();
+
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "ready" },
+        { access: { kind: "ready", participant: { id: 8, name: "田中" } }, start },
+      ),
+    );
+    rerender(<QuizRunner />);
+    expect(screen.getByRole("heading", { name: "田中さん" })).toBeInTheDocument();
+    expect(start).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "検定をはじめる" }));
+    expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the name and clears the PIN after a failed participant login", async () => {
+    const login = vi.fn(async () => {
+      throw new Error("PINが正しくありません。");
+    });
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "ready" }, { access: { kind: "login" }, login }),
+    );
+    render(<QuizRunner />);
+    const nameInput = screen.getByLabelText("お名前") as HTMLInputElement;
+    const pinInput = screen.getByLabelText("4桁PIN") as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: "田中" } });
+    fireEvent.change(pinInput, { target: { value: "0123" } });
+    fireEvent.click(screen.getByRole("button", { name: "はじめる" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("PINが正しくありません。");
+    expect(nameInput).toHaveValue("田中");
+    expect(pinInput).toHaveValue("");
+  });
+
+  it("offers logout and another name for an authenticated participant", () => {
+    const switchParticipant = vi.fn(async () => {});
+    mockUseQuizSession.mockReturnValue(session({ kind: "ready" }, { switchParticipant }));
+    render(<QuizRunner />);
+    expect(screen.getByRole("heading", { name: "参加者さん" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "別の名前で参加" }));
+    expect(switchParticipant).toHaveBeenCalledOnce();
+  });
+
+  it("shows a fallback alert when switching participants rejects a non-Error value", async () => {
+    const switchParticipant = vi.fn(() => Promise.reject("failure"));
+    mockUseQuizSession.mockReturnValue(session({ kind: "ready" }, { switchParticipant }));
+    render(<QuizRunner />);
+    fireEvent.click(screen.getByRole("button", { name: "別の名前で参加" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "参加状態を切り替えられませんでした。",
+    );
   });
 
   it("shows a shortage message and home path when five questions are unavailable", () => {
@@ -106,6 +193,29 @@ describe("QuizRunner", () => {
     fireEvent.click(screen.getByRole("button", { name: "回答を再送する" }));
     expect(resendAnswer).toHaveBeenCalledOnce();
     expect(screen.getByRole("link", { name: "ホームへ戻る" })).toHaveAttribute("href", "/");
+  });
+
+  it("shows reauthentication while keeping the failed choice and does not offer automatic resend", () => {
+    const login = vi.fn(async () => {});
+    mockUseQuizSession.mockReturnValue(
+      session(
+        {
+          kind: "error",
+          message: "Session expired",
+          selectedIndex: 1,
+          authenticationRequired: true,
+        },
+        { access: { kind: "reauthentication", participant: { id: 7, name: "参加者" } }, login },
+      ),
+    );
+    render(<QuizRunner />);
+    expect(screen.getByRole("button", { name: /London.*選択中/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText(/回答は自動送信されません/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "再ログインする" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回答を再送する" })).not.toBeInTheDocument();
   });
 
   it("shows neutral completion and restarts a fresh attempt", () => {

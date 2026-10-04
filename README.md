@@ -1,12 +1,12 @@
 # Stcirt - 1-Knowledge-1-Question Endless Learning App
 
-A Next.js 16 application for answering stored 4-choice questions in insertion order, with instant feedback.
+A Next.js 16 application for answering a shared set of stored 4-choice questions in insertion order.
 
 ## Features
 
-- 📚 **Sequential Learning**: Answer existing questions from earliest to latest.
-- ⚡ **Instant Feedback**: Immediate correct/incorrect grading, highlighting correct answers and your selections.
-- 📊 **Dashboard Stats**: Real-time tracking of total questions, answers, and overall accuracy.
+- 📚 **Fixed Exam Experience**: Answer the same five-question exam in order.
+- 📝 **Shared Exam Set**: Participants answer the same fixed set of five questions in order.
+- 👤 **Participant Answers**: Participants sign in with their name and the shared four-digit event PIN; their answers are saved in the database under their participant record.
 
 ## Stack
 
@@ -52,7 +52,21 @@ A Next.js 16 application for answering stored 4-choice questions in insertion or
    pnpm db:push
    ```
 
-4. **Run development server**:
+   For an existing deployment, apply checked-in migrations with `pnpm db:migrate`.
+
+4. **Configure participant access**:
+
+   Generate a random event PIN, its scrypt hash, and a pepper:
+
+   ```bash
+   node scripts/generate-participant-pin-hash.mjs
+   ```
+
+   Put the printed `PARTICIPANT_PIN_HASH` and `PARTICIPANT_PIN_PEPPER` into the server's secret environment. Generate `PARTICIPANT_SESSION_SECRET` separately with `openssl rand -hex 32`, and set `PARTICIPANT_EVENT_VERSION=1`. Share the displayed four-digit PIN with participants using a secure channel; do not put the plain PIN in the repository or application logs. Keep the PIN hash, pepper, and session secret in deployment secrets, not in source control.
+
+   Rotating the event PIN requires generating and configuring a new hash and pepper and incrementing `PARTICIPANT_EVENT_VERSION`. This invalidates all previously issued participant cookies. The cookie lifetime defaults to 30 days and can be set with `PARTICIPANT_SESSION_DAYS` (1–90). Failed authentication attempts are reserved transactionally in Turso before PIN verification: the default limit is 5 attempts per normalized name in 15 minutes, shared across all request sources. Set `PARTICIPANT_RATE_LIMIT_NAME` to change that limit. A successful PIN verification releases its reservation in a Turso transaction, so successful sign-ins do not count against the limit. If that release fails, sign-in fails closed with a temporary-unavailable response and no session cookie; the reservation may remain counted until its 15-minute window expires, so the participant may need to retry later. Database errors while reserving or finalizing an authentication attempt also fail closed. Old rate-limit records are cleaned during failed sign-in requests once they are more than 24 hours old.
+
+5. **Run development server**:
 
    ```bash
    pnpm dev

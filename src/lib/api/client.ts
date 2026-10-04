@@ -15,16 +15,52 @@ export const answerResultSchema = z.object({
 
 type RequestOptions = { customErrorMsg?: string; allowNotFound?: boolean };
 
-async function readErrorMessage(res: Response): Promise<string | null> {
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  readonly retryAt: string | null;
+
+  constructor({
+    status,
+    message,
+    code,
+    retryAt,
+  }: {
+    status: number;
+    message: string;
+    code: string | null;
+    retryAt: string | null;
+  }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.retryAt = retryAt;
+  }
+}
+
+type ApiErrorPayload = { message: string | null; code: string | null; retryAt: string | null };
+
+async function readErrorPayload(res: Response): Promise<ApiErrorPayload> {
   try {
     const json = await res.json();
-    if (json && typeof json === "object" && "error" in json && typeof json.error === "string") {
-      return json.error;
+    if (json && typeof json === "object") {
+      const value = json as Record<string, unknown>;
+      return {
+        message:
+          typeof value.message === "string"
+            ? value.message
+            : typeof value.error === "string"
+              ? value.error
+              : null,
+        code: typeof value.error === "string" ? value.error : null,
+        retryAt: typeof value.retryAt === "string" ? value.retryAt : null,
+      };
     }
   } catch {
     // non-JSON body, fall back
   }
-  return null;
+  return { message: null, code: null, retryAt: null };
 }
 
 async function request<T>(
@@ -48,14 +84,19 @@ async function request<T>(
   schema: z.ZodType<T>,
   options?: RequestOptions,
 ): Promise<T | null> {
-  const res = await fetch(path, init);
+  const res = await fetch(path, { ...init, credentials: "same-origin" });
   if (res.status === 404 && options?.allowNotFound) {
     return null;
   }
   if (!res.ok) {
     const fallback = `Failed to ${label}: status ${res.status}`;
-    const errorMsg = (await readErrorMessage(res)) ?? options?.customErrorMsg ?? fallback;
-    throw new Error(errorMsg);
+    const payload = await readErrorPayload(res);
+    throw new ApiError({
+      status: res.status,
+      message: payload.message ?? options?.customErrorMsg ?? fallback,
+      code: payload.code,
+      retryAt: payload.retryAt,
+    });
   }
 
   let data: unknown;
@@ -82,6 +123,58 @@ export async function fetchNextQuestion(afterId?: number): Promise<QuizQuestion 
     quizQuestionSchema,
     { allowNotFound: true },
   );
+}
+
+export type Participant = { id: number; name: string };
+export type ParticipantSession = { participant: Participant; expiresAt: string };
+
+const participantSchema = z.object({ id: z.number(), name: z.string() });
+const participantSessionSchema = z.object({
+  participant: participantSchema,
+  expiresAt: z.string(),
+});
+const participantLookupSchema = z.object({ participant: participantSchema.nullable() });
+
+export async function fetchParticipantSession(): Promise<Participant | null> {
+  const result = await request(
+    "/api/participants/session",
+    undefined,
+    "check participant session",
+    participantLookupSchema,
+  );
+  return result.participant;
+}
+
+export async function createParticipantSession(
+  name: string,
+  pin: string,
+): Promise<ParticipantSession> {
+  return request(
+    "/api/participants/session",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, pin }),
+    },
+    "start participant session",
+    participantSessionSchema,
+  );
+}
+
+export async function deleteParticipantSession(): Promise<void> {
+  const res = await fetch("/api/participants/session", {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+  if (!res.ok) {
+    const payload = await readErrorPayload(res);
+    throw new ApiError({
+      status: res.status,
+      message: payload.message ?? `Failed to end participant session: status ${res.status}`,
+      code: payload.code,
+      retryAt: payload.retryAt,
+    });
+  }
 }
 
 export async function submitAnswer(

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Stcirt presents a dedicated set of five Japanese IT-literacy questions in ID order as a fixed-length, exam-style answering session. The UI records each submitted choice through the existing answer API but does not present correctness, explanations, scores, accuracy, or pass/fail results within an exam session. Legacy `questions` and `answer_logs` data remain intact and are not read or written by this application. The home page shows aggregate history from the dedicated exam tables as secondary information, clearly distinguished from one exam attempt.
+Stcirt presents a dedicated set of five Japanese IT-literacy questions in ID order as a fixed-length, exam-style answering session. Participants join with a display name and the event's shared four-digit PIN; a signed HttpOnly cookie identifies them for subsequent answers. The UI records each submitted choice but does not present correctness, explanations, scores, accuracy, or pass/fail results within an exam session. Legacy `questions` and `answer_logs` data remain intact and are not read or written by this application. The home page does not show answer history statistics.
 
 ## Data Model
 
@@ -12,7 +12,11 @@ The Drizzle schema in `src/lib/db/schema.ts` contains the legacy tables and the 
 - `questions`: one question per knowledge record, with choices and correct answer
 - `answer_logs`: submitted choices, correctness, and answer time
 - `exam_questions`: stable integer IDs and unique keys for the five seeded exam questions
-- `exam_answer_logs`: submitted choices, correctness, and answer time, linked only to `exam_questions`
+- `exam_participants`: unique trim+NFC normalized name, display name, and creation time; no PIN data
+- `exam_answer_logs`: submitted choices, correctness, answer time, and nullable participant reference; historical anonymous rows remain NULL
+- `participant_rate_limits`: shared database-backed failed-authentication windows keyed by HMAC fingerprints, without storing IP addresses or names
+
+Participant names are trimmed and normalized to Unicode NFC for case-sensitive uniqueness. They are not compatibility-normalized and internal whitespace is preserved. The event PIN is held only as a salted scrypt hash plus server-side pepper in environment configuration.
 
 The exam session is held only in client state. It is not persisted. Reloading or remounting starts a new attempt, and repeated attempts write another set of per-question rows to `exam_answer_logs`. The initial migration seeds five questions idempotently; it does not modify or migrate legacy question or answer data.
 
@@ -31,10 +35,15 @@ The exam session is held only in client state. It is not persisted. Reloading or
 - A remount or reload starts a fresh attempt. Restart clears the held set and all session state, then fetches the first five again.
 - If fewer than five questions exist, the home CTA is disabled and the `/answer` route shows an explanation and a home link.
 
-### R2: Answer confirmation and recording
+### R2: Participant-authenticated answer confirmation and recording
 
 **WHEN** a user chooses an option and confirms it
 **THEN** the existing `POST /api/answers` records that choice for the current question.
+
+- The user first joins with a display name and event-wide four-ASCII-digit PIN. A valid existing participant session may be reused without re-entry.
+- Every answer POST requires a valid signed participant cookie and same-origin `Origin`; anonymous POSTs are rejected.
+- The participant ID comes only from the validated cookie. A client-supplied `participantId` is rejected.
+- New answer rows store the validated participant ID. Historical rows remain unchanged with a NULL participant ID.
 
 - The user may change a choice until explicit confirmation.
 - A pending request locks the answer controls and prevents duplicate submission.
@@ -53,14 +62,14 @@ The exam session is held only in client state. It is not persisted. Reloading or
 - Completion has no score, correctness, explanation, or pass/fail result.
 - Restart starts a new attempt from the first five questions.
 
-### R4: Home and aggregate statistics
+### R4: Home and participant entry
 
 **WHEN** the user visits `/`
 **THEN** show a primary `5問検定` briefing with `全5問`, `順番に出題`, `回答を記録します`, and the `検定を開始する` CTA.
 
 - Disable starting when fewer than five dedicated exam questions are available and explain that five questions are required.
-- Show aggregate historical statistics below the briefing under `これまでの回答状況`, and identify them as not belonging to one exam attempt.
-- Show total dedicated exam question count, today's dedicated exam answer count, and today's exam answer accuracy using JST day boundaries.
+- Do not show the `これまでの回答状況` section or aggregate statistic cards. Keep answer logs and repository data intact.
+- The answer entry flow accepts a name and the organizer-provided shared four-digit PIN in one form. A valid cookie displays the participant name and requires an explicit start action.
 
 ### R5: Accessible responsive interface
 
@@ -82,15 +91,26 @@ The exam session is held only in client state. It is not persisted. Reloading or
 ### `POST /api/answers`
 
 - Request: `{ questionId: number, selectedIndex: number }`
+- Requires same-origin `Origin` and a valid signed participant cookie whose participant still exists and whose event version matches current configuration.
+- Rejects anonymous calls and any body containing `participantId`; associates the answer with the cookie's participant.
 - Response 200: `{ isCorrect, correctIndex, explanation }` (the exam UI ignores grading fields)
-- Response 400/404: invalid selection or missing question
+- Response 400/401/403/404: invalid selection, missing/invalid participant session, origin failure, or missing question
+
+### `/api/participants/session`
+
+- `POST` request: `{ name: string, pin: string }`; PIN must be four ASCII digits, including leading zeroes.
+- On success, reuses or creates the case-sensitive trim+NFC participant and returns `{ participant: { id, name }, expiresAt }` with a signed HttpOnly, SameSite=Lax cookie (`Path=/`, Secure in production; default lifetime 30 days).
+- Failed authentication is rate-limited in the shared database to 5 attempts per normalized name per 15 minutes by default, shared across all request sources. `PARTICIPANT_RATE_LIMIT_NAME` configures this limit. Failure records contain HMAC fingerprints only and expired records are opportunistically deleted after 24 hours.
+- `GET` returns `{ participant: { id, name } | null }` after cookie signature, expiry, event-version, and database checks.
+- `DELETE` clears the cookie. Both mutating methods require a same-origin `Origin` header.
+- PIN/KDF, pepper, session secret, event version, or shared database configuration failures fail closed. PINs and secrets are never returned.
 
 ## Components
 
-- `/`: server-rendered exam briefing, start availability, and secondary historical statistics
-- `/answer`: client-held five-question session, confirmation, per-question answer recording, and neutral completion
+- `/`: server-rendered exam briefing and start availability
+- `/answer`: participant entry/session reuse, client-held five-question session, confirmation, per-question answer recording, and neutral completion
 - `src/lib/db/repository/question-repository.ts`: next-question lookup by ID cursor and answer lookup from `exam_questions`
-- `src/lib/db/repository/answer-repository.ts`: answer logging and aggregate statistics from `exam_answer_logs`
+- `src/lib/db/repository/answer-repository.ts`: participant-linked answer logging in `exam_answer_logs` (legacy aggregate rows are retained)
 
 ## Coverage tiers
 
@@ -109,4 +129,4 @@ Vitest covers core logic, API/client behavior, the sequential question repositor
 
 ## Environment
 
-Runtime configuration requires `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`. Question generation and question-management endpoints are not part of the application.
+Runtime configuration requires `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `PARTICIPANT_PIN_HASH`, `PARTICIPANT_PIN_PEPPER`, `PARTICIPANT_SESSION_SECRET`, and `PARTICIPANT_EVENT_VERSION` for participant authentication. PIN hash format is `scrypt$<salt hex>$<digest hex>` using scrypt N=16384, r=8, p=1, 32-byte output. Generate a fresh PIN/hash/pepper with `node scripts/generate-participant-pin-hash.mjs`; configure the pepper and hash only in the server's secret environment, and securely share the displayed PIN with participants. To rotate the PIN, replace the hash and pepper and increment `PARTICIPANT_EVENT_VERSION` to invalidate every old session. Optional `PARTICIPANT_SESSION_DAYS` accepts 1–90 (default 30); `PARTICIPANT_RATE_LIMIT_NAME` defaults to 5 failed attempts per normalized name per 15 minutes. Question generation and question-management endpoints are not part of the application.

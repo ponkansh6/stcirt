@@ -1,11 +1,10 @@
 import { NavLink } from "@/components/NavLink";
 import { getStats } from "@/lib/db/repository/answer-repository";
-import { StatCard } from "@/components/StatCard";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const { totalQuestions, todayAnswers, todayAccuracy } = await getStats();
+  const { totalQuestions } = await getStats();
   const canStart = totalQuestions >= 5;
 
   return (
@@ -61,30 +60,12 @@ export default async function Home() {
                 検定を開始する
               </NavLink>
             )}
-            <p className="mt-3 text-sm text-muted" role={canStart ? undefined : "status"}>
-              {canStart
-                ? `問題 ${totalQuestions}問`
-                : `問題は現在${totalQuestions}問です。問題が5問そろうと開始できます。`}
-            </p>
+            {!canStart && (
+              <p className="mt-3 text-sm text-muted" role="status">
+                問題は現在{totalQuestions}問です。5問そろうと開始できます。
+              </p>
+            )}
           </div>
-        </div>
-      </section>
-
-      <section className="space-y-4" aria-labelledby="stats-heading">
-        <div className="flex items-baseline justify-between gap-3">
-          <h2 id="stats-heading" className="text-lg font-bold">
-            これまでの回答状況
-          </h2>
-          <p className="text-xs text-muted">検定1回ごとの成績ではありません</p>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <StatCard label="問題数" value={String(totalQuestions)} />
-          <StatCard label="本日の解答数" value={String(todayAnswers)} />
-          <StatCard
-            label="本日の正答率"
-            value={`${Math.round(todayAccuracy * 100)}%`}
-            progress={todayAccuracy}
-          />
         </div>
       </section>
     </main>

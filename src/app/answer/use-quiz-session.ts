@@ -1,23 +1,46 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Participant } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/client";
+import {
+  createParticipantSession,
+  deleteParticipantSession,
+  fetchNextQuestion,
+  fetchParticipantSession,
+  submitAnswer,
+} from "@/lib/api/client";
 import type { QuizQuestion } from "@/types/quiz";
 import { shuffleChoices, type ShuffledChoices } from "@/lib/shuffle";
-import { fetchNextQuestion, submitAnswer } from "@/lib/api/client";
 
 const EXAM_SIZE = 5;
 
 export type LoadedQuiz = { question: QuizQuestion; shuffled: ShuffledChoices };
 export type Phase =
+  | { kind: "ready" }
   | { kind: "loading" }
   | { kind: "shortage" }
-  | { kind: "error"; message: string; selectedIndex?: number; unavailable?: boolean }
+  | {
+      kind: "error";
+      message: string;
+      selectedIndex?: number;
+      unavailable?: boolean;
+      authenticationRequired?: boolean;
+    }
   | { kind: "question"; selectedIndex?: number }
   | { kind: "submitting" }
   | { kind: "complete" };
 
+export type AccessState =
+  | { kind: "checking" }
+  | { kind: "login"; message?: string }
+  | { kind: "ready"; participant: Participant }
+  | { kind: "switching"; participant: Participant }
+  | { kind: "reauthentication"; participant: Participant };
+
 export function useQuizSession() {
-  const [phase, setPhase] = useState<Phase>({ kind: "loading" });
+  const [phase, setPhase] = useState<Phase>({ kind: "ready" });
+  const [access, setAccess] = useState<AccessState>({ kind: "checking" });
   const [quizzes, setQuizzes] = useState<LoadedQuiz[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [recordedCount, setRecordedCount] = useState(0);
@@ -25,7 +48,30 @@ export function useQuizSession() {
   const busyRef = useRef(false);
   const quizzesRef = useRef(quizzes);
   const phaseRef = useRef(phase);
+  const accessRef = useRef(access);
   phaseRef.current = phase;
+  accessRef.current = access;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void fetchParticipantSession()
+      .then((participant) => {
+        if (mountedRef.current) {
+          setAccess(participant ? { kind: "ready", participant } : { kind: "login" });
+        }
+      })
+      .catch(() => {
+        if (mountedRef.current) {
+          setAccess({
+            kind: "login",
+            message: "参加状態を確認できませんでした。お名前とPINを入力してください。",
+          });
+        }
+      });
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const loadQuestions = useCallback(async (restart = false) => {
     if (busyRef.current) return;
@@ -72,13 +118,57 @@ export function useQuizSession() {
     }
   }, []);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    void loadQuestions(true);
-    return () => {
-      mountedRef.current = false;
-    };
-  }, [loadQuestions]); // A remount always starts a fresh exam.
+  const start = useCallback(() => {
+    if (accessRef.current.kind === "ready") void loadQuestions(true);
+  }, [loadQuestions]);
+
+  const login = useCallback(async (name: string, pin: string) => {
+    const currentAccess = accessRef.current;
+    try {
+      const { participant } = await createParticipantSession(name, pin);
+      if (!mountedRef.current) return;
+      const currentPhase = phaseRef.current;
+      setAccess({ kind: "ready", participant });
+      if (currentPhase.kind === "error" && currentPhase.authenticationRequired) {
+        setPhase({
+          kind: "error",
+          selectedIndex: currentPhase.selectedIndex,
+          message: "再ログインしました。選択した回答を確認してから、明示的に再送してください。",
+        });
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        setAccess(
+          currentAccess.kind === "reauthentication"
+            ? currentAccess
+            : {
+                kind: "login",
+                message: error instanceof Error ? error.message : "参加できませんでした。",
+              },
+        );
+      }
+      throw error;
+    }
+  }, []);
+
+  const switchParticipant = useCallback(async () => {
+    const current = accessRef.current;
+    if (current.kind !== "ready") return;
+    setAccess({ kind: "switching", participant: current.participant });
+    try {
+      await deleteParticipantSession();
+      if (!mountedRef.current) return;
+      quizzesRef.current = [];
+      setQuizzes([]);
+      setQuestionIndex(0);
+      setRecordedCount(0);
+      setPhase({ kind: "ready" });
+      setAccess({ kind: "login" });
+    } catch (error) {
+      if (mountedRef.current) setAccess(current);
+      throw error;
+    }
+  }, []);
 
   const select = useCallback((selectedIndex: number) => {
     if (phaseRef.current.kind !== "question") return;
@@ -104,13 +194,25 @@ export function useQuizSession() {
           setQuestionIndex((index) => index + 1);
           setPhase({ kind: "question" });
         }
-      } catch (e) {
-        if (mountedRef.current) {
+      } catch (error) {
+        if (mountedRef.current && error instanceof ApiError && error.status === 401) {
+          const currentAccess = accessRef.current;
+          if (currentAccess.kind === "ready") {
+            setAccess({ kind: "reauthentication", participant: currentAccess.participant });
+          }
+          setPhase({
+            kind: "error",
+            message:
+              "参加セッションの期限が切れました。再ログインしてください。回答はまだ送信されていません。",
+            selectedIndex,
+            authenticationRequired: true,
+          });
+        } else if (mountedRef.current) {
           setPhase({
             kind: "error",
             message: "回答を記録できませんでした。通信状態を確認して、回答を再送してください。",
             selectedIndex,
-            unavailable: e instanceof Error && /status 404\b/.test(e.message),
+            unavailable: error instanceof ApiError && error.status === 404,
           });
         }
       } finally {
@@ -127,9 +229,7 @@ export function useQuizSession() {
   }, [submitSelectedAnswer]);
 
   const retry = useCallback(() => {
-    if (phaseRef.current.kind === "error") {
-      void loadQuestions(false);
-    }
+    if (phaseRef.current.kind === "error") void loadQuestions(false);
   }, [loadQuestions]);
 
   const resendAnswer = useCallback(() => {
@@ -139,6 +239,7 @@ export function useQuizSession() {
   }, [submitSelectedAnswer]);
 
   return {
+    access,
     phase,
     quiz: quizzes[questionIndex],
     questionIndex,
@@ -146,6 +247,9 @@ export function useQuizSession() {
     select,
     confirm,
     retry,
+    login,
+    start,
+    switchParticipant,
     resendAnswer,
     restart: () => void loadQuestions(true),
   };

@@ -15,6 +15,13 @@
       "when": 1791112156707,
       "tag": "0001_brainy_lizard",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791125259787,
+      "tag": "0002_nifty_eddie_brock",
+      "breakpoints": true
     }
   ]
 }

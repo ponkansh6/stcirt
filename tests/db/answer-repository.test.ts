@@ -48,7 +48,7 @@ describe("answer-repository", () => {
   });
 
   describe("recordAnswer", () => {
-    it("inserts an answer log row", async () => {
+    it("preserves anonymous answer logs with a null participant ID", async () => {
       const questionId = await insertQuestion();
       await recordAnswer({ questionId, selectedIndex: 0, isCorrect: true });
 
@@ -57,6 +57,26 @@ describe("answer-repository", () => {
       expect(rows[0].questionId).toBe(questionId);
       expect(rows[0].isCorrect).toBe(1);
       expect(rows[0].selectedIndex).toBe(0);
+      expect(rows[0].participantId).toBeNull();
+    });
+
+    it("stores the participant ID for a new participant answer", async () => {
+      const questionId = await insertQuestion();
+      const [participant] = await dbRef
+        .db!.insert(schema.examParticipants)
+        .values({ normalizedName: "山田", displayName: "山田" })
+        .returning({ id: schema.examParticipants.id });
+
+      await recordAnswer({
+        questionId,
+        selectedIndex: 0,
+        isCorrect: true,
+        participantId: participant!.id,
+      });
+
+      const rows = await dbRef.db!.select().from(schema.examAnswerLogs);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].participantId).toBe(participant!.id);
     });
   });
 
