@@ -58,7 +58,9 @@ async function main() {
     if (!match) continue;
 
     const colBlock = match[1];
-    const colRegex = /\"(\w+)\"/g;
+    // Match the physical column name passed to a Drizzle column builder,
+    // not string options such as { mode: "json" }.
+    const colRegex = /\b\w+\s*:\s*\w+\s*\(\s*"(\w+)"/g;
     const expectedCols = new Set();
     let c;
     while ((c = colRegex.exec(colBlock)) !== null) {
