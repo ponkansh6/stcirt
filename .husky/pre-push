@@ -145,7 +145,7 @@ fi
 
 PID_BUILD=""
 if [ "$NEED_BUILD" = "1" ]; then
-  ( set -e; NEXT_BUILD=1 next build --turbopack ) >"$LOG_BUILD" 2>&1 &
+  ( set -e; NEXT_BUILD=1 pnpm build ) >"$LOG_BUILD" 2>&1 &
   PID_BUILD=$!
 fi
 
