@@ -147,6 +147,42 @@ describe("useQuizSession hook", () => {
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/answers")).toHaveLength(1);
   });
 
+  it("synchronously blocks duplicate confirms and selection changes while a POST is pending", async () => {
+    let answerCalls = 0;
+    let releaseAnswer!: () => void;
+    const answerGate = new Promise<void>((resolve) => {
+      releaseAnswer = resolve;
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url.includes("/api/questions/next")) return questionFetch(url);
+      answerCalls += 1;
+      await answerGate;
+      return { ok: true, json: async () => answerResult };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => result.current.start());
+    await waitFor(() => expect(result.current.phase.kind).toBe("question"));
+    act(() => result.current.select(1));
+
+    act(() => {
+      result.current.confirm();
+      result.current.confirm();
+      result.current.select(2);
+    });
+    expect(result.current.phase).toEqual({ kind: "submitting", selectedIndex: 1 });
+    expect(answerCalls).toBe(1);
+
+    await act(async () => releaseAnswer());
+    await waitFor(() => expect(result.current.quiz?.question.id).toBe(2));
+    expect(result.current.recordedCount).toBe(1);
+    expect(answerCalls).toBe(1);
+  });
+
   it("retains a failed selection and resends it only after explicit retry", async () => {
     let answerFailed = true;
     const fetchMock = vi.fn(async (url: string) => {

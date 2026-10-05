@@ -28,7 +28,7 @@ export type Phase =
       authenticationRequired?: boolean;
     }
   | { kind: "question"; selectedIndex?: number }
-  | { kind: "submitting" }
+  | { kind: "submitting"; selectedIndex: number }
   | { kind: "complete" };
 
 export type AccessState =
@@ -171,7 +171,7 @@ export function useQuizSession() {
   }, []);
 
   const select = useCallback((selectedIndex: number) => {
-    if (phaseRef.current.kind !== "question") return;
+    if (busyRef.current || phaseRef.current.kind !== "question") return;
     setPhase({ kind: "question", selectedIndex });
   }, []);
 
@@ -181,7 +181,8 @@ export function useQuizSession() {
       const quiz = quizzes[questionIndex];
       if (!quiz) return;
       busyRef.current = true;
-      setPhase({ kind: "submitting" });
+      phaseRef.current = { kind: "submitting", selectedIndex };
+      setPhase({ kind: "submitting", selectedIndex });
       const selectedOriginalIndex = quiz.shuffled.choiceIndices[selectedIndex];
       try {
         await submitAnswer(quiz.question.id, selectedOriginalIndex);
@@ -223,6 +224,7 @@ export function useQuizSession() {
   );
 
   const confirm = useCallback(() => {
+    if (busyRef.current) return;
     const current = phaseRef.current;
     if (current.kind !== "question" || current.selectedIndex === undefined) return;
     void submitSelectedAnswer(current.selectedIndex);

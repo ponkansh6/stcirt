@@ -158,25 +158,27 @@ describe("QuizRunner", () => {
     expect(screen.getByRole("heading", { name: "第2問 / 全5問" })).toBeInTheDocument();
     expect(screen.getByText("回答記録済み 1/5")).toBeInTheDocument();
     expect(screen.getByText("What is the capital of France?")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Paris.*選択中/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.getByRole("radio", { name: /A\..*Paris/ })).toBeChecked();
+    expect(screen.getByRole("group", { name: "回答を1つ選択してください" })).toBeInTheDocument();
+    expect(screen.getAllByRole("radio")).toHaveLength(4);
     fireEvent.click(screen.getByRole("button", { name: "回答を確定する" }));
     expect(confirm).toHaveBeenCalledOnce();
     expect(screen.queryByText(/正解！|不正解|解説:/)).not.toBeInTheDocument();
   });
 
   it("locks choices while the answer is being recorded", () => {
-    mockUseQuizSession.mockReturnValue(session({ kind: "submitting" }));
+    mockUseQuizSession.mockReturnValue(session({ kind: "submitting", selectedIndex: 1 }));
     render(<QuizRunner />);
     expect(screen.getByRole("status")).toHaveTextContent("回答を記録しています");
-    expect(screen.getByRole("button", { name: /回答を記録しています/ })).toBeDisabled();
-    expect(
-      screen
-        .getAllByRole("button", { name: /Paris|London|Berlin|Madrid/ })
-        .every((button) => button.hasAttribute("disabled")),
-    ).toBe(true);
+    const confirm = screen.getByRole("button", { name: "回答を確定する" });
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    expect(confirm).not.toBeDisabled();
+    expect(confirm).not.toHaveAttribute("aria-busy");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByRole("radio", { name: /B\..*London/ })).toBeChecked();
+    expect(screen.getAllByRole("radio").every((button) => button.hasAttribute("disabled"))).toBe(
+      true,
+    );
   });
 
   it("keeps the selected option visible after failure and explicitly resends or returns home", () => {
@@ -186,10 +188,7 @@ describe("QuizRunner", () => {
     );
     render(<QuizRunner />);
     expect(screen.getByRole("alert")).toHaveTextContent("Could not record");
-    expect(screen.getByRole("button", { name: /London.*選択中/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.getByRole("radio", { name: /B\..*London/ })).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "回答を再送する" }));
     expect(resendAnswer).toHaveBeenCalledOnce();
     expect(screen.getByRole("link", { name: "ホームへ戻る" })).toHaveAttribute("href", "/");
@@ -209,10 +208,7 @@ describe("QuizRunner", () => {
       ),
     );
     render(<QuizRunner />);
-    expect(screen.getByRole("button", { name: /London.*選択中/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.getByRole("radio", { name: /B\..*London/ })).toBeChecked();
     expect(screen.getByText(/回答は自動送信されません/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "再ログインする" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "回答を再送する" })).not.toBeInTheDocument();

@@ -4,50 +4,71 @@ import ChoiceButton from "@/components/ChoiceButton";
 
 describe("ChoiceButton", () => {
   it("renders label and text in idle variant by default", () => {
-    render(<ChoiceButton label="A." text="Choice text" variant="idle" />);
+    render(
+      <ChoiceButton
+        id="choice-a"
+        name="answer"
+        value="0"
+        label="A."
+        text="Choice text"
+        variant="idle"
+        checked={false}
+      />,
+    );
     expect(screen.getByText("A.")).toBeInTheDocument();
     expect(screen.getByText("Choice text")).toBeInTheDocument();
-    const button = screen.getByRole("button");
-    expect(button).not.toBeDisabled();
-    expect(button).not.toHaveAttribute("aria-busy");
+    const radio = screen.getByRole("radio", { name: /A\..*Choice text/ });
+    expect(radio).not.toBeDisabled();
+    expect(radio).not.toBeChecked();
   });
 
-  it("renders correct variant with checkmark", () => {
-    render(<ChoiceButton label="B." text="Correct text" variant="correct" />);
-    expect(screen.getByText("✓")).toBeInTheDocument();
-  });
-
-  it("renders selectedWrong variant with cross", () => {
-    render(<ChoiceButton label="C." text="Wrong text" variant="selectedWrong" />);
-    expect(screen.getByText("✗")).toBeInTheDocument();
-  });
-
-  it("renders muted variant", () => {
-    render(<ChoiceButton label="D." text="Muted text" variant="muted" />);
-    expect(screen.getByText("D.")).toBeInTheDocument();
-  });
-
-  it("renders selected variant with a textual selected state", () => {
-    render(<ChoiceButton label="A." text="Selected text" variant="selected" />);
-    const button = screen.getByRole("button");
-    expect(screen.getByText("選択中")).toBeInTheDocument();
-    expect(button).not.toHaveAttribute("aria-busy");
-  });
-
-  it("calls onClick when clicked and not disabled", () => {
-    const handleClick = vi.fn();
-    render(<ChoiceButton label="A." text="Clickable" variant="idle" onClick={handleClick} />);
-    fireEvent.click(screen.getByRole("button"));
-    expect(handleClick).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not call onClick when disabled", () => {
-    const handleClick = vi.fn();
+  it("renders the selected mark and a checked native radio", () => {
     render(
-      <ChoiceButton label="A." text="Disabled" variant="idle" onClick={handleClick} disabled />,
+      <ChoiceButton
+        id="choice-a"
+        name="answer"
+        value="0"
+        label="A."
+        text="Selected text"
+        variant="selected"
+        checked
+      />,
     );
-    fireEvent.click(screen.getByRole("button"));
-    expect(handleClick).not.toHaveBeenCalled();
-    expect(screen.getByRole("button")).toBeDisabled();
+    expect(screen.getByText("選択中")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /A\..*Selected text/ })).toBeChecked();
+  });
+
+  it("changes the radio when its full row label is activated", () => {
+    const handleChange = vi.fn();
+    render(
+      <ChoiceButton
+        id="choice-a"
+        name="answer"
+        value="0"
+        label="A."
+        text="Clickable"
+        variant="idle"
+        checked={false}
+        onChange={handleChange}
+      />,
+    );
+    fireEvent.click(screen.getByText("Clickable"));
+    expect(handleChange).toHaveBeenCalledOnce();
+  });
+
+  it("disables the radio while a submission is pending", () => {
+    render(
+      <ChoiceButton
+        id="choice-a"
+        name="answer"
+        value="0"
+        label="A."
+        text="Disabled"
+        variant="idle"
+        checked={false}
+        disabled
+      />,
+    );
+    expect(screen.getByRole("radio", { name: /A\..*Disabled/ })).toBeDisabled();
   });
 });

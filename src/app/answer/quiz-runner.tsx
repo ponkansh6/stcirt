@@ -6,6 +6,7 @@ import ChoiceButton from "@/components/ChoiceButton";
 import { choiceLabel } from "@/lib/choice-label";
 import { Button } from "@/components/Button";
 import { NavLink } from "@/components/NavLink";
+import { Spinner } from "@/components/Spinner";
 import { ApiError } from "@/lib/api/client";
 
 export default function QuizRunner() {
@@ -154,19 +155,24 @@ export default function QuizRunner() {
           {isAnswerError ? (
             <>
               {quiz && (
-                <div className="mt-6 space-y-3" aria-label="選択した回答">
-                  <p className="font-semibold">{quiz.question.question}</p>
+                <fieldset className="mt-6 min-w-0 space-y-3" disabled>
+                  <legend className="mb-3 break-words font-semibold">
+                    選択した回答: {quiz.question.question}
+                  </legend>
                   {quiz.shuffled.choices.map((choice, index) => (
                     <ChoiceButton
                       key={index}
+                      id={`failed-answer-${quiz.question.id}-${index}`}
+                      name={`failed-answer-${quiz.question.id}`}
+                      value={String(index)}
                       label={choiceLabel(index)}
                       text={choice}
                       variant={index === phase.selectedIndex ? "selected" : "idle"}
+                      checked={index === phase.selectedIndex}
                       disabled
-                      aria-pressed={index === phase.selectedIndex}
                     />
                   ))}
-                </div>
+                </fieldset>
               )}
               {isReauthentication ? (
                 <div className="mt-8 rounded-xl border border-border bg-surface-2 p-5 sm:p-6">
@@ -219,7 +225,8 @@ export default function QuizRunner() {
   }
 
   if (!quiz) return null;
-  const selectedIndex = phase.kind === "question" ? phase.selectedIndex : undefined;
+  const selectedIndex =
+    phase.kind === "question" || phase.kind === "submitting" ? phase.selectedIndex : undefined;
   const isSubmitting = phase.kind === "submitting";
 
   return (
@@ -234,7 +241,7 @@ export default function QuizRunner() {
             回答記録済み {recordedCount}/5
           </p>
         </div>
-        <ol className="mt-5 grid grid-cols-5 gap-2" aria-label="各問題の回答状態">
+        <ol className="mt-5 grid grid-cols-5 gap-1 sm:gap-2" aria-label="各問題の回答状態">
           {Array.from({ length: 5 }, (_, index) => {
             const answered = index < recordedCount;
             const current = index === questionIndex;
@@ -242,11 +249,10 @@ export default function QuizRunner() {
             return (
               <li
                 key={index}
-                className={`flex min-h-10 items-center justify-center rounded-md border px-1 text-xs font-semibold sm:text-sm ${answered ? "border-primary bg-primary text-on-primary" : current ? "border-primary bg-surface text-primary ring-2 ring-primary/30" : "border-border bg-surface-2 text-muted"}`}
+                className={`flex min-h-11 min-w-0 flex-col items-center justify-center rounded-md border px-0.5 text-[10px] font-semibold leading-tight sm:text-xs ${answered ? "border-primary bg-primary text-on-primary" : current ? "border-primary bg-surface text-primary ring-2 ring-primary/30" : "border-border bg-surface-2 text-muted"}`}
                 aria-current={current ? "step" : undefined}
               >
-                <span className="sr-only">第{index + 1}問、</span>
-                <span className="hidden sm:inline">{index + 1}問・</span>
+                <span>{index + 1}問</span>
                 {status}
               </li>
             );
@@ -254,31 +260,45 @@ export default function QuizRunner() {
         </ol>
       </header>
 
-      <section className="flex-1" aria-labelledby="question-title">
+      <section
+        className="flex-1 rounded-2xl border border-border bg-surface p-4 shadow-card sm:p-8"
+        aria-labelledby="question-title"
+      >
         <p className="mb-2 text-sm font-semibold tracking-widest text-primary">設問</p>
         <h2
           ref={questionHeadingRef}
           id="question-title"
           tabIndex={-1}
-          className="mb-7 text-xl font-bold leading-relaxed tracking-tight sm:text-2xl"
+          className="mb-7 break-words text-xl font-bold leading-relaxed tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4 sm:text-2xl"
         >
           {quiz.question.question}
         </h2>
-        <fieldset disabled={isSubmitting} className="space-y-3">
-          <legend className="sr-only">回答を1つ選択してください</legend>
+        <fieldset
+          disabled={isSubmitting}
+          className="min-w-0 space-y-3 border-t border-border pt-5"
+          aria-describedby="choice-instruction"
+        >
+          <legend className="mb-3 px-1 text-sm font-semibold text-muted">
+            回答を1つ選択してください
+          </legend>
           {quiz.shuffled.choices.map((choice, index) => (
             <ChoiceButton
               key={index}
+              id={`answer-${quiz.question.id}-${index}`}
+              name={`answer-${quiz.question.id}`}
+              value={String(index)}
               label={choiceLabel(index)}
               text={choice}
               variant={selectedIndex === index ? "selected" : "idle"}
-              onClick={() => select(index)}
+              checked={selectedIndex === index}
+              onChange={() => select(index)}
               disabled={isSubmitting}
-              aria-pressed={selectedIndex === index}
             />
           ))}
         </fieldset>
-        <p className="mt-4 text-sm text-muted">選択内容を確認してから回答を確定してください。</p>
+        <p id="choice-instruction" className="mt-4 break-words text-sm text-muted">
+          選択内容を確認してから回答を確定してください。
+        </p>
         {isSubmitting && (
           <p className="mt-3 text-sm font-medium" role="status" aria-live="polite">
             回答を記録しています…
@@ -286,11 +306,12 @@ export default function QuizRunner() {
         )}
         <Button
           onClick={() => void confirm()}
-          disabled={selectedIndex === undefined || isSubmitting}
-          loading={isSubmitting}
-          className="mt-7"
+          disabled={!isSubmitting && selectedIndex === undefined}
+          aria-disabled={isSubmitting || undefined}
+          className={`mt-7 ${isSubmitting ? "cursor-wait opacity-80" : ""}`}
         >
-          {isSubmitting ? "回答を記録しています…" : "回答を確定する"}
+          {isSubmitting && <Spinner className="motion-reduce:animate-none" />}
+          回答を確定する
         </Button>
       </section>
     </main>

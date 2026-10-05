@@ -105,6 +105,12 @@ async function startQuiz(page: Page) {
   await page.getByRole("button", { name: "検定をはじめる" }).click();
 }
 
+async function selectRadio(page: Page, name: RegExp) {
+  const radio = page.getByRole("radio", { name });
+  await radio.locator("xpath=ancestor::label").click();
+  await expect(radio).toBeChecked();
+}
+
 test("direct answer access requires name and four digit PIN before the explicit start action", async ({
   page,
 }) => {
@@ -178,7 +184,7 @@ test("requires explicit confirmation, records the selected answer with the parti
   await expect(page.getByText("Question 1?")).toBeVisible();
   const confirm = page.getByRole("button", { name: "回答を確定する" });
   await expect(confirm).toBeDisabled();
-  await page.getByRole("button", { name: /Option 1B/ }).click();
+  await selectRadio(page, /Option 1B/);
   await expect(confirm).toBeEnabled();
   await confirm.click();
 
@@ -189,6 +195,133 @@ test("requires explicit confirmation, records the selected answer with the parti
   expect(submitted[0].body).toMatchObject({ questionId: 1 });
   expect(submitted[0].body).not.toHaveProperty("participantId");
   expect(submitted[0].cookie).toContain("stcirt_participant_session=mock-session");
+});
+
+test("keeps the pending confirmation focused and moves focus to the next question", async ({
+  page,
+}) => {
+  await mockParticipantSession(page);
+  await mockQuestions(page);
+
+  let answerCalls = 0;
+  let markRequestStarted!: () => void;
+  const requestStarted = new Promise<void>((resolve) => {
+    markRequestStarted = resolve;
+  });
+  let releaseAnswer!: () => void;
+  const answerGate = new Promise<void>((resolve) => {
+    releaseAnswer = resolve;
+  });
+  await page.route("**/api/answers", async (route) => {
+    answerCalls += 1;
+    markRequestStarted();
+    await answerGate;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(neutralAnswer),
+    });
+  });
+
+  await page.goto("/answer");
+  await signIn(page);
+  await startQuiz(page);
+  await selectRadio(page, /Option 1B/);
+  const confirm = page.getByRole("button", { name: "回答を確定する" });
+  await confirm.click();
+  await requestStarted;
+
+  await expect(confirm).toBeFocused();
+  await expect(confirm).toHaveAttribute("aria-disabled", "true");
+  await expect(confirm).toHaveAccessibleName("回答を確定する");
+  await expect(confirm).not.toHaveAttribute("disabled");
+  await expect(confirm).not.toHaveAttribute("aria-busy");
+  await expect(page.getByRole("status")).toHaveText("回答を記録しています…");
+  await expect(page.getByRole("radio", { name: /Option 1B/ })).toBeChecked();
+  await confirm.evaluate((button: HTMLButtonElement) => button.click());
+  expect(answerCalls).toBe(1);
+
+  releaseAnswer();
+  const nextHeading = page.getByRole("heading", { name: "Question 2?" });
+  await expect(nextHeading).toBeFocused();
+  const focusRing = await nextHeading.evaluate((element) => getComputedStyle(element).boxShadow);
+  expect(focusRing).not.toBe("none");
+});
+
+test("supports native radio keyboard operation and reflows long Japanese text at 320px", async ({
+  page,
+}) => {
+  // This sets a 320 CSS px viewport; browser zoom at 200% needs a real-browser check.
+  await page.setViewportSize({ width: 320, height: 900 });
+  await mockParticipantSession(page);
+  await page.route("**/api/questions/next*", async (route) => {
+    const url = new URL(route.request().url());
+    const afterId = Number(url.searchParams.get("afterId") ?? 0);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        makeQuestion({
+          id: afterId + 1,
+          question: "長文の設問です。".repeat(20),
+          choices: [
+            "長文の選択肢Aです。".repeat(20),
+            "長文の選択肢Bです。".repeat(20),
+            "長文の選択肢Cです。".repeat(20),
+            "長文の選択肢Dです。".repeat(20),
+          ],
+        }),
+      ),
+    });
+  });
+
+  await page.goto("/answer");
+  await signIn(page);
+  await startQuiz(page);
+
+  const group = page.getByRole("group", { name: "回答を1つ選択してください" });
+  await expect(group).toBeVisible();
+  const radios = page.getByRole("radio");
+  await expect(radios).toHaveCount(4);
+  const firstRadio = radios.nth(0);
+  await expect(firstRadio).toHaveAttribute("name", "answer-1");
+  await expect(firstRadio).toHaveAttribute("value", "0");
+  await expect(firstRadio).toHaveAccessibleName(/A\. 長文の選択肢[A-D]です/);
+  const firstRadioId = await firstRadio.getAttribute("id");
+  expect(firstRadioId).toBeTruthy();
+  await expect(page.locator(`label[for="${firstRadioId}"]`)).toHaveCount(1);
+  const radioNames = await radios.evaluateAll((inputs) => [
+    ...new Set(inputs.map((input) => (input as HTMLInputElement).name)),
+  ]);
+  expect(radioNames).toEqual(["answer-1"]);
+
+  await firstRadio.focus();
+  await page.keyboard.press("Space");
+  await expect(firstRadio).toBeChecked();
+  const firstRow = firstRadio.locator("xpath=..");
+  const radioFocusRing = await firstRow.evaluate((element) => getComputedStyle(element).boxShadow);
+  expect(radioFocusRing).not.toBe("none");
+
+  const progress = page.getByRole("list", { name: "各問題の回答状態" });
+  await expect(progress.getByRole("listitem")).toHaveCount(5);
+  await expect(progress).toContainText("1問");
+  await expect(progress).toContainText("現在");
+  await expect(progress).toContainText("2問");
+  await expect(progress).toContainText("未到達");
+  await expect(progress.locator("a, button, input")).toHaveCount(0);
+
+  const [rowBox, confirmBox] = await Promise.all([
+    firstRow.boundingBox(),
+    page.getByRole("button", { name: "回答を確定する" }).boundingBox(),
+  ]);
+  expect(rowBox?.height).toBeGreaterThanOrEqual(44);
+  expect(confirmBox?.height).toBeGreaterThanOrEqual(44);
+  const widths = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth,
+    body: document.body.scrollWidth,
+    viewport: document.documentElement.clientWidth,
+  }));
+  expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport);
 });
 
 test("shows neutral completion after the fifth recorded answer", async ({ page }) => {
@@ -207,7 +340,7 @@ test("shows neutral completion after the fifth recorded answer", async ({ page }
   await startQuiz(page);
   for (let id = 1; id <= 5; id += 1) {
     await expect(page.getByText(`Question ${id}?`)).toBeVisible();
-    await page.getByRole("button", { name: new RegExp(`Option ${id}A`) }).click();
+    await selectRadio(page, new RegExp(`Option ${id}A`));
     await page.getByRole("button", { name: "回答を確定する" }).click();
   }
 
@@ -258,15 +391,17 @@ test("retains a selected answer through reauthentication and resends only after 
   await page.goto("/answer");
   await expect(page.getByRole("heading", { name: "Akiさん" })).toBeVisible();
   await startQuiz(page);
-  await page.getByRole("button", { name: /Option 1C/ }).click();
+  await selectRadio(page, /Option 1C/);
   await page.getByRole("button", { name: "回答を確定する" }).click();
   await expect(page.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Option 1C.*選択中/ })).toBeDisabled();
+  await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeDisabled();
+  await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeChecked();
 
   await page.getByLabel("4桁PIN").fill("0123");
   await page.getByRole("button", { name: "再ログインする" }).click();
   await expect(page.getByRole("heading", { name: "回答を記録できませんでした" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Option 1C.*選択中/ })).toBeDisabled();
+  await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeDisabled();
+  await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeChecked();
   expect(answerCalls).toBe(1);
   await page.getByRole("button", { name: "回答を再送する" }).click();
   await expect(page.getByRole("heading", { name: "第2問 / 全5問" })).toBeVisible();

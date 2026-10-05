@@ -46,7 +46,9 @@ The exam session is held only in client state. It is not persisted. Reloading or
 - New answer rows store the validated participant ID. Historical rows remain unchanged with a NULL participant ID.
 
 - The user may change a choice until explicit confirmation.
+- Choices are native radio inputs grouped by question with a fieldset and legend; each input has an explicit full-row label, and its submitted value remains the existing shuffled-choice index.
 - A pending request locks the answer controls and prevents duplicate submission.
+- While pending, the selected radio remains checked and the confirmation action keeps its name and focus; its disabled state is communicated with `aria-disabled` and guarded synchronously.
 - The selected choice and current question remain available after a failed request so the user can retry.
 - A successful POST increments the recorded-answer count before advancing to the next held question. A successful answer is never submitted again during the same attempt.
 - The current question position (`第n問 / 全5問`) and successful recorded count (`回答記録済み k/5`) are separate values. The five-step list distinguishes answered, current, and not-yet-reached questions in text as well as appearance.
@@ -73,9 +75,10 @@ The exam session is held only in client state. It is not persisted. Reloading or
 
 ### R5: Accessible responsive interface
 
-- Use a restrained exam-guide visual style with light surfaces, ink text, and a subtle gold/primary accent; do not use medals, pass/fail imagery, or certificate visuals.
-- Provide readable contrast, visible keyboard focus, operable controls, live status updates, and textual state labels so color is not the sole signal.
-- Keep content in a single readable column on narrow screens, avoid horizontal scrolling at 200% zoom, and respect reduced-motion preferences.
+- Use a restrained exam-paper visual style with light surfaces, ink text, subtle borders, and a primary accent; do not use medals, pass/fail imagery, or certificate visuals.
+- Provide readable contrast, visible keyboard focus, native radio semantics, live status updates, and textual progress labels so color is not the sole signal. Choice rows and the primary confirmation action have at least 44 CSS px of interaction height.
+- Keep content in a single readable column on narrow screens, avoid horizontal scrolling at 320 CSS px and 200% zoom, and respect reduced-motion preferences.
+- After a successful answer advances to the next question, move focus to the new question heading. Do not add exam-time correctness, explanation, score, accuracy, or pass/fail information.
 
 ## API
 
@@ -108,7 +111,8 @@ The exam session is held only in client state. It is not persisted. Reloading or
 ## Components
 
 - `/`: server-rendered exam briefing and start availability
-- `/answer`: participant entry/session reuse, client-held five-question session, confirmation, per-question answer recording, and neutral completion
+- `/answer`: participant entry/session reuse, client-held five-question session, native radio choice group with explicit confirmation, per-question answer recording, and neutral completion
+- `src/components/ChoiceButton.tsx`: labeled native radio row with circular choice mark and selected-state styling, reused for the active and failed-answer views
 - `src/lib/db/repository/question-repository.ts`: next-question lookup by ID cursor and answer lookup from `exam_questions`
 - `src/lib/db/repository/answer-repository.ts`: participant-linked answer logging in `exam_answer_logs` (legacy aggregate rows are retained)
 
