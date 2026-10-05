@@ -268,4 +268,365 @@ describe("useQuizSession hook", () => {
       ),
     ).toBe(true);
   });
+
+  it("shows login after session lookup failure and keeps login errors visible", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "POST")
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ message: "名前またはPINが違います" }),
+        };
+      throw new Error("session unavailable");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("login"));
+    expect(result.current.access).toMatchObject({
+      message: "参加状態を確認できませんでした。お名前とPINを入力してください。",
+    });
+    await act(async () => {
+      await expect(result.current.login("参加者", "0000")).rejects.toThrow(
+        "名前またはPINが違います",
+      );
+    });
+    expect(result.current.access).toMatchObject({
+      kind: "login",
+      message: "名前またはPINが違います",
+    });
+  });
+
+  it("offers a shortage state when fewer than five questions remain", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/questions/next") return { ok: true, json: async () => question(1) };
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => result.current.start());
+    await waitFor(() => expect(result.current.phase.kind).toBe("shortage"));
+    expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([1]);
+  });
+
+  it("keeps an explicitly rejected draft editable and gives changed answers a new retry operation", async () => {
+    const attempts: Array<Record<string, unknown>> = [];
+    let rejectFirst = true;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url.startsWith("/api/questions/next")) {
+        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
+        return { ok: true, json: async () => question(id) };
+      }
+      if (url === "/api/answers/batch" && init?.method === "POST") {
+        attempts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        if (rejectFirst) {
+          rejectFirst = false;
+          return {
+            ok: false,
+            status: 400,
+            json: async () => ({ message: "回答を確認してください" }),
+          };
+        }
+        return { ok: true, json: async () => ({ submissionId, revision: 1 }) };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = await start();
+    await answerAll(result);
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase).toMatchObject({
+      kind: "answering",
+      message: "回答を確認してください",
+      retryRequired: false,
+    });
+    expect(result.current.answeredCount).toBe(5);
+    act(() => result.current.select(1, 1));
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase.kind).toBe("complete");
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]?.operationId).not.toBe(attempts[1]?.operationId);
+  });
+
+  it("requires reauthentication after an unauthorized batch response while retaining the draft", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url.startsWith("/api/questions/next")) {
+        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
+        return { ok: true, json: async () => question(id) };
+      }
+      if (url === "/api/answers/batch" && init?.method === "POST")
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ message: "ログイン期限が切れました" }),
+        };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = await start();
+    await answerAll(result);
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.access).toEqual({ kind: "reauthentication", participant });
+    expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
+    expect(result.current.answeredCount).toBe(5);
+  });
+
+  it("retains a draft when conflict refresh fails, then refreshes saved answers on request", async () => {
+    let getFails = true;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url.startsWith("/api/questions/next")) {
+        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
+        return { ok: true, json: async () => question(id) };
+      }
+      if (url === "/api/answers/batch" && init?.method === "POST")
+        return { ok: false, status: 409, json: async () => ({ message: "conflict" }) };
+      if (url.startsWith("/api/answers/batch?")) {
+        if (getFails) {
+          getFails = false;
+          return {
+            ok: false,
+            status: 503,
+            json: async () => ({ message: "一時的に確認できません" }),
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            submissionId,
+            revision: 4,
+            answers: [1, 2, 3, 4, 5].map((questionId) => ({ questionId, selectedIndex: 0 })),
+          }),
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = await start();
+    await answerAll(result);
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
+    expect(result.current.answeredCount).toBe(5);
+    await act(async () => result.current.refreshSavedAnswers());
+    expect(result.current.phase).toMatchObject({
+      kind: "answering",
+      message: expect.stringContaining("編集中の回答案は保持されています"),
+    });
+    expect(result.current.phase).not.toHaveProperty("refreshRequired");
+    expect(result.current.revision).toBe(4);
+    expect(result.current.answeredCount).toBe(5);
+  });
+
+  it("clears participant data after switching and restores access if session deletion fails", async () => {
+    let deletionFails = false;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        if (deletionFails) return { ok: false, status: 500, json: async () => ({}) };
+        return { ok: true };
+      }
+      if (_url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (_url.startsWith("/api/questions/next")) {
+        const id = Number(_url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
+        return { ok: true, json: async () => question(id) };
+      }
+      throw new Error(`Unexpected request: ${_url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = await start();
+    deletionFails = true;
+    await act(async () => {
+      await expect(result.current.switchParticipant()).rejects.toThrow();
+    });
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    deletionFails = false;
+    await act(async () => result.current.switchParticipant());
+    expect(result.current.access).toEqual({ kind: "login" });
+    expect(result.current.phase).toEqual({ kind: "ready" });
+    expect(result.current.quizzes).toEqual([]);
+    expect(result.current.selections).toEqual({});
+    expect(result.current.submissionId).toBeNull();
+  });
+
+  it("ignores actions that do not match the current session phase", async () => {
+    const fetchMock = setupFetch();
+    const { result } = renderHook(() => useQuizSession());
+    act(() => {
+      result.current.start();
+      result.current.select(1, 0);
+      void result.current.saveAnswers();
+      void result.current.refreshSavedAnswers();
+      result.current.editAnswers();
+      result.current.retryLoad();
+      void result.current.switchParticipant();
+    });
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/questions/next")),
+    ).toBe(false);
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    act(() => {
+      result.current.select(1, 0);
+      void result.current.saveAnswers();
+      void result.current.refreshSavedAnswers();
+      result.current.editAnswers();
+      result.current.retryLoad();
+    });
+    expect(result.current.phase.kind).toBe("ready");
+    expect(result.current.selections).toEqual({});
+  });
+
+  it("blocks selection while a submit is pending", async () => {
+    let release!: (value: unknown) => void;
+    const gate = new Promise<unknown>((resolve) => {
+      release = resolve;
+    });
+    setupFetch({ batch: () => gate });
+    const { result } = await start();
+    await answerAll(result);
+    await act(async () => {
+      const saving = result.current.saveAnswers();
+      result.current.select(1, 3);
+      expect(result.current.selections[1]).toBe(2);
+      release({ submissionId, revision: 1 });
+      await saving;
+    });
+    expect(result.current.phase.kind).toBe("complete");
+  });
+
+  it("rejects malformed saved answer counts, unknown questions, and duplicate question IDs", async () => {
+    const malformedPayloads = [
+      [1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
+      [1, 2, 3, 4, 99].map((questionId) => ({ questionId, selectedIndex: 0 })),
+      [1, 1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
+    ];
+    let payloadIndex = 0;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url.startsWith("/api/questions/next")) {
+        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
+        return { ok: true, json: async () => question(id) };
+      }
+      if (url === "/api/answers/batch" && init?.method === "POST")
+        return { ok: false, status: 409, json: async () => ({ message: "conflict" }) };
+      if (url.startsWith("/api/answers/batch?"))
+        return {
+          ok: true,
+          json: async () => ({
+            submissionId,
+            revision: 2 + payloadIndex,
+            answers: malformedPayloads[payloadIndex++]!,
+          }),
+        };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = await start();
+    await answerAll(result);
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
+    expect(result.current.phase).toMatchObject({
+      message: expect.stringContaining("保存済み回答を読み込めませんでした"),
+    });
+    await act(async () => result.current.refreshSavedAnswers());
+    expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
+    expect(result.current.phase).toMatchObject({
+      message: expect.stringContaining("保存済み回答を問題に対応づけられませんでした"),
+    });
+    await act(async () => result.current.refreshSavedAnswers());
+    expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
+    expect(result.current.phase).toMatchObject({
+      message: expect.stringContaining("保存済み回答の設問が正しくありません"),
+    });
+    expect(result.current.answeredCount).toBe(5);
+  });
+
+  it("requires reauthentication when conflict recovery and manual refresh return 401", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && init?.method === "POST")
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({
+            message: "認証が必要です",
+            participant,
+            expiresAt: "2030-01-01T00:00:00.000Z",
+          }),
+        };
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url.startsWith("/api/questions/next")) {
+        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
+        return { ok: true, json: async () => question(id) };
+      }
+      if (url === "/api/answers/batch" && init?.method === "POST")
+        return { ok: false, status: 409, json: async () => ({ message: "conflict" }) };
+      if (url.startsWith("/api/answers/batch?"))
+        return { ok: false, status: 401, json: async () => ({ message: "認証が必要です" }) };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = await start();
+    await answerAll(result);
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.access).toEqual({ kind: "reauthentication", participant });
+    expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
+    await act(async () => result.current.refreshSavedAnswers());
+    expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
+    expect(result.current.access).toEqual({ kind: "reauthentication", participant });
+    await act(async () => {
+      await expect(result.current.login("参加者", "1234")).rejects.toThrow("認証が必要です");
+    });
+    expect(result.current.access).toEqual({ kind: "reauthentication", participant });
+  });
+
+  it("starts a session after login and does not replace reauthentication with a failed login state", async () => {
+    let sessionExists = false;
+    let loginFails = false;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && init?.method === "POST") {
+        if (loginFails)
+          return { ok: false, status: 401, json: async () => ({ message: "PIN error" }) };
+        sessionExists = true;
+        return {
+          ok: true,
+          json: async () => ({ participant, expiresAt: "2030-01-01T00:00:00.000Z" }),
+        };
+      }
+      if (url === "/api/participants/session")
+        return {
+          ok: true,
+          json: async () => ({ participant: sessionExists ? participant : null }),
+        };
+      if (url.startsWith("/api/questions/next")) {
+        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
+        return { ok: true, json: async () => question(id) };
+      }
+      if (url === "/api/answers/batch" && init?.method === "POST")
+        return { ok: false, status: 401, json: async () => ({ message: "expired" }) };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("login"));
+    await act(async () => result.current.login("参加者", "1234"));
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    act(() => result.current.start());
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    await answerAll(result);
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.access.kind).toBe("reauthentication");
+    loginFails = true;
+    await act(async () => {
+      await expect(result.current.login("参加者", "0000")).rejects.toThrow("PIN error");
+    });
+    expect(result.current.access.kind).toBe("reauthentication");
+  });
 });
