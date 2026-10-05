@@ -23,6 +23,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "check-env": "tsx scripts/check-env.ts",
+    "participant-auth": "node scripts/manage-participant-auth.mjs",
     "prepare": "husky || true"
   },
   "dependencies": {
@@ -66,6 +67,7 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",
+    "vercel": "58.4.4",
     "vitest": "^4.1.10"
   },
   "engines": {

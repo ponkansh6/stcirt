@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { randomBytes, scryptSync, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import {
   createParticipantSession,
   isParticipantAuthConfigured,
@@ -8,27 +8,15 @@ import {
 } from "@/lib/participants/security";
 
 const envKeys = [
+  "PARTICIPANT_PIN",
   "PARTICIPANT_SESSION_SECRET",
-  "PARTICIPANT_EVENT_VERSION",
   "PARTICIPANT_SESSION_DAYS",
-  "PARTICIPANT_PIN_HASH",
-  "PARTICIPANT_PIN_PEPPER",
 ] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
 function configure(pin = "0427") {
-  const salt = randomBytes(16);
-  const pepper = "test-pepper-value-that-is-long-enough-32-bytes";
-  const digest = scryptSync(`${pin}:${pepper}`, salt, 32, {
-    N: 16_384,
-    r: 8,
-    p: 1,
-    maxmem: 64 * 1024 * 1024,
-  });
+  process.env.PARTICIPANT_PIN = pin;
   process.env.PARTICIPANT_SESSION_SECRET = "session-secret-value-that-is-at-least-32-bytes-long";
-  process.env.PARTICIPANT_EVENT_VERSION = "event-1";
-  process.env.PARTICIPANT_PIN_PEPPER = pepper;
-  process.env.PARTICIPANT_PIN_HASH = `scrypt$${salt.toString("hex")}$${digest.toString("hex")}`;
   delete process.env.PARTICIPANT_SESSION_DAYS;
 }
 
@@ -41,24 +29,25 @@ afterEach(() => {
 });
 
 describe("participant security", () => {
-  it("verifies a salted KDF PIN as a four-character string, including a leading zero", () => {
+  it("verifies an ASCII four-digit PIN as a string, including a leading zero", () => {
     configure("0007");
     expect(verifyEventPin("0007")).toBe(true);
     expect(verifyEventPin("7")).toBe(false);
     expect(verifyEventPin("0008")).toBe(false);
     expect(verifyEventPin("０007")).toBe(false);
+    expect(verifyEventPin("１２３４")).toBe(false);
   });
 
   it("fails closed for missing or malformed PIN and session configuration", () => {
     configure();
     expect(isParticipantAuthConfigured()).toBe(true);
 
-    delete process.env.PARTICIPANT_PIN_HASH;
+    delete process.env.PARTICIPANT_PIN;
     expect(isParticipantAuthConfigured()).toBe(false);
     expect(verifyEventPin("0427")).toBe(false);
 
     configure();
-    process.env.PARTICIPANT_PIN_HASH = "not-a-valid-kdf-value";
+    process.env.PARTICIPANT_PIN = "１２３４";
     expect(isParticipantAuthConfigured()).toBe(false);
     expect(verifyEventPin("0427")).toBe(false);
 
@@ -67,28 +56,31 @@ describe("participant security", () => {
     expect(createParticipantSession(1, 60)).toBeNull();
   });
 
-  it("rejects tampered, expired, and event-version-mismatched signed sessions", () => {
+  it("rejects tampered, expired, and legacy payload sessions", () => {
     configure();
     const session = createParticipantSession(42, 60);
     expect(session).not.toBeNull();
     expect(verifyParticipantSession(session!.value)?.id).toBe(42);
     expect(verifyParticipantSession(`${session!.value}x`)).toBeNull();
 
-    const secret = process.env.PARTICIPANT_SESSION_SECRET!;
+    const key = createHmac("sha256", process.env.PARTICIPANT_SESSION_SECRET!)
+      .update("stcirt-participant-session-v1\0" + process.env.PARTICIPANT_PIN)
+      .digest();
     const signedPayload = (payload: object) => {
       const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
-      const signature = createHmac("sha256", secret).update(encoded).digest("base64url");
+      const signature = createHmac("sha256", key).update(encoded).digest("base64url");
       return `${encoded}.${signature}`;
     };
     const now = Math.floor(Date.now() / 1000);
+    expect(verifyParticipantSession(signedPayload({ id: 42, exp: now - 1 }))).toBeNull();
     expect(
-      verifyParticipantSession(signedPayload({ id: 42, exp: now - 1, version: "event-1" })),
-    ).toBeNull();
-    expect(
-      verifyParticipantSession(signedPayload({ id: 42, exp: now + 60, version: "event-0" })),
+      verifyParticipantSession(signedPayload({ id: 42, exp: now + 60, version: "event-1" })),
     ).toBeNull();
 
-    process.env.PARTICIPANT_EVENT_VERSION = "event-2";
+    process.env.PARTICIPANT_PIN = "0428";
+    expect(verifyParticipantSession(session!.value)).toBeNull();
+    process.env.PARTICIPANT_PIN = "0427";
+    process.env.PARTICIPANT_SESSION_SECRET = "different-session-secret-value-that-is-32bytes";
     expect(verifyParticipantSession(session!.value)).toBeNull();
   });
 });

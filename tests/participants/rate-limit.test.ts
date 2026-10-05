@@ -20,10 +20,11 @@ import {
   commitParticipantAuthFailure,
   releaseParticipantAuthReservation,
 } from "@/lib/participants/rate-limit";
+import { getRateLimitKey } from "@/lib/participants/security";
 
 const envKeys = [
+  "PARTICIPANT_PIN",
   "PARTICIPANT_SESSION_SECRET",
-  "PARTICIPANT_EVENT_VERSION",
   "PARTICIPANT_SESSION_DAYS",
   "PARTICIPANT_RATE_LIMIT_NAME",
 ] as const;
@@ -36,8 +37,8 @@ describe("participant shared rate limit", () => {
     testDb = await createTestDb();
     dbRef.db = testDb.db;
     await testDb.db.delete(schema.participantRateLimits);
+    process.env.PARTICIPANT_PIN = "0427";
     process.env.PARTICIPANT_SESSION_SECRET = "session-secret-value-that-is-at-least-32-bytes-long";
-    process.env.PARTICIPANT_EVENT_VERSION = "event-1";
     delete process.env.PARTICIPANT_SESSION_DAYS;
     process.env.PARTICIPANT_RATE_LIMIT_NAME = "5";
   });
@@ -104,6 +105,19 @@ describe("participant shared rate limit", () => {
     // Source IP is not part of the limiter input, so every request shares this counter.
     const fromAnotherSource = await checkParticipantRateLimit("山田");
     expect(fromAnotherSource.available && !fromAnotherSource.allowed).toBe(true);
+  });
+
+  it("keeps the rate-limit key and persisted counter stable when the PIN rotates", async () => {
+    const firstKey = getRateLimitKey("name\0山田");
+    const first = await checkParticipantRateLimit("山田");
+    expect(first.available && first.allowed).toBe(true);
+    process.env.PARTICIPANT_PIN = "0428";
+    expect(getRateLimitKey("name\0山田")).toBe(firstKey);
+    const second = await checkParticipantRateLimit("山田");
+    expect(second.available && second.allowed).toBe(true);
+    const rows = await dbRef.db!.select().from(schema.participantRateLimits);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.attempts).toBe(2);
   });
 
   it("does not grant more concurrent reservations than the configured cap", async () => {

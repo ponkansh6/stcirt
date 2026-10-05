@@ -16,7 +16,7 @@ The Drizzle schema in `src/lib/db/schema.ts` contains the legacy tables and the 
 - `exam_answer_logs`: submitted choices, correctness, answer time, and nullable participant reference; historical anonymous rows remain NULL
 - `participant_rate_limits`: shared database-backed failed-authentication windows keyed by HMAC fingerprints, without storing IP addresses or names
 
-Participant names are trimmed and normalized to Unicode NFC for case-sensitive uniqueness. They are not compatibility-normalized and internal whitespace is preserved. The event PIN is held only as a salted scrypt hash plus server-side pepper in environment configuration.
+Participant names are trimmed and normalized to Unicode NFC for case-sensitive uniqueness. They are not compatibility-normalized and internal whitespace is preserved. The shared event PIN and session signing secret are held only in server-side environment configuration.
 
 The exam session is held only in client state. It is not persisted. Reloading or remounting starts a new attempt, and repeated attempts write another set of per-question rows to `exam_answer_logs`. The initial migration seeds five questions idempotently; it does not modify or migrate legacy question or answer data.
 
@@ -91,19 +91,19 @@ The exam session is held only in client state. It is not persisted. Reloading or
 ### `POST /api/answers`
 
 - Request: `{ questionId: number, selectedIndex: number }`
-- Requires same-origin `Origin` and a valid signed participant cookie whose participant still exists and whose event version matches current configuration.
+- Requires same-origin `Origin` and a valid signed participant cookie whose participant still exists.
 - Rejects anonymous calls and any body containing `participantId`; associates the answer with the cookie's participant.
 - Response 200: `{ isCorrect, correctIndex, explanation }` (the exam UI ignores grading fields)
 - Response 400/401/403/404: invalid selection, missing/invalid participant session, origin failure, or missing question
 
 ### `/api/participants/session`
 
-- `POST` request: `{ name: string, pin: string }`; PIN must be four ASCII digits, including leading zeroes.
+- `POST` request: `{ name: string, pin: string }`; PIN must be four ASCII digits, including leading zeroes. The configured `PARTICIPANT_PIN` is validated the same way and compared in constant time.
 - On success, reuses or creates the case-sensitive trim+NFC participant and returns `{ participant: { id, name }, expiresAt }` with a signed HttpOnly, SameSite=Lax cookie (`Path=/`, Secure in production; default lifetime 30 days).
 - Failed authentication is rate-limited in the shared database to 5 attempts per normalized name per 15 minutes by default, shared across all request sources. `PARTICIPANT_RATE_LIMIT_NAME` configures this limit. Failure records contain HMAC fingerprints only and expired records are opportunistically deleted after 24 hours.
-- `GET` returns `{ participant: { id, name } | null }` after cookie signature, expiry, event-version, and database checks.
+- `GET` returns `{ participant: { id, name } | null }` after cookie signature, expiry, and database checks.
 - `DELETE` clears the cookie. Both mutating methods require a same-origin `Origin` header.
-- PIN/KDF, pepper, session secret, event version, or shared database configuration failures fail closed. PINs and secrets are never returned.
+- PIN, session secret, or shared database configuration failures fail closed. PINs and secrets are never returned.
 
 ## Components
 
@@ -129,4 +129,8 @@ Vitest covers core logic, API/client behavior, the sequential question repositor
 
 ## Environment
 
-Runtime configuration requires `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `PARTICIPANT_PIN_HASH`, `PARTICIPANT_PIN_PEPPER`, `PARTICIPANT_SESSION_SECRET`, and `PARTICIPANT_EVENT_VERSION` for participant authentication. PIN hash format is `scrypt$<salt hex>$<digest hex>` using scrypt N=16384, r=8, p=1, 32-byte output. Choose a four-ASCII-digit PIN (including a possible leading zero) and generate its hash and pepper with `node scripts/generate-participant-pin-hash.mjs`; the script requires an interactive terminal, hides PIN input, and confirms the entry. Configure the pepper and hash only in the server's secret environment, and securely share the chosen PIN with participants. To rotate the PIN, replace the hash and pepper and increment `PARTICIPANT_EVENT_VERSION` to invalidate every old session. Optional `PARTICIPANT_SESSION_DAYS` accepts 1–90 (default 30); `PARTICIPANT_RATE_LIMIT_NAME` defaults to 5 failed attempts per normalized name per 15 minutes. Question generation and question-management endpoints are not part of the application.
+Runtime configuration requires `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`, `PARTICIPANT_PIN`, and `PARTICIPANT_SESSION_SECRET` for participant authentication. `PARTICIPANT_PIN` is exactly four ASCII digits, including possible leading zeroes. The secret must have at least 32 bytes. The cookie payload is `{ id, exp }`; its HMAC-SHA256 signing key is derived as `HMAC-SHA256(PARTICIPANT_SESSION_SECRET, "stcirt-participant-session-v1" + NUL + PARTICIPANT_PIN)`. The `stcirt-participant-session-v1` purpose label and NUL delimiter are fixed. PIN or secret changes invalidate existing cookies. Rate-limit HMAC key derivation uses a separate fixed purpose label and does not include the PIN, so PIN rotation does not reset rate limits. Old cookies are rejected and participants must sign in again. `PARTICIPANT_PIN_HASH`, `PARTICIPANT_PIN_PEPPER`, and `PARTICIPANT_EVENT_VERSION` are retired.
+
+Use `pnpm participant-auth generate` to create the pair in `.env.local`. It prompts twice for a user-selected four-digit ASCII PIN using hidden terminal input, preserving leading zeroes, and generates the session secret automatically. Non-interactive runs fail. It preserves other settings, refuses to overwrite either existing key, and writes atomically with mode 0600. Use `pnpm participant-auth generate --rotate` only for intentional replacement. To also sync the newly saved pair to Production in the same command, link the repository to the intended Vercel project, authenticate with Vercel CLI, and run `pnpm participant-auth generate --sync-production`. This sync does not start a deployment; start a new deployment separately after sync succeeds. If sync fails, `.env.local` retains the generated pair and the command exits nonzero with instructions to rerun `pnpm participant-auth sync --target production`. Alternatively, sync a saved pair with `pnpm participant-auth sync --target production` or `--target preview`. Sync requires Vercel CLI authentication, upserts both values through stdin using `--force --sensitive`, never deploys, and exits nonzero if either upsert fails. Preview applies to all branches; inspect branch-specific overrides in Vercel separately. Development is excluded because Vercel sensitive variables are supported only for Production and Preview. The Vercel CLI dependency is pinned to version `58.4.4`.
+
+Optional `PARTICIPANT_SESSION_DAYS` accepts 1–90 (default 30); `PARTICIPANT_RATE_LIMIT_NAME` defaults to 5 failed attempts per normalized name per 15 minutes. Question generation and question-management endpoints are not part of the application.

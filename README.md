@@ -56,15 +56,32 @@ A Next.js 16 application for answering a shared set of stored 4-choice questions
 
 4. **Configure participant access**:
 
-   Choose the shared event PIN and generate its scrypt hash and pepper. The script asks for the PIN twice without displaying what you type; it accepts exactly four ASCII digits, including a leading zero, and requires an interactive terminal:
+   Choose a four-digit PIN when prompted in the interactive terminal, then enter it again to confirm. Input is hidden, accepts ASCII digits only, and preserves leading zeroes. The signing secret is generated automatically and never printed. This upserts only those two keys in `.env.local`, preserving database and other settings, and saves the file with owner-only permissions. Non-interactive runs fail because PIN entry requires a terminal.
 
    ```bash
-   node scripts/generate-participant-pin-hash.mjs
+   pnpm participant-auth generate
    ```
 
-   Put the printed `PARTICIPANT_PIN_HASH` and `PARTICIPANT_PIN_PEPPER` into the server's secret environment. The script does not print the PIN. Generate `PARTICIPANT_SESSION_SECRET` separately with `openssl rand -hex 32`, and set `PARTICIPANT_EVENT_VERSION=1`. Share the PIN you entered with participants using a secure channel; do not put the plain PIN in the repository or application logs. Keep the PIN hash, pepper, and session secret in deployment secrets, not in source control.
+   Existing values are preserved unless rotation is explicit. Rotation invalidates existing sessions:
 
-   Rotating the event PIN requires generating and configuring a new hash and pepper and incrementing `PARTICIPANT_EVENT_VERSION`. This invalidates all previously issued participant cookies. The cookie lifetime defaults to 30 days and can be set with `PARTICIPANT_SESSION_DAYS` (1–90). Failed authentication attempts are reserved transactionally in Turso before PIN verification: the default limit is 5 attempts per normalized name in 15 minutes, shared across all request sources. Set `PARTICIPANT_RATE_LIMIT_NAME` to change that limit. A successful PIN verification releases its reservation in a Turso transaction, so successful sign-ins do not count against the limit. If that release fails, sign-in fails closed with a temporary-unavailable response and no session cookie; the reservation may remain counted until its 15-minute window expires, so the participant may need to retry later. Database errors while reserving or finalizing an authentication attempt also fail closed. Old rate-limit records are cleaned during failed sign-in requests once they are more than 24 hours old.
+   ```bash
+   pnpm participant-auth generate --rotate
+   ```
+
+   To save the pair and sync it to Production in one step, link the checkout to the intended Vercel project and sign in to Vercel first. This command still does not deploy; start a new deployment after it succeeds for the settings to take effect. If sync fails, the pair remains saved in `.env.local`; fix the issue and rerun the standalone sync command below.
+
+   ```bash
+   pnpm participant-auth generate --sync-production
+   ```
+
+   To sync a saved pair, explicitly select one target. The command uses the pinned Vercel CLI 58.4.4 and its existing login, and sends values over stdin as sensitive variables. Sensitive sync supports Production and Preview; Development is not supported. Preview sync targets all branches; review any branch-specific participant-auth overrides in Vercel separately. Sync does not deploy, and changes take effect only after a new deployment.
+
+   ```bash
+   pnpm participant-auth sync --target production
+   pnpm participant-auth sync --target preview
+   ```
+
+   The required server settings are `PARTICIPANT_PIN` (exactly four ASCII digits, including leading zeroes) and `PARTICIPANT_SESSION_SECRET` (at least 32 bytes). PIN or secret changes invalidate existing signed cookies. The cookie lifetime defaults to 30 days and can be set with `PARTICIPANT_SESSION_DAYS` (1–90). Failed authentication attempts are reserved transactionally in Turso before PIN verification: the default limit is 5 attempts per normalized name in 15 minutes, shared across all request sources. Set `PARTICIPANT_RATE_LIMIT_NAME` to change that limit. A successful PIN verification releases its reservation in a Turso transaction, so successful sign-ins do not count against the limit. If that release fails, sign-in fails closed with a temporary-unavailable response and no session cookie; the reservation may remain counted until its 15-minute window expires, so the participant may need to retry later. Database errors while reserving or finalizing an authentication attempt also fail closed. Old rate-limit records are cleaned during failed sign-in requests once they are more than 24 hours old.
 
 5. **Run development server**:
 
