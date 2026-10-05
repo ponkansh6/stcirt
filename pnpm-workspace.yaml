@@ -4,6 +4,11 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 overrides:
+  tar@7: 7.5.22
+  minimatch@10: 10.2.6
+  path-to-regexp@6: 6.3.0
+  path-to-regexp@8: 8.4.0
+  smol-toml@1: 1.7.1
   fast-uri: 3.1.8
   js-yaml: 4.3.2
   undici: 8.10.2
