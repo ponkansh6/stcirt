@@ -13,7 +13,7 @@ fi
 echo "🔍 Checking production schema consistency..."
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-node -e "
+SCHEMA_PROJECT_ROOT="$PROJECT_ROOT" node 2>&1 <<'NODE'
 const { createClient } = require('@libsql/client');
 const fs = require('fs');
 const path = require('path');
@@ -24,7 +24,7 @@ async function main() {
     authToken: process.env.TURSO_AUTH_TOKEN,
   });
 
-  const schemaPath = path.join('$PROJECT_ROOT', 'src/lib/db/schema.ts');
+  const schemaPath = path.join(process.env.SCHEMA_PROJECT_ROOT, 'src/lib/db/schema.ts');
   const schemaContent = fs.readFileSync(schemaPath, 'utf-8');
 
   // Extract all table names defined via sqliteTable in schema.ts
@@ -35,7 +35,7 @@ async function main() {
     expectedTables.push(t[1]);
   }
 
-  const tablesResult = await client.execute(\"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name\");
+  const tablesResult = await client.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
   const actualTables = new Set(tablesResult.rows.map(r => r.name));
 
   const missingTables = expectedTables.filter(tt => !actualTables.has(tt));
@@ -97,4 +97,4 @@ main().catch(err => {
   console.error('Schema check failed:', err.message);
   process.exit(1);
 });
-" 2>&1
+NODE

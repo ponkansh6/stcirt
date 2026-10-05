@@ -28,6 +28,8 @@ jobs:
       - run: pnpm format:check
       - run: bash scripts/check-spec-refs.sh
       - run: pnpm security-check
+      - name: Check production schema script syntax
+        run: bash -n scripts/check-prod-schema.sh
       - name: Production schema drift
         run: bash scripts/check-prod-schema.sh
         env:

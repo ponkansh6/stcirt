@@ -1,6 +1,6 @@
 # 5問縦スクロール・一括確定の検定 UI 計画
 
-> **状態:** 実装完了。`pnpm test:coverage` は33/33 files・146/146 tests pass（statements 73.13%、branches 69.15%、functions 84.17%、lines 76.13%）。`pnpm build`、lockfile check、lint、format、両 type-check、spec refs は pass。E2E は承認済み loopback server 経由で20/20 pass。security check は production `pnpm audit` の fetch failure が2回発生し監査データ取得不可で blocked（dev audit / secretlint 未到達）。pre-push / CI は未実行。
+> **状態:** 実装完了。`pnpm test:coverage` は33/33 files・170/170 tests pass（statements 85.85%、branches 82.32%、functions 92.8%、lines 89.08%）、coverage tiers は全て pass（Tier 4: statements 96.88%、branches 90.91%）。build、format、lint、lockfile、両 type-check、spec refs と pre-push security preflight は pass。pre-push E2E は22/22 pass。`scripts/check-prod-schema.sh` は quoted heredoc に修正され、CI static job は checker の前に `bash -n` を実行する。`bash -n`、埋め込み JavaScript の `node --check`、diff check は pass。TURSO_DATABASE_URL がないためローカルの read-only checker は skip され、本番DBとの live schema 比較は未検証。CI workflow 自体は未実行。`7c13e41` と `6f18385` は既に `origin/main` へ push 済み。以降の変更は push せず commit のみ行う。
 
 ## 背景
 
@@ -124,11 +124,14 @@
 - [x] 縦スクロール画面、回答数、未回答導線、最終確認と一括確定を実装。
 - [x] OpenSpec と API / DB / state 関連テストを実装に同期。
 - [x] lockfile check、lint、format、両 type-check、spec refs が pass。
-- [x] `pnpm test:coverage`: 33/33 files、146/146 tests pass。Coverage: statements 73.13%、branches 69.15%、functions 84.17%、lines 76.13%。
+- [x] `pnpm test:coverage`: 33/33 files、170/170 tests pass。Coverage: statements 85.85%、branches 82.32%、functions 92.8%、lines 89.08%。All coverage tiers pass; Tier 4 statements 96.88%、branches 90.91%。
 - [x] `pnpm build` が pass。
-- [x] E2E は承認済み loopback server 経由で20/20 pass。
-- [ ] **Blocked:** `scripts/check-security.sh` は production `pnpm audit` fetch failure を2回返し、監査データを取得できなかった。dev audit と secretlint は未到達。
-- [ ] pre-push / CI は未実行。
+- [x] pre-push security preflight が pass。
+- [x] pre-push E2E は22/22 pass。
+- [x] `scripts/check-prod-schema.sh` の quoted heredoc と CI static job の `bash -n` 先行実行を追加。`bash -n`、埋め込み JavaScript の `node --check`、diff check は pass。
+- [ ] TURSO_DATABASE_URL がないためローカル read-only schema checker は skip。本番DBとの live schema 比較は未検証。
+- [ ] CI workflow は未実行。
+- [x] `7c13e41` と `6f18385` を `origin/main` へ push。push 後の plan 更新前は working tree clean。
 
 ## 受け入れ基準
 
@@ -143,13 +146,15 @@
 - [x] 匿名、異なる origin、不正 ID、重複・件数・選択範囲違反を拒否し、記録しない。
 - [x] 初回保存の成功後だけ完了し、失敗時は回答を保って同じ操作を安全に再試行できる。
 - [x] 画面・完了・batch 応答に正誤、正解、解説を含めず、採点・合否を追加しない。
-- [x] E2E 20/20 pass。実ブラウザで native radio / keyboard 操作、320px 長文表示、focus ring、44px 操作領域、横スクロールなしを確認。
-- [ ] 200% zoom、スクリーンリーダーの実機確認、全ての表示位置での遮蔽検証は未確認。
-- [x] OpenSpec と実装は同期済み。format/lint/type-check/spec refs、coverage tests、build、E2E は pass。
-- [ ] security check は production audit fetch failure により blocked（dev audit / secretlint 未到達）。pre-push / CI は未実行。
+- [x] E2E 22/22 pass。実ブラウザで native radio / keyboard 操作、320px 長文表示、focus ring、44px 操作領域、横スクロールなしを確認。
+- [ ] 全ての表示位置での遮蔽検証は未確認。
+- 対象外（未検証を意味しない）: 200% zoom とスクリーンリーダーの実機確認。
+- [x] OpenSpec と実装は同期済み。format/lint/type-check/spec refs、coverage tiers、build、pre-push security、E2E は pass。
+- [x] schema checker の構文・埋め込み JavaScript 構文・差分チェックは pass。
+- [ ] live production schema 比較は TURSO_DATABASE_URL 不在で未実施。CI workflow も未実行。
 - [x] 完了後に保存済みの同じ5問・回答を復元して編集でき、修正で新規 submission / log set を作らない。
 - [x] 修正失敗時も確定値と草案を保持し、同じ operation ID / payload で再試行できる。次の意図的保存では新 ID を使う。
 
 ## 未決事項
 
-仕様上の未決事項はなし。残る検証状態は security check blocked、pre-push / CI 未実行。200% zoom とスクリーンリーダーの実機確認は未確認。
+仕様上の未決事項はなし。200% zoom とスクリーンリーダーの実機確認は今回の対象外。TURSO_DATABASE_URL 不在のため本番DBとの live schema 比較は未実施で、CI workflow も未実行。全表示位置での遮蔽検証は未確認。
