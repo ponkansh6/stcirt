@@ -53,7 +53,7 @@ Unconfirmed selections are held only in client state. Confirmed answer sets are 
 - A batch submission is associated with the validated participant. Historical single-answer rows remain unchanged with a NULL participant ID.
 
 - Individual choices remain in client state until explicit batch confirmation; they do not create server records.
-- Choices are native radio inputs grouped by question with a fieldset and legend; each input has an explicit full-row label, and its submitted value remains the existing shuffled-choice index.
+- Choices are native radio inputs grouped by question with a fieldset and legend; show each question prompt visually only in its heading and visually hide the duplicate legend while retaining it as the radio group's accessible name. Each input has an explicit full-row label, and its submitted value remains the existing shuffled-choice index.
 - A pending batch request locks all answer controls and prevents duplicate submission.
 - While pending, the selected radios remain checked and the confirmation action keeps its name and focus; its disabled state is communicated to assistive technology and guarded synchronously.
 - The five selected choices remain available after a failed request so the user can retry.
@@ -84,7 +84,7 @@ Unconfirmed selections are held only in client state. Confirmed answer sets are 
 - Provide readable contrast, visible keyboard focus, native radio semantics, live status updates, and textual progress labels so color is not the sole signal. Choice rows and the primary confirmation action have at least 44 CSS px of interaction height.
 - Keep content in a single readable column on narrow screens, avoid horizontal scrolling at 320 CSS px and 200% zoom, and respect reduced-motion preferences.
 - During the active answering session, replace the shared sticky header's home link with one five-question navigation. Keep the sticky header's sizing and spacing, show answered state, retain answers while navigating, and move focus to each question heading below the sticky header. At all other answer states, including login, ready, loading, switching, shortage, error, and completion, keep a home link in the shared header and do not show question navigation.
-- Do not show per-question helper paragraphs below the radio choices or reference them with `aria-describedby`; retain each fieldset legend, native radio group name, overall unanswered guidance, and answer progress.
+- Show each question prompt only once visually in its heading; keep the duplicate fieldset legend visually hidden and available to assistive technology as the radio group's accessible name. Do not show per-question helper paragraphs below the radio choices or reference them with `aria-describedby`; retain native radio group semantics, overall unanswered guidance, and answer progress.
 - In-page links to unanswered questions move focus to a visible question heading without it being hidden behind page chrome. Do not add exam-time correctness, explanation, score, accuracy, or pass/fail information.
 
 ### R6: Isolated administrator authentication

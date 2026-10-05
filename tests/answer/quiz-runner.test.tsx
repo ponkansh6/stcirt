@@ -57,6 +57,9 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
     expect(screen.getByRole("heading", { name: "受検票" })).toBeInTheDocument();
     expect(screen.getAllByRole("group", { name: /Question [1-5]\?/ })).toHaveLength(5);
+    expect(screen.getByRole("heading", { name: "Question 1?" })).toBeVisible();
+    expect(document.querySelector("#question-1 legend")).toHaveClass("sr-only");
+    expect(screen.getByRole("group", { name: /Question 1\?/ })).toBeInTheDocument();
     expect(screen.getAllByRole("radio")).toHaveLength(20);
     const navigation = screen.getByRole("navigation", { name: "設問へ移動" });
     expect(navigation.closest("header")).toBeInTheDocument();

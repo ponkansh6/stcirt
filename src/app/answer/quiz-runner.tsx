@@ -320,7 +320,7 @@ export default function QuizRunner() {
                   disabled={isLocked}
                   className="min-w-0 space-y-3 border-t border-border pt-5"
                 >
-                  <legend className="mb-3 max-w-full break-words px-1 text-sm font-semibold text-muted">
+                  <legend className="sr-only">
                     <span className="sr-only">第{index + 1}問 / 全5問：</span>
                     {question.question}
                   </legend>
