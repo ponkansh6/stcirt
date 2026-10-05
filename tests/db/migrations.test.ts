@@ -43,6 +43,13 @@ describe("database migrations", () => {
       for (const statement of migration.split("--> statement-breakpoint")) {
         if (statement.trim()) await client.execute(statement);
       }
+      const batchMigration = readFileSync(
+        join(process.cwd(), "src/lib/db/migrations/0003_calm_five.sql"),
+        "utf8",
+      );
+      for (const statement of batchMigration.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.execute(statement);
+      }
 
       const result = await client.execute(
         "SELECT id, question_id, selected_index, is_correct, participant_id FROM exam_answer_logs",
@@ -55,6 +62,45 @@ describe("database migrations", () => {
         is_correct: 0,
         participant_id: null,
       });
+      const batchTables = await client.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('exam_answer_submissions', 'exam_submission_answers', 'exam_submission_operations') ORDER BY name",
+      );
+      expect(batchTables.rows.map((row) => row.name)).toEqual([
+        "exam_answer_submissions",
+        "exam_submission_answers",
+        "exam_submission_operations",
+      ]);
+    } finally {
+      client.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("applies migration 0003 to a new database after the base migrations", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stcirt-migration-fresh-"));
+    const client = createClient({ url: `file:${dir}/migration.db` });
+    try {
+      for (const file of [
+        "0001_brainy_lizard.sql",
+        "0002_nifty_eddie_brock.sql",
+        "0003_calm_five.sql",
+      ]) {
+        const sql = readFileSync(join(process.cwd(), "src/lib/db/migrations", file), "utf8");
+        for (const statement of sql.split("--> statement-breakpoint")) {
+          if (statement.trim()) await client.execute(statement);
+        }
+      }
+      const tables = await client.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'exam_submission_%' ORDER BY name",
+      );
+      expect(tables.rows.map((row) => row.name)).toEqual([
+        "exam_submission_answers",
+        "exam_submission_operations",
+      ]);
+      const submissions = await client.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'exam_answer_submissions'",
+      );
+      expect(submissions.rows).toHaveLength(1);
     } finally {
       client.close();
       rmSync(dir, { recursive: true, force: true });

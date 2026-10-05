@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { QuizQuestion, AnswerResult } from "@/types/quiz";
+import { answerBatchResultSchema, answerSubmissionSchema } from "./schemas";
 
 export const quizQuestionSchema = z.object({
   id: z.number(),
@@ -190,5 +191,38 @@ export async function submitAnswer(
     },
     "submit answer",
     answerResultSchema,
+  );
+}
+
+export type AnswerBatchInput = {
+  submissionId: string;
+  operationId: string;
+  expectedRevision: number;
+  answers: { questionId: number; selectedIndex: number }[];
+};
+
+export type AnswerBatchResult = { submissionId: string; revision: number };
+
+export async function submitAnswerBatch(input: AnswerBatchInput): Promise<AnswerBatchResult> {
+  return request(
+    "/api/answers/batch",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+    "submit answer batch",
+    answerBatchResultSchema,
+  );
+}
+
+export type AnswerSubmission = z.infer<typeof answerSubmissionSchema>;
+
+export async function fetchAnswerSubmission(submissionId: string): Promise<AnswerSubmission> {
+  return request(
+    `/api/answers/batch?submissionId=${encodeURIComponent(submissionId)}`,
+    undefined,
+    "fetch answer submission",
+    answerSubmissionSchema,
   );
 }

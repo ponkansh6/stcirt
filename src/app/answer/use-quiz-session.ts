@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Participant } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/client";
+import type { AnswerSubmission, Participant } from "@/lib/api/client";
 import {
+  ApiError,
   createParticipantSession,
   deleteParticipantSession,
+  fetchAnswerSubmission,
   fetchNextQuestion,
   fetchParticipantSession,
-  submitAnswer,
+  submitAnswerBatch,
 } from "@/lib/api/client";
 import type { QuizQuestion } from "@/types/quiz";
 import { shuffleChoices, type ShuffledChoices } from "@/lib/shuffle";
@@ -20,15 +21,10 @@ export type Phase =
   | { kind: "ready" }
   | { kind: "loading" }
   | { kind: "shortage" }
-  | {
-      kind: "error";
-      message: string;
-      selectedIndex?: number;
-      unavailable?: boolean;
-      authenticationRequired?: boolean;
-    }
-  | { kind: "question"; selectedIndex?: number }
-  | { kind: "submitting"; selectedIndex: number }
+  | { kind: "load-error"; message: string }
+  | { kind: "answering"; message?: string; retryRequired?: boolean; refreshRequired?: boolean }
+  | { kind: "submitting" }
+  | { kind: "refreshing" }
   | { kind: "complete" };
 
 export type AccessState =
@@ -38,27 +34,70 @@ export type AccessState =
   | { kind: "switching"; participant: Participant }
   | { kind: "reauthentication"; participant: Participant };
 
+type BatchAnswer = { questionId: number; selectedIndex: number };
+type SaveAttempt = {
+  operationId: string;
+  expectedRevision: number;
+  answers: BatchAnswer[];
+  selectedByQuestion: Record<number, number>;
+};
+
+function newId() {
+  return globalThis.crypto.randomUUID();
+}
+
+function copySelections(selections: Record<number, number | undefined>) {
+  return { ...selections };
+}
+
+function restoreDisplaySelections(
+  answers: AnswerSubmission["answers"],
+  quizzes: LoadedQuiz[],
+): Record<number, number> {
+  if (answers.length !== EXAM_SIZE) throw new Error("保存済み回答の数が正しくありません。");
+  const restored: Record<number, number> = {};
+  for (const answer of answers) {
+    const quiz = quizzes.find(({ question }) => question.id === answer.questionId);
+    const displayIndex = quiz?.shuffled.choiceIndices.indexOf(answer.selectedIndex) ?? -1;
+    if (displayIndex < 0) throw new Error("保存済み回答を問題に対応づけられませんでした。");
+    restored[answer.questionId] = displayIndex;
+  }
+  if (Object.keys(restored).length !== EXAM_SIZE)
+    throw new Error("保存済み回答の設問が正しくありません。");
+  return restored;
+}
+
 export function useQuizSession() {
   const [phase, setPhase] = useState<Phase>({ kind: "ready" });
   const [access, setAccess] = useState<AccessState>({ kind: "checking" });
   const [quizzes, setQuizzes] = useState<LoadedQuiz[]>([]);
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [recordedCount, setRecordedCount] = useState(0);
+  const [selections, setSelections] = useState<Record<number, number | undefined>>({});
+  const [savedSelections, setSavedSelections] = useState<Record<number, number | undefined>>({});
+  const [answeredCount, setAnsweredCount] = useState(0);
+  const [submissionId, setSubmissionId] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
   const mountedRef = useRef(false);
   const busyRef = useRef(false);
   const quizzesRef = useRef(quizzes);
   const phaseRef = useRef(phase);
   const accessRef = useRef(access);
+  const selectionsRef = useRef(selections);
+  const submissionIdRef = useRef(submissionId);
+  const revisionRef = useRef(revision);
+  const failedAttemptRef = useRef<SaveAttempt | null>(null);
   phaseRef.current = phase;
   accessRef.current = access;
+  quizzesRef.current = quizzes;
+  selectionsRef.current = selections;
+  submissionIdRef.current = submissionId;
+  revisionRef.current = revision;
 
   useEffect(() => {
     mountedRef.current = true;
     void fetchParticipantSession()
       .then((participant) => {
-        if (mountedRef.current) {
+        if (mountedRef.current)
           setAccess(participant ? { kind: "ready", participant } : { kind: "login" });
-        }
       })
       .catch(() => {
         if (mountedRef.current) {
@@ -80,11 +119,19 @@ export function useQuizSession() {
     if (restart) {
       quizzesRef.current = [];
       setQuizzes([]);
-      setQuestionIndex(0);
-      setRecordedCount(0);
+      setSelections({});
+      selectionsRef.current = {};
+      setSavedSelections({});
+      setAnsweredCount(0);
+      const id = newId();
+      submissionIdRef.current = id;
+      setSubmissionId(id);
+      revisionRef.current = 0;
+      setRevision(0);
+      failedAttemptRef.current = null;
     }
     setPhase({ kind: "loading" });
-    const loaded = [...initial];
+    const loaded: LoadedQuiz[] = [...initial];
     try {
       while (loaded.length < EXAM_SIZE) {
         const afterId = loaded.at(-1)?.question.id;
@@ -100,16 +147,13 @@ export function useQuizSession() {
         quizzesRef.current = [...loaded];
         setQuizzes([...loaded]);
       }
-      quizzesRef.current = loaded;
-      setQuizzes(loaded);
-      setQuestionIndex(0);
-      setPhase({ kind: "question" });
+      setPhase({ kind: "answering" });
     } catch {
       if (mountedRef.current) {
         quizzesRef.current = loaded;
         setQuizzes(loaded);
         setPhase({
-          kind: "error",
+          kind: "load-error",
           message: "問題を読み込めませんでした。通信状態を確認して、もう一度お試しください。",
         });
       }
@@ -126,16 +170,7 @@ export function useQuizSession() {
     const currentAccess = accessRef.current;
     try {
       const { participant } = await createParticipantSession(name, pin);
-      if (!mountedRef.current) return;
-      const currentPhase = phaseRef.current;
-      setAccess({ kind: "ready", participant });
-      if (currentPhase.kind === "error" && currentPhase.authenticationRequired) {
-        setPhase({
-          kind: "error",
-          selectedIndex: currentPhase.selectedIndex,
-          message: "再ログインしました。選択した回答を確認してから、明示的に再送してください。",
-        });
-      }
+      if (mountedRef.current) setAccess({ kind: "ready", participant });
     } catch (error) {
       if (mountedRef.current) {
         setAccess(
@@ -160,8 +195,15 @@ export function useQuizSession() {
       if (!mountedRef.current) return;
       quizzesRef.current = [];
       setQuizzes([]);
-      setQuestionIndex(0);
-      setRecordedCount(0);
+      setSelections({});
+      selectionsRef.current = {};
+      setSavedSelections({});
+      setAnsweredCount(0);
+      setSubmissionId(null);
+      submissionIdRef.current = null;
+      setRevision(0);
+      revisionRef.current = 0;
+      failedAttemptRef.current = null;
       setPhase({ kind: "ready" });
       setAccess({ kind: "login" });
     } catch (error) {
@@ -170,89 +212,203 @@ export function useQuizSession() {
     }
   }, []);
 
-  const select = useCallback((selectedIndex: number) => {
-    if (busyRef.current || phaseRef.current.kind !== "question") return;
-    setPhase({ kind: "question", selectedIndex });
+  const select = useCallback((questionId: number, selectedIndex: number) => {
+    const currentPhase = phaseRef.current;
+    if (
+      busyRef.current ||
+      currentPhase.kind !== "answering" ||
+      currentPhase.retryRequired ||
+      currentPhase.refreshRequired
+    )
+      return;
+    const next = { ...selectionsRef.current, [questionId]: selectedIndex };
+    selectionsRef.current = next;
+    setSelections(next);
+    setAnsweredCount(Object.keys(next).length);
+    setPhase({ kind: "answering" });
   }, []);
 
-  const submitSelectedAnswer = useCallback(
-    async (selectedIndex: number) => {
-      if (busyRef.current) return;
-      const quiz = quizzes[questionIndex];
-      if (!quiz) return;
-      busyRef.current = true;
-      phaseRef.current = { kind: "submitting", selectedIndex };
-      setPhase({ kind: "submitting", selectedIndex });
-      const selectedOriginalIndex = quiz.shuffled.choiceIndices[selectedIndex];
-      try {
-        await submitAnswer(quiz.question.id, selectedOriginalIndex);
-        if (!mountedRef.current) return;
-        const nextRecordedCount = recordedCount + 1;
-        setRecordedCount(nextRecordedCount);
-        if (nextRecordedCount === EXAM_SIZE) {
-          setPhase({ kind: "complete" });
-        } else {
-          setQuestionIndex((index) => index + 1);
-          setPhase({ kind: "question" });
+  const saveAnswers = useCallback(async () => {
+    const currentPhase = phaseRef.current;
+    if (busyRef.current || currentPhase.kind !== "answering" || currentPhase.refreshRequired)
+      return;
+    const currentQuizzes = quizzesRef.current;
+    const currentSelections = selectionsRef.current;
+    if (
+      currentQuizzes.length !== EXAM_SIZE ||
+      currentQuizzes.some(({ question }) => currentSelections[question.id] === undefined)
+    )
+      return;
+    const selectedByQuestion = copySelections(currentSelections) as Record<number, number>;
+    const answers = currentQuizzes.map(({ question, shuffled }) => ({
+      questionId: question.id,
+      selectedIndex: shuffled.choiceIndices[selectedByQuestion[question.id]],
+    }));
+    const sameAnswers = (attempt: SaveAttempt) =>
+      attempt.expectedRevision === revisionRef.current &&
+      JSON.stringify(attempt.answers) === JSON.stringify(answers);
+    let attempt = failedAttemptRef.current;
+    if (!attempt || !sameAnswers(attempt)) {
+      attempt = {
+        operationId: newId(),
+        expectedRevision: revisionRef.current,
+        answers,
+        selectedByQuestion,
+      };
+      failedAttemptRef.current = attempt;
+    }
+    const currentSubmissionId = submissionIdRef.current;
+    if (!currentSubmissionId) return;
+    busyRef.current = true;
+    setPhase({ kind: "submitting" });
+    try {
+      const result = await submitAnswerBatch({
+        submissionId: currentSubmissionId,
+        operationId: attempt.operationId,
+        expectedRevision: attempt.expectedRevision,
+        answers: attempt.answers,
+      });
+      if (!mountedRef.current) return;
+      const confirmedSelections = { ...attempt.selectedByQuestion };
+      setSavedSelections(confirmedSelections);
+      setSelections(confirmedSelections);
+      selectionsRef.current = confirmedSelections;
+      setRevision(result.revision);
+      revisionRef.current = result.revision;
+      failedAttemptRef.current = null;
+      setPhase({ kind: "complete" });
+    } catch (error) {
+      if (mountedRef.current) {
+        if (error instanceof ApiError && error.status === 401) {
+          const currentAccess = accessRef.current;
+          if (currentAccess.kind === "ready")
+            setAccess({ kind: "reauthentication", participant: currentAccess.participant });
         }
-      } catch (error) {
-        if (mountedRef.current && error instanceof ApiError && error.status === 401) {
+        if (error instanceof ApiError && error.status === 409) {
+          try {
+            const currentSubmissionId = submissionIdRef.current;
+            if (!currentSubmissionId) throw new Error("提出情報を確認できませんでした。");
+            const persisted = await fetchAnswerSubmission(currentSubmissionId);
+            if (!mountedRef.current) return;
+            const restored = restoreDisplaySelections(persisted.answers, quizzesRef.current);
+            setSavedSelections(restored);
+            setRevision(persisted.revision);
+            revisionRef.current = persisted.revision;
+            failedAttemptRef.current = null;
+            setPhase({
+              kind: "answering",
+              message:
+                "保存済み回答が更新されています。回答案を保持しました。内容を確認して再度確定してください。",
+            });
+          } catch (refreshError) {
+            if (mountedRef.current) {
+              const currentAccess = accessRef.current;
+              if (
+                refreshError instanceof ApiError &&
+                refreshError.status === 401 &&
+                currentAccess.kind === "ready"
+              ) {
+                setAccess({ kind: "reauthentication", participant: currentAccess.participant });
+              }
+              setPhase({
+                kind: "answering",
+                message:
+                  "保存済み回答を読み込めませんでした。回答案は保持しています。状態を再確認してください。",
+                refreshRequired: true,
+              });
+            }
+          }
+        } else {
+          const resultMayBeUnknown =
+            !(error instanceof ApiError) ||
+            error.status >= 500 ||
+            error.status === 401 ||
+            error.status === 408 ||
+            error.status === 429;
+          setPhase({
+            kind: "answering",
+            message:
+              error instanceof Error
+                ? error.message
+                : "回答を保存できませんでした。入力内容を保持しています。",
+            retryRequired: resultMayBeUnknown,
+          });
+        }
+      }
+    } finally {
+      busyRef.current = false;
+    }
+  }, []);
+
+  const refreshSavedAnswers = useCallback(async () => {
+    const currentPhase = phaseRef.current;
+    if (busyRef.current || currentPhase.kind !== "answering" || !currentPhase.refreshRequired)
+      return;
+    const currentSubmissionId = submissionIdRef.current;
+    if (!currentSubmissionId) return;
+    busyRef.current = true;
+    setPhase({ kind: "refreshing" });
+    try {
+      const persisted = await fetchAnswerSubmission(currentSubmissionId);
+      if (!mountedRef.current) return;
+      const restored = restoreDisplaySelections(persisted.answers, quizzesRef.current);
+      setSavedSelections(restored);
+      setRevision(persisted.revision);
+      revisionRef.current = persisted.revision;
+      failedAttemptRef.current = null;
+      setPhase({
+        kind: "answering",
+        message:
+          "保存済み回答を読み込みました。編集中の回答案は保持されています。内容を確認して確定してください。",
+      });
+    } catch (error) {
+      if (mountedRef.current) {
+        if (error instanceof ApiError && error.status === 401) {
           const currentAccess = accessRef.current;
           if (currentAccess.kind === "ready") {
             setAccess({ kind: "reauthentication", participant: currentAccess.participant });
           }
-          setPhase({
-            kind: "error",
-            message:
-              "参加セッションの期限が切れました。再ログインしてください。回答はまだ送信されていません。",
-            selectedIndex,
-            authenticationRequired: true,
-          });
-        } else if (mountedRef.current) {
-          setPhase({
-            kind: "error",
-            message: "回答を記録できませんでした。通信状態を確認して、回答を再送してください。",
-            selectedIndex,
-            unavailable: error instanceof ApiError && error.status === 404,
-          });
         }
-      } finally {
-        busyRef.current = false;
+        setPhase({
+          kind: "answering",
+          message: error instanceof Error ? error.message : "保存済み回答を読み込めませんでした。",
+          refreshRequired: true,
+        });
       }
-    },
-    [quizzes, questionIndex, recordedCount],
-  );
+    } finally {
+      busyRef.current = false;
+    }
+  }, []);
 
-  const confirm = useCallback(() => {
-    if (busyRef.current) return;
-    const current = phaseRef.current;
-    if (current.kind !== "question" || current.selectedIndex === undefined) return;
-    void submitSelectedAnswer(current.selectedIndex);
-  }, [submitSelectedAnswer]);
+  const editAnswers = useCallback(() => {
+    if (phaseRef.current.kind !== "complete") return;
+    const restored = copySelections(savedSelections);
+    selectionsRef.current = restored;
+    setSelections(restored);
+    setAnsweredCount(Object.keys(restored).length);
+    setPhase({ kind: "answering" });
+  }, [savedSelections]);
 
-  const retry = useCallback(() => {
-    if (phaseRef.current.kind === "error") void loadQuestions(false);
+  const retryLoad = useCallback(() => {
+    if (phaseRef.current.kind === "load-error") void loadQuestions();
   }, [loadQuestions]);
-
-  const resendAnswer = useCallback(() => {
-    const current = phaseRef.current;
-    if (current.kind !== "error" || current.selectedIndex === undefined) return;
-    void submitSelectedAnswer(current.selectedIndex);
-  }, [submitSelectedAnswer]);
 
   return {
     access,
     phase,
-    quiz: quizzes[questionIndex],
-    questionIndex,
-    recordedCount,
-    select,
-    confirm,
-    retry,
-    login,
+    quizzes,
+    selections,
+    savedSelections,
+    answeredCount,
+    submissionId,
+    revision,
     start,
+    select,
+    saveAnswers,
+    refreshSavedAnswers,
+    editAnswers,
+    retryLoad,
+    login,
     switchParticipant,
-    resendAnswer,
-    restart: () => void loadQuestions(true),
   };
 }

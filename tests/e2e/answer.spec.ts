@@ -8,7 +8,13 @@ const questionFor = (id: number) =>
     choices: [`Option ${id}A`, `Option ${id}B`, `Option ${id}C`, `Option ${id}D`],
   });
 
-const neutralAnswer = { isCorrect: false, correctIndex: 0, explanation: "Hidden explanation" };
+type BatchAnswer = { questionId: number; selectedIndex: number };
+type BatchPayload = {
+  submissionId: string;
+  operationId: string;
+  expectedRevision: number;
+  answers: BatchAnswer[];
+};
 
 async function mockParticipantSession(page: Page, initialName: string | null = null) {
   let activeParticipant = initialName ? { id: 17, name: initialName } : null;
@@ -128,7 +134,7 @@ test("direct answer access requires name and four digit PIN before the explicit 
   expect(requests).toEqual([]);
   await expect(page.getByRole("button", { name: "検定をはじめる" })).toBeVisible();
   await startQuiz(page);
-  await expect(page.getByRole("heading", { name: "第1問 / 全5問" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   expect(requests).toEqual([
     "/api/questions/next",
     "/api/questions/next?afterId=1",
@@ -160,46 +166,53 @@ test("direct answer access explains when five questions are unavailable", async 
   await expect(page.getByRole("link", { name: "ホームへ戻る" })).toHaveAttribute("href", "/");
 });
 
-test("requires explicit confirmation, records the selected answer with the participant cookie, and advances without grading UI", async ({
+test("keeps choices local, blocks an incomplete batch, then confirms all five with the participant cookie", async ({
   page,
 }) => {
   await mockParticipantSession(page);
   await mockQuestions(page);
-  const submitted: Array<{ body: unknown; cookie: string | undefined }> = [];
-  await page.route("**/api/answers", async (route) => {
+  const submitted: Array<{ body: BatchPayload; cookie: string | undefined }> = [];
+  await page.route("**/api/answers/batch", async (route) => {
     submitted.push({
-      body: route.request().postDataJSON(),
+      body: route.request().postDataJSON() as BatchPayload,
       cookie: route.request().headers().cookie,
     });
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(neutralAnswer),
+      body: JSON.stringify({ submissionId: "00000000-0000-4000-8000-000000000001", revision: 1 }),
     });
   });
 
   await page.goto("/answer");
   await signIn(page, "Aki");
   await startQuiz(page);
-  await expect(page.getByText("Question 1?")).toBeVisible();
-  const confirm = page.getByRole("button", { name: "回答を確定する" });
+  await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
+  const confirm = page.getByRole("button", { name: "5問の回答を確定する" });
   await expect(confirm).toBeDisabled();
   await selectRadio(page, /Option 1B/);
+  expect(submitted).toHaveLength(0);
+  for (let id = 2; id <= 5; id += 1) await selectRadio(page, new RegExp(`Option ${id}B`));
   await expect(confirm).toBeEnabled();
   await confirm.click();
 
-  await expect(page.getByRole("heading", { name: "第2問 / 全5問" })).toBeVisible();
-  await expect(page.getByText("回答記録済み 1/5")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
   await expect(page.getByText(/正解！|不正解|解説:|正答率|合格/)).toHaveCount(0);
   expect(submitted).toHaveLength(1);
-  expect(submitted[0].body).toMatchObject({ questionId: 1 });
-  expect(submitted[0].body).not.toHaveProperty("participantId");
+  expect(submitted[0].body).toMatchObject({ expectedRevision: 0 });
+  expect(submitted[0].body.answers).toHaveLength(5);
+  expect(
+    submitted[0].body.answers.map((answer: { questionId: number }) => answer.questionId),
+  ).toEqual([1, 2, 3, 4, 5]);
+  expect(
+    submitted[0].body.answers.every(
+      (answer: { selectedIndex: number }) => answer.selectedIndex >= 0 && answer.selectedIndex < 4,
+    ),
+  ).toBe(true);
   expect(submitted[0].cookie).toContain("stcirt_participant_session=mock-session");
 });
 
-test("keeps the pending confirmation focused and moves focus to the next question", async ({
-  page,
-}) => {
+test("locks the full answer sheet while its batch request is pending", async ({ page }) => {
   await mockParticipantSession(page);
   await mockQuestions(page);
 
@@ -212,40 +225,38 @@ test("keeps the pending confirmation focused and moves focus to the next questio
   const answerGate = new Promise<void>((resolve) => {
     releaseAnswer = resolve;
   });
-  await page.route("**/api/answers", async (route) => {
+  await page.route("**/api/answers/batch", async (route) => {
     answerCalls += 1;
     markRequestStarted();
     await answerGate;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(neutralAnswer),
+      body: JSON.stringify({ submissionId: "00000000-0000-4000-8000-000000000001", revision: 1 }),
     });
   });
 
   await page.goto("/answer");
   await signIn(page);
   await startQuiz(page);
-  await selectRadio(page, /Option 1B/);
-  const confirm = page.getByRole("button", { name: "回答を確定する" });
+  for (let id = 1; id <= 5; id += 1) await selectRadio(page, new RegExp(`Option ${id}B`));
+  const confirm = page.getByRole("button", { name: "5問の回答を確定する" });
   await confirm.click();
   await requestStarted;
 
-  await expect(confirm).toBeFocused();
-  await expect(confirm).toHaveAttribute("aria-disabled", "true");
-  await expect(confirm).toHaveAccessibleName("回答を確定する");
-  await expect(confirm).not.toHaveAttribute("disabled");
-  await expect(confirm).not.toHaveAttribute("aria-busy");
-  await expect(page.getByRole("status")).toHaveText("回答を記録しています…");
+  const submittingButton = page.getByRole("button", { name: "回答を送信しています…" });
+  await expect(submittingButton).toBeFocused();
+  await expect(submittingButton).toHaveAttribute("aria-disabled", "true");
+  await expect(submittingButton).toHaveAccessibleName("回答を送信しています…");
+  await expect(submittingButton).not.toHaveAttribute("disabled");
+  await expect(submittingButton).not.toHaveAttribute("aria-busy");
+  await expect(page.getByRole("status")).toHaveText("回答を送信しています…");
   await expect(page.getByRole("radio", { name: /Option 1B/ })).toBeChecked();
-  await confirm.evaluate((button: HTMLButtonElement) => button.click());
+  await submittingButton.evaluate((button: HTMLButtonElement) => button.click());
   expect(answerCalls).toBe(1);
 
   releaseAnswer();
-  const nextHeading = page.getByRole("heading", { name: "Question 2?" });
-  await expect(nextHeading).toBeFocused();
-  const focusRing = await nextHeading.evaluate((element) => getComputedStyle(element).boxShadow);
-  expect(focusRing).not.toBe("none");
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
 });
 
 test("supports native radio keyboard operation and reflows long Japanese text at 320px", async ({
@@ -279,10 +290,11 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   await signIn(page);
   await startQuiz(page);
 
-  const group = page.getByRole("group", { name: "回答を1つ選択してください" });
+  const group = page.locator("#question-1 fieldset");
   await expect(group).toBeVisible();
+  await expect(group.getByRole("radio")).toHaveCount(4);
   const radios = page.getByRole("radio");
-  await expect(radios).toHaveCount(4);
+  await expect(radios).toHaveCount(20);
   const firstRadio = radios.nth(0);
   await expect(firstRadio).toHaveAttribute("name", "answer-1");
   await expect(firstRadio).toHaveAttribute("value", "0");
@@ -293,7 +305,7 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   const radioNames = await radios.evaluateAll((inputs) => [
     ...new Set(inputs.map((input) => (input as HTMLInputElement).name)),
   ]);
-  expect(radioNames).toEqual(["answer-1"]);
+  expect(radioNames).toEqual(["answer-1", "answer-2", "answer-3", "answer-4", "answer-5"]);
 
   await firstRadio.focus();
   await page.keyboard.press("Space");
@@ -302,17 +314,13 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   const radioFocusRing = await firstRow.evaluate((element) => getComputedStyle(element).boxShadow);
   expect(radioFocusRing).not.toBe("none");
 
-  const progress = page.getByRole("list", { name: "各問題の回答状態" });
-  await expect(progress.getByRole("listitem")).toHaveCount(5);
-  await expect(progress).toContainText("1問");
-  await expect(progress).toContainText("現在");
-  await expect(progress).toContainText("2問");
-  await expect(progress).toContainText("未到達");
-  await expect(progress.locator("a, button, input")).toHaveCount(0);
+  const navigation = page.getByRole("navigation", { name: "設問へ移動" });
+  await expect(navigation.getByRole("list").getByRole("listitem")).toHaveCount(5);
+  await expect(navigation.locator("a, button, input")).toHaveCount(5);
 
   const [rowBox, confirmBox] = await Promise.all([
     firstRow.boundingBox(),
-    page.getByRole("button", { name: "回答を確定する" }).boundingBox(),
+    page.getByRole("button", { name: "5問の回答を確定する" }).boundingBox(),
   ]);
   expect(rowBox?.height).toBeGreaterThanOrEqual(44);
   expect(confirmBox?.height).toBeGreaterThanOrEqual(44);
@@ -324,30 +332,115 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport);
 });
 
-test("shows neutral completion after the fifth recorded answer", async ({ page }) => {
+test("shows neutral completion after one batch and can reopen the same answer set for correction", async ({
+  page,
+}) => {
   await mockParticipantSession(page);
   await mockQuestions(page);
-  await page.route("**/api/answers", async (route) => {
+  const submissions: BatchPayload[] = [];
+  await page.route("**/api/answers/batch", async (route) => {
+    submissions.push(route.request().postDataJSON() as BatchPayload);
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(neutralAnswer),
+      body: JSON.stringify({
+        submissionId: "00000000-0000-4000-8000-000000000001",
+        revision: submissions.length,
+      }),
     });
   });
 
   await page.goto("/answer");
   await signIn(page);
   await startQuiz(page);
-  for (let id = 1; id <= 5; id += 1) {
-    await expect(page.getByText(`Question ${id}?`)).toBeVisible();
-    await selectRadio(page, new RegExp(`Option ${id}A`));
-    await page.getByRole("button", { name: "回答を確定する" }).click();
-  }
+  for (let id = 1; id <= 5; id += 1) await selectRadio(page, new RegExp(`Option ${id}A`));
+  await page.getByRole("button", { name: "5問の回答を確定する" }).click();
 
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
   await expect(page.getByText("全5問の回答を記録しました。")).toBeVisible();
-  await expect(page.getByRole("button", { name: "もう一度受検する" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "回答を修正する" })).toBeVisible();
   await expect(page.getByText(/正解！|不正解|解説:|正答率|合格|得点/)).toHaveCount(0);
+  expect(submissions).toHaveLength(1);
+  await page.getByRole("button", { name: "回答を修正する" }).click();
+  await expect(page.getByRole("button", { name: "修正内容を確定する" })).toBeEnabled();
+  expect(await page.getByRole("radio", { name: /Option 1A/ }).isChecked()).toBe(true);
+});
+
+test("loads the canonical batch after a revision conflict while preserving the local draft", async ({
+  page,
+}) => {
+  await mockParticipantSession(page);
+  await mockQuestions(page);
+  const posts: BatchPayload[] = [];
+  let savedAnswers: BatchAnswer[] = [];
+  await page.route("**/api/answers/batch**", async (route) => {
+    const request = route.request();
+    if (request.method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          submissionId: "00000000-0000-4000-8000-000000000001",
+          revision: 2,
+          answers: savedAnswers,
+        }),
+      });
+      return;
+    }
+    const body = request.postDataJSON() as BatchPayload;
+    if (posts.length === 0) {
+      savedAnswers = body.answers;
+      posts.push(body);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ submissionId: body.submissionId, revision: 1 }),
+      });
+      return;
+    }
+    if (posts.length === 1) {
+      posts.push(body);
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "Revision conflict" }),
+      });
+      return;
+    }
+    posts.push(body);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ submissionId: body.submissionId, revision: 3 }),
+    });
+  });
+
+  await page.goto("/answer");
+  await signIn(page);
+  await startQuiz(page);
+  for (let id = 1; id <= 5; id += 1) await selectRadio(page, new RegExp(`Option ${id}A`));
+  await page.getByRole("button", { name: "5問の回答を確定する" }).click();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+
+  await page.getByRole("button", { name: "回答を修正する" }).click();
+  const q1Alternate = page.getByRole("radio", { name: /Option 1B/ });
+  await selectRadio(page, /Option 1B/);
+  await page.getByRole("button", { name: "修正内容を確定する" }).click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "保存済み回答が更新されています。" }),
+  ).toContainText("回答案を保持しました");
+  await expect(q1Alternate).toBeChecked();
+  expect(posts).toHaveLength(2);
+  expect(posts[1]?.submissionId).toBe(posts[0]?.submissionId);
+  expect(posts[1]?.expectedRevision).toBe(1);
+  expect(posts[1]?.answers[0]?.selectedIndex).not.toBe(posts[0]?.answers[0]?.selectedIndex);
+
+  const editedAnswers = posts[1]!.answers;
+  await page.getByRole("button", { name: "修正内容を確定する" }).click();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  expect(posts).toHaveLength(3);
+  expect(posts[2]?.expectedRevision).toBe(2);
+  expect(posts[2]?.answers).toEqual(editedAnswers);
 });
 
 test("allows a different participant after ending the current session", async ({ page }) => {
@@ -365,46 +458,44 @@ test("allows a different participant after ending the current session", async ({
   await expect(page.getByRole("button", { name: "検定をはじめる" })).toBeVisible();
 });
 
-test("retains a selected answer through reauthentication and resends only after an explicit action", async ({
+test("retains all choices through reauthentication and resubmits the batch only after an explicit action", async ({
   page,
 }) => {
   await mockParticipantSession(page, "Aki");
   await mockQuestions(page);
   let answerCalls = 0;
-  await page.route("**/api/answers", async (route) => {
+  await page.route("**/api/answers/batch", async (route) => {
     answerCalls += 1;
     if (answerCalls === 1) {
       await route.fulfill({
         status: 401,
         contentType: "application/json",
-        body: JSON.stringify({ error: "Authentication required" }),
+        body: JSON.stringify({ message: "Authentication required" }),
       });
       return;
     }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(neutralAnswer),
+      body: JSON.stringify({ submissionId: "00000000-0000-4000-8000-000000000001", revision: 1 }),
     });
   });
 
   await page.goto("/answer");
   await expect(page.getByRole("heading", { name: "Akiさん" })).toBeVisible();
   await startQuiz(page);
-  await selectRadio(page, /Option 1C/);
-  await page.getByRole("button", { name: "回答を確定する" }).click();
+  for (let id = 1; id <= 5; id += 1) await selectRadio(page, new RegExp(`Option ${id}C`));
+  await page.getByRole("button", { name: "5問の回答を確定する" }).click();
   await expect(page.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeVisible();
-  await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeDisabled();
   await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeChecked();
 
   await page.getByLabel("4桁PIN").fill("0123");
   await page.getByRole("button", { name: "再ログインする" }).click();
-  await expect(page.getByRole("heading", { name: "回答を記録できませんでした" })).toBeVisible();
-  await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "同じ回答を再送する" })).toBeVisible();
   await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeChecked();
   expect(answerCalls).toBe(1);
-  await page.getByRole("button", { name: "回答を再送する" }).click();
-  await expect(page.getByRole("heading", { name: "第2問 / 全5問" })).toBeVisible();
+  await page.getByRole("button", { name: "同じ回答を再送する" }).click();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
   expect(answerCalls).toBe(2);
 });
 
@@ -436,7 +527,7 @@ test("retries only missing questions after a prefetch network failure", async ({
   await signIn(page);
   await startQuiz(page);
   await page.getByRole("button", { name: "不足分を再読み込み" }).click();
-  await expect(page.getByRole("heading", { name: "第1問 / 全5問" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   expect(requests).toEqual([
     "/api/questions/next",
     "/api/questions/next?afterId=1",

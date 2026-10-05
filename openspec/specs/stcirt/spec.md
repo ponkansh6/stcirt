@@ -14,11 +14,14 @@ The Drizzle schema in `src/lib/db/schema.ts` contains the legacy tables and the 
 - `exam_questions`: stable integer IDs and unique keys for the five seeded exam questions
 - `exam_participants`: unique trim+NFC normalized name, display name, and creation time; no PIN data
 - `exam_answer_logs`: submitted choices, correctness, answer time, and nullable participant reference; historical anonymous rows remain NULL
+- `exam_answer_submissions`: participant-owned fixed five-question submissions and revision
+- `exam_submission_answers`: current selected indices for a submission; revisions replace these rows atomically
+- `exam_submission_operations`: operation IDs and canonical payloads used for idempotent retries and mismatch rejection
 - `participant_rate_limits`: shared database-backed failed-authentication windows keyed by HMAC fingerprints, without storing IP addresses or names
 
 Participant names are trimmed and normalized to Unicode NFC for case-sensitive uniqueness. They are not compatibility-normalized and internal whitespace is preserved. The shared event PIN and session signing secret are held only in server-side environment configuration.
 
-The exam session is held only in client state. It is not persisted. Reloading or remounting starts a new attempt, and repeated attempts write another set of per-question rows to `exam_answer_logs`. The initial migration seeds five questions idempotently; it does not modify or migrate legacy question or answer data.
+Unconfirmed selections are held only in client state. Confirmed answer sets are persisted as participant-owned submissions and can be revised in place. The existing single-answer API continues to write `exam_answer_logs`; batch submissions do not append to that table. The initial migration seeds five questions idempotently; it does not modify or migrate legacy question or answer data.
 
 ## Requirements
 
@@ -37,32 +40,30 @@ The exam session is held only in client state. It is not persisted. Reloading or
 
 ### R2: Participant-authenticated answer confirmation and recording
 
-**WHEN** a user chooses an option and confirms it
-**THEN** the existing `POST /api/answers` records that choice for the current question.
+**WHEN** a user chooses options for the five questions and confirms the set
+**THEN** `POST /api/answers/batch` atomically saves the five answers for one stable submission.
 
 - The user first joins with a display name and event-wide four-ASCII-digit PIN. A valid existing participant session may be reused without re-entry.
-- Every answer POST requires a valid signed participant cookie and same-origin `Origin`; anonymous POSTs are rejected.
+- Every answer POST requires a valid signed participant cookie and same-origin `Origin`; anonymous POSTs are rejected. The legacy single-answer endpoint retains its existing behavior.
 - The participant ID comes only from the validated cookie. A client-supplied `participantId` is rejected.
-- New answer rows store the validated participant ID. Historical rows remain unchanged with a NULL participant ID.
+- A batch submission is associated with the validated participant. Historical single-answer rows remain unchanged with a NULL participant ID.
 
-- The user may change a choice until explicit confirmation.
+- Individual choices remain in client state until explicit batch confirmation; they do not create server records.
 - Choices are native radio inputs grouped by question with a fieldset and legend; each input has an explicit full-row label, and its submitted value remains the existing shuffled-choice index.
-- A pending request locks the answer controls and prevents duplicate submission.
-- While pending, the selected radio remains checked and the confirmation action keeps its name and focus; its disabled state is communicated with `aria-disabled` and guarded synchronously.
-- The selected choice and current question remain available after a failed request so the user can retry.
-- A successful POST increments the recorded-answer count before advancing to the next held question. A successful answer is never submitted again during the same attempt.
-- The current question position (`第n問 / 全5問`) and successful recorded count (`回答記録済み k/5`) are separate values. The five-step list distinguishes answered, current, and not-yet-reached questions in text as well as appearance.
+- A pending batch request locks all answer controls and prevents duplicate submission.
+- While pending, the selected radios remain checked and the confirmation action keeps its name and focus; its disabled state is communicated to assistive technology and guarded synchronously.
+- The five selected choices remain available after a failed request so the user can retry.
+- A successful batch confirmation moves to completion. The completion view can restore the saved five answers and revise the same submission.
 - The UI does not use the response's correctness, correct index, or explanation fields. It shows no per-exam correctness, explanation, score, accuracy, or pass/fail state.
-- If an answer is rejected because the question changed or disappeared, keep the user on that question with the selected option and an error/home path; do not replace or skip it.
-- Retrying a POST after a transport failure may create another answer log if the server recorded the first request but its response was lost. This cannot be resolved by the UI-only flow.
+- Retrying a batch after a transport failure reuses the operation ID and exact payload, so a committed request is returned idempotently without duplicating writes.
 
 ### R3: Completion
 
-**WHEN** the fifth answer POST succeeds
-**THEN** show `回答完了` and `全5問の回答を記録しました。` with a `もう一度受検する` action.
+**WHEN** the batch answer POST succeeds
+**THEN** show `回答完了` with a `回答を修正する` action for the same saved set.
 
 - Completion has no score, correctness, explanation, or pass/fail result.
-- Restart starts a new attempt from the first five questions.
+- The saved submission revision is updated in place when corrections are confirmed.
 
 ### R4: Home and participant entry
 
@@ -78,7 +79,7 @@ The exam session is held only in client state. It is not persisted. Reloading or
 - Use a restrained exam-paper visual style with light surfaces, ink text, subtle borders, and a primary accent; do not use medals, pass/fail imagery, or certificate visuals.
 - Provide readable contrast, visible keyboard focus, native radio semantics, live status updates, and textual progress labels so color is not the sole signal. Choice rows and the primary confirmation action have at least 44 CSS px of interaction height.
 - Keep content in a single readable column on narrow screens, avoid horizontal scrolling at 320 CSS px and 200% zoom, and respect reduced-motion preferences.
-- After a successful answer advances to the next question, move focus to the new question heading. Do not add exam-time correctness, explanation, score, accuracy, or pass/fail information.
+- In-page links to unanswered questions move focus to a visible question heading without it being hidden behind page chrome. Do not add exam-time correctness, explanation, score, accuracy, or pass/fail information.
 
 ## API
 
@@ -99,6 +100,30 @@ The exam session is held only in client state. It is not persisted. Reloading or
 - Response 200: `{ isCorrect, correctIndex, explanation }` (the exam UI ignores grading fields)
 - Response 400/401/403/404: invalid selection, missing/invalid participant session, origin failure, or missing question
 
+### `/api/answers/batch`
+
+`POST` creates or revises a five-answer submission; `GET` restores a confirmed submission.
+
+#### `POST`
+
+- Request: `{ submissionId: UUID, operationId: UUID, expectedRevision: integer, answers: [{ questionId, selectedIndex }] }`
+- `answers` must contain exactly five distinct questions in the current fixed exam set for initial submission; revisions must use the same saved question set.
+- Requires same-origin `Origin` and a valid signed participant cookie whose participant still exists. Participant identity is taken only from that cookie.
+- Answer APIs currently have no rate limit; failed sign-in attempts are rate-limited only on `POST /api/participants/session`. The batch route keeps the existing single-answer API's rate-limit behavior unchanged.
+- `expectedRevision` is `0` for initial save and the current saved revision for a correction. A successful write advances the revision by one.
+- Initial creation and correction are each one transaction. Corrections update the same submission answer rows and do not append to `exam_answer_logs`.
+- `operationId` is unique per deliberate save. Repeating it with the same submission ID and canonical payload returns the original revision; reusing it with a different payload is rejected. Revision mismatches return 409.
+- Response 200: `{ submissionId, revision }`; no correctness, correct index, explanation, score, or pass/fail data is returned.
+- Response 400/401/403/404/409: invalid request/question set, missing participant, origin failure, missing submission, or operation/revision conflict.
+- If a save conflicts because its `expectedRevision` is stale, the client can use GET to reload the saved revision while retaining its local draft.
+
+#### `GET /api/answers/batch?submissionId={UUID}`
+
+- Requires a valid signed participant cookie. A submission is visible only to its owning participant; missing and other-participant submissions both return 404.
+- Response 200: `{ submissionId, revision, answers: [{ questionId, selectedIndex }] }`. No grading fields are returned.
+- Used to restore confirmed answers or reload the saved revision after a conflict while preserving the local draft.
+- Response 400/401/404: invalid submission ID, missing participant session, or unavailable submission.
+
 ### `/api/participants/session`
 
 - `POST` request: `{ name: string, pin: string }`; PIN must be four ASCII digits, including leading zeroes. The configured `PARTICIPANT_PIN` is validated the same way and compared in constant time.
@@ -111,10 +136,11 @@ The exam session is held only in client state. It is not persisted. Reloading or
 ## Components
 
 - `/`: server-rendered exam briefing and start availability
-- `/answer`: participant entry/session reuse, client-held five-question session, native radio choice group with explicit confirmation, per-question answer recording, and neutral completion
-- `src/components/ChoiceButton.tsx`: labeled native radio row with circular choice mark and selected-state styling, reused for the active and failed-answer views
+- `/answer`: participant entry/session reuse, client-held five-question session, native radio choice groups, atomic batch confirmation, same-submission correction, and neutral completion
+- `src/components/ChoiceButton.tsx`: labeled native radio row with circular choice mark and selected-state styling
 - `src/lib/db/repository/question-repository.ts`: next-question lookup by ID cursor and answer lookup from `exam_questions`
-- `src/lib/db/repository/answer-repository.ts`: participant-linked answer logging in `exam_answer_logs` (legacy aggregate rows are retained)
+- `src/app/api/answers/batch/route.ts`: authenticated atomic five-answer create/correction endpoint
+- `src/lib/db/repository/answer-repository.ts`: preserves legacy single-answer logging and provides atomic submission persistence, owner-scoped restore, revision checks, and idempotent operation replay
 
 ## Coverage tiers
 

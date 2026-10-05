@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { sql, desc } from "drizzle-orm";
 
 export const knowledge = sqliteTable("knowledge", {
@@ -103,3 +103,46 @@ export const examAnswerLogs = sqliteTable(
     ),
   }),
 );
+
+// A certification submission is the stable five-question answer set. Edits
+// update these rows in place; operation rows make retries safe and detect a
+// reused operation ID with a different payload.
+export const examAnswerSubmissions = sqliteTable("exam_answer_submissions", {
+  id: text("id").primaryKey(),
+  participantId: integer("participant_id")
+    .notNull()
+    .references(() => examParticipants.id, { onDelete: "cascade" }),
+  questionIds: text("question_ids", { mode: "json" }).notNull().$type<number[]>(),
+  revision: integer("revision").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const examSubmissionAnswers = sqliteTable(
+  "exam_submission_answers",
+  {
+    submissionId: text("submission_id")
+      .notNull()
+      .references(() => examAnswerSubmissions.id, { onDelete: "cascade" }),
+    questionId: integer("question_id")
+      .notNull()
+      .references(() => examQuestions.id, { onDelete: "cascade" }),
+    selectedIndex: integer("selected_index").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.submissionId, t.questionId] }),
+  }),
+);
+
+export const examSubmissionOperations = sqliteTable("exam_submission_operations", {
+  operationId: text("operation_id").primaryKey(),
+  submissionId: text("submission_id")
+    .notNull()
+    .references(() => examAnswerSubmissions.id, { onDelete: "cascade" }),
+  payload: text("payload").notNull(),
+  revision: integer("revision").notNull(),
+});

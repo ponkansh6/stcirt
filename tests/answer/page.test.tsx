@@ -7,43 +7,34 @@ vi.mock("@/app/answer/use-quiz-session", () => ({
   useQuizSession: () => mockUseQuizSession(),
 }));
 
+function mockSession(access: object, phase: object) {
+  mockUseQuizSession.mockReturnValue({
+    access,
+    phase,
+    quizzes: [],
+    selections: {},
+    savedSelections: {},
+    answeredCount: 0,
+    select: vi.fn(),
+    saveAnswers: vi.fn(),
+    refreshSavedAnswers: vi.fn(),
+    editAnswers: vi.fn(),
+    retryLoad: vi.fn(),
+    login: vi.fn(async () => {}),
+    start: vi.fn(),
+    switchParticipant: vi.fn(async () => {}),
+  });
+}
+
 describe("AnswerPage", () => {
   it("renders QuizRunner", () => {
-    mockUseQuizSession.mockReturnValue({
-      access: { kind: "checking" },
-      phase: { kind: "loading" },
-      quiz: undefined,
-      questionIndex: 0,
-      recordedCount: 0,
-      select: vi.fn(),
-      confirm: vi.fn(),
-      retry: vi.fn(),
-      login: vi.fn(async () => {}),
-      start: vi.fn(),
-      switchParticipant: vi.fn(async () => {}),
-      resendAnswer: vi.fn(),
-      restart: vi.fn(),
-    });
+    mockSession({ kind: "checking" }, { kind: "loading" });
     render(<AnswerPage />);
     expect(screen.getByRole("status")).toHaveTextContent("参加状態を確認しています");
   });
 
   it("shows the participant form after session lookup reports no participant", () => {
-    mockUseQuizSession.mockReturnValue({
-      access: { kind: "login" },
-      phase: { kind: "ready" },
-      quiz: undefined,
-      questionIndex: 0,
-      recordedCount: 0,
-      select: vi.fn(),
-      confirm: vi.fn(),
-      retry: vi.fn(),
-      login: vi.fn(async () => {}),
-      start: vi.fn(),
-      switchParticipant: vi.fn(async () => {}),
-      resendAnswer: vi.fn(),
-      restart: vi.fn(),
-    });
+    mockSession({ kind: "login" }, { kind: "ready" });
     render(<AnswerPage />);
     expect(screen.getByRole("heading", { name: "参加して検定を受ける" })).toBeInTheDocument();
     expect(screen.getByLabelText("お名前")).toBeInTheDocument();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQuizSession } from "./use-quiz-session";
 import ChoiceButton from "@/components/ChoiceButton";
 import { choiceLabel } from "@/lib/choice-label";
@@ -13,26 +13,24 @@ export default function QuizRunner() {
   const {
     access,
     phase,
-    quiz,
-    questionIndex,
-    recordedCount,
-    select,
-    confirm,
-    retry,
-    login,
+    quizzes,
+    selections,
+    savedSelections,
+    answeredCount,
     start,
+    select,
+    saveAnswers,
+    refreshSavedAnswers,
+    editAnswers,
+    retryLoad,
+    login,
     switchParticipant,
-    resendAnswer,
-    restart,
   } = useQuizSession();
-  const questionHeadingRef = useRef<HTMLHeadingElement>(null);
+  const questionRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
   const [switchError, setSwitchError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (phase.kind === "question" && recordedCount > 0) {
-      questionHeadingRef.current?.focus();
-    }
-  }, [phase.kind, questionIndex, recordedCount]);
+  const isSubmitting = phase.kind === "submitting";
+  const isRefreshing = phase.kind === "refreshing";
+  const unanswered = quizzes.filter(({ question }) => selections[question.id] === undefined);
 
   async function handleSwitchParticipant() {
     setSwitchError(null);
@@ -43,6 +41,11 @@ export default function QuizRunner() {
         error instanceof Error ? error.message : "参加状態を切り替えられませんでした。",
       );
     }
+  }
+
+  function jumpToQuestion(questionId: number) {
+    questionRefs.current[questionId]?.scrollIntoView({ behavior: "auto", block: "start" });
+    questionRefs.current[questionId]?.focus({ preventScroll: true });
   }
 
   if (access.kind === "checking") {
@@ -89,7 +92,9 @@ export default function QuizRunner() {
         <ParticipantCard>
           <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{access.participant.name}さん</h1>
-          <p className="mt-3 text-muted">準備ができました。ボタンを押すと検定が始まります。</p>
+          <p className="mt-3 text-muted">
+            全5問に回答し、最後にまとめて確定します。回答は確定前に何度でも見直せます。
+          </p>
           {switchError && (
             <p className="mt-4 text-sm font-medium text-error" role="alert">
               {switchError}
@@ -133,77 +138,29 @@ export default function QuizRunner() {
     );
   }
 
-  if (phase.kind === "error") {
-    const isAnswerError = phase.selectedIndex !== undefined;
-    const isReauthentication = phase.authenticationRequired && access.kind === "reauthentication";
+  if (phase.kind === "load-error") {
+    const hasLoadedQuestions = quizzes.length > 0;
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
           <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-          <h1 className="text-3xl font-bold tracking-tight">
-            {isReauthentication
-              ? "参加状態の確認が必要です"
-              : isAnswerError
-                ? "回答を記録できませんでした"
-                : "問題を読み込めませんでした"}
-          </h1>
-          <p className="mt-4 text-muted" role="alert" aria-live="assertive">
-            {isAnswerError && phase.unavailable
-              ? "この問題は現在回答を記録できません。選択した回答を保持しています。問題を差し替えず、この画面からホームへ戻れます。"
-              : phase.message}
+          <h1 className="text-3xl font-bold tracking-tight">問題を読み込めませんでした</h1>
+          <p className="mt-4 text-muted" role="alert">
+            {phase.message}
           </p>
-          {isAnswerError ? (
-            <>
-              {quiz && (
-                <fieldset className="mt-6 min-w-0 space-y-3" disabled>
-                  <legend className="mb-3 break-words font-semibold">
-                    選択した回答: {quiz.question.question}
-                  </legend>
-                  {quiz.shuffled.choices.map((choice, index) => (
-                    <ChoiceButton
-                      key={index}
-                      id={`failed-answer-${quiz.question.id}-${index}`}
-                      name={`failed-answer-${quiz.question.id}`}
-                      value={String(index)}
-                      label={choiceLabel(index)}
-                      text={choice}
-                      variant={index === phase.selectedIndex ? "selected" : "idle"}
-                      checked={index === phase.selectedIndex}
-                      disabled
-                    />
-                  ))}
-                </fieldset>
-              )}
-              {isReauthentication ? (
-                <div className="mt-8 rounded-xl border border-border bg-surface-2 p-5 sm:p-6">
-                  <h2 className="text-lg font-bold">再ログイン</h2>
-                  <p className="mt-2 text-sm leading-relaxed text-muted">
-                    再ログイン後、回答は自動送信されません。選択した回答を確認してから再送してください。
-                  </p>
-                  <ParticipantForm
-                    key="reauthentication-form"
-                    onLogin={login}
-                    initialName={access.participant.name}
-                    submitLabel="再ログインする"
-                  />
-                </div>
-              ) : (
-                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                  <Button onClick={resendAnswer}>回答を再送する</Button>
-                  <NavLink href="/" variant="ghost">
-                    ホームへ戻る
-                  </NavLink>
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Button onClick={retry}>不足分を再読み込み</Button>
-              <NavLink href="/" variant="ghost">
-                ホームへ戻る
-              </NavLink>
-            </div>
+          {hasLoadedQuestions && (
+            <p className="mt-3 text-sm leading-relaxed text-muted" role="status" aria-live="polite">
+              取得済みの{quizzes.length}問は保持しています。不足分から再開できます。
+            </p>
           )}
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <Button onClick={retryLoad}>
+              {hasLoadedQuestions ? "不足分を再読み込み" : "もう一度読み込む"}
+            </Button>
+            <NavLink href="/" variant="ghost">
+              ホームへ戻る
+            </NavLink>
+          </div>
         </ParticipantCard>
       </main>
     );
@@ -216,103 +173,245 @@ export default function QuizRunner() {
           <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
           <h1 className="text-3xl font-bold tracking-tight">回答完了</h1>
           <p className="mt-4 text-muted">全5問の回答を記録しました。</p>
-          <Button onClick={restart} className="mt-8">
-            もう一度受検する
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            回答を見直す場合は、同じ5問の回答を復元して修正できます。
+          </p>
+          <Button onClick={editAnswers} className="mt-8">
+            回答を修正する
           </Button>
         </ParticipantCard>
       </main>
     );
   }
 
-  if (!quiz) return null;
-  const selectedIndex =
-    phase.kind === "question" || phase.kind === "submitting" ? phase.selectedIndex : undefined;
-  const isSubmitting = phase.kind === "submitting";
+  const retryRequired = phase.kind === "answering" && phase.retryRequired;
+  const refreshRequired = phase.kind === "answering" && phase.refreshRequired;
+  const isLocked = isSubmitting || isRefreshing || retryRequired || refreshRequired;
+  const authExpired = access.kind === "reauthentication";
+  const hasSavedAnswers = Object.keys(savedSelections).length === 5;
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-8 sm:py-12">
-      <header className="mb-8 border-b border-border pb-5">
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-7 sm:py-10">
+      <header className="mb-7 border-b border-border pb-6">
         <p className="text-sm font-semibold tracking-widest text-primary">5問検定</p>
-        <div className="mt-3 flex flex-wrap items-end justify-between gap-2">
-          <h1 className="text-3xl font-bold tracking-tight">
-            第{questionIndex + 1}問 <span className="text-lg font-medium text-muted">/ 全5問</span>
-          </h1>
-          <p className="text-sm font-semibold text-muted" aria-live="polite">
-            回答記録済み {recordedCount}/5
+        <div className="mt-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">受検票</h1>
+            {access.kind === "ready" && (
+              <p className="mt-1 text-sm text-muted">受検者：{access.participant.name}</p>
+            )}
+          </div>
+          <p className="text-base font-bold" aria-live="polite">
+            回答済み {answeredCount}/5
           </p>
         </div>
-        <ol className="mt-5 grid grid-cols-5 gap-1 sm:gap-2" aria-label="各問題の回答状態">
-          {Array.from({ length: 5 }, (_, index) => {
-            const answered = index < recordedCount;
-            const current = index === questionIndex;
-            const status = answered ? "回答済み" : current ? "現在" : "未到達";
-            return (
-              <li
-                key={index}
-                className={`flex min-h-11 min-w-0 flex-col items-center justify-center rounded-md border px-0.5 text-[10px] font-semibold leading-tight sm:text-xs ${answered ? "border-primary bg-primary text-on-primary" : current ? "border-primary bg-surface text-primary ring-2 ring-primary/30" : "border-border bg-surface-2 text-muted"}`}
-                aria-current={current ? "step" : undefined}
-              >
-                <span>{index + 1}問</span>
-                {status}
-              </li>
-            );
-          })}
-        </ol>
+        <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted">
+          全5問を縦に確認しながら回答してください。回答は最後にまとめて確定します。
+        </p>
+        <nav className="mt-5" aria-label="設問へ移動">
+          <ol className="grid grid-cols-5 gap-2">
+            {quizzes.map(({ question }, index) => {
+              const answered = selections[question.id] !== undefined;
+              return (
+                <li key={question.id}>
+                  <a
+                    href={`#question-${question.id}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      jumpToQuestion(question.id);
+                    }}
+                    aria-label={`第${index + 1}問へ移動、${answered ? "回答済み" : "未回答"}`}
+                    className={`flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${answered ? "border-primary bg-primary text-on-primary" : "border-border bg-surface-2 text-muted"}`}
+                  >
+                    <span>第{index + 1}問</span>
+                    {answered ? "回答済み" : "未回答"}
+                  </a>
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
       </header>
 
-      <section
-        className="flex-1 rounded-2xl border border-border bg-surface p-4 shadow-card sm:p-8"
-        aria-labelledby="question-title"
-      >
-        <p className="mb-2 text-sm font-semibold tracking-widest text-primary">設問</p>
-        <h2
-          ref={questionHeadingRef}
-          id="question-title"
-          tabIndex={-1}
-          className="mb-7 break-words text-xl font-bold leading-relaxed tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4 sm:text-2xl"
+      {phase.kind === "answering" && phase.message && (
+        <p
+          className="mb-5 rounded-lg border border-error/50 bg-error/10 p-4 text-sm font-medium text-error"
+          role="alert"
+          aria-live="assertive"
         >
-          {quiz.question.question}
-        </h2>
-        <fieldset
-          disabled={isSubmitting}
-          className="min-w-0 space-y-3 border-t border-border pt-5"
-          aria-describedby="choice-instruction"
-        >
-          <legend className="mb-3 px-1 text-sm font-semibold text-muted">
-            回答を1つ選択してください
-          </legend>
-          {quiz.shuffled.choices.map((choice, index) => (
-            <ChoiceButton
-              key={index}
-              id={`answer-${quiz.question.id}-${index}`}
-              name={`answer-${quiz.question.id}`}
-              value={String(index)}
-              label={choiceLabel(index)}
-              text={choice}
-              variant={selectedIndex === index ? "selected" : "idle"}
-              checked={selectedIndex === index}
-              onChange={() => select(index)}
-              disabled={isSubmitting}
-            />
-          ))}
-        </fieldset>
-        <p id="choice-instruction" className="mt-4 break-words text-sm text-muted">
-          選択内容を確認してから回答を確定してください。
+          {phase.message}{" "}
+          {phase.refreshRequired
+            ? "回答案は保持しています。保存済み回答を再確認してから、確定してください。"
+            : phase.retryRequired
+              ? "回答案は保持しています。同じ内容を再送してください。"
+              : "回答案は保持しています。内容を確認して、もう一度確定してください。"}
         </p>
+      )}
+
+      {authExpired && (
+        <section
+          className="mb-6 rounded-xl border border-border bg-surface-2 p-5 sm:p-6"
+          aria-labelledby="reauth-title"
+        >
+          <h2 id="reauth-title" className="text-lg font-bold">
+            参加状態の確認が必要です
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            再ログイン後、回答は自動送信されません。回答案を確認してから、明示的に再確定してください。
+          </p>
+          <ParticipantForm
+            key="reauthentication-form"
+            onLogin={login}
+            initialName={access.participant.name}
+            submitLabel="再ログインする"
+          />
+        </section>
+      )}
+
+      <div className="space-y-5">
+        {quizzes.map(({ question, shuffled }, index) => {
+          const selectedIndex = selections[question.id];
+          const questionTitleId = `question-title-${question.id}`;
+          return (
+            <section
+              key={question.id}
+              id={`question-${question.id}`}
+              className="scroll-mt-5 rounded-2xl border border-border bg-surface p-4 shadow-card sm:p-7"
+              aria-labelledby={questionTitleId}
+            >
+              <p className="mb-2 text-sm font-semibold tracking-widest text-primary">
+                第{index + 1}問{" "}
+                <span className="font-medium tracking-normal text-muted">/ 全5問</span>
+              </p>
+              <h2
+                id={questionTitleId}
+                ref={(node) => {
+                  questionRefs.current[question.id] = node;
+                }}
+                tabIndex={-1}
+                className="mb-6 break-words text-xl font-bold leading-relaxed tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4 sm:text-2xl"
+              >
+                {question.question}
+              </h2>
+              <fieldset
+                disabled={isLocked}
+                className="min-w-0 space-y-3 border-t border-border pt-5"
+                aria-describedby={`choice-instruction-${question.id}`}
+              >
+                <legend className="mb-3 max-w-full break-words px-1 text-sm font-semibold text-muted">
+                  <span className="sr-only">第{index + 1}問 / 全5問：</span>
+                  {question.question}
+                </legend>
+                {shuffled.choices.map((choice, choiceIndex) => (
+                  <ChoiceButton
+                    key={choiceIndex}
+                    id={`answer-${question.id}-${choiceIndex}`}
+                    name={`answer-${question.id}`}
+                    value={String(choiceIndex)}
+                    label={choiceLabel(choiceIndex)}
+                    text={choice}
+                    variant={selectedIndex === choiceIndex ? "selected" : "idle"}
+                    checked={selectedIndex === choiceIndex}
+                    onChange={() => select(question.id, choiceIndex)}
+                    disabled={isLocked}
+                  />
+                ))}
+              </fieldset>
+              <p id={`choice-instruction-${question.id}`} className="mt-3 text-sm text-muted">
+                {selectedIndex === undefined
+                  ? "まだ回答していません。選択肢を1つ選んでください。"
+                  : "回答を選択しています。確定前に変更できます。"}
+              </p>
+            </section>
+          );
+        })}
+      </div>
+
+      <section
+        className="mt-7 rounded-2xl border-2 border-primary/30 bg-surface p-5 shadow-card sm:p-7"
+        aria-labelledby="final-check-title"
+      >
+        <p className="text-sm font-semibold tracking-widest text-primary">最終確認</p>
+        <h2 id="final-check-title" className="mt-1 text-xl font-bold">
+          回答内容を確認してください
+        </h2>
+        <p className="mt-3 text-sm leading-relaxed text-muted">
+          保存すると回答完了になります。完了後も「回答を修正する」から同じ5問を見直せます。
+        </p>
+        <p className="mt-4 font-semibold" aria-live="polite">
+          {unanswered.length === 0 ? "全5問に回答しました。" : `未回答 ${unanswered.length}問`}
+        </p>
+        {unanswered.length > 0 && (
+          <div className="mt-2" role="group" aria-labelledby="unanswered-heading">
+            <p id="unanswered-heading" className="text-sm text-muted">
+              未回答の設問へ移動できます：
+            </p>
+            <ul className="mt-2 flex flex-wrap gap-2">
+              {unanswered.map(({ question }) => {
+                const questionIndex = quizzes.findIndex((quiz) => quiz.question.id === question.id);
+                return (
+                  <li key={question.id}>
+                    <button
+                      type="button"
+                      onClick={() => jumpToQuestion(question.id)}
+                      className="min-h-11 rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm font-semibold underline decoration-1 underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    >
+                      第{questionIndex + 1}問へ
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
         {isSubmitting && (
-          <p className="mt-3 text-sm font-medium" role="status" aria-live="polite">
-            回答を記録しています…
+          <p className="mt-4 text-sm font-medium" role="status" aria-live="polite">
+            回答を送信しています…
           </p>
         )}
+        {isRefreshing && (
+          <p className="mt-4 text-sm font-medium" role="status" aria-live="polite">
+            保存済み回答を確認しています…
+          </p>
+        )}
+        {refreshRequired && (
+          <Button
+            onClick={() => void refreshSavedAnswers()}
+            className="mt-6 min-h-12"
+            disabled={isSubmitting || isRefreshing}
+          >
+            保存済み回答を再確認する
+          </Button>
+        )}
         <Button
-          onClick={() => void confirm()}
-          disabled={!isSubmitting && selectedIndex === undefined}
-          aria-disabled={isSubmitting || undefined}
-          className={`mt-7 ${isSubmitting ? "cursor-wait opacity-80" : ""}`}
+          onClick={() => void saveAnswers()}
+          disabled={unanswered.length > 0 || isRefreshing || authExpired || refreshRequired}
+          aria-disabled={
+            isSubmitting ||
+            isRefreshing ||
+            unanswered.length > 0 ||
+            authExpired ||
+            refreshRequired ||
+            undefined
+          }
+          className={`mt-6 min-h-12 w-full sm:w-auto ${isSubmitting || isRefreshing ? "cursor-wait opacity-80" : ""}`}
         >
-          {isSubmitting && <Spinner className="motion-reduce:animate-none" />}
-          回答を確定する
+          {(isSubmitting || isRefreshing) && <Spinner className="motion-reduce:animate-none" />}
+          {isSubmitting
+            ? "回答を送信しています…"
+            : isRefreshing
+              ? "保存済み回答を確認しています…"
+              : retryRequired
+                ? "同じ回答を再送する"
+                : hasSavedAnswers
+                  ? "修正内容を確定する"
+                  : "5問の回答を確定する"}
         </Button>
+        {authExpired && (
+          <p className="mt-3 text-sm text-muted">
+            再ログインすると、回答案を保ったまま送信できます。
+          </p>
+        )}
       </section>
     </main>
   );
