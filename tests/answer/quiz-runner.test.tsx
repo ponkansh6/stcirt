@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within, act, waitFor } from "@testing-library/react";
 import QuizRunner from "@/app/answer/quiz-runner";
+import GlobalHeader from "@/app/GlobalHeader";
 import { ApiError } from "@/lib/api/client";
 
 const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
+vi.mock("next/navigation", () => ({ usePathname: () => "/answer" }));
 
 const quizzes = Array.from({ length: 5 }, (_, index) => ({
   question: {
@@ -38,25 +40,42 @@ function session(phase: object, overrides: Record<string, unknown> = {}) {
   };
 }
 
+function RunnerPage() {
+  return (
+    <>
+      <GlobalHeader />
+      <QuizRunner />
+    </>
+  );
+}
+
 describe("QuizRunner batch answer sheet", () => {
   beforeEach(() => mockUseQuizSession.mockReset());
 
   it("renders five native radio groups, progress navigation, and a disabled final confirmation while unanswered", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "answering" }));
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     expect(screen.getByRole("heading", { name: "受検票" })).toBeInTheDocument();
     expect(screen.getAllByRole("group", { name: /Question [1-5]\?/ })).toHaveLength(5);
     expect(screen.getAllByRole("radio")).toHaveLength(20);
     const navigation = screen.getByRole("navigation", { name: "設問へ移動" });
+    expect(navigation.closest("header")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "ホームへ" })).not.toBeInTheDocument();
     expect(within(navigation).getByRole("list").querySelectorAll("li")).toHaveLength(5);
+    expect(screen.queryByText(/まだ回答していません|回答を選択しています/)).not.toBeInTheDocument();
+    expect(
+      document.querySelectorAll('fieldset[aria-describedby^="choice-instruction-"]'),
+    ).toHaveLength(0);
+    expect(screen.getAllByRole("group", { name: /Question [1-5]\?/ })).toHaveLength(5);
     expect(screen.getByText("未回答 5問")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeDisabled();
   });
 
   it("shows loading, participant switching, and the ready start screen", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "loading" }));
-    const { rerender } = render(<QuizRunner />);
+    const { rerender } = render(<RunnerPage />);
     expect(screen.getByRole("status")).toHaveTextContent("全5問を準備しています");
+    expect(screen.getByRole("link", { name: "ホームへ" }).closest("header")).toBeInTheDocument();
 
     mockUseQuizSession.mockReturnValue(
       session(
@@ -64,29 +83,42 @@ describe("QuizRunner batch answer sheet", () => {
         { access: { kind: "switching", participant: { id: 7, name: "参加者" } } },
       ),
     );
-    rerender(<QuizRunner />);
+    rerender(<RunnerPage />);
     expect(screen.getByRole("status")).toHaveTextContent("参加状態を切り替えています");
+    expect(screen.getByRole("link", { name: "ホームへ" }).closest("header")).toBeInTheDocument();
 
     const start = vi.fn();
     mockUseQuizSession.mockReturnValue(session({ kind: "ready" }, { start }));
-    rerender(<QuizRunner />);
+    rerender(<RunnerPage />);
     expect(screen.getByRole("heading", { name: "参加者さん" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
     fireEvent.click(screen.getByRole("button", { name: "検定をはじめる" }));
     expect(start).toHaveBeenCalledOnce();
   });
 
+  it("keeps the home link in the shared header while checking participant access", () => {
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "answering" }, { access: { kind: "checking" } }),
+    );
+    render(<RunnerPage />);
+    expect(screen.getByRole("status")).toHaveTextContent("参加状態を確認しています");
+    expect(screen.getByRole("link", { name: "ホームへ" }).closest("header")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "設問へ移動" })).not.toBeInTheDocument();
+  });
+
   it("shows shortage and load-error screens with and without retained questions", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "shortage" }, { quizzes: [] }));
-    const { rerender } = render(<QuizRunner />);
+    const { rerender } = render(<RunnerPage />);
     expect(screen.getByRole("heading", { name: "問題が足りません" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "ホームへ戻る" })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
 
     const retryLoad = vi.fn();
     mockUseQuizSession.mockReturnValue(
       session({ kind: "load-error", message: "load failed" }, { quizzes: [], retryLoad }),
     );
-    rerender(<QuizRunner />);
+    rerender(<RunnerPage />);
     expect(screen.getByRole("alert")).toHaveTextContent("load failed");
+    expect(screen.getByRole("link", { name: "ホームへ" }).closest("header")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "もう一度読み込む" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "もう一度読み込む" }));
     expect(retryLoad).toHaveBeenCalledOnce();
@@ -97,7 +129,7 @@ describe("QuizRunner batch answer sheet", () => {
         { quizzes: quizzes.slice(0, 2), retryLoad },
       ),
     );
-    rerender(<QuizRunner />);
+    rerender(<RunnerPage />);
     expect(screen.getByRole("status")).toHaveTextContent("取得済みの2問は保持しています");
     expect(screen.getByRole("button", { name: "不足分を再読み込み" })).toBeInTheDocument();
   });
@@ -105,7 +137,7 @@ describe("QuizRunner batch answer sheet", () => {
   it("reports a failed participant switch and falls back for non-Error failures", async () => {
     const switchParticipant = vi.fn().mockRejectedValueOnce(new Error("switch failed"));
     mockUseQuizSession.mockReturnValue(session({ kind: "ready" }, { switchParticipant }));
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     fireEvent.click(screen.getByRole("button", { name: "別の名前で参加" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("switch failed");
 
@@ -131,7 +163,7 @@ describe("QuizRunner batch answer sheet", () => {
         },
       ),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     expect(screen.getByText("回答済み 5/5")).toBeInTheDocument();
     expect(screen.getByText("全5問に回答しました。")).toBeInTheDocument();
     const radios = screen.getAllByRole("radio");
@@ -150,7 +182,7 @@ describe("QuizRunner batch answer sheet", () => {
         { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, answeredCount: 5 },
       ),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     expect(screen.getByRole("status")).toHaveTextContent("回答を送信しています");
     expect(screen.getAllByRole("radio").every((radio) => radio.hasAttribute("disabled"))).toBe(
       true,
@@ -162,8 +194,15 @@ describe("QuizRunner batch answer sheet", () => {
   });
 
   it("moves focus to a question from the progress and unanswered links", () => {
-    mockUseQuizSession.mockReturnValue(session({ kind: "answering" }));
-    render(<QuizRunner />);
+    const select = vi.fn();
+    const saveAnswers = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        { selections: { 1: 3 }, answeredCount: 1, select, saveAnswers },
+      ),
+    );
+    render(<RunnerPage />);
     const heading = document.querySelector<HTMLHeadingElement>("#question-2 h2");
     expect(heading).not.toBeNull();
     const scrollIntoView = vi.fn();
@@ -179,6 +218,9 @@ describe("QuizRunner batch answer sheet", () => {
     fireEvent.click(screen.getByRole("button", { name: "第2問へ" }));
     expect(scrollIntoView).toHaveBeenCalledOnce();
     expect(focus).toHaveBeenCalledOnce();
+    expect(select).not.toHaveBeenCalled();
+    expect(saveAnswers).not.toHaveBeenCalled();
+    expect(screen.getByRole("radio", { name: /B1/ })).toBeChecked();
   });
 
   it("shows a retryable save error, locks the draft, and calls batch save explicitly", () => {
@@ -189,7 +231,7 @@ describe("QuizRunner batch answer sheet", () => {
         { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, answeredCount: 5, saveAnswers },
       ),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     expect(screen.getByRole("alert")).toHaveTextContent(
       "回答案は保持しています。同じ内容を再送してください。",
     );
@@ -217,7 +259,7 @@ describe("QuizRunner batch answer sheet", () => {
         },
       ),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     expect(screen.getByRole("alert")).toHaveTextContent(
       "回答案は保持しています。内容を確認して、もう一度確定してください。",
     );
@@ -235,7 +277,7 @@ describe("QuizRunner batch answer sheet", () => {
         { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, answeredCount: 5 },
       ),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     expect(screen.getByRole("status")).toHaveTextContent("保存済み回答を確認しています");
     expect(screen.getByRole("button", { name: "保存済み回答を確認しています…" })).toBeDisabled();
   });
@@ -255,7 +297,7 @@ describe("QuizRunner batch answer sheet", () => {
         },
       ),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     expect(screen.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeInTheDocument();
     expect(screen.getByLabelText("お名前")).toHaveValue("参加者");
     expect(screen.getAllByRole("radio")[1]).toBeChecked();
@@ -284,7 +326,7 @@ describe("QuizRunner batch answer sheet", () => {
         },
       ),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     fireEvent.click(screen.getByRole("button", { name: "修正内容を確定する" }));
     expect(saveAnswers).toHaveBeenCalledOnce();
   });
@@ -292,8 +334,10 @@ describe("QuizRunner batch answer sheet", () => {
   it("shows neutral completion and offers correction of the same five answers", () => {
     const editAnswers = vi.fn();
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }, { editAnswers }));
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     expect(screen.getByRole("heading", { name: "回答完了" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("navigation", { name: "設問へ移動" })).not.toBeInTheDocument();
     expect(
       screen.getByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
     ).toBeInTheDocument();
@@ -310,7 +354,7 @@ describe("QuizRunner batch answer sheet", () => {
         { selections: { 1: 1 }, answeredCount: 1, refreshSavedAnswers },
       ),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     expect(screen.getByRole("alert")).toHaveTextContent("回答案は保持しています");
     expect(screen.getAllByRole("radio")[1]).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "保存済み回答を再確認する" }));
@@ -327,7 +371,7 @@ describe("QuizRunner batch answer sheet", () => {
     mockUseQuizSession.mockReturnValue(
       session({ kind: "ready" }, { access: { kind: "login" }, login }),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     const name = screen.getByLabelText("お名前");
     const pin = screen.getByLabelText("4桁PIN");
     fireEvent.change(name, { target: { value: "田中" } });
@@ -365,7 +409,7 @@ describe("QuizRunner batch answer sheet", () => {
     mockUseQuizSession.mockReturnValue(
       session({ kind: "ready" }, { access: { kind: "login" }, login }),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     fireEvent.change(screen.getByLabelText("お名前"), { target: { value: "田中" } });
     const pin = screen.getByLabelText("4桁PIN");
     fireEvent.change(pin, { target: { value: "0123" } });
@@ -385,7 +429,7 @@ describe("QuizRunner batch answer sheet", () => {
         { access: { kind: "login", message: "参加状態を確認できませんでした。" } },
       ),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     expect(screen.getByRole("alert")).toHaveTextContent("参加状態を確認できませんでした。");
     expect(screen.getByLabelText("お名前")).toHaveAttribute(
       "aria-describedby",
@@ -420,7 +464,7 @@ describe("QuizRunner batch answer sheet", () => {
     mockUseQuizSession.mockReturnValue(
       session({ kind: "ready" }, { access: { kind: "login" }, login }),
     );
-    render(<QuizRunner />);
+    render(<RunnerPage />);
     fireEvent.change(screen.getByLabelText("お名前"), { target: { value: "田中" } });
     fireEvent.change(screen.getByLabelText("4桁PIN"), { target: { value: "0123" } });
     fireEvent.click(screen.getByRole("button", { name: "はじめる" }));

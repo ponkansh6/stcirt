@@ -8,6 +8,7 @@ import { Button } from "@/components/Button";
 import { NavLink } from "@/components/NavLink";
 import { Spinner } from "@/components/Spinner";
 import { ApiError } from "@/lib/api/client";
+import { HeaderPortal } from "./header-portal";
 
 export default function QuizRunner() {
   const {
@@ -50,137 +51,156 @@ export default function QuizRunner() {
 
   if (access.kind === "checking") {
     return (
-      <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
-        <p className="w-full text-center text-muted" role="status" aria-live="polite">
-          参加状態を確認しています…
-        </p>
-      </main>
+      <>
+        <HeaderHomeLink />
+        <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
+          <p className="w-full text-center text-muted" role="status" aria-live="polite">
+            参加状態を確認しています…
+          </p>
+        </main>
+      </>
     );
   }
 
   if (access.kind === "login") {
     return (
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-        <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-          <h1 className="text-3xl font-bold tracking-tight">参加して検定を受ける</h1>
-          <p className="mt-4 max-w-xl leading-relaxed text-muted">
-            回答を記録するため、お名前と主催者から案内された4桁PINを入力してください。
-          </p>
-          <ParticipantForm onLogin={login} message={access.message} />
-          <NavLink href="/" variant="ghost" className="mt-3">
-            ホームへ戻る
-          </NavLink>
-        </ParticipantCard>
-      </main>
+      <>
+        <HeaderHomeLink />
+        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+          <ParticipantCard>
+            <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+            <h1 className="text-3xl font-bold tracking-tight">参加して検定を受ける</h1>
+            <p className="mt-4 max-w-xl leading-relaxed text-muted">
+              回答を記録するため、お名前と主催者から案内された4桁PINを入力してください。
+            </p>
+            <ParticipantForm onLogin={login} message={access.message} />
+          </ParticipantCard>
+        </main>
+      </>
     );
   }
 
   if (access.kind === "switching") {
     return (
-      <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
-        <p className="w-full text-center text-muted" role="status" aria-live="polite">
-          参加状態を切り替えています…
-        </p>
-      </main>
+      <>
+        <HeaderHomeLink />
+        <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
+          <p className="w-full text-center text-muted" role="status" aria-live="polite">
+            参加状態を切り替えています…
+          </p>
+        </main>
+      </>
     );
   }
 
   if (access.kind === "ready" && phase.kind === "ready") {
     return (
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-        <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-          <h1 className="text-3xl font-bold tracking-tight">{access.participant.name}さん</h1>
-          <p className="mt-3 text-muted">
-            全5問に回答し、最後にまとめて確定します。回答は確定前に何度でも見直せます。
-          </p>
-          {switchError && (
-            <p className="mt-4 text-sm font-medium text-error" role="alert">
-              {switchError}
+      <>
+        <HeaderHomeLink />
+        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+          <ParticipantCard>
+            <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+            <h1 className="text-3xl font-bold tracking-tight">{access.participant.name}さん</h1>
+            <p className="mt-3 text-muted">
+              全5問に回答し、最後にまとめて確定します。回答は確定前に何度でも見直せます。
             </p>
-          )}
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Button onClick={start}>検定をはじめる</Button>
-            <Button onClick={() => void handleSwitchParticipant()} variant="ghost">
-              別の名前で参加
-            </Button>
-          </div>
-        </ParticipantCard>
-      </main>
+            {switchError && (
+              <p className="mt-4 text-sm font-medium text-error" role="alert">
+                {switchError}
+              </p>
+            )}
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <Button onClick={start}>検定をはじめる</Button>
+              <Button onClick={() => void handleSwitchParticipant()} variant="ghost">
+                別の名前で参加
+              </Button>
+            </div>
+          </ParticipantCard>
+        </main>
+      </>
     );
   }
 
   if (phase.kind === "loading") {
     return (
-      <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
-        <p className="w-full text-center text-muted" role="status" aria-live="polite">
-          全5問を準備しています…
-        </p>
-      </main>
+      <>
+        <HeaderHomeLink />
+        <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
+          <p className="w-full text-center text-muted" role="status" aria-live="polite">
+            全5問を準備しています…
+          </p>
+        </main>
+      </>
     );
   }
 
   if (phase.kind === "shortage") {
     return (
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-        <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-          <h1 className="text-3xl font-bold tracking-tight">問題が足りません</h1>
-          <p className="mt-4 text-muted">
-            全5問をそろえられないため、検定を開始できません。問題が5問そろったら、もう一度お試しください。
-          </p>
-          <NavLink href="/" variant="outline" className="mt-8">
-            ホームへ戻る
-          </NavLink>
-        </ParticipantCard>
-      </main>
+      <>
+        <HeaderHomeLink />
+        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+          <ParticipantCard>
+            <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+            <h1 className="text-3xl font-bold tracking-tight">問題が足りません</h1>
+            <p className="mt-4 text-muted">
+              全5問をそろえられないため、検定を開始できません。問題が5問そろったら、もう一度お試しください。
+            </p>
+          </ParticipantCard>
+        </main>
+      </>
     );
   }
 
   if (phase.kind === "load-error") {
     const hasLoadedQuestions = quizzes.length > 0;
     return (
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-        <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-          <h1 className="text-3xl font-bold tracking-tight">問題を読み込めませんでした</h1>
-          <p className="mt-4 text-muted" role="alert">
-            {phase.message}
-          </p>
-          {hasLoadedQuestions && (
-            <p className="mt-3 text-sm leading-relaxed text-muted" role="status" aria-live="polite">
-              取得済みの{quizzes.length}問は保持しています。不足分から再開できます。
+      <>
+        <HeaderHomeLink />
+        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+          <ParticipantCard>
+            <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+            <h1 className="text-3xl font-bold tracking-tight">問題を読み込めませんでした</h1>
+            <p className="mt-4 text-muted" role="alert">
+              {phase.message}
             </p>
-          )}
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <Button onClick={retryLoad}>
-              {hasLoadedQuestions ? "不足分を再読み込み" : "もう一度読み込む"}
-            </Button>
-            <NavLink href="/" variant="ghost">
-              ホームへ戻る
-            </NavLink>
-          </div>
-        </ParticipantCard>
-      </main>
+            {hasLoadedQuestions && (
+              <p
+                className="mt-3 text-sm leading-relaxed text-muted"
+                role="status"
+                aria-live="polite"
+              >
+                取得済みの{quizzes.length}問は保持しています。不足分から再開できます。
+              </p>
+            )}
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Button onClick={retryLoad}>
+                {hasLoadedQuestions ? "不足分を再読み込み" : "もう一度読み込む"}
+              </Button>
+            </div>
+          </ParticipantCard>
+        </main>
+      </>
     );
   }
 
   if (phase.kind === "complete") {
     return (
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-        <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-          <h1 className="text-3xl font-bold tracking-tight">回答完了</h1>
-          <p className="mt-4 text-muted">全5問の回答を記録しました。</p>
-          <p className="mt-2 text-sm leading-relaxed text-muted">
-            回答を見直す場合は、同じ5問の回答を復元して修正できます。
-          </p>
-          <Button onClick={editAnswers} className="mt-8">
-            回答を修正する
-          </Button>
-        </ParticipantCard>
-      </main>
+      <>
+        <HeaderHomeLink />
+        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+          <ParticipantCard>
+            <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+            <h1 className="text-3xl font-bold tracking-tight">回答完了</h1>
+            <p className="mt-4 text-muted">全5問の回答を記録しました。</p>
+            <p className="mt-2 text-sm leading-relaxed text-muted">
+              回答を見直す場合は、同じ5問の回答を復元して修正できます。
+            </p>
+            <Button onClick={editAnswers} className="mt-8">
+              回答を修正する
+            </Button>
+          </ParticipantCard>
+        </main>
+      </>
     );
   }
 
@@ -191,24 +211,9 @@ export default function QuizRunner() {
   const hasSavedAnswers = Object.keys(savedSelections).length === 5;
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-7 sm:py-10">
-      <header className="mb-7 border-b border-border pb-6">
-        <p className="text-sm font-semibold tracking-widest text-primary">5問検定</p>
-        <div className="mt-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">受検票</h1>
-            {access.kind === "ready" && (
-              <p className="mt-1 text-sm text-muted">受検者：{access.participant.name}</p>
-            )}
-          </div>
-          <p className="text-base font-bold" aria-live="polite">
-            回答済み {answeredCount}/5
-          </p>
-        </div>
-        <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted">
-          全5問を縦に確認しながら回答してください。回答は最後にまとめて確定します。
-        </p>
-        <nav className="mt-5" aria-label="設問へ移動">
+    <>
+      <HeaderPortal>
+        <nav aria-label="設問へ移動">
           <ol className="grid grid-cols-5 gap-2">
             {quizzes.map(({ question }, index) => {
               const answered = selections[question.id] !== undefined;
@@ -231,189 +236,219 @@ export default function QuizRunner() {
             })}
           </ol>
         </nav>
-      </header>
-
-      {phase.kind === "answering" && phase.message && (
-        <p
-          className="mb-5 rounded-lg border border-error/50 bg-error/10 p-4 text-sm font-medium text-error"
-          role="alert"
-          aria-live="assertive"
-        >
-          {phase.message}{" "}
-          {phase.refreshRequired
-            ? "回答案は保持しています。保存済み回答を再確認してから、確定してください。"
-            : phase.retryRequired
-              ? "回答案は保持しています。同じ内容を再送してください。"
-              : "回答案は保持しています。内容を確認して、もう一度確定してください。"}
-        </p>
-      )}
-
-      {authExpired && (
-        <section
-          className="mb-6 rounded-xl border border-border bg-surface-2 p-5 sm:p-6"
-          aria-labelledby="reauth-title"
-        >
-          <h2 id="reauth-title" className="text-lg font-bold">
-            参加状態の確認が必要です
-          </h2>
-          <p className="mt-2 text-sm leading-relaxed text-muted">
-            再ログイン後、回答は自動送信されません。回答案を確認してから、明示的に再確定してください。
-          </p>
-          <ParticipantForm
-            key="reauthentication-form"
-            onLogin={login}
-            initialName={access.participant.name}
-            submitLabel="再ログインする"
-          />
-        </section>
-      )}
-
-      <div className="space-y-5">
-        {quizzes.map(({ question, shuffled }, index) => {
-          const selectedIndex = selections[question.id];
-          const questionTitleId = `question-title-${question.id}`;
-          return (
-            <section
-              key={question.id}
-              id={`question-${question.id}`}
-              className="scroll-mt-5 rounded-2xl border border-border bg-surface p-4 shadow-card sm:p-7"
-              aria-labelledby={questionTitleId}
-            >
-              <p className="mb-2 text-sm font-semibold tracking-widest text-primary">
-                第{index + 1}問{" "}
-                <span className="font-medium tracking-normal text-muted">/ 全5問</span>
-              </p>
-              <h2
-                id={questionTitleId}
-                ref={(node) => {
-                  questionRefs.current[question.id] = node;
-                }}
-                tabIndex={-1}
-                className="mb-6 break-words text-xl font-bold leading-relaxed tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4 sm:text-2xl"
-              >
-                {question.question}
-              </h2>
-              <fieldset
-                disabled={isLocked}
-                className="min-w-0 space-y-3 border-t border-border pt-5"
-                aria-describedby={`choice-instruction-${question.id}`}
-              >
-                <legend className="mb-3 max-w-full break-words px-1 text-sm font-semibold text-muted">
-                  <span className="sr-only">第{index + 1}問 / 全5問：</span>
-                  {question.question}
-                </legend>
-                {shuffled.choices.map((choice, choiceIndex) => (
-                  <ChoiceButton
-                    key={choiceIndex}
-                    id={`answer-${question.id}-${choiceIndex}`}
-                    name={`answer-${question.id}`}
-                    value={String(choiceIndex)}
-                    label={choiceLabel(choiceIndex)}
-                    text={choice}
-                    variant={selectedIndex === choiceIndex ? "selected" : "idle"}
-                    checked={selectedIndex === choiceIndex}
-                    onChange={() => select(question.id, choiceIndex)}
-                    disabled={isLocked}
-                  />
-                ))}
-              </fieldset>
-              <p id={`choice-instruction-${question.id}`} className="mt-3 text-sm text-muted">
-                {selectedIndex === undefined
-                  ? "まだ回答していません。選択肢を1つ選んでください。"
-                  : "回答を選択しています。確定前に変更できます。"}
-              </p>
-            </section>
-          );
-        })}
-      </div>
-
-      <section
-        className="mt-7 rounded-2xl border-2 border-primary/30 bg-surface p-5 shadow-card sm:p-7"
-        aria-labelledby="final-check-title"
-      >
-        <p className="text-sm font-semibold tracking-widest text-primary">最終確認</p>
-        <h2 id="final-check-title" className="mt-1 text-xl font-bold">
-          回答内容を確認してください
-        </h2>
-        <p className="mt-3 text-sm leading-relaxed text-muted">
-          保存すると回答完了になります。完了後も「回答を修正する」から同じ5問を見直せます。
-        </p>
-        <p className="mt-4 font-semibold" aria-live="polite">
-          {unanswered.length === 0 ? "全5問に回答しました。" : `未回答 ${unanswered.length}問`}
-        </p>
-        {unanswered.length > 0 && (
-          <div className="mt-2" role="group" aria-labelledby="unanswered-heading">
-            <p id="unanswered-heading" className="text-sm text-muted">
-              未回答の設問へ移動できます：
+      </HeaderPortal>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-7 sm:py-10">
+        <header className="mb-7 border-b border-border pb-6">
+          <p className="text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <div className="mt-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">受検票</h1>
+              {access.kind === "ready" && (
+                <p className="mt-1 text-sm text-muted">受検者：{access.participant.name}</p>
+              )}
+            </div>
+            <p className="text-base font-bold" aria-live="polite">
+              回答済み {answeredCount}/5
             </p>
-            <ul className="mt-2 flex flex-wrap gap-2">
-              {unanswered.map(({ question }) => {
-                const questionIndex = quizzes.findIndex((quiz) => quiz.question.id === question.id);
-                return (
-                  <li key={question.id}>
-                    <button
-                      type="button"
-                      onClick={() => jumpToQuestion(question.id)}
-                      className="min-h-11 rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm font-semibold underline decoration-1 underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                    >
-                      第{questionIndex + 1}問へ
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
           </div>
-        )}
-        {isSubmitting && (
-          <p className="mt-4 text-sm font-medium" role="status" aria-live="polite">
-            回答を送信しています…
+          <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted">
+            全5問を縦に確認しながら回答してください。回答は最後にまとめて確定します。
           </p>
-        )}
-        {isRefreshing && (
-          <p className="mt-4 text-sm font-medium" role="status" aria-live="polite">
-            保存済み回答を確認しています…
-          </p>
-        )}
-        {refreshRequired && (
-          <Button
-            onClick={() => void refreshSavedAnswers()}
-            className="mt-6 min-h-12"
-            disabled={isSubmitting || isRefreshing}
+        </header>
+
+        {phase.kind === "answering" && phase.message && (
+          <p
+            className="mb-5 rounded-lg border border-error/50 bg-error/10 p-4 text-sm font-medium text-error"
+            role="alert"
+            aria-live="assertive"
           >
-            保存済み回答を再確認する
-          </Button>
-        )}
-        <Button
-          onClick={() => void saveAnswers()}
-          disabled={unanswered.length > 0 || isRefreshing || authExpired || refreshRequired}
-          aria-disabled={
-            isSubmitting ||
-            isRefreshing ||
-            unanswered.length > 0 ||
-            authExpired ||
-            refreshRequired ||
-            undefined
-          }
-          className={`mt-6 min-h-12 w-full sm:w-auto ${isSubmitting || isRefreshing ? "cursor-wait opacity-80" : ""}`}
-        >
-          {(isSubmitting || isRefreshing) && <Spinner className="motion-reduce:animate-none" />}
-          {isSubmitting
-            ? "回答を送信しています…"
-            : isRefreshing
-              ? "保存済み回答を確認しています…"
-              : retryRequired
-                ? "同じ回答を再送する"
-                : hasSavedAnswers
-                  ? "修正内容を確定する"
-                  : "5問の回答を確定する"}
-        </Button>
-        {authExpired && (
-          <p className="mt-3 text-sm text-muted">
-            再ログインすると、回答案を保ったまま送信できます。
+            {phase.message}{" "}
+            {phase.refreshRequired
+              ? "回答案は保持しています。保存済み回答を再確認してから、確定してください。"
+              : phase.retryRequired
+                ? "回答案は保持しています。同じ内容を再送してください。"
+                : "回答案は保持しています。内容を確認して、もう一度確定してください。"}
           </p>
         )}
-      </section>
-    </main>
+
+        {authExpired && (
+          <section
+            className="mb-6 rounded-xl border border-border bg-surface-2 p-5 sm:p-6"
+            aria-labelledby="reauth-title"
+          >
+            <h2 id="reauth-title" className="text-lg font-bold">
+              参加状態の確認が必要です
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-muted">
+              再ログイン後、回答は自動送信されません。回答案を確認してから、明示的に再確定してください。
+            </p>
+            <ParticipantForm
+              key="reauthentication-form"
+              onLogin={login}
+              initialName={access.participant.name}
+              submitLabel="再ログインする"
+            />
+          </section>
+        )}
+
+        <div className="space-y-5">
+          {quizzes.map(({ question, shuffled }, index) => {
+            const selectedIndex = selections[question.id];
+            const questionTitleId = `question-title-${question.id}`;
+            return (
+              <section
+                key={question.id}
+                id={`question-${question.id}`}
+                className="rounded-2xl border border-border bg-surface p-4 shadow-card sm:p-7"
+                aria-labelledby={questionTitleId}
+              >
+                <p className="mb-2 text-sm font-semibold tracking-widest text-primary">
+                  第{index + 1}問{" "}
+                  <span className="font-medium tracking-normal text-muted">/ 全5問</span>
+                </p>
+                <h2
+                  id={questionTitleId}
+                  ref={(node) => {
+                    questionRefs.current[question.id] = node;
+                  }}
+                  tabIndex={-1}
+                  className="mb-6 scroll-mt-20 break-words text-xl font-bold leading-relaxed tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4 sm:text-2xl"
+                >
+                  {question.question}
+                </h2>
+                <fieldset
+                  disabled={isLocked}
+                  className="min-w-0 space-y-3 border-t border-border pt-5"
+                >
+                  <legend className="mb-3 max-w-full break-words px-1 text-sm font-semibold text-muted">
+                    <span className="sr-only">第{index + 1}問 / 全5問：</span>
+                    {question.question}
+                  </legend>
+                  {shuffled.choices.map((choice, choiceIndex) => (
+                    <ChoiceButton
+                      key={choiceIndex}
+                      id={`answer-${question.id}-${choiceIndex}`}
+                      name={`answer-${question.id}`}
+                      value={String(choiceIndex)}
+                      label={choiceLabel(choiceIndex)}
+                      text={choice}
+                      variant={selectedIndex === choiceIndex ? "selected" : "idle"}
+                      checked={selectedIndex === choiceIndex}
+                      onChange={() => select(question.id, choiceIndex)}
+                      disabled={isLocked}
+                    />
+                  ))}
+                </fieldset>
+              </section>
+            );
+          })}
+        </div>
+
+        <section
+          className="mt-7 rounded-2xl border-2 border-primary/30 bg-surface p-5 shadow-card sm:p-7"
+          aria-labelledby="final-check-title"
+        >
+          <p className="text-sm font-semibold tracking-widest text-primary">最終確認</p>
+          <h2 id="final-check-title" className="mt-1 text-xl font-bold">
+            回答内容を確認してください
+          </h2>
+          <p className="mt-3 text-sm leading-relaxed text-muted">
+            保存すると回答完了になります。完了後も「回答を修正する」から同じ5問を見直せます。
+          </p>
+          <p className="mt-4 font-semibold" aria-live="polite">
+            {unanswered.length === 0 ? "全5問に回答しました。" : `未回答 ${unanswered.length}問`}
+          </p>
+          {unanswered.length > 0 && (
+            <div className="mt-2" role="group" aria-labelledby="unanswered-heading">
+              <p id="unanswered-heading" className="text-sm text-muted">
+                未回答の設問へ移動できます：
+              </p>
+              <ul className="mt-2 flex flex-wrap gap-2">
+                {unanswered.map(({ question }) => {
+                  const questionIndex = quizzes.findIndex(
+                    (quiz) => quiz.question.id === question.id,
+                  );
+                  return (
+                    <li key={question.id}>
+                      <button
+                        type="button"
+                        onClick={() => jumpToQuestion(question.id)}
+                        className="min-h-11 rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm font-semibold underline decoration-1 underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      >
+                        第{questionIndex + 1}問へ
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+          {isSubmitting && (
+            <p className="mt-4 text-sm font-medium" role="status" aria-live="polite">
+              回答を送信しています…
+            </p>
+          )}
+          {isRefreshing && (
+            <p className="mt-4 text-sm font-medium" role="status" aria-live="polite">
+              保存済み回答を確認しています…
+            </p>
+          )}
+          {refreshRequired && (
+            <Button
+              onClick={() => void refreshSavedAnswers()}
+              className="mt-6 min-h-12"
+              disabled={isSubmitting || isRefreshing}
+            >
+              保存済み回答を再確認する
+            </Button>
+          )}
+          <Button
+            onClick={() => void saveAnswers()}
+            disabled={unanswered.length > 0 || isRefreshing || authExpired || refreshRequired}
+            aria-disabled={
+              isSubmitting ||
+              isRefreshing ||
+              unanswered.length > 0 ||
+              authExpired ||
+              refreshRequired ||
+              undefined
+            }
+            className={`mt-6 min-h-12 w-full sm:w-auto ${isSubmitting || isRefreshing ? "cursor-wait opacity-80" : ""}`}
+          >
+            {(isSubmitting || isRefreshing) && <Spinner className="motion-reduce:animate-none" />}
+            {isSubmitting
+              ? "回答を送信しています…"
+              : isRefreshing
+                ? "保存済み回答を確認しています…"
+                : retryRequired
+                  ? "同じ回答を再送する"
+                  : hasSavedAnswers
+                    ? "修正内容を確定する"
+                    : "5問の回答を確定する"}
+          </Button>
+          {authExpired && (
+            <p className="mt-3 text-sm text-muted">
+              再ログインすると、回答案を保ったまま送信できます。
+            </p>
+          )}
+        </section>
+      </main>
+    </>
+  );
+}
+
+function HeaderHomeLink() {
+  return (
+    <HeaderPortal>
+      <NavLink
+        href="/"
+        variant="bare"
+        className="font-bold text-lg hover:text-primary transition duration-200 ease-[var(--ease-out-soft)] motion-safe:active:scale-[0.98]"
+        pendingClassName="opacity-50"
+      >
+        ホームへ
+      </NavLink>
+    </HeaderPortal>
   );
 }
 

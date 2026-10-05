@@ -79,6 +79,8 @@ Unconfirmed selections are held only in client state. Confirmed answer sets are 
 - Use a restrained exam-paper visual style with light surfaces, ink text, subtle borders, and a primary accent; do not use medals, pass/fail imagery, or certificate visuals.
 - Provide readable contrast, visible keyboard focus, native radio semantics, live status updates, and textual progress labels so color is not the sole signal. Choice rows and the primary confirmation action have at least 44 CSS px of interaction height.
 - Keep content in a single readable column on narrow screens, avoid horizontal scrolling at 320 CSS px and 200% zoom, and respect reduced-motion preferences.
+- During the active answering session, replace the shared sticky header's home link with one five-question navigation. Keep the sticky header's sizing and spacing, show answered state, retain answers while navigating, and move focus to each question heading below the sticky header. At all other answer states, including login, ready, loading, switching, shortage, error, and completion, keep a home link in the shared header and do not show question navigation.
+- Do not show per-question helper paragraphs below the radio choices or reference them with `aria-describedby`; retain each fieldset legend, native radio group name, overall unanswered guidance, and answer progress.
 - In-page links to unanswered questions move focus to a visible question heading without it being hidden behind page chrome. Do not add exam-time correctness, explanation, score, accuracy, or pass/fail information.
 
 ## API
@@ -136,7 +138,8 @@ Unconfirmed selections are held only in client state. Confirmed answer sets are 
 ## Components
 
 - `/`: server-rendered exam briefing and start availability
-- `/answer`: participant entry/session reuse, client-held five-question session, native radio choice groups, atomic batch confirmation, same-submission correction, and neutral completion
+- `/answer`: participant entry/session reuse, client-held five-question session, native radio choice groups, sticky-header question navigation while answering and home navigation in other states, atomic batch confirmation, same-submission correction, and neutral completion
+- `src/app/GlobalHeader.tsx` and `src/app/answer/header-portal.tsx`: shared sticky header and answer-route navigation slot, with RootLayout remaining a Server Component
 - `src/components/ChoiceButton.tsx`: labeled native radio row with circular choice mark and selected-state styling
 - `src/lib/db/repository/question-repository.ts`: next-question lookup by ID cursor and answer lookup from `exam_questions`
 - `src/app/api/answers/batch/route.ts`: authenticated atomic five-answer create/correction endpoint

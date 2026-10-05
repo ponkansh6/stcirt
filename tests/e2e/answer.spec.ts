@@ -126,6 +126,8 @@ test("direct answer access requires name and four digit PIN before the explicit 
 
   await page.goto("/answer");
   await expect(page.getByRole("heading", { name: "参加して検定を受ける" })).toBeVisible();
+  const sharedHeader = page.locator("body > header");
+  await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
   await expect(page.getByLabel("4桁PIN")).toHaveAttribute("inputmode", "numeric");
   await expect(page.getByLabel("4桁PIN")).toHaveAttribute("pattern", "[0-9]{4}");
   await signIn(page, "Aki", "0123");
@@ -133,6 +135,7 @@ test("direct answer access requires name and four digit PIN before the explicit 
   expect(loginRequests).toEqual([{ name: "Aki", pin: "0123" }]);
   expect(requests).toEqual([]);
   await expect(page.getByRole("button", { name: "検定をはじめる" })).toBeVisible();
+  await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
   await startQuiz(page);
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   expect(requests).toEqual([
@@ -163,7 +166,9 @@ test("direct answer access explains when five questions are unavailable", async 
       "全5問をそろえられないため、検定を開始できません。問題が5問そろったら、もう一度お試しください。",
     ),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "ホームへ戻る" })).toHaveAttribute("href", "/");
+  await expect(
+    page.locator("body > header").getByRole("link", { name: "ホームへ" }),
+  ).toHaveAttribute("href", "/");
 });
 
 test("keeps choices local, blocks an incomplete batch, then confirms all five with the participant cookie", async ({
@@ -197,6 +202,8 @@ test("keeps choices local, blocks an incomplete batch, then confirms all five wi
   await confirm.click();
 
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "設問へ移動" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
   await expect(page.getByText(/正解！|不正解|解説:|正答率|合格/)).toHaveCount(0);
   expect(submitted).toHaveLength(1);
   expect(submitted[0].body).toMatchObject({ expectedRevision: 0 });
@@ -307,6 +314,17 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   ]);
   expect(radioNames).toEqual(["answer-1", "answer-2", "answer-3", "answer-4", "answer-5"]);
 
+  const navigation = page.getByRole("navigation", { name: "設問へ移動" });
+  await firstRadio.locator("xpath=ancestor::label").click();
+  await expect(firstRadio).toBeChecked();
+  await expect(navigation.getByRole("link", { name: "第1問へ移動、回答済み" })).toBeVisible();
+  const navControls = navigation.getByRole("link");
+  for (let index = 0; index < 5; index += 1) {
+    const box = await navControls.nth(index).boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+    expect(box?.width).toBeGreaterThanOrEqual(44);
+  }
+
   await firstRadio.focus();
   await page.keyboard.press("Space");
   await expect(firstRadio).toBeChecked();
@@ -314,9 +332,20 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   const radioFocusRing = await firstRow.evaluate((element) => getComputedStyle(element).boxShadow);
   expect(radioFocusRing).not.toBe("none");
 
-  const navigation = page.getByRole("navigation", { name: "設問へ移動" });
+  await expect(navigation.locator("xpath=ancestor::header")).toBeVisible();
+  await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "設問へ移動" })).toHaveCount(1);
   await expect(navigation.getByRole("list").getByRole("listitem")).toHaveCount(5);
   await expect(navigation.locator("a, button, input")).toHaveCount(5);
+  const targetHeading = page.locator("#question-5 h2");
+  await navigation.getByRole("link", { name: "第5問へ移動、未回答" }).click();
+  await expect(targetHeading).toBeFocused();
+  const headingTop = await targetHeading.evaluate((heading) => heading.getBoundingClientRect().top);
+  const stickyBottom = await page
+    .locator("body > header")
+    .evaluate((header) => header.getBoundingClientRect().bottom);
+  expect(headingTop).toBeGreaterThanOrEqual(stickyBottom);
+  await expect(firstRadio).toBeChecked();
 
   const [rowBox, confirmBox] = await Promise.all([
     firstRow.boundingBox(),
@@ -449,9 +478,12 @@ test("allows a different participant after ending the current session", async ({
 
   await page.goto("/answer");
   await expect(page.getByRole("heading", { name: "First Participantさん" })).toBeVisible();
+  const sharedHeader = page.locator("body > header");
+  await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
   await expect(page.getByRole("button", { name: "検定をはじめる" })).toBeVisible();
   await page.getByRole("button", { name: "別の名前で参加" }).click();
   await expect(page.getByRole("heading", { name: "参加して検定を受ける" })).toBeVisible();
+  await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
   await signIn(page, "Second Participant", "0042");
   expect(session.logoutRequests).toBe(1);
   expect(session.loginRequests).toEqual([{ name: "Second Participant", pin: "0042" }]);
@@ -526,6 +558,10 @@ test("retries only missing questions after a prefetch network failure", async ({
   await page.goto("/answer");
   await signIn(page);
   await startQuiz(page);
+  await expect(page.getByRole("button", { name: "不足分を再読み込み" })).toBeVisible();
+  await expect(
+    page.locator("body > header").getByRole("link", { name: "ホームへ" }),
+  ).toHaveAttribute("href", "/");
   await page.getByRole("button", { name: "不足分を再読み込み" }).click();
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   expect(requests).toEqual([
