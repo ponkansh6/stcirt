@@ -83,6 +83,31 @@ A Next.js 16 application for answering a shared set of stored 4-choice questions
 
    The required server settings are `PARTICIPANT_PIN` (exactly four ASCII digits, including leading zeroes) and `PARTICIPANT_SESSION_SECRET` (at least 32 bytes). PIN or secret changes invalidate existing signed cookies. The cookie lifetime defaults to 30 days and can be set with `PARTICIPANT_SESSION_DAYS` (1–90). Failed authentication attempts are reserved transactionally in Turso before PIN verification: the default limit is 5 attempts per normalized name in 15 minutes, shared across all request sources. Set `PARTICIPANT_RATE_LIMIT_NAME` to change that limit. A successful PIN verification releases its reservation in a Turso transaction, so successful sign-ins do not count against the limit. If that release fails, sign-in fails closed with a temporary-unavailable response and no session cookie; the reservation may remain counted until its 15-minute window expires, so the participant may need to retry later. Database errors while reserving or finalizing an authentication attempt also fail closed. Old rate-limit records are cleaned during failed sign-in requests once they are more than 24 hours old.
 
+   **Admin presentation access** uses a separate PIN and signing secret. Run the same creator with `--profile admin`; enter and confirm a private PIN (1–128 characters) in the hidden terminal prompt. The generated signing secret is saved with mode `0600` and is never printed. Add `--rotate` only to deliberately replace an existing admin pair. After linking the checkout to the intended Vercel project and signing in, use `--sync-production` to create the pair and sync it, or sync an already saved pair to one explicit target. Both commands only update environment variables; start a new deployment separately for changes to affect the running app. The default profile remains `participant`, so always include `--profile admin` for admin operations.
+
+   ```bash
+   pnpm participant-auth generate --profile admin
+   pnpm participant-auth generate --profile admin --sync-production
+   pnpm participant-auth sync --profile admin --target production
+   pnpm participant-auth sync --profile admin --target preview
+   ```
+
+   Vercelへ送る2変数のupsertはatomicではありません。同期が失敗し片方だけ反映された可能性がある場合は、同じprofileとtargetを指定して同期コマンドを再実行してください。選択したVercel targetに、そのprofileの2変数が両方そろったことを確認してから新しいdeploymentを開始します。
+
+   ```bash
+   # participant / Production, Preview
+   pnpm participant-auth sync --target production
+   pnpm participant-auth sync --target preview
+
+   # admin / Production, Preview
+   pnpm participant-auth sync --profile admin --target production
+   pnpm participant-auth sync --profile admin --target preview
+   ```
+
+   Admin Preview sync targets all branches. A branch-specific override for `ADMIN_PRESENTATION_PIN` or `ADMIN_PRESENTATION_SESSION_SECRET` may take precedence over the general Preview value; inspect the intended branch's Vercel environment and update its override if needed.
+
+   `ADMIN_PRESENTATION_PIN` must contain 1–128 characters on one line and `ADMIN_PRESENTATION_SESSION_SECRET` must have at least 32 bytes. The generator preserves spaces, `#`, `$`, quotes, and backslashes using Next.js dotenv-compatible quoting. It refuses a PIN containing all three dotenv quote delimiters (`'`, `"`, and `` ` ``), or one that would be changed by dotenv's double-quote newline escapes, because `.env.local` cannot represent those values unambiguously. Admin credentials are independent from participant credentials.
+
 5. **Run development server**:
 
    ```bash

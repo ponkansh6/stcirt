@@ -6,6 +6,9 @@ import { NavLink } from "@/components/NavLink";
 export default function GlobalHeader() {
   const pathname = usePathname();
   const isAnswerRoute = pathname === "/answer";
+  const isPresentationRoute = pathname === "/presentation" || pathname === "/admin/presentation";
+
+  if (isPresentationRoute) return null;
 
   return (
     <header className="sticky top-0 z-10 border-b border-border bg-bg/80 backdrop-blur-md">

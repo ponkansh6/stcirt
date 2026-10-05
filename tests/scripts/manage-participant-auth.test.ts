@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,18 @@ import {
   validatePair,
   writePair,
 } from "../../scripts/manage-participant-auth.mjs";
+
+const testRequire = createRequire(import.meta.url);
+const nextRequire = createRequire(testRequire.resolve("next"));
+const { processEnv, resetEnv } = nextRequire("@next/env") as {
+  processEnv: (
+    files: Array<{ path: string; contents: string; env: Record<string, string> }>,
+    directory: string,
+    logger: { error: () => void },
+    forceReload: boolean,
+  ) => [Record<string, string>, Record<string, string>];
+  resetEnv: () => void;
+};
 
 const directories: string[] = [];
 
@@ -213,6 +226,114 @@ describe("participant auth management", () => {
     expect(parseEnv(contents).get("CUSTOM")).toBe("value");
     expect(parseEnv(contents).get("PARTICIPANT_PIN")).toBe("0007");
     expect((await stat(envPath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("creates admin values without replacing participant values and syncs only the admin profile", async () => {
+    const directory = await temporaryDirectory();
+    const envPath = join(directory, ".env.local");
+    const projectPath = join(directory, "project.json");
+    const participantPair = `PARTICIPANT_PIN=0042\nPARTICIPANT_SESSION_SECRET=${"p".repeat(43)}\n`;
+    await writeFile(envPath, participantPair);
+    await writeFile(projectPath, JSON.stringify({ projectName: "stcirt" }));
+
+    const adminPin = " host #1 'quoted' \"double\" \\ value $HOME ";
+    const adminSecret = "a".repeat(43);
+    await writePair({
+      profile: "admin",
+      envPath,
+      pin: adminPin,
+      secretFactory: () => adminSecret,
+    });
+    const values = parseEnv(await readFile(envPath, "utf8"));
+    expect(values.get("PARTICIPANT_PIN")).toBe("0042");
+    expect(values.get("ADMIN_PRESENTATION_PIN")).toBe(adminPin);
+    expect(values.get("ADMIN_PRESENTATION_SESSION_SECRET")).toBe(adminSecret);
+    expect(() => validatePair(values, "admin")).not.toThrow();
+    expect(() =>
+      validatePair(
+        new Map([
+          ["ADMIN_PRESENTATION_PIN", "x".repeat(129)],
+          ["ADMIN_PRESENTATION_SESSION_SECRET", "a".repeat(43)],
+        ]),
+        "admin",
+      ),
+    ).toThrow("1 to 128");
+
+    try {
+      const [, parsedEnv] = processEnv(
+        [{ path: ".env.local", contents: await readFile(envPath, "utf8"), env: {} }],
+        directory,
+        { error: vi.fn() },
+        true,
+      );
+      expect(parsedEnv?.ADMIN_PRESENTATION_PIN).toBe(adminPin);
+      expect(parsedEnv?.ADMIN_PRESENTATION_SESSION_SECRET).toBe(adminSecret);
+    } finally {
+      resetEnv();
+    }
+
+    const calls: Array<{ args: string[]; input?: string }> = [];
+    const spawn = vi.fn(
+      (_command: string, args: string[], options?: SpawnSyncOptionsWithStringEncoding) => {
+        calls.push({ args, input: options?.input as string | undefined });
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+    const log = vi.fn();
+    await syncPair({ profile: "admin", target: "preview", envPath, projectPath, spawn, log });
+    expect(calls.map(({ args }) => args)).toContainEqual([
+      "env",
+      "add",
+      "ADMIN_PRESENTATION_PIN",
+      "preview",
+      "--force",
+      "--sensitive",
+    ]);
+    expect(calls.map(({ args }) => args)).toContainEqual([
+      "env",
+      "add",
+      "ADMIN_PRESENTATION_SESSION_SECRET",
+      "preview",
+      "--force",
+      "--sensitive",
+    ]);
+    expect(calls.some(({ args }) => args.includes("PARTICIPANT_PIN"))).toBe(false);
+    expect(calls.find(({ args }) => args[2] === "ADMIN_PRESENTATION_PIN")?.input).toBe(
+      `${adminPin}\n`,
+    );
+    expect(log.mock.calls.flat().join(" ")).toContain("new deployment");
+    expect(log.mock.calls.flat().join(" ")).not.toContain(adminPin);
+    expect(log.mock.calls.flat().join(" ")).not.toContain(adminSecret);
+  });
+
+  it("refuses admin PINs that cannot be represented unambiguously in Next dotenv syntax", () => {
+    expect(() =>
+      upsertEnv("", {
+        ADMIN_PRESENTATION_PIN: "single' double\" backtick`",
+      }),
+    ).toThrow("cannot be represented safely");
+  });
+
+  it("selects the admin profile from the CLI and confirms a full-length non-participant PIN", async () => {
+    const directory = await temporaryDirectory();
+    const envPath = join(directory, ".env.local");
+    const adminPin = "式典管理者-é";
+    const promptPin = vi.fn().mockResolvedValueOnce(adminPin).mockResolvedValueOnce(adminPin);
+    const log = vi.fn();
+    const error = vi.fn();
+
+    const status = await main(["generate", "--profile", "admin"], {
+      promptPin,
+      log,
+      error,
+      writeOptions: { envPath, secretFactory: () => "a".repeat(43) },
+    });
+
+    expect(status).toBe(0);
+    expect(promptPin.mock.calls[0][0]).toContain("admin PIN");
+    expect(parseEnv(await readFile(envPath, "utf8")).get("ADMIN_PRESENTATION_PIN")).toBe(adminPin);
+    expect(error).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join(" ")).not.toContain(adminPin);
   });
 
   it("upserts pair keys without changing unrelated lines", () => {

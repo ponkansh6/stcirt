@@ -146,3 +146,59 @@ export const examSubmissionOperations = sqliteTable("exam_submission_operations"
   payload: text("payload").notNull(),
   revision: integer("revision").notNull(),
 });
+
+// One durable presentation run is active at a time. Questions and entries are
+// copied into immutable child rows when it starts so later exam edits or
+// answer revisions cannot change the announced results.
+export const presentationSessions = sqliteTable("presentation_sessions", {
+  id: integer("id").primaryKey(),
+  state: text("state").notNull(),
+  version: integer("version").notNull(),
+  questionIndex: integer("question_index").notNull(),
+  questionCount: integer("question_count").notNull(),
+  projectionHidden: integer("projection_hidden", { mode: "boolean" }).notNull().default(false),
+  presentationMode: text("presentation_mode").notNull().default("full"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const presentationQuestions = sqliteTable(
+  "presentation_questions",
+  {
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => presentationSessions.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    sourceQuestionId: integer("source_question_id").notNull(),
+    question: text("question").notNull(),
+    choices: text("choices", { mode: "json" }).notNull().$type<string[]>(),
+    correctIndex: integer("correct_index").notNull(),
+    explanation: text("explanation"),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.sessionId, t.position] }) }),
+);
+
+export const presentationEntries = sqliteTable(
+  "presentation_entries",
+  {
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => presentationSessions.id, { onDelete: "cascade" }),
+    participantId: integer("participant_id").notNull(),
+    displayName: text("display_name").notNull(),
+    score: integer("score").notNull(),
+    rank: integer("rank").notNull(),
+    answers: text("answers", { mode: "json" })
+      .notNull()
+      .$type<{ questionId: number; selectedIndex: number | null }[]>(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.sessionId, t.participantId] }) }),
+);
+
+export const presentationOperations = sqliteTable("presentation_operations", {
+  operationId: text("operation_id").primaryKey(),
+  action: text("action").notNull(),
+  mode: text("mode"),
+  version: integer("version").notNull(),
+});

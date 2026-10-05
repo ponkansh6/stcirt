@@ -1,0 +1,1 @@
+ALTER TABLE `presentation_sessions` ADD `projection_hidden` integer DEFAULT false NOT NULL;

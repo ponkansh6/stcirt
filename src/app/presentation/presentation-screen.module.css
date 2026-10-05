@@ -1,0 +1,516 @@
+.screen {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #ede9df;
+  color: #23343c;
+  font-family: var(--font-geist), "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+}
+
+.canvas {
+  position: relative;
+  display: flex;
+  width: min(100vw, 177.7778dvh);
+  height: min(100dvh, 56.25vw);
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  padding: clamp(22px, 4.7vw, 86px);
+  background:
+    radial-gradient(ellipse at 50% 48%, rgb(255 255 255 / 78%), transparent 63%),
+    linear-gradient(135deg, #f9f7f0 0%, #f0ede4 48%, #f8f5ed 100%);
+  box-shadow: 0 14px 70px rgb(50 45 32 / 13%);
+  isolation: isolate;
+}
+
+.canvas::before,
+.canvas::after {
+  position: absolute;
+  z-index: -1;
+  width: 28vw;
+  height: 28vw;
+  border: 1px solid rgb(169 143 91 / 21%);
+  border-radius: 50%;
+  content: "";
+  pointer-events: none;
+}
+
+.canvas::before {
+  top: -19vw;
+  right: -14vw;
+}
+.canvas::after {
+  bottom: -21vw;
+  left: -13vw;
+  width: 34vw;
+  height: 34vw;
+}
+.topline,
+.bottomline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  color: #93805a;
+  font-size: clamp(0.55rem, 0.9vw, 0.8rem);
+  font-weight: 800;
+  letter-spacing: 0.25em;
+  white-space: nowrap;
+}
+.toplineRule,
+.bottomRule {
+  width: clamp(36px, 8vw, 140px);
+  height: 1px;
+  background: #c7b88f;
+}
+.bottomline {
+  gap: 16px;
+  font-size: clamp(0.5rem, 0.77vw, 0.7rem);
+  letter-spacing: 0.23em;
+}
+.bottomRule {
+  width: clamp(30px, 6vw, 90px);
+}
+
+.waiting,
+.podiumPreview,
+.finished,
+.winners,
+.question {
+  width: 100%;
+  max-height: 76%;
+  margin: auto;
+}
+.waiting,
+.podiumPreview,
+.finished {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.kicker {
+  margin: 0 0 clamp(14px, 2.4vh, 26px);
+  color: #927847;
+  font-size: clamp(0.64rem, 1.05vw, 1rem);
+  font-weight: 850;
+  letter-spacing: 0.25em;
+  text-align: center;
+}
+.decorativeRule {
+  display: block;
+  width: clamp(45px, 5vw, 76px);
+  height: 2px;
+  margin: clamp(17px, 2.3vh, 25px) 0;
+  background: #b89a5e;
+}
+.waiting h1,
+.podiumPreview h1,
+.finished h1 {
+  margin: 0;
+  font-family: Georgia, "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: clamp(2.6rem, 6vw, 6.6rem);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 1.32;
+}
+.subtitle {
+  max-width: 78%;
+  margin: clamp(17px, 2.6vh, 30px) 0 0;
+  color: #57636a;
+  font-size: clamp(1rem, 1.8vw, 2rem);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.question {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
+  max-width: 1360px;
+}
+.question .kicker {
+  align-self: flex-start;
+  margin: 0 0 clamp(13px, 1.7vh, 22px);
+  text-align: left;
+}
+.ordinal {
+  margin: 0 0 clamp(8px, 1.4vh, 17px);
+  color: #9a7b42;
+  font-size: clamp(0.83rem, 1.5vw, 1.4rem);
+  font-weight: 800;
+  letter-spacing: 0.19em;
+}
+.ordinal strong {
+  margin-left: 7px;
+  color: #344b55;
+  font-family: Georgia, serif;
+  font-size: 1.4em;
+}
+.ordinal span {
+  color: #829095;
+  letter-spacing: 0.08em;
+}
+.question h1 {
+  max-width: 1250px;
+  margin: 0;
+  font-size: clamp(1.8rem, 4.25vw, 4.6rem);
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+}
+.choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(10px, 1.6vw, 22px);
+  padding: 0;
+  margin: clamp(19px, 3.1vh, 34px) 0 0;
+  list-style: none;
+}
+.choices li {
+  display: flex;
+  min-height: clamp(56px, 10vh, 100px);
+  align-items: center;
+  gap: clamp(10px, 1.3vw, 19px);
+  padding: clamp(10px, 1.5vw, 20px) clamp(12px, 1.8vw, 25px);
+  border: 1px solid #d5d0c3;
+  border-radius: 12px;
+  background: rgb(255 254 250 / 80%);
+  color: #33464e;
+  font-size: clamp(1rem, 2.15vw, 2rem);
+  line-height: 1.35;
+}
+.choiceLetter {
+  display: grid;
+  width: clamp(29px, 3.3vw, 44px);
+  height: clamp(29px, 3.3vw, 44px);
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: #eee9dc;
+  color: #806b43;
+  font-family: Georgia, serif;
+  font-size: 0.72em;
+}
+.choiceText {
+  overflow-wrap: anywhere;
+}
+.answered .choices li {
+  opacity: 0.52;
+}
+.answered .choices .correct {
+  border-color: #6c9975;
+  background: #eef5ed;
+  color: #274d37;
+  opacity: 1;
+}
+.answered .choices .correct .choiceLetter {
+  background: #487456;
+  color: white;
+}
+.shortAnswer {
+  display: flex;
+  min-height: clamp(60px, 9vh, 92px);
+  align-items: center;
+  gap: clamp(12px, 2vw, 24px);
+  margin-top: clamp(14px, 2.2vh, 24px);
+  padding: 10px clamp(14px, 2vw, 25px);
+  border: 1px solid #78957c;
+  border-radius: 10px;
+  background: #e9f2e8;
+  color: #244d35;
+}
+.shortAnswerLabel {
+  flex: 0 0 auto;
+  color: #456d4c;
+  font-size: clamp(0.78rem, 1.25vw, 1.1rem);
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+.shortAnswer p {
+  margin: 0;
+  font-size: clamp(1.3rem, 2.8vw, 2.7rem);
+  font-weight: 850;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.correctLabel {
+  margin-left: auto;
+  padding: 5px 9px;
+  border-radius: 5px;
+  background: #dceade;
+  color: #2e6540;
+  font-size: 0.56em;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.explanation {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  max-height: 17vh;
+  margin-top: clamp(12px, 2vh, 22px);
+  padding: 13px 18px;
+  overflow: hidden;
+  border-left: 3px solid #b89a5e;
+  background: rgb(255 255 255 / 48%);
+}
+.explanationMark {
+  color: #a17e3e;
+  font-size: 1.35rem;
+}
+.explanation p {
+  display: -webkit-box;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: #46555a;
+  font-size: clamp(0.92rem, 1.65vw, 1.55rem);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.podiumPreview h1 {
+  font-size: clamp(2.5rem, 5.4vw, 5.7rem);
+}
+.podiumMarks {
+  display: flex;
+  align-items: flex-end;
+  gap: clamp(24px, 5vw, 80px);
+  margin-top: clamp(20px, 4vh, 45px);
+  color: #b49a65;
+  font-family: Georgia, serif;
+  font-size: clamp(2.1rem, 4.5vw, 4.8rem);
+}
+.podiumMarks span:nth-child(2) {
+  transform: translateY(-13px);
+}
+.podiumMarks span:nth-child(3) {
+  transform: translateY(-27px);
+}
+
+.winners {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.winners .kicker {
+  margin-bottom: clamp(9px, 1.6vh, 18px);
+}
+.rank {
+  margin: 0;
+  color: #9b7b40;
+  font-family: Georgia, "Yu Mincho", serif;
+  font-size: clamp(2.8rem, 7vw, 7rem);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+.winners .decorativeRule {
+  margin: clamp(15px, 2.2vh, 25px) 0;
+}
+.winnerNames {
+  display: flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(16px, 3vw, 42px);
+}
+.winner {
+  min-width: min(42vw, 380px);
+  max-width: 100%;
+  padding: 0 10px;
+}
+.winner h1,
+.noWinner {
+  margin: 0;
+  color: #293c44;
+  font-family: Georgia, "Yu Mincho", serif;
+  font-size: clamp(2.5rem, 6vw, 6.5rem);
+  font-weight: 600;
+  letter-spacing: 0.015em;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.winner h1 span {
+  font-size: 0.52em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.winner p {
+  margin: clamp(9px, 1.6vh, 17px) 0 0;
+  color: #687579;
+  font-size: clamp(0.95rem, 1.7vw, 1.55rem);
+  letter-spacing: 0.08em;
+}
+.noWinner {
+  font-size: clamp(1.8rem, 3.8vw, 3.7rem);
+}
+.congratulations {
+  margin: clamp(18px, 3vh, 34px) 0 0;
+  color: #79623a;
+  font-family: Georgia, "Yu Mincho", serif;
+  font-size: clamp(1rem, 1.8vw, 1.8rem);
+  letter-spacing: 0.15em;
+}
+.grandWinner .rank {
+  color: #a77b2f;
+  text-shadow: 0 5px 22px rgb(178 146 80 / 14%);
+}
+.grandWinner .winner h1 {
+  font-size: clamp(3rem, 7.3vw, 7.3rem);
+}
+
+.finished .subtitle {
+  max-width: 85%;
+}
+.finished .decorativeRule:last-child {
+  margin-top: clamp(27px, 5vh, 55px);
+}
+.connection {
+  position: absolute;
+  right: clamp(12px, 2vw, 25px);
+  bottom: 8px;
+  margin: 0;
+  color: #777b76;
+  font-size: clamp(0.62rem, 0.8vw, 0.8rem);
+}
+.fullscreenButton {
+  position: fixed;
+  z-index: 2;
+  right: 12px;
+  bottom: 12px;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgb(107 102 88 / 28%);
+  border-radius: 50%;
+  background: rgb(250 248 242 / 78%);
+  color: #536168;
+  font-size: 1.3rem;
+  opacity: 0.18;
+  cursor: pointer;
+  transition:
+    opacity 0.2s ease,
+    background 0.2s ease;
+}
+.fullscreenButton:hover,
+.fullscreenButton:focus-visible {
+  background: #fffefa;
+  opacity: 1;
+}
+.wakeHint {
+  position: fixed;
+  z-index: 2;
+  bottom: 14px;
+  left: 17px;
+  max-width: min(54vw, 420px);
+  margin: 0;
+  padding: 5px 9px;
+  border-radius: 5px;
+  background: rgb(247 245 239 / 74%);
+  color: #7d807b;
+  font-size: clamp(0.57rem, 0.72vw, 0.7rem);
+  letter-spacing: 0.015em;
+  opacity: 0.72;
+}
+
+@media (max-aspect-ratio: 4/3) {
+  .canvas {
+    width: 100vw;
+    height: 56.25vw;
+  }
+}
+
+@media (max-width: 640px) {
+  .canvas {
+    padding: 5vw;
+  }
+  .topline {
+    gap: 9px;
+  }
+  .question {
+    max-height: 80%;
+  }
+  .question h1 {
+    font-size: clamp(1.35rem, 5vw, 2rem);
+  }
+  .choices {
+    gap: 7px;
+    margin-top: 12px;
+  }
+  .choices li {
+    min-height: 42px;
+    gap: 7px;
+    padding: 7px 8px;
+    border-radius: 7px;
+    font-size: clamp(0.74rem, 2.8vw, 1rem);
+  }
+  .choiceLetter {
+    width: 24px;
+    height: 24px;
+  }
+  .correctLabel {
+    padding: 3px 4px;
+  }
+  .shortAnswer {
+    min-height: 46px;
+    gap: 8px;
+    margin-top: 9px;
+    padding: 7px 9px;
+    border-radius: 7px;
+  }
+  .shortAnswerLabel {
+    font-size: 0.68rem;
+  }
+  .shortAnswer p {
+    font-size: clamp(1.1rem, 4vw, 1.6rem);
+  }
+  .explanation {
+    max-height: 15vh;
+    gap: 7px;
+    margin-top: 9px;
+    padding: 8px;
+  }
+  .explanation p {
+    font-size: 0.78rem;
+    -webkit-line-clamp: 3;
+  }
+  .rank {
+    font-size: clamp(2.4rem, 12vw, 4rem);
+  }
+  .winner h1 {
+    font-size: clamp(2rem, 8vw, 3rem);
+  }
+  .fullscreenButton {
+    right: 5px;
+    bottom: 5px;
+    width: 34px;
+    height: 34px;
+  }
+  .wakeHint {
+    bottom: 9px;
+    left: 7px;
+    max-width: calc(100vw - 58px);
+    font-size: 0.55rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fullscreenButton {
+    transition: none;
+  }
+}
