@@ -4,13 +4,13 @@
 #
 #   Phase 1（常時・並列）: preflight | unit+coverage | production build
 #   Phase 2（条件付き）  : E2E
-#   Phase 3（条件付き）  : 本番スキーマ drift（advisory のみ）
+#   Phase 3（条件付き）  : 本番スキーマ drift（blocking）
 #
 # 設計原則:
 #   - vitest は 1 回だけ回す（--coverage 版は素の run より +2.3s しか違わない）
 #   - pnpm ラッパーを挟まない（1 呼び出し約 0.48s）
 #   - 独立な検査は並列。ログはジョブごとに分離し、失敗したものだけ全文表示
-#   - 環境/ネットワーク依存の検査は blocking にしない（push 可否の根拠にならない）
+#   - 本番スキーマを確認できない場合も push をブロックする
 # ============================================================================
 set -eu
 
@@ -32,6 +32,21 @@ git worktree prune >/dev/null 2>&1 || true
 #    空 diff を生み、coverage と build が無言でスキップされていた。
 # ---------------------------------------------------------------------------
 is_zero() { case "$1" in *[!0]*) return 1 ;; *) return 0 ;; esac; }
+
+check_prod_schema() {
+  echo "[pre-push] 本番スキーマ drift を確認します (blocking)"
+  if [ ! -f "$ROOT/.env.local" ]; then
+    echo "[error] 本番スキーマ確認に必要な .env.local がありません。push を中止します。" >&2
+    return 1
+  fi
+  T_URL=$(grep -E '^TURSO_DATABASE_URL=' "$ROOT/.env.local" | head -1 | cut -d= -f2- || true)
+  T_TOK=$(grep -E '^TURSO_AUTH_TOKEN=' "$ROOT/.env.local" | head -1 | cut -d= -f2- || true)
+  if [ -z "$T_URL" ] || [ -z "$T_TOK" ]; then
+    echo "[error] .env.local に TURSO_DATABASE_URL と TURSO_AUTH_TOKEN の両方が必要です。push を中止します。" >&2
+    return 1
+  fi
+  TURSO_DATABASE_URL="$T_URL" TURSO_AUTH_TOKEN="$T_TOK" bash scripts/check-prod-schema.sh
+}
 
 TIP=""
 CHANGED=""
@@ -95,7 +110,6 @@ fi
 if changed_match '^src/lib/db/(schema\.ts$|migrations/)'; then
   NEED_DRIFT=1
 fi
-
 N_CHANGED=$(printf '%s\n' "$CHANGED" | grep -c . || true)
 printf '[pre-push] tip=%s  changed=%s files\n' "$(git rev-parse --short "$TIP")" "$N_CHANGED"
 printf '[pre-push] plan: preflight=1 unit+coverage=%s build=%s e2e=%s drift=%s\n\n' \
@@ -193,23 +207,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Phase 3 — 本番スキーマ drift（advisory のみ）
-#    「push しようとしているコード」ではなく「本番 DB の状態」を見る検査。
-#    ネットワークと .env.local の有無に依存し開発者ごとに挙動が変わるため、
-#    push をブロックしない。CI 側（secrets あり）を blocking の正とする。
+# 4. Phase 3 — 本番スキーマ drift（対象変更時に blocking）
+#    スキーマ変更時は、本番 DB を確認できない場合も push を止める。
 # ---------------------------------------------------------------------------
-if [ "$NEED_DRIFT" = "1" ] && [ -f "$ROOT/.env.local" ]; then
+if [ "$NEED_DRIFT" = "1" ]; then
   echo ""
-  echo "[pre-push] Phase 3: 本番スキーマ drift (advisory)"
-  T_URL=$(grep -E '^TURSO_DATABASE_URL=' "$ROOT/.env.local" | head -1 | cut -d= -f2-)
-  T_TOK=$(grep -E '^TURSO_AUTH_TOKEN='  "$ROOT/.env.local" | head -1 | cut -d= -f2-)
-  if [ -n "$T_URL" ] && [ -n "$T_TOK" ]; then
-    if ! TURSO_DATABASE_URL="$T_URL" TURSO_AUTH_TOKEN="$T_TOK" bash scripts/check-prod-schema.sh; then
-      printf '\n[warn] 本番スキーマに drift の可能性があります。\n'
-      printf '       デプロイ前に `pnpm exec drizzle-kit push` を検討してください。\n'
-      printf '       ネットワーク/認証に依存するため push はブロックしません。\n\n'
-    fi
-  fi
+  check_prod_schema
+else
+  echo "  SKIP  production schema drift (schema.ts / migrations に変更なし)"
 fi
 
 echo ""

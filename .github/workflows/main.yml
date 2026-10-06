@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   # 静的解析 + 環境/ネットワーク依存の検査。
-  # 本番スキーマ drift は pre-push では advisory なので、ここが blocking の正。
+  # 本番スキーマ drift は対象変更時の pre-push と CI の両方で blocking。
   static:
     runs-on: ubuntu-latest
     steps:

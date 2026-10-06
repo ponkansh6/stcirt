@@ -6,8 +6,8 @@
 set -e
 
 if [ -z "$TURSO_DATABASE_URL" ] || [ -z "$TURSO_AUTH_TOKEN" ]; then
-  echo "⏭️  Skipping production schema check: TURSO_DATABASE_URL not set"
-  exit 0
+  echo "❌ Production schema check requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN" >&2
+  exit 1
 fi
 
 echo "🔍 Checking production schema consistency..."
