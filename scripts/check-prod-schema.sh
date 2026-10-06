@@ -42,18 +42,20 @@ async function main() {
 
   if (missingTables.length > 0) {
     console.log('');
-    console.log('❌ Production schema drift detected!');
-    console.log('   The following tables are defined in schema.ts but missing in Turso:');
+    console.log('❌ Production database schema drift detected.');
+    console.log('   Production is missing tables required by the current application schema.');
+    console.log('   Missing tables:');
     missingTables.forEach(tt => console.log('   - ' + tt));
     console.log('');
-    console.log('   Run: pnpm exec drizzle-kit push');
+    console.log('   Apply the project migrations to production with:');
+    console.log('   pnpm db:migrate');
     console.log('');
     process.exit(1);
   }
 
   // Check column drift for each table
   for (const tableName of expectedTables) {
-    const regex = new RegExp('export const \\\\w+ = sqliteTable\\\\s*\\\\(\\\\s*\"' + tableName + '\"\\\\s*,\\\\s*\\\\{([\\\\s\\\\S]*?)\\\\}');
+    const regex = new RegExp('export const \\w+ = sqliteTable\\s*\\(\\s*"' + tableName + '"\\s*,\\s*\\{([\\s\\S]*?)\\}');
     const match = schemaContent.match(regex);
     if (!match) continue;
 
@@ -79,11 +81,13 @@ async function main() {
 
     if (missingCols.length > 0) {
       console.log('');
-      console.log('❌ Production schema drift detected in table: ' + tableName);
-      console.log('   The following columns are in schema.ts but missing in Turso:');
+      console.log('❌ Production database schema drift detected in table: ' + tableName);
+      console.log('   Production is missing columns required by the current application schema.');
+      console.log('   Missing columns:');
       missingCols.forEach(cc => console.log('   - ' + cc));
       console.log('');
-      console.log('   Run: pnpm exec drizzle-kit push');
+      console.log('   Apply the project migrations to production with:');
+      console.log('   pnpm db:migrate');
       console.log('');
       process.exit(1);
     }

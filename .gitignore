@@ -41,5 +41,8 @@ yarn-error.log*
 # Deepwork state
 .slim/deepwork/
 
+# Shared plans
+/shared_plan/
+
 # Claude session summaries
 .claude/
