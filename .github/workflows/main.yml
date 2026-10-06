@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   # 静的解析 + 環境/ネットワーク依存の検査。
-  # 本番スキーマ drift は対象変更時の pre-push と CI の両方で blocking。
+  # 本番スキーマ drift は対象変更時の pre-push では blocking、CI では non-blocking。
   static:
     runs-on: ubuntu-latest
     steps:
@@ -31,6 +31,7 @@ jobs:
       - name: Check production schema script syntax
         run: bash -n scripts/check-prod-schema.sh
       - name: Production schema drift
+        continue-on-error: true
         run: bash scripts/check-prod-schema.sh
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
