@@ -453,14 +453,14 @@ export default function PresentationAdmin() {
             )}
             {["third", "second", "first"].includes(data.state) && (
               <div className={styles.winnerPreview}>
-                <span className={styles.winnerRank}>{currentRank}</span>
                 <div>
                   <p className={styles.overline}>公開中の受賞者</p>
                   {currentEntries.length ? (
                     currentEntries.map((entry) => (
                       <div key={`${entry.rank}-${entry.displayName}`}>
                         <h3>{entry.displayName}</h3>
-                        <p>{entry.score} 問正解</p>
+                        <p>{entry.score} ポイント</p>
+                        <span className={styles.winnerRank}>{entry.rank}位</span>
                       </div>
                     ))
                   ) : (

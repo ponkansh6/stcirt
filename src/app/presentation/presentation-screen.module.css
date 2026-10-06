@@ -12,11 +12,11 @@
 
 .canvas {
   position: relative;
-  display: flex;
+  display: grid;
   width: min(100vw, 177.7778dvh);
   height: min(100dvh, 56.25vw);
-  flex-direction: column;
-  justify-content: space-between;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
   overflow: hidden;
   padding: clamp(22px, 4.7vw, 86px);
   background:
@@ -82,6 +82,7 @@
 .question {
   width: 100%;
   max-height: 76%;
+  min-height: 0;
   margin: auto;
 }
 .waiting,
@@ -300,19 +301,45 @@
 
 .winners {
   display: flex;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  margin: 0;
+  overflow-y: auto;
+  scrollbar-color: #b89a5e rgb(184 154 94 / 12%);
+  scrollbar-width: thin;
   text-align: center;
+}
+.winners:focus-visible {
+  outline: 3px solid #315b66;
+  outline-offset: -3px;
+}
+.winners::-webkit-scrollbar {
+  width: 9px;
+}
+.winners::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 9px;
+  background: #b89a5e;
+  background-clip: padding-box;
+}
+.winners::-webkit-scrollbar-track {
+  background: rgb(184 154 94 / 12%);
 }
 .winners .kicker {
   margin-bottom: clamp(9px, 1.6vh, 18px);
+}
+.winners > * {
+  flex-shrink: 0;
 }
 .rank {
   margin: 0;
   color: #9b7b40;
   font-family: Georgia, "Yu Mincho", serif;
-  font-size: clamp(2.8rem, 7vw, 7rem);
+  font-size: clamp(1.35rem, 2.4vw, 2.5rem);
   font-weight: 500;
   letter-spacing: 0.12em;
   line-height: 1;
@@ -322,6 +349,8 @@
 }
 .winnerNames {
   display: flex;
+  width: 100%;
+  flex: 0 0 auto;
   max-width: 100%;
   flex-wrap: wrap;
   align-items: center;
@@ -329,7 +358,8 @@
   gap: clamp(16px, 3vw, 42px);
 }
 .winner {
-  min-width: min(42vw, 380px);
+  min-width: min(30vw, 300px);
+  flex: 0 0 min(30vw, 300px);
   max-width: 100%;
   padding: 0 10px;
 }
@@ -338,7 +368,7 @@
   margin: 0;
   color: #293c44;
   font-family: Georgia, "Yu Mincho", serif;
-  font-size: clamp(2.5rem, 6vw, 6.5rem);
+  font-size: clamp(1.8rem, 5.5vw, 5.5rem);
   font-weight: 600;
   letter-spacing: 0.015em;
   line-height: 1.25;
@@ -353,7 +383,7 @@
   margin: clamp(9px, 1.6vh, 17px) 0 0;
   color: #687579;
   font-size: clamp(0.95rem, 1.7vw, 1.55rem);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.03em;
 }
 .noWinner {
   font-size: clamp(1.8rem, 3.8vw, 3.7rem);
@@ -370,7 +400,35 @@
   text-shadow: 0 5px 22px rgb(178 146 80 / 14%);
 }
 .grandWinner .winner h1 {
-  font-size: clamp(3rem, 7.3vw, 7.3rem);
+  font-size: clamp(2rem, 6vw, 6rem);
+}
+.rank {
+  margin-top: clamp(9px, 1.4vh, 16px);
+  letter-spacing: 0.08em;
+}
+.announce .winner {
+  animation: winner-arrive 1.15s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+.announce .rank {
+  animation: rank-arrive 0.9s 0.12s ease-out both;
+}
+@keyframes winner-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes rank-arrive {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .finished .subtitle {
@@ -510,6 +568,17 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .screen *,
+  .screen *::before,
+  .screen *::after {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+  .podiumMarks span:nth-child(2),
+  .podiumMarks span:nth-child(3) {
+    transform: none;
+  }
   .fullscreenButton {
     transition: none;
   }

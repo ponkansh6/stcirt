@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import styles from "./presentation-screen.module.css";
 
 type State =
@@ -58,6 +58,13 @@ async function getProjection(): Promise<ProjectionData> {
 }
 
 const rankTitle: Record<string, string> = { third: "第3位", second: "第2位", first: "第1位" };
+
+function announcementKeyFor(state: string, winners: Winner[] = []) {
+  const winnerKey = winners
+    .map((winner) => [winner.displayName, winner.score] as const)
+    .sort(([nameA], [nameB]) => (nameA < nameB ? -1 : nameA > nameB ? 1 : 0));
+  return JSON.stringify([state, winnerKey]);
+}
 
 function QuestionPrompt({ question }: { question: PublicQuestion }) {
   return (
@@ -126,6 +133,9 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
 
 export default function PresentationScreen() {
   const [data, setData] = useState<ProjectionData | null>(null);
+  const [announcementKey, setAnnouncementKey] = useState<string | null>(null);
+  const previousState = useRef<State | null>(null);
+  const seenAnnouncements = useRef(new Set<string>());
   const [connectionError, setConnectionError] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [wakeStatus, setWakeStatus] = useState<
@@ -139,6 +149,41 @@ export default function PresentationScreen() {
       try {
         const next = await getProjection();
         if (active) {
+          const previous = previousState.current;
+          if (next.state === "third" || next.state === "second" || next.state === "first") {
+            const eventKey = announcementKeyFor(next.state, next.winners);
+            let hasBeenSeen = seenAnnouncements.current.has(eventKey);
+            try {
+              const saved = window.sessionStorage.getItem("stcirt:presentation:announcements");
+              const parsed: unknown = saved ? JSON.parse(saved) : [];
+              let storedAnnouncements: string[] = [];
+              if (Array.isArray(parsed)) {
+                storedAnnouncements = parsed.filter(
+                  (item): item is string => typeof item === "string",
+                );
+              }
+              for (const item of storedAnnouncements) seenAnnouncements.current.add(item);
+              hasBeenSeen = seenAnnouncements.current.has(eventKey);
+            } catch {
+              // The in-memory set still deduplicates announcements while this component is mounted.
+            }
+            if (previous !== null && previous !== next.state && !hasBeenSeen) {
+              setAnnouncementKey(eventKey);
+              window.setTimeout(() => setAnnouncementKey(null), 1400);
+            }
+            if (!hasBeenSeen) {
+              seenAnnouncements.current.add(eventKey);
+              try {
+                window.sessionStorage.setItem(
+                  "stcirt:presentation:announcements",
+                  JSON.stringify([...seenAnnouncements.current].slice(-30)),
+                );
+              } catch {
+                // Session persistence is best effort; the in-memory set remains available.
+              }
+            }
+          }
+          previousState.current = next.state;
           setData(next);
           setConnectionError(false);
         }
@@ -275,13 +320,15 @@ export default function PresentationScreen() {
 
         {(state === "third" || state === "second" || state === "first") && (
           <section
-            className={`${styles.winners} ${state === "first" ? styles.grandWinner : ""}`}
-            aria-labelledby="winner-heading"
+            className={`${styles.winners} ${state === "first" ? styles.grandWinner : ""} ${
+              announcementKey === announcementKeyFor(state, data?.winners) ? styles.announce : ""
+            }`}
+            role="region"
+            aria-label={`${rankTitle[state]}の勝者一覧`}
+            tabIndex={0}
           >
             <p className={styles.kicker}>WITH OUR WARMEST CONGRATULATIONS</p>
-            <p className={styles.rank}>{rankTitle[state]}</p>
-            <span className={styles.decorativeRule} aria-hidden="true" />
-            <div id="winner-heading" className={styles.winnerNames}>
+            <div className={styles.winnerNames}>
               {data?.winners?.length ? (
                 data.winners.map((winner, index) => (
                   <article
@@ -292,13 +339,14 @@ export default function PresentationScreen() {
                       {winner.displayName}
                       <span> さん</span>
                     </h1>
-                    <p>{winner.score} 問正解</p>
+                    <p>{winner.score} ポイント</p>
                   </article>
                 ))
               ) : (
                 <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
               )}
             </div>
+            <p className={styles.rank}>{rankTitle[state]}</p>
             <p className={styles.congratulations}>おめでとうございます</p>
           </section>
         )}
