@@ -54,33 +54,12 @@
     "Yu Gothic Medium", Meiryo, system-ui, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #20272c;
-    --color-text: #f2efe7;
-    --color-surface: #292f33;
-    --color-surface-2: #343a3d;
-    --color-muted: #c0c0b9;
-    --color-border: #85837b;
-    --color-primary: #d5b35c;
-    --color-primary-hover: #e1c879;
-    --color-on-primary: #25313a;
-    --color-accent: #e1c879;
-    --color-success: #8bc5a0;
-    --color-error: #f09a8e;
-    --color-warning: #e1c879;
-
-    --shadow-card: 0 4px 20px -2px oklch(0 0 0 / 0.3);
-    --shadow-raise: 0 12px 30px -4px oklch(0 0 0 / 0.5);
-  }
-}
-
 /* Gold is reserved for small editorial details, never for body copy. */
 [aria-labelledby="exam-briefing"] li span {
   color: var(--color-accent);
 }
 
-/* Keep keyboard focus distinct from the control edge on both light and dark surfaces. */
+/* Keep keyboard focus distinct from the control edge. */
 :focus-visible {
   outline: 3px solid var(--color-accent) !important;
   outline-offset: 3px;

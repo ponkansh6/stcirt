@@ -81,6 +81,7 @@ Unconfirmed selections are held only in client state. Confirmed answer sets are 
 ### R5: Accessible responsive interface
 
 - Use a restrained exam-paper visual style with light surfaces, ink text, subtle borders, and a primary accent; do not use medals, pass/fail imagery, or certificate visuals.
+- Always use the light color palette regardless of the operating system's color-scheme preference.
 - Provide readable contrast, visible keyboard focus, native radio semantics, live status updates, and textual progress labels so color is not the sole signal. Choice rows and the primary confirmation action have at least 44 CSS px of interaction height.
 - Keep content in a single readable column on narrow screens, avoid horizontal scrolling at 320 CSS px and 200% zoom, and respect reduced-motion preferences.
 - During the active answering session, replace the shared sticky header's home link with one five-question navigation. Keep the sticky header's sizing and spacing, show answered state, retain answers while navigating, and move focus to each question heading below the sticky header. At all other answer states, including login, ready, loading, switching, shortage, error, and completion, keep a home link in the shared header and do not show question navigation.
