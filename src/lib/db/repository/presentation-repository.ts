@@ -10,6 +10,7 @@ import {
   presentationOperations,
   presentationQuestions,
   presentationSessions,
+  participantResultSettings,
 } from "@/lib/db/schema";
 
 export type PresentationState =
@@ -35,6 +36,8 @@ type AdminPresentation = {
   questionCount: number;
   projectionHidden: boolean;
   presentationMode: PresentationMode;
+  participantResultsVisible: boolean;
+  participantResultsReady: boolean;
   questions: {
     id: number;
     question: string;
@@ -82,6 +85,10 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
     .from(presentationSessions)
     .where(eq(presentationSessions.id, 1));
   if (!session) {
+    const [resultSettings] = await tx
+      .select({ visible: participantResultSettings.visible })
+      .from(participantResultSettings)
+      .where(eq(participantResultSettings.id, 1));
     return {
       state: "not_started",
       version: 0,
@@ -89,6 +96,8 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
       questionCount: 0,
       projectionHidden: false,
       presentationMode: "full",
+      participantResultsVisible: resultSettings?.visible ?? false,
+      participantResultsReady: false,
       questions: [],
       entries: [],
     } satisfies AdminPresentation;
@@ -105,6 +114,10 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
       .where(eq(presentationEntries.sessionId, 1))
       .orderBy(asc(presentationEntries.rank), asc(presentationEntries.displayName)),
   ]);
+  const [resultSettings] = await tx
+    .select({ visible: participantResultSettings.visible })
+    .from(participantResultSettings)
+    .where(eq(participantResultSettings.id, 1));
   return {
     state: session.state as PresentationState,
     version: session.version,
@@ -112,6 +125,8 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
     questionCount: session.questionCount,
     projectionHidden: session.projectionHidden,
     presentationMode: session.presentationMode as PresentationMode,
+    participantResultsVisible: resultSettings?.visible ?? false,
+    participantResultsReady: session.state !== "not_started",
     questions: questions.map((question) => ({
       id: question.sourceQuestionId,
       question: question.question,
@@ -128,6 +143,22 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
       answers,
     })),
   } satisfies AdminPresentation;
+}
+export async function setParticipantResultsVisible(visible: boolean) {
+  return db.transaction(async (tx) => {
+    const [session] = await tx
+      .select({ state: presentationSessions.state })
+      .from(presentationSessions)
+      .where(eq(presentationSessions.id, 1));
+    if (visible && (!session || session.state === "not_started")) {
+      throw new PresentationConflictError("Results are not ready");
+    }
+    await tx
+      .insert(participantResultSettings)
+      .values({ id: 1, visible })
+      .onConflictDoUpdate({ target: participantResultSettings.id, set: { visible } });
+    return { visible };
+  });
 }
 
 export async function getAdminPresentation() {

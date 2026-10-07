@@ -29,6 +29,8 @@ const adminPayload = {
   questionCount: 1,
   projectionHidden: false,
   presentationMode: "full",
+  participantResultsVisible: false,
+  participantResultsReady: false,
   questions: [],
   entries: [],
 } satisfies Awaited<ReturnType<typeof getAdminPresentation>>;

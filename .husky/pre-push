@@ -19,6 +19,9 @@ cd "$ROOT"
 PATH="$ROOT/node_modules/.bin:$PATH"
 export PATH
 
+# 未コミット変更がある状態では push しない
+bash "$ROOT/.husky/check-clean-worktree.sh"
+
 # 中断された check-head-typecheck.sh の worktree 残骸を掃除
 git worktree prune >/dev/null 2>&1 || true
 

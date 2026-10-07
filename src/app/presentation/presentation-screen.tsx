@@ -59,6 +59,8 @@ type AdminControls = {
   questionCount: number;
   projectionHidden: boolean;
   presentationMode: PresentationMode;
+  participantResultsVisible: boolean;
+  participantResultsReady: boolean;
 };
 type AdminAction = "start" | "advance" | "previous" | "hide" | "show" | "setMode";
 type ScreenLock = {
@@ -103,6 +105,8 @@ async function getAdminControls(): Promise<AdminControls> {
     questionCount: typeof admin.questionCount === "number" ? admin.questionCount : 0,
     projectionHidden: admin.projectionHidden === true,
     presentationMode: admin.presentationMode === "short" ? "short" : "full",
+    participantResultsVisible: admin.participantResultsVisible === true,
+    participantResultsReady: admin.participantResultsReady === true,
   };
 }
 
@@ -120,6 +124,24 @@ async function requestAdminAction(action: AdminAction, mode?: PresentationMode) 
   });
   if (!response.ok) {
     const error = new Error("操作を反映できませんでした。") as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+}
+
+async function requestParticipantResultsVisibility(visible: boolean) {
+  const response = await fetch("/api/admin/participant-results", {
+    method: "POST",
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ visible }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    const error = new Error(payload?.error ?? "操作を反映できませんでした。") as Error & {
+      status?: number;
+    };
     error.status = response.status;
     throw error;
   }
@@ -413,6 +435,35 @@ export default function PresentationScreen({
     [adminControls, recoverUnauthorized, refreshAdmin],
   );
 
+  const toggleParticipantResults = useCallback(async () => {
+    if (!adminControls || mutationInFlight.current) return;
+    mutationInFlight.current = true;
+    setAdminBusy(true);
+    setAdminMessage(null);
+    try {
+      await requestParticipantResultsVisibility(!adminControls.participantResultsVisible);
+      await refreshAdmin();
+    } catch (error) {
+      const status = (error as { status?: number })?.status;
+      if (status === 401) recoverUnauthorized();
+      else {
+        setAdminMessage(
+          status === 409
+            ? "発表を開始して結果スナップショットを作成してから公開してください。"
+            : "結果公開状態を更新できませんでした。",
+        );
+        try {
+          await refreshAdmin();
+        } catch {
+          /* The next session poll will retry. */
+        }
+      }
+    } finally {
+      mutationInFlight.current = false;
+      setAdminBusy(false);
+    }
+  }, [adminControls, recoverUnauthorized, refreshAdmin]);
+
   useEffect(() => {
     if (!adminControls || !presenterRequested) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -695,6 +746,26 @@ export default function PresentationScreen({
               >
                 短縮
               </button>
+            </div>
+            <div className={styles.resultControls}>
+              <button
+                type="button"
+                onClick={() => void toggleParticipantResults()}
+                disabled={
+                  adminBusy ||
+                  (!adminControls.participantResultsReady &&
+                    !adminControls.participantResultsVisible)
+                }
+                aria-pressed={adminControls.participantResultsVisible}
+              >
+                {adminControls.participantResultsVisible
+                  ? "参加者結果を非公開"
+                  : "参加者結果を公開"}
+              </button>
+              {!adminControls.participantResultsReady &&
+                !adminControls.participantResultsVisible && (
+                  <span>公開するには先に発表を開始してください。</span>
+                )}
             </div>
             <button
               type="button"

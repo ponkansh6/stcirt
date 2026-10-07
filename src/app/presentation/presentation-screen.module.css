@@ -71,11 +71,13 @@
   font-size: 0.7rem;
 }
 .controlButtons,
-.modeControls {
+.modeControls,
+.resultControls {
   display: flex;
   align-items: center;
   gap: 7px;
 }
+.resultControls span {
   max-width: 150px;
   color: #815d32;
   font-size: 0.65rem;

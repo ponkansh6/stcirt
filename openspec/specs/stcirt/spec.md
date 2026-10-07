@@ -23,6 +23,7 @@ The Drizzle schema in `src/lib/db/schema.ts` contains the legacy tables and the 
 - `presentation_questions`: immutable question/choice/correct-answer/explanation snapshot taken at presentation start in `exam_questions.id ASC` order
 - `presentation_entries`: immutable participant/display-name/floating-point score/standard-competition-rank and typed answer/assessment snapshot for every participant, including participants with no valid saved submission (score zero)
 - `presentation_operations`: admin operation IDs, actions, and optional mode payload for idempotent retries and mismatch rejection
+- `participant_result_settings`: singleton durable participant-results visibility flag, defaulting to private and independent of presentation stage and projection visibility
 
 Participant names are trimmed and normalized to Unicode NFC for case-sensitive uniqueness. They are not compatibility-normalized and internal whitespace is preserved. The shared event PIN and session signing secret are held only in server-side environment configuration.
 
@@ -136,6 +137,11 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - Slide content is rendered only from `GET /api/presentation`. The 16:9 slide canvas and presenter controls footer occupy separate regions; the footer remains visible without covering slide content. Fullscreen targets the complete presentation wrapper, including controls, and remains optional when the browser API is unavailable.
 - Existing participant session, answer, and batch APIs do not return presentation ranking or answer keys.
 
+### R9: Participant result visibility
+
+- Participant result visibility is stored independently from `presentation_sessions.projection_hidden`, presentation mode, stage, and operation version. It defaults to false.
+- An administrator can publish results only after a presentation snapshot has been created. Changing visibility does not grade answers, rebuild rankings, or move the presentation stage.
+
 ## API
 
 ### `GET /api/questions/next`
@@ -226,6 +232,13 @@ The presenter screen may consume only the minimal state, cursor, hidden flag, an
 - In a rank announcement, response is `{ state, winners: [{ displayName, score, rank }] }`, containing every tied participant for only the announced rank. `podium_preview` has no `winners` property. Other states return only `{ state }`.
 - When the durable projection standby flag is on, the sole response is `{ state: 'standby' }`, independent of the private presentation stage.
 
+### `/api/admin/participant-results`
+
+- `POST` requires a valid admin cookie, same-origin `Origin`, and `{ visible: boolean }`.
+- Response 200: `{ visible: boolean }`; responses are `Cache-Control: private, no-store`.
+- Attempting to publish before a result snapshot exists returns 409 and does not change visibility. Hiding is allowed at any time.
+- Visibility changes do not mutate presentation stage, projection visibility, presentation version, or score snapshots.
+
 ## Components
 
 - `/`: server-side redirect to `/answer`
@@ -241,6 +254,7 @@ The presenter screen may consume only the minimal state, cursor, hidden flag, an
 - `/api/admin/session`, `/api/admin/presentation`, `/api/presentation`: isolated sign-in, private conductor API, and staged public projection
 - `/admin/presentation`: same-tab PIN authentication entry for presenter mode
 - `/presentation`: spectator projection screen by default; `?presenter=1` requests a signed-session-gated, single-screen control footer and fullscreen wrapper
+- `/api/admin/participant-results`: authenticated admin visibility control
 
 ## Coverage tiers
 

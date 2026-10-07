@@ -27,6 +27,7 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
   let version = 0;
   let projectionHidden = false;
   let presentationMode: "full" | "short" = "full";
+  let participantResultsVisible = false;
   let failAdminRead = false;
   let failNextMutationUnauthorized = false;
   let failNextMutationConflict = false;
@@ -36,7 +37,12 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
   let holdNextProjection = false;
   let releaseHeldProjection: (() => void) | null = null;
   let heldProjectionStarted: (() => void) | null = null;
+  let failNextParticipantResultsMutation = false;
+  let pauseNextParticipantResultsMutation = false;
+  let releasePausedParticipantResultsMutation: (() => void) | null = null;
+  let participantResultsMutationStarted: (() => void) | null = null;
   const actions: string[] = [];
+  const participantResultsMutations: boolean[] = [];
   const stages: PresentationState[] = [
     "not_started",
     "question",
@@ -60,6 +66,8 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
     ],
     projectionHidden,
     presentationMode,
+    participantResultsVisible,
+    participantResultsReady: state !== "not_started",
   });
 
   return page
@@ -172,6 +180,39 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
         await route.fulfill({ json: projection });
       }),
     )
+    .then(() =>
+      page.route("**/api/admin/participant-results", async (route) => {
+        const body = route.request().postDataJSON() as { visible?: unknown };
+        if (!authenticated) {
+          await route.fulfill({ status: 401, json: { error: "Unauthorized" } });
+          return;
+        }
+        if (typeof body.visible !== "boolean") {
+          await route.fulfill({ status: 400, json: { error: "Invalid request" } });
+          return;
+        }
+        if (body.visible && state === "not_started") {
+          await route.fulfill({ status: 409, json: { error: "Results are not ready" } });
+          return;
+        }
+        if (failNextParticipantResultsMutation) {
+          failNextParticipantResultsMutation = false;
+          await route.fulfill({ status: 503, json: { error: "Unavailable" } });
+          return;
+        }
+        if (pauseNextParticipantResultsMutation) {
+          pauseNextParticipantResultsMutation = false;
+          participantResultsMutationStarted?.();
+          await new Promise<void>((resolve) => {
+            releasePausedParticipantResultsMutation = resolve;
+          });
+          releasePausedParticipantResultsMutation = null;
+        }
+        participantResultsVisible = body.visible;
+        participantResultsMutations.push(body.visible);
+        await route.fulfill({ json: { visible: participantResultsVisible } });
+      }),
+    )
     .then(() => ({
       failAdminReads: () => {
         failAdminRead = true;
@@ -197,6 +238,17 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
       },
       releaseHeldProjection: () => releaseHeldProjection?.(),
       actionLog: actions,
+      participantResultsMutations,
+      failNextResultsMutation: () => {
+        failNextParticipantResultsMutation = true;
+      },
+      pauseNextResultsMutation: () => {
+        pauseNextParticipantResultsMutation = true;
+        return new Promise<void>((resolve) => {
+          participantResultsMutationStarted = resolve;
+        });
+      },
+      releasePausedResultsMutation: () => releasePausedParticipantResultsMutation?.(),
     }));
 }
 
@@ -346,6 +398,41 @@ test("presenter single-flights rapid button and keyboard mutations", async ({ pa
   mock.releasePausedMutation();
   await expect(page.getByRole("button", { name: "正解を発表する" })).toBeVisible();
   expect(mock.actionLog).toEqual(["start"]);
+});
+
+test("participant result publication waits for a snapshot, single-flights, and preserves server state on failure", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  await page.goto("/admin/presentation");
+  await page.getByLabel("管理者 PIN").fill("2468");
+  await page.getByRole("button", { name: "発表画面を始める" }).click();
+
+  await expect(page.getByText("公開するには先に発表を開始してください。")).toBeVisible();
+  const publishButton = page.getByRole("button", { name: "参加者結果を公開" });
+  await expect(publishButton).toBeDisabled();
+
+  await page.getByRole("button", { name: "発表を始める" }).click();
+  await expect(publishButton).toBeEnabled();
+  mock.failNextResultsMutation();
+  await publishButton.click();
+  await expect(page.getByText("結果公開状態を更新できませんでした。")).toBeVisible();
+  await expect(publishButton).toHaveAttribute("aria-pressed", "false");
+
+  const mutationStarted = mock.pauseNextResultsMutation();
+  await publishButton.click();
+  await mutationStarted;
+  await expect(publishButton).toBeDisabled();
+  await publishButton.evaluate((button) => {
+    button.removeAttribute("disabled");
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  mock.releasePausedResultsMutation();
+  await expect(page.getByRole("button", { name: "参加者結果を非公開" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(mock.participantResultsMutations).toEqual([true]);
 });
 
 test("presenter fullscreen targets the whole wrapper and keeps controls inside", async ({

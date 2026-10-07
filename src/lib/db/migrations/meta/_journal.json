@@ -57,6 +57,13 @@
       "when": 1791388800000,
       "tag": "0007_fifth_free_response_jev",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791388800001,
+      "tag": "0008_participant_results_visibility",
+      "breakpoints": true
     }
   ]
 }

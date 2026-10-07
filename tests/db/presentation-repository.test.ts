@@ -21,6 +21,7 @@ import {
   getPublicPresentation,
   operatePresentation,
   PresentationConflictError,
+  setParticipantResultsVisible,
 } from "@/lib/db/repository/presentation-repository";
 
 async function commitWinnerThenRaiseAdapterUniqueConflict(operationId: string) {
@@ -296,6 +297,27 @@ describe("presentation repository", () => {
       status: 409,
     });
     expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
+  });
+  it("keeps participant result publication private until a snapshot exists", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Participant");
+    await addSubmission(participant, [0, 0]);
+    await expect(setParticipantResultsVisible(true)).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
+    const started = await operatePresentation("visibility-start", "start");
+    await setParticipantResultsVisible(true);
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      version: started.version,
+      participantResultsVisible: true,
+      participantResultsReady: true,
+    });
+    await setParticipantResultsVisible(false);
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      version: started.version,
+      participantResultsVisible: false,
+      participantResultsReady: true,
+    });
   });
 
   it("recovers an operation retry after an adapter conflict without advancing twice", async () => {

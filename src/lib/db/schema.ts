@@ -242,3 +242,10 @@ export const presentationOperations = sqliteTable("presentation_operations", {
   mode: text("mode"),
   version: integer("version").notNull(),
 });
+
+// Participant-facing result visibility is independent from the presentation
+// screen's progression and standby state.
+export const participantResultSettings = sqliteTable("participant_result_settings", {
+  id: integer("id").primaryKey(),
+  visible: integer("visible", { mode: "boolean" }).notNull().default(false),
+});
