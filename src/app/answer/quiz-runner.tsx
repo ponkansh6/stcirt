@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import Link from "next/link";
 import { useQuizSession } from "./use-quiz-session";
 import ChoiceButton from "@/components/ChoiceButton";
 import { choiceLabel } from "@/lib/choice-label";
@@ -30,6 +31,42 @@ export default function QuizRunner() {
     login,
   } = useQuizSession();
   const questionRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
+  const [participantResultsVisible, setParticipantResultsVisible] = useState(false);
+  useEffect(() => {
+    if (phase.kind !== "complete" || access.kind !== "ready") {
+      setParticipantResultsVisible(false);
+      return;
+    }
+    let active = true;
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const response = await fetch("/api/participants/results", {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        if (!active) return;
+        if (!response.ok) {
+          setParticipantResultsVisible(false);
+          return;
+        }
+        const result = (await response.json()) as { state?: unknown };
+        if (active) setParticipantResultsVisible(result.state === "visible");
+      } catch {
+        if (active) setParticipantResultsVisible(false);
+      } finally {
+        pending = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 1500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [access.kind, phase.kind]);
   const isSubmitting = phase.kind === "submitting";
   const isRefreshing = phase.kind === "refreshing";
   const unanswered = quizzes.filter(({ question }) =>
@@ -172,6 +209,14 @@ export default function QuizRunner() {
           <Button onClick={editAnswers} className="mt-8" disabled={Boolean(restoreError)}>
             回答を修正する
           </Button>
+          {participantResultsVisible && (
+            <Link
+              href="/results"
+              className="mt-3 inline-flex min-h-11 items-center justify-center rounded-md border border-primary px-5 font-semibold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              自分の結果を見る
+            </Link>
+          )}
         </ParticipantCard>
       </main>
     );

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, within, act, waitFor } from "@testing-library/react";
 import QuizRunner from "@/app/answer/quiz-runner";
 import GlobalHeader from "@/app/GlobalHeader";
@@ -57,6 +57,7 @@ function RunnerPage() {
 
 describe("QuizRunner batch answer sheet", () => {
   beforeEach(() => mockUseQuizSession.mockReset());
+  afterEach(() => vi.unstubAllGlobals());
 
   it("renders five native radio groups, progress navigation, and a disabled final confirmation while unanswered", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "answering" }));
@@ -350,6 +351,7 @@ describe("QuizRunner batch answer sheet", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }, { editAnswers }));
     render(<RunnerPage />);
     expect(screen.getByRole("heading", { name: "回答完了" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "ホームへ" })).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "設問へ移動" })).not.toBeInTheDocument();
     expect(
@@ -358,6 +360,23 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.queryByText(/正解|不正解|合格|得点|正答率/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
     expect(editAnswers).toHaveBeenCalledOnce();
+  });
+
+  it("adds the results link only after publication and keeps the correction CTA beside it", async () => {
+    const editAnswers = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ state: "visible" }) }),
+    );
+    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }, { editAnswers }));
+
+    render(<RunnerPage />);
+
+    const resultLink = await screen.findByRole("link", { name: "自分の結果を見る" });
+    expect(resultLink).toHaveAttribute("href", "/results");
+    fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
+    expect(editAnswers).toHaveBeenCalledOnce();
+    expect(resultLink).toBeInTheDocument();
   });
 
   it("keeps correction disabled when saved answers could not be restored", () => {

@@ -71,6 +71,21 @@ type PresentationAnswerSnapshot = {
   normalizedScore: number | null;
 };
 
+export type ParticipantResultQuestion = {
+  position: number;
+  question: string;
+  answer:
+    | { kind: "selected"; value: string; correctness: "correct" | "incorrect" | "unavailable" }
+    | { kind: "freeText"; value: string; score: number | null }
+    | { kind: "unanswered" }
+    | { kind: "legacy" };
+};
+
+export type ParticipantResult =
+  | { state: "waiting" }
+  | { state: "unavailable" }
+  | { state: "visible"; score: number; rank: number; questions: ParticipantResultQuestion[] };
+
 function stageForRank(rank: number): PresentationState {
   return rank === 3 ? "third" : rank === 2 ? "second" : "first";
 }
@@ -144,6 +159,7 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
     })),
   } satisfies AdminPresentation;
 }
+
 export async function setParticipantResultsVisible(visible: boolean) {
   return db.transaction(async (tx) => {
     const [session] = await tx
@@ -161,6 +177,154 @@ export async function setParticipantResultsVisible(visible: boolean) {
   });
 }
 
+export async function getParticipantResult(participantId: number): Promise<ParticipantResult> {
+  return db.transaction(async (tx) => {
+    const [settings] = await tx
+      .select({ visible: participantResultSettings.visible })
+      .from(participantResultSettings)
+      .where(eq(participantResultSettings.id, 1));
+    const [session] = await tx
+      .select({ state: presentationSessions.state })
+      .from(presentationSessions)
+      .where(eq(presentationSessions.id, 1));
+    if (!settings?.visible || !session || session.state === "not_started") {
+      return { state: "waiting" as const };
+    }
+    const [entry] = await tx
+      .select({
+        score: presentationEntries.score,
+        rank: presentationEntries.rank,
+        answers: presentationEntries.answers,
+      })
+      .from(presentationEntries)
+      .where(
+        and(
+          eq(presentationEntries.sessionId, 1),
+          eq(presentationEntries.participantId, participantId),
+        ),
+      );
+    if (!entry) return { state: "unavailable" as const };
+    const questionRows = await tx
+      .select()
+      .from(presentationQuestions)
+      .where(eq(presentationQuestions.sessionId, 1))
+      .orderBy(asc(presentationQuestions.position));
+    if (
+      !Number.isFinite(entry.score) ||
+      entry.score < 0 ||
+      entry.score > questionRows.length ||
+      !Number.isInteger(entry.rank) ||
+      entry.rank < 1 ||
+      questionRows.length === 0 ||
+      !Array.isArray(entry.answers) ||
+      entry.answers.length !== questionRows.length
+    ) {
+      return { state: "unavailable" as const };
+    }
+
+    const answerByQuestionId = new Map<number, PresentationAnswerSnapshot>();
+    const questionIds = new Set<number>();
+    const positions = new Set<number>();
+    for (const [index, question] of questionRows.entries()) {
+      if (
+        !Number.isInteger(question.position) ||
+        question.position !== index ||
+        positions.has(question.position) ||
+        !Number.isInteger(question.sourceQuestionId) ||
+        questionIds.has(question.sourceQuestionId)
+      ) {
+        return { state: "unavailable" as const };
+      }
+      positions.add(question.position);
+      questionIds.add(question.sourceQuestionId);
+    }
+    for (const item of entry.answers as unknown[]) {
+      if (
+        !item ||
+        typeof item !== "object" ||
+        !("questionId" in item) ||
+        typeof item.questionId !== "number" ||
+        !Number.isInteger(item.questionId) ||
+        !("answerKind" in item) ||
+        !["selected", "freeText", "legacy", "unanswered"].includes(String(item.answerKind)) ||
+        answerByQuestionId.has(item.questionId as number)
+      ) {
+        return { state: "unavailable" as const };
+      }
+      answerByQuestionId.set(item.questionId as number, item as PresentationAnswerSnapshot);
+    }
+
+    const questions: ParticipantResultQuestion[] = [];
+    for (const question of questionRows) {
+      const answer = answerByQuestionId.get(question.sourceQuestionId);
+      if (
+        !answer ||
+        typeof question.question !== "string" ||
+        !Array.isArray(question.choices) ||
+        !Array.from(question.choices).every((choice) => typeof choice === "string")
+      ) {
+        return { state: "unavailable" as const };
+      }
+      let answerDto: ParticipantResultQuestion["answer"];
+      if (answer.answerKind === "selected") {
+        if (question.choices.length === 0) return { state: "unavailable" as const };
+        const selectedIndex = answer.selectedIndex;
+        const validCorrectIndex =
+          Number.isInteger(question.correctIndex) &&
+          question.correctIndex >= 0 &&
+          question.correctIndex < question.choices.length;
+        if (
+          !validCorrectIndex ||
+          !Number.isInteger(selectedIndex) ||
+          selectedIndex === null ||
+          selectedIndex < 0 ||
+          selectedIndex >= question.choices.length
+        ) {
+          answerDto = { kind: "selected", value: "", correctness: "unavailable" };
+        } else {
+          answerDto = {
+            kind: "selected",
+            value: question.choices[selectedIndex],
+            correctness: selectedIndex === question.correctIndex ? "correct" : "incorrect",
+          };
+        }
+      } else if (answer.answerKind === "freeText") {
+        if (question.choices.length > 0) return { state: "unavailable" as const };
+        if (typeof answer.freeText !== "string") return { state: "unavailable" as const };
+        const score = answer.normalizedScore;
+        if (score !== null && (!Number.isFinite(score) || score < 0 || score > 1)) {
+          return { state: "unavailable" as const };
+        }
+        answerDto = { kind: "freeText", value: answer.freeText, score };
+      } else if (answer.answerKind === "legacy") {
+        // The historical legacy answer is the final free-response question:
+        // its original choices are no longer in the snapshot, but its old
+        // selected index is retained without interpreting it.
+        if (
+          question.position !== questionRows.length - 1 ||
+          question.choices.length !== 0 ||
+          !Number.isInteger(answer.selectedIndex) ||
+          answer.selectedIndex === null ||
+          answer.selectedIndex < 0 ||
+          answer.freeText !== null ||
+          answer.rawScore !== null ||
+          answer.normalizedScore !== null
+        ) {
+          return { state: "unavailable" as const };
+        }
+        answerDto = { kind: "legacy" };
+      } else {
+        answerDto = { kind: "unanswered" };
+      }
+      questions.push({
+        position: question.position,
+        question: question.question,
+        answer: answerDto,
+      });
+    }
+    return { state: "visible" as const, score: entry.score, rank: entry.rank, questions };
+  });
+}
 export async function getAdminPresentation() {
   return db.transaction((tx) => readAdminPresentation(tx));
 }

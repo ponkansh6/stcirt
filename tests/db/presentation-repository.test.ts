@@ -18,6 +18,7 @@ vi.mock("@/lib/db", async (importOriginal) => {
 
 import {
   getAdminPresentation,
+  getParticipantResult,
   getPublicPresentation,
   operatePresentation,
   PresentationConflictError,
@@ -298,6 +299,7 @@ describe("presentation repository", () => {
     });
     expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
   });
+
   it("keeps participant result publication private until a snapshot exists", async () => {
     await addQuestions();
     const participant = await addParticipant("Participant");
@@ -318,6 +320,247 @@ describe("presentation repository", () => {
       participantResultsVisible: false,
       participantResultsReady: true,
     });
+  });
+
+  it("returns only the cookie owner's result and fails closed on malformed snapshots", async () => {
+    await addQuestions();
+    const first = await addParticipant("First");
+    const second = await addParticipant("Second");
+    await addSubmission(first, [0, 0]);
+    await addSubmission(second, [0, 1]);
+    await operatePresentation("results-start", "start");
+    const lateParticipant = await addParticipant("Late participant");
+    await setParticipantResultsVisible(true);
+    await expect(getParticipantResult(lateParticipant)).resolves.toEqual({ state: "unavailable" });
+
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ question: "Changed after presentation" })
+      .where(eq(schema.examQuestions.id, 11));
+    await expect(getParticipantResult(first)).resolves.toEqual({
+      state: "visible",
+      rank: 1,
+      score: 2,
+      questions: [
+        {
+          position: 0,
+          question: "Question 11",
+          answer: { kind: "selected", value: "Correct 11", correctness: "correct" },
+        },
+        {
+          position: 1,
+          question: "Question 22",
+          answer: { kind: "selected", value: "Correct 22", correctness: "correct" },
+        },
+      ],
+    });
+    await expect(getParticipantResult(second)).resolves.toEqual({
+      state: "visible",
+      rank: 2,
+      score: 1,
+      questions: [
+        {
+          position: 0,
+          question: "Question 11",
+          answer: { kind: "selected", value: "Correct 11", correctness: "correct" },
+        },
+        {
+          position: 1,
+          question: "Question 22",
+          answer: { kind: "selected", value: "Wrong 22", correctness: "incorrect" },
+        },
+      ],
+    });
+    const [firstEntry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, first));
+    const invalidIndexSnapshot = firstEntry!.answers.map((answer) =>
+      answer.questionId === 11 ? { ...answer, selectedIndex: -1 } : answer,
+    );
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: invalidIndexSnapshot })
+      .where(eq(schema.presentationEntries.participantId, first));
+    await expect(getParticipantResult(first)).resolves.toMatchObject({
+      state: "visible",
+      questions: [
+        {
+          position: 0,
+          answer: { kind: "selected", value: "", correctness: "unavailable" },
+        },
+        {
+          position: 1,
+          answer: { kind: "selected", value: "Correct 22", correctness: "correct" },
+        },
+      ],
+    });
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ correctIndex: 99 })
+      .where(eq(schema.presentationQuestions.position, 0));
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: firstEntry!.answers })
+      .where(eq(schema.presentationEntries.participantId, first));
+    await expect(getParticipantResult(first)).resolves.toMatchObject({
+      state: "visible",
+      questions: [
+        {
+          position: 0,
+          answer: { kind: "selected", value: "", correctness: "unavailable" },
+        },
+        {
+          position: 1,
+          answer: { kind: "selected", value: "Correct 22", correctness: "correct" },
+        },
+      ],
+    });
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ correctIndex: 0 })
+      .where(eq(schema.presentationQuestions.position, 0));
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ choices: [] })
+      .where(eq(schema.presentationQuestions.position, 1));
+    const legacyAndUnansweredSnapshot = firstEntry!.answers.map((answer) =>
+      answer.questionId === 11
+        ? { ...answer, answerKind: "unanswered" as const, selectedIndex: null }
+        : {
+            ...answer,
+            answerKind: "legacy" as const,
+            selectedIndex: 1,
+            freeText: null,
+            rawScore: null,
+            normalizedScore: null,
+          },
+    );
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: legacyAndUnansweredSnapshot })
+      .where(eq(schema.presentationEntries.participantId, first));
+    await expect(getParticipantResult(first)).resolves.toEqual({
+      state: "visible",
+      rank: 1,
+      score: 2,
+      questions: [
+        { position: 0, question: "Question 11", answer: { kind: "unanswered" } },
+        { position: 1, question: "Question 22", answer: { kind: "legacy" } },
+      ],
+    });
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ choices: ["Correct 22", "Wrong 22"] })
+      .where(eq(schema.presentationQuestions.position, 1));
+    const legacyOnChoiceQuestion = firstEntry!.answers.map((answer) =>
+      answer.questionId === 11
+        ? { ...answer, answerKind: "legacy" as const, selectedIndex: 0 }
+        : answer,
+    );
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: legacyOnChoiceQuestion })
+      .where(eq(schema.presentationEntries.participantId, first));
+    await expect(getParticipantResult(first)).resolves.toEqual({ state: "unavailable" });
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: legacyAndUnansweredSnapshot.slice(1) })
+      .where(eq(schema.presentationEntries.participantId, first));
+    await expect(getParticipantResult(first)).resolves.toEqual({ state: "unavailable" });
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: [legacyAndUnansweredSnapshot[0]!, legacyAndUnansweredSnapshot[0]!] })
+      .where(eq(schema.presentationEntries.participantId, first));
+    await expect(getParticipantResult(first)).resolves.toEqual({ state: "unavailable" });
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ position: 3 })
+      .where(eq(schema.presentationQuestions.position, 1));
+    await expect(getParticipantResult(first)).resolves.toEqual({ state: "unavailable" });
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ position: 1 })
+      .where(eq(schema.presentationQuestions.position, 3));
+    const [secondEntry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, second));
+    const freeTextSnapshot = secondEntry!.answers.map((answer) =>
+      answer.questionId === 22
+        ? {
+            ...answer,
+            answerKind: "freeText" as const,
+            selectedIndex: null,
+            freeText: "saved free response",
+            rawScore: 987,
+            normalizedScore: 0.75,
+          }
+        : answer,
+    );
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: freeTextSnapshot })
+      .where(eq(schema.presentationEntries.participantId, second));
+    await expect(getParticipantResult(second)).resolves.toEqual({ state: "unavailable" });
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ choices: [] })
+      .where(eq(schema.presentationQuestions.position, 1));
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: freeTextSnapshot })
+      .where(eq(schema.presentationEntries.participantId, second));
+    const freeTextResult = await getParticipantResult(second);
+    expect(freeTextResult).toEqual({
+      state: "visible",
+      rank: 2,
+      score: 1,
+      questions: [
+        {
+          position: 0,
+          question: "Question 11",
+          answer: { kind: "selected", value: "Correct 11", correctness: "correct" },
+        },
+        {
+          position: 1,
+          question: "Question 22",
+          answer: { kind: "freeText", value: "saved free response", score: 0.75 },
+        },
+      ],
+    });
+    expect(JSON.stringify(freeTextResult)).not.toContain("rawScore");
+    expect(JSON.stringify(freeTextResult)).not.toContain("987");
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ score: 3 })
+      .where(eq(schema.presentationEntries.participantId, second));
+    await expect(getParticipantResult(second)).resolves.toEqual({ state: "unavailable" });
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ score: -0.1 })
+      .where(eq(schema.presentationEntries.participantId, second));
+    await expect(getParticipantResult(second)).resolves.toEqual({ state: "unavailable" });
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ score: 1 })
+      .where(eq(schema.presentationEntries.participantId, second));
+    const outOfRangeScoreSnapshot = freeTextSnapshot.map((answer) =>
+      answer.questionId === 22 ? { ...answer, normalizedScore: 1.2 } : answer,
+    );
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: outOfRangeScoreSnapshot })
+      .where(eq(schema.presentationEntries.participantId, second));
+    await expect(getParticipantResult(second)).resolves.toEqual({ state: "unavailable" });
+    const malformedSnapshot = freeTextSnapshot.map((answer) =>
+      answer.questionId === 22 ? { ...answer, answerKind: "unrecognized" } : answer,
+    ) as unknown as typeof freeTextSnapshot;
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: malformedSnapshot })
+      .where(eq(schema.presentationEntries.participantId, second));
+    await expect(getParticipantResult(second)).resolves.toEqual({ state: "unavailable" });
   });
 
   it("recovers an operation retry after an adapter conflict without advancing twice", async () => {

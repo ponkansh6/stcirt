@@ -141,6 +141,12 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 
 - Participant result visibility is stored independently from `presentation_sessions.projection_hidden`, presentation mode, stage, and operation version. It defaults to false.
 - An administrator can publish results only after a presentation snapshot has been created. Changing visibility does not grade answers, rebuild rankings, or move the presentation stage.
+- While results are private, `/results` displays exactly `回答中`; its API returns only `{ state: 'waiting' }`, with no score, rank, answer text, participant name, or other participant data.
+- Published results expose only the authenticated participant's own `rank`, `score`, and per-question answer summary, selected from the immutable `presentation_entries` and `presentation_questions` snapshots using the ID in the signed participant cookie. Client-provided participant IDs are ignored; no overall ranking or other participant data is returned. Selected answers contain the chosen label and `correct`/`incorrect`/`unavailable` correctness, never the correct choice. Free-text answers contain the saved text and an existing normalized score in the 0..1 range, without a binary correctness label. Legacy and unanswered answers remain distinct. Invalid or missing selected indexes and invalid correct indexes produce `unavailable` correctness rather than a guessed result.
+- `/answer` keeps the existing completion text and correction CTA. It adds a results CTA only while that participant's result API reports a published result.
+- The dynamic Server Component for `/results` checks the participant cookie, participant record, and current publication state before rendering. It passes only an unauthenticated/neutral state or that participant's own rank, score, and answer summary to a narrow client panel. The panel polls the no-store API; when a poll observes that results have become private, it removes the published result and displays `回答中`.
+- Missing or invalid participant sessions return 401. A valid participant with no snapshot entry receives an unavailable state; the application does not invent a zero score or return another participant's result.
+- Participant result responses and the result page's data access use `no-store`. Publication changes do not alter `/api/presentation`, projection hiding, presentation progression, or the frozen score snapshot.
 
 ## API
 
@@ -239,6 +245,12 @@ The presenter screen may consume only the minimal state, cursor, hidden flag, an
 - Attempting to publish before a result snapshot exists returns 409 and does not change visibility. Hiding is allowed at any time.
 - Visibility changes do not mutate presentation stage, projection visibility, presentation version, or score snapshots.
 
+### `GET /api/participants/results`
+
+- Requires a valid signed participant cookie whose participant still exists; identity comes only from that cookie.
+- Response 200 while private: `{ state: 'waiting' }`. Response 200 when published and the participant has a valid snapshot entry: `{ state: 'visible', rank, score, questions }`, where each question is `{ position, question, answer }` and answer is `{ kind: 'selected', value, correctness: 'correct' | 'incorrect' | 'unavailable' }`, `{ kind: 'freeText', value, score: number | null }`, `{ kind: 'unanswered' }`, or `{ kind: 'legacy' }`. Data comes only from the immutable presentation question and entry snapshots; current questions are not consulted. A participant without a snapshot entry or with a malformed snapshot receives `{ state: 'unavailable' }` (or the existing unavailable server error). Unknown answer kinds fail closed. No correct choice, raw answers JSON, raw score, JEV data, internal assessment data, names, or other participants' information is returned.
+- Invalid or missing sessions return 401. All responses are `Cache-Control: private, no-store`.
+
 ## Components
 
 - `/`: server-side redirect to `/answer`
@@ -254,7 +266,8 @@ The presenter screen may consume only the minimal state, cursor, hidden flag, an
 - `/api/admin/session`, `/api/admin/presentation`, `/api/presentation`: isolated sign-in, private conductor API, and staged public projection
 - `/admin/presentation`: same-tab PIN authentication entry for presenter mode
 - `/presentation`: spectator projection screen by default; `?presenter=1` requests a signed-session-gated, single-screen control footer and fullscreen wrapper
-- `/api/admin/participant-results`: authenticated admin visibility control
+- `/results`: dynamic Server Component that checks session and publication state before rendering; a narrow client panel polls for changes and exposes only the authenticated participant's own rank, score, and per-question answer summary
+- `/api/admin/participant-results`, `/api/participants/results`: authenticated admin visibility control and participant-scoped result API
 
 ## Coverage tiers
 
