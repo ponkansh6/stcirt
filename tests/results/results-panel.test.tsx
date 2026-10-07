@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import ResultsPanel from "@/app/results/results-panel";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -28,8 +28,75 @@ const mockPoll = (payload: unknown) => {
   );
 };
 
+const setVisibility = (state: "hidden" | "visible") => {
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
+  document.dispatchEvent(new Event("visibilitychange"));
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe("ResultsPanel", () => {
-  it("removes all visible details and shows 回答中 when a poll observes that results are private", async () => {
+  it("uses the server state initially, skips hidden-tab changes, and refreshes on return", async () => {
+    mockPoll(visibleResult);
+
+    render(<ResultsPanel initial={visibleResult} />);
+
+    expect(screen.getByText("2位")).toBeVisible();
+    expect(fetch).not.toHaveBeenCalled();
+    setVisibility("hidden");
+    expect(fetch).not.toHaveBeenCalled();
+    setVisibility("visible");
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(fetch).toHaveBeenCalledWith("/api/participants/results", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+  });
+
+  it("queues one trailing refresh when tab return happens during a request", async () => {
+    const firstResponse = deferred<{ ok: boolean; status: number; json: () => Promise<unknown> }>();
+    const secondResponse = deferred<{
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(firstResponse.promise)
+      .mockReturnValueOnce(secondResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ResultsPanel initial={visibleResult} />);
+    setVisibility("visible");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    setVisibility("hidden");
+    setVisibility("visible");
+    setVisibility("hidden");
+    setVisibility("visible");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstResponse.resolve({ ok: true, status: 200, json: async () => ({ state: "waiting" }) });
+      await firstResponse.promise;
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("2位")).toBeVisible();
+
+    await act(async () => {
+      secondResponse.resolve({ ok: true, status: 200, json: async () => visibleResult });
+      await secondResponse.promise;
+    });
+    expect(screen.getByText("2位")).toBeVisible();
+  });
+
+  it("removes all visible details and shows 回答中 when a refresh observes that results are private", async () => {
     mockPoll({ state: "waiting" });
 
     render(<ResultsPanel initial={visibleResult} />);
@@ -41,6 +108,8 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(screen.getByText("正解")).toBeVisible();
 
+    expect(fetch).not.toHaveBeenCalled();
+    setVisibility("visible");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("回答中"));
     expect(screen.queryByText("2位")).not.toBeInTheDocument();
     expect(screen.queryByText("1点")).not.toBeInTheDocument();
@@ -65,7 +134,7 @@ describe("ResultsPanel", () => {
         questions: [{ position: -1, question: "不正な問題", answer: { kind: "unanswered" } }],
       },
     },
-  ])("clears prior details when polling an $label payload", async ({ payload }) => {
+  ])("clears prior details when a refresh returns an $label payload", async ({ payload }) => {
     mockPoll(payload);
 
     render(<ResultsPanel initial={visibleResult} />);
@@ -74,6 +143,8 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
 
+    expect(fetch).not.toHaveBeenCalled();
+    setVisibility("visible");
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "結果を確認できません" })).toBeVisible(),
     );

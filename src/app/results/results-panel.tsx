@@ -153,15 +153,22 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
   useEffect(() => {
     let active = true;
     let pending = false;
+    let refreshQueued = false;
+    let requestRevision = 0;
     const refresh = async () => {
-      if (pending) return;
+      if (pending) {
+        refreshQueued = true;
+        requestRevision += 1;
+        return;
+      }
       pending = true;
+      const currentRevision = ++requestRevision;
       try {
         const response = await fetch("/api/participants/results", {
           cache: "no-store",
           credentials: "same-origin",
         });
-        if (!active) return;
+        if (!active || currentRevision !== requestRevision) return;
         if (response.status === 401) {
           setAuthorized(false);
           setResult({ state: "waiting" });
@@ -172,23 +179,31 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
         try {
           payload = await response.json();
         } catch {
+          if (!active || currentRevision !== requestRevision) return;
           setAuthorized(true);
           setResult({ state: "unavailable" });
           return;
         }
+        if (!active || currentRevision !== requestRevision) return;
         setAuthorized(true);
         setResult(parsePollResult(payload));
       } catch {
-        // Keep the last server-confirmed state until the next no-store poll.
+        // Keep the last server-confirmed state until the next visibility refresh.
       } finally {
         pending = false;
+        if (active && refreshQueued) {
+          refreshQueued = false;
+          void refresh();
+        }
       }
     };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 1500);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
-      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 

@@ -55,6 +55,14 @@ function RunnerPage() {
   );
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe("QuizRunner batch answer sheet", () => {
   beforeEach(() => mockUseQuizSession.mockReset());
   afterEach(() => vi.unstubAllGlobals());
@@ -374,9 +382,52 @@ describe("QuizRunner batch answer sheet", () => {
 
     const resultLink = await screen.findByRole("link", { name: "自分の結果を見る" });
     expect(resultLink).toHaveAttribute("href", "/results");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(fetch).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
     expect(editAnswers).toHaveBeenCalledOnce();
     expect(resultLink).toBeInTheDocument();
+  });
+
+  it("queues one tab-return refresh and ignores the stale in-flight completion response", async () => {
+    const firstResponse = deferred<{ ok: boolean; json: () => Promise<{ state: string }> }>();
+    const secondResponse = deferred<{ ok: boolean; json: () => Promise<{ state: string }> }>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(firstResponse.promise)
+      .mockReturnValueOnce(secondResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
+
+    render(<RunnerPage />);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstResponse.resolve({ ok: true, json: async () => ({ state: "visible" }) });
+      await firstResponse.promise;
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      secondResponse.resolve({ ok: true, json: async () => ({ state: "waiting" }) });
+      await secondResponse.promise;
+    });
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
   });
 
   it("keeps correction disabled when saved answers could not be restored", () => {

@@ -39,32 +39,48 @@ export default function QuizRunner() {
     }
     let active = true;
     let pending = false;
+    let refreshQueued = false;
+    let requestRevision = 0;
     const refresh = async () => {
-      if (pending) return;
+      if (pending) {
+        refreshQueued = true;
+        requestRevision += 1;
+        return;
+      }
       pending = true;
+      const currentRevision = ++requestRevision;
       try {
         const response = await fetch("/api/participants/results", {
           cache: "no-store",
           credentials: "same-origin",
         });
-        if (!active) return;
+        if (!active || currentRevision !== requestRevision) return;
         if (!response.ok) {
           setParticipantResultsVisible(false);
           return;
         }
         const result = (await response.json()) as { state?: unknown };
-        if (active) setParticipantResultsVisible(result.state === "visible");
+        if (active && currentRevision === requestRevision) {
+          setParticipantResultsVisible(result.state === "visible");
+        }
       } catch {
-        if (active) setParticipantResultsVisible(false);
+        if (active && currentRevision === requestRevision) setParticipantResultsVisible(false);
       } finally {
         pending = false;
+        if (active && refreshQueued) {
+          refreshQueued = false;
+          void refresh();
+        }
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 1500);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
-      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [access.kind, phase.kind]);
   const isSubmitting = phase.kind === "submitting";
