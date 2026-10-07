@@ -2,19 +2,32 @@
   position: fixed;
   z-index: 30;
   inset: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
   background: #ede9df;
   color: #23343c;
   font-family: var(--font-geist), "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
 }
+.slideRegion {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+  place-items: center;
+  container-type: size;
+}
 
 .canvas {
   position: relative;
   display: grid;
-  width: min(100vw, 177.7778dvh);
-  height: min(100dvh, 56.25vw);
+  width: min(100cqw, 177.7778cqh);
+  height: min(100cqh, 56.25cqw);
+  flex: 0 0 auto;
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
   overflow: hidden;
@@ -24,6 +37,96 @@
     linear-gradient(135deg, #f9f7f0 0%, #f0ede4 48%, #f8f5ed 100%);
   box-shadow: 0 14px 70px rgb(50 45 32 / 13%);
   isolation: isolate;
+}
+
+.presenterScreen {
+  justify-content: flex-start;
+}
+.presenterScreen .slideRegion {
+  flex: 1 1 0;
+}
+.controls {
+  z-index: 3;
+  display: flex;
+  width: 100%;
+  min-height: 76px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px clamp(12px, 2.2vw, 32px);
+  border-top: 1px solid #d7d1c4;
+  background: #f8f6ef;
+  color: #263741;
+  font-family: var(--font-geist), "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+}
+.controlStatus {
+  display: grid;
+  min-width: 92px;
+  gap: 3px;
+  font-size: 0.82rem;
+}
+.controlStatus span {
+  max-width: 25vw;
+  color: #815d32;
+  font-size: 0.7rem;
+}
+.controlButtons,
+.modeControls {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+  max-width: 150px;
+  color: #815d32;
+  font-size: 0.65rem;
+  line-height: 1.2;
+}
+.controlButtons button {
+  min-height: 42px;
+  padding: 0 13px;
+  border: 1px solid #bdb6a7;
+  border-radius: 8px;
+  background: #fffefa;
+  color: #34464e;
+  font: inherit;
+  font-size: 0.83rem;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.controlButtons button:hover:not(:disabled) {
+  background: #f0ece1;
+}
+.controlButtons button:focus-visible {
+  outline: 3px solid #bb9147;
+  outline-offset: 2px;
+}
+.controlButtons button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.controlButtons .primaryControl {
+  border-color: #365b4a;
+  background: #365b4a;
+  color: white;
+}
+.controlButtons .primaryControl:hover:not(:disabled) {
+  background: #294738;
+}
+.modeControls {
+  padding-left: 7px;
+  border-left: 1px solid #d6d0c3;
+}
+.controlButtons .modeControls button[aria-pressed="true"] {
+  border-color: #93805a;
+  background: #eee8d9;
+  color: #4d432e;
+}
+.controlButtons .fullscreenControl {
+  background: transparent;
+}
+.presenterScreen .wakeHint {
+  display: none;
 }
 
 .canvas::before,
@@ -486,14 +589,43 @@
   opacity: 0.72;
 }
 
-@media (max-aspect-ratio: 4/3) {
-  .canvas {
-    width: 100vw;
-    height: 56.25vw;
-  }
-}
-
 @media (max-width: 640px) {
+  .presenterScreen {
+    overflow: auto;
+  }
+  .presenterScreen .slideRegion {
+    height: 56.25vw;
+    min-height: 56.25vw;
+    flex: 0 0 auto;
+  }
+  .presenterScreen .canvas {
+    width: 100cqw;
+    height: 100cqh;
+  }
+  .controls {
+    min-height: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 9px;
+  }
+  .controlStatus {
+    display: flex;
+    justify-content: space-between;
+  }
+  .controlStatus span {
+    max-width: 70%;
+    text-align: right;
+  }
+  .controlButtons {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .controlButtons button {
+    min-height: 40px;
+    padding: 0 10px;
+    font-size: 0.75rem;
+  }
   .canvas {
     padding: 5vw;
   }
@@ -567,6 +699,31 @@
   }
 }
 
+@media (min-width: 641px) and (max-width: 900px) {
+  .controls {
+    flex-wrap: wrap;
+  }
+  .controlStatus {
+    width: 100%;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+  }
+  .controlStatus span {
+    max-width: none;
+    text-align: right;
+  }
+  .controlButtons {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
+
+.screen:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  background: #ede9df;
+}
 @media (prefers-reduced-motion: reduce) {
   .screen *,
   .screen *::before,

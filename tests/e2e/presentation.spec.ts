@@ -27,6 +27,16 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
   let version = 0;
   let projectionHidden = false;
   let presentationMode: "full" | "short" = "full";
+  let failAdminRead = false;
+  let failNextMutationUnauthorized = false;
+  let failNextMutationConflict = false;
+  let pauseNextMutation = false;
+  let releasePausedMutation: (() => void) | null = null;
+  let pausedMutationStarted: (() => void) | null = null;
+  let holdNextProjection = false;
+  let releaseHeldProjection: (() => void) | null = null;
+  let heldProjectionStarted: (() => void) | null = null;
+  const actions: string[] = [];
   const stages: PresentationState[] = [
     "not_started",
     "question",
@@ -74,6 +84,10 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
     .then(() =>
       page.route("**/api/admin/presentation", async (route) => {
         if (route.request().method() === "GET") {
+          if (failAdminRead) {
+            await route.fulfill({ status: 503, json: { error: "Unavailable" } });
+            return;
+          }
           await route.fulfill({ json: payload() });
           return;
         }
@@ -82,9 +96,34 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
           action?: string;
           mode?: "full" | "short";
         };
+        if (failNextMutationUnauthorized) {
+          failNextMutationUnauthorized = false;
+          authenticated = false;
+          await route.fulfill({ status: 401, json: { error: "Unauthorized" } });
+          return;
+        }
+        if (failNextMutationConflict) {
+          failNextMutationConflict = false;
+          if (body.action === "advance" && state === "question") state = "answer";
+          version += 1;
+          await route.fulfill({
+            status: 409,
+            json: { error: "Presentation state changed concurrently" },
+          });
+          return;
+        }
         if (!authenticated || !body.operationId) {
           await route.fulfill({ status: 401, json: { error: "Unauthorized" } });
           return;
+        }
+        actions.push(body.action ?? "");
+        if (pauseNextMutation) {
+          pauseNextMutation = false;
+          pausedMutationStarted?.();
+          await new Promise<void>((resolve) => {
+            releasePausedMutation = resolve;
+          });
+          releasePausedMutation = null;
         }
         if (body.action === "start" && state === "not_started") state = "question";
         else if (body.action === "advance") {
@@ -99,30 +138,286 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
         version += 1;
         await route.fulfill({ json: payload() });
       }),
-    );
+    )
+    .then(() =>
+      page.route("**/api/presentation", async (route) => {
+        let projection: Record<string, unknown>;
+        if (projectionHidden) {
+          projection = { state: "standby" };
+        } else if (state === "question" || state === "answer") {
+          projection = {
+            state,
+            question: {
+              id: 11,
+              ordinal: 1,
+              total: 1,
+              question: questions[0].question,
+              choices: questions[0].choices,
+              ...(state === "answer"
+                ? { correctAnswer: questions[0].correctAnswer, correctIndex: 1 }
+                : {}),
+            },
+          };
+        } else {
+          projection = { state };
+        }
+        if (holdNextProjection) {
+          holdNextProjection = false;
+          heldProjectionStarted?.();
+          await new Promise<void>((resolve) => {
+            releaseHeldProjection = resolve;
+          });
+          releaseHeldProjection = null;
+        }
+        await route.fulfill({ json: projection });
+      }),
+    )
+    .then(() => ({
+      failAdminReads: () => {
+        failAdminRead = true;
+      },
+      failNextMutationAsUnauthorized: () => {
+        failNextMutationUnauthorized = true;
+      },
+      conflictNextMutation: () => {
+        failNextMutationConflict = true;
+      },
+      pauseNextMutation: () => {
+        pauseNextMutation = true;
+        return new Promise<void>((resolve) => {
+          pausedMutationStarted = resolve;
+        });
+      },
+      releasePausedMutation: () => releasePausedMutation?.(),
+      holdNextProjection: () => {
+        holdNextProjection = true;
+        return new Promise<void>((resolve) => {
+          heldProjectionStarted = resolve;
+        });
+      },
+      releaseHeldProjection: () => releaseHeldProjection?.(),
+      actionLog: actions,
+    }));
 }
 
-test("admin controls use mocked session and presentation APIs", async ({ page }) => {
-  await installAdminApiMock(page);
+test("admin PIN opens same-tab presenter controls guarded by the session", async ({ page }) => {
+  const mock = await installAdminApiMock(page);
+  await page.goto("/presentation?presenter=1");
+  await expect(page.getByRole("button", { name: "発表を始める" })).toHaveCount(0);
+
   await page.goto("/admin/presentation");
 
   await page.getByLabel("管理者 PIN").fill("2468");
-  await page.getByRole("button", { name: "管理画面に入る" }).click();
-  await expect(page.getByRole("heading", { name: "披露宴 発表操作" })).toBeVisible();
+  await page.getByRole("button", { name: "発表画面を始める" }).click();
+  await expect(page).toHaveURL(/\/presentation\?presenter=1$/);
+  await expect(page.locator("footer[aria-label='発表操作']")).toBeVisible();
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowRight", repeat: true, bubbles: true }),
+    );
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.focus();
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    input.remove();
+  });
+  await expect(page.getByRole("button", { name: "発表を始める" })).toBeVisible();
+  expect(mock.actionLog).toEqual([]);
+
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 1366, height: 768 },
+    { width: 1920, height: 1080 },
+    // Rounded CSS layout viewport for 1366×768 at 125% browser zoom, not browser UI zoom automation.
+    { width: 1093, height: 614 },
+    { width: 900, height: 720 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const layout = await page.evaluate(() => {
+      const canvas = document
+        .querySelector("[data-testid='presentation-canvas']")
+        ?.getBoundingClientRect();
+      const footer = document
+        .querySelector("footer[aria-label='発表操作']")
+        ?.getBoundingClientRect();
+      return {
+        canvasBottom: canvas?.bottom ?? Number.POSITIVE_INFINITY,
+        footerTop: footer?.top ?? Number.NEGATIVE_INFINITY,
+        footerBottom: footer?.bottom ?? Number.POSITIVE_INFINITY,
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+      };
+    });
+    expect(layout.canvasBottom).toBeLessThanOrEqual(layout.footerTop + 1);
+    expect(layout.footerBottom).toBeLessThanOrEqual(layout.innerHeight + 1);
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.innerWidth);
+    expect(layout.scrollHeight).toBeLessThanOrEqual(layout.innerHeight);
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   await page.getByRole("button", { name: "発表を始める" }).click();
-  await expect(page.getByRole("heading", { name: "設問のおさらい" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: questions[0].question })).toBeVisible();
   await page.getByRole("button", { name: "正解を発表する" }).click();
-  await expect(page.getByRole("heading", { name: "正解・解説" })).toBeVisible();
-  await page.getByRole("button", { name: "← 前の画面へ" }).click();
-  await expect(page.getByRole("heading", { name: "設問のおさらい" })).toBeVisible();
+  await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "← 前へ" }).click();
+  await expect(
+    page.getByTestId("presentation-canvas").getByText("QUESTION 1", { exact: false }),
+  ).toBeVisible();
 
-  await page.getByRole("button", { name: /短縮/ }).click();
-  await expect(page.getByText(/短縮中：正解を強調し、解説を省きます。/)).toBeVisible();
-  await page.getByRole("button", { name: "投影画面を隠す" }).click();
-  await expect(page.getByText("投影画面は非表示")).toBeVisible();
-  await page.getByRole("button", { name: "投影画面を表示する" }).click();
-  await expect(page.getByText("投影画面を表示中")).toBeVisible();
+  await page.getByRole("button", { name: "短縮", exact: true }).click();
+  await expect(page.getByRole("button", { name: "短縮", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.getByRole("button", { name: "投影を隠す" }).click();
+  await expect(page.getByRole("heading", { name: "ただいま休憩中です" })).toBeVisible();
+  await page.getByRole("button", { name: "投影を表示" }).click();
+  await expect(page.getByRole("heading", { name: questions[0].question })).toBeVisible();
+
+  mock.failNextMutationAsUnauthorized();
+  await page.getByRole("button", { name: "投影を隠す" }).click();
+  await expect(page.locator("footer[aria-label='発表操作']")).toHaveCount(0);
+});
+
+test("presenter metadata request failure clears controls", async ({ page }) => {
+  const mock = await installAdminApiMock(page);
+  await page.goto("/admin/presentation");
+  await page.getByLabel("管理者 PIN").fill("2468");
+  await page.getByRole("button", { name: "発表画面を始める" }).click();
+  await expect(page.locator("footer[aria-label='発表操作']")).toBeVisible();
+
+  mock.failAdminReads();
+  await page.getByRole("button", { name: "発表を始める" }).click();
+  await expect(page.locator("footer[aria-label='発表操作']")).toHaveCount(0);
+});
+
+test("presenter recovers from a 409 by showing the latest public projection", async ({ page }) => {
+  const mock = await installAdminApiMock(page);
+  await page.goto("/admin/presentation");
+  await page.getByLabel("管理者 PIN").fill("2468");
+  await page.getByRole("button", { name: "発表画面を始める" }).click();
+  await page.getByRole("button", { name: "発表を始める" }).click();
+  await expect(page.getByRole("button", { name: "正解を発表する" })).toBeVisible();
+
+  mock.conflictNextMutation();
+  await page.getByRole("button", { name: "正解を発表する" }).click();
+  await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "次へ進む" })).toBeVisible();
+});
+
+test("presenter ignores an older projection poll that resolves after a mutation refresh", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  await page.goto("/admin/presentation");
+  await page.getByLabel("管理者 PIN").fill("2468");
+  await page.getByRole("button", { name: "発表画面を始める" }).click();
+  await page.getByRole("button", { name: "発表を始める" }).click();
+  await expect(page.getByRole("button", { name: "正解を発表する" })).toBeVisible();
+
+  const oldPollStarted = mock.holdNextProjection();
+  await oldPollStarted;
+  await page.getByRole("button", { name: "正解を発表する" }).click();
+  await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  mock.releaseHeldProjection();
+  await expect(page.getByRole("button", { name: "次へ進む" })).toBeVisible();
+  await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+});
+
+test("presenter single-flights rapid button and keyboard mutations", async ({ page }) => {
+  const mock = await installAdminApiMock(page);
+  await page.goto("/admin/presentation");
+  await page.getByLabel("管理者 PIN").fill("2468");
+  await page.getByRole("button", { name: "発表画面を始める" }).click();
+  const mutationStarted = mock.pauseNextMutation();
+  await page.getByRole("button", { name: "発表を始める" }).click();
+  await mutationStarted;
+
+  await page.evaluate(() => {
+    document
+      .querySelector<HTMLButtonElement>(".primaryControl")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+  });
+  expect(mock.actionLog).toEqual(["start"]);
+  mock.releasePausedMutation();
+  await expect(page.getByRole("button", { name: "正解を発表する" })).toBeVisible();
+  expect(mock.actionLog).toEqual(["start"]);
+});
+
+test("presenter fullscreen targets the whole wrapper and keeps controls inside", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "chromium",
+    "Fullscreen behavior is verified in desktop Chromium only.",
+  );
+  const mock = await installAdminApiMock(page);
+  await page.goto("/admin/presentation");
+  await page.getByLabel("管理者 PIN").fill("2468");
+  await page.getByRole("button", { name: "発表画面を始める" }).click();
+  await expect(page.locator("footer[aria-label='発表操作']")).toBeVisible();
+
+  await page.evaluate(() => {
+    const wrapper = document.querySelector("main");
+    if (!wrapper) throw new Error("Presenter wrapper was not rendered.");
+    let fullscreenTarget: Element | null = null;
+    const testWindow = window as Window & { __fullscreenRequestTarget?: Element | null };
+    testWindow.__fullscreenRequestTarget = null;
+    Object.defineProperty(document, "fullscreenEnabled", {
+      configurable: true,
+      value: true,
+    });
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenTarget,
+    });
+    Object.defineProperty(wrapper, "requestFullscreen", {
+      configurable: true,
+      value: () => {
+        fullscreenTarget = wrapper;
+        testWindow.__fullscreenRequestTarget = wrapper;
+        document.dispatchEvent(new Event("fullscreenchange"));
+        return Promise.resolve();
+      },
+    });
+    Object.defineProperty(document, "exitFullscreen", {
+      configurable: true,
+      value: () => {
+        fullscreenTarget = null;
+        document.dispatchEvent(new Event("fullscreenchange"));
+        return Promise.resolve();
+      },
+    });
+  });
+
+  await page.getByRole("button", { name: "全画面表示" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const target = (window as Window & { __fullscreenRequestTarget?: Element | null })
+          .__fullscreenRequestTarget;
+        return Boolean(
+          target?.tagName === "MAIN" && target.querySelector("footer[aria-label='発表操作']"),
+        );
+      }),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const target = (window as Window & { __fullscreenRequestTarget?: Element | null })
+          .__fullscreenRequestTarget;
+        return document.fullscreenElement === target;
+      }),
+    )
+    .toBe(true);
+  await page.getByRole("button", { name: "全画面表示を終了" }).click();
+  await expect(page.locator("footer[aria-label='発表操作']")).toBeVisible();
+  expect(mock.actionLog).toEqual([]);
 });
 
 test("projection exposes only the current public payload and stays legible at 16:9 and 4:3", async ({

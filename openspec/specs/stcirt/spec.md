@@ -103,6 +103,8 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - Admin sign-in uses `ADMIN_PRESENTATION_PIN` and `ADMIN_PRESENTATION_SESSION_SECRET`; if either is missing or invalid, admin sign-in and protected admin endpoints fail closed.
 - The admin session is a signed HttpOnly cookie with a purpose-specific HMAC key, separate cookie name and secret from the participant session. Participant cookies never grant admin access.
 - `POST` and `DELETE` admin session operations and every admin state mutation require a same-origin `Origin`. Every admin presentation route requires a valid admin cookie. Admin and public presentation API responses use `Cache-Control: no-store`.
+- `/admin/presentation` is the PIN entry point. Successful authentication opens `/presentation?presenter=1` in the same tab; the presentation screen verifies `/api/admin/session` and only renders its controls while that endpoint confirms an authenticated signed admin cookie. The query parameter requests the presenter interface and never grants authorization.
+- A 401 from a protected admin operation immediately removes presenter controls and returns the screen to spectator behavior. Private admin responses are reduced to the minimum control metadata in client state; they are never used to render slides or written to browser storage.
 
 ### R7: Immutable presentation snapshot and ranking
 
@@ -120,6 +122,8 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - `short` changes only the disclosed answer-screen content: the question and answer stages remain separate manual stages; ranking stages remain manual in 3rd → 2nd → 1st order. Hiding the projection and moving backward work in both modes; score/rank snapshots remain immutable.
 - Rank announcements use a brief, silent entrance motion only when the projection observes a transition into a rank state; it settles within 1.2 seconds and never advances the presentation. No confetti is used. The motion is disabled under `prefers-reduced-motion`, including transforms, so names and points are immediately readable. Initial loads, reconnects, rerenders, and a return to an already seen announcement in the same tab session do not replay that announcement's motion. The browser session marker is accessed after mount and guarded when storage is unavailable.
 - The public API has no announcement event ID. The browser therefore identifies a seen announcement by its rank and tied names/points within a tab session; distinct publication events with an identical signature cannot be reliably distinguished. This limits motion deduplication only: visible rank data always comes from the current public API state.
+- An authenticated presenter can operate start, advance, previous, hide/show, and full/short mode from the presentation screen using the existing admin API actions and operation IDs. Mutations are single-flight; success re-fetches public projection, and 401/409 recovery synchronizes the public projection without automatically retrying a mutation.
+- Presenter-only left/right keyboard navigation is enabled only while both `presenter=1` and a valid admin session are confirmed. Repeated keys and input, textarea, editable, or dialog targets do not trigger stage changes.
 
 ### R8: Staged result disclosure
 
@@ -129,6 +133,7 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - `podium_preview` includes no winner names or scores. A `third`, `second`, or `first` state includes only the display name, score, and rank of everyone tied at that announced rank. Other states include no winners.
 - At each rank state, the projection displays each name before the `ポイント` value and rank label. Brief entrance motion may accompany a newly observed rank-state transition as defined in R7; it adds no audio and does not change disclosure boundaries or manual progression.
 - Winner names wrap without truncation and each winner card keeps its natural height. When the winner list exceeds the available 16:9 canvas area, the list itself scrolls so every disclosed winner remains reachable and readable at the minimum name size. With unbounded participant counts or name lengths, all winners are not guaranteed to fit in the viewport at once; the 16:9 canvas remains the outer safe area.
+- Slide content is rendered only from `GET /api/presentation`. The 16:9 slide canvas and presenter controls footer occupy separate regions; the footer remains visible without covering slide content. Fullscreen targets the complete presentation wrapper, including controls, and remains optional when the browser API is unavailable.
 - Existing participant session, answer, and batch APIs do not return presentation ranking or answer keys.
 
 ## API
@@ -212,6 +217,8 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - `POST` requires admin cookie, same-origin `Origin`, and `{ operationId, action: 'start' | 'advance' | 'previous' | 'hide' | 'show' }` or `{ operationId, action: 'setMode', mode: 'full' | 'short' }`. It returns the current complete admin projection. Replayed operations do not progress state again; ID/action/payload conflicts and state/version conflicts return 409.
 - Both methods are `no-store`; unauthenticated access returns 401.
 
+The presenter screen may consume only the minimal state, cursor, hidden flag, and presentation mode needed by its controls from these existing responses. It does not add an API or alter these response contracts.
+
 ### `GET /api/presentation`
 
 - Returns the server's current public projection and is `no-store`.
@@ -232,6 +239,8 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - `src/lib/presentation/admin-auth.ts`: separate admin PIN verification, HMAC session cookie, and origin-checked authorization
 - `src/lib/db/repository/presentation-repository.ts`: immutable answer/question snapshot, scoring, standard competition ranks, state machine, operation idempotency, and strict public projection
 - `/api/admin/session`, `/api/admin/presentation`, `/api/presentation`: isolated sign-in, private conductor API, and staged public projection
+- `/admin/presentation`: same-tab PIN authentication entry for presenter mode
+- `/presentation`: spectator projection screen by default; `?presenter=1` requests a signed-session-gated, single-screen control footer and fullscreen wrapper
 
 ## Coverage tiers
 
