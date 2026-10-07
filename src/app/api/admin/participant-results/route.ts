@@ -59,6 +59,8 @@ export async function POST(request: Request) {
         phase: diagnostics?.phase ?? "unclassified",
         errorKind: diagnostics?.errorKind ?? "unknown",
         databaseCode: diagnostics?.databaseCode ?? null,
+        clientErrorClass: diagnostics?.clientErrorClass ?? null,
+        clientCode: diagnostics?.clientCode ?? null,
       }),
     );
     return NextResponse.json(

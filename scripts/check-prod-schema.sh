@@ -18,6 +18,27 @@ const { createClient } = require('@libsql/client');
 const fs = require('fs');
 const path = require('path');
 
+function extractTableColumnBlock(schemaContent, tableName) {
+  const declarationRegex = new RegExp(
+    'export const \\w+ = sqliteTable\\s*\\(\\s*"' + tableName + '"\\s*,\\s*\\{',
+  );
+  const declaration = declarationRegex.exec(schemaContent);
+  if (!declaration) return null;
+
+  const openingBrace = declaration.index + declaration[0].lastIndexOf('{');
+  let depth = 0;
+  for (let i = openingBrace; i < schemaContent.length; i += 1) {
+    if (schemaContent[i] === '{') depth += 1;
+    if (schemaContent[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return schemaContent.slice(openingBrace + 1, i);
+    }
+  }
+
+  // An incomplete declaration is ignored; the bounded scan above cannot loop forever.
+  return null;
+}
+
 async function main() {
   const client = createClient({
     url: process.env.TURSO_DATABASE_URL,
@@ -55,11 +76,8 @@ async function main() {
 
   // Check column drift for each table
   for (const tableName of expectedTables) {
-    const regex = new RegExp('export const \\w+ = sqliteTable\\s*\\(\\s*"' + tableName + '"\\s*,\\s*\\{([\\s\\S]*?)\\}');
-    const match = schemaContent.match(regex);
-    if (!match) continue;
-
-    const colBlock = match[1];
+    const colBlock = extractTableColumnBlock(schemaContent, tableName);
+    if (colBlock === null) continue;
     // Match the physical column name passed to a Drizzle column builder,
     // not string options such as { mode: "json" }.
     const colRegex = /\b\w+\s*:\s*\w+\s*\(\s*"(\w+)"/g;

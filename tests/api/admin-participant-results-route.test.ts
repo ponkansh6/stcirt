@@ -140,6 +140,8 @@ describe("POST /api/admin/participant-results", () => {
         phase: "source_questions_read",
         errorKind: "database",
         databaseCode: "SQLITE_BUSY_SNAPSHOT",
+        clientErrorClass: null,
+        clientCode: null,
       });
       expect(logged).not.toContain("private row");
     } finally {

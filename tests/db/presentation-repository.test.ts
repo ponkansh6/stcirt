@@ -539,6 +539,8 @@ describe("presentation repository", () => {
       phase: "source_questions_read",
       errorKind: "database",
       databaseCode: "SQLITE_ERROR",
+      clientErrorClass: null,
+      clientCode: null,
     });
 
     await setParticipantResultsVisible(true);
@@ -552,6 +554,8 @@ describe("presentation repository", () => {
       phase: "delete_entries",
       errorKind: "database",
       databaseCode: "SQLITE_ERROR",
+      clientErrorClass: null,
+      clientCode: null,
     });
   });
 
@@ -582,6 +586,8 @@ describe("presentation repository", () => {
         phase: "transaction_begin",
         errorKind: "database",
         databaseCode: "SQLITE_ERROR",
+        clientErrorClass: null,
+        clientCode: null,
       });
       expect(attempts).toBe(2);
     } finally {
