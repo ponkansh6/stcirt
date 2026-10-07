@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   examAnswerSubmissions,
@@ -141,7 +141,8 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
     projectionHidden: session.projectionHidden,
     presentationMode: session.presentationMode as PresentationMode,
     participantResultsVisible: resultSettings?.visible ?? false,
-    participantResultsReady: session.state !== "not_started",
+    participantResultsReady:
+      session.state !== "not_started" || questions.length > 0 || entries.length > 0,
     questions: questions.map((question) => ({
       id: question.sourceQuestionId,
       question: question.question,
@@ -161,22 +162,18 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
 }
 
 export async function setParticipantResultsVisible(visible: boolean) {
-  return db.transaction(async (tx) => {
-    if (visible) {
-      const [session] = await tx
-        .select({ state: presentationSessions.state })
-        .from(presentationSessions)
-        .where(eq(presentationSessions.id, 1));
-      if (!session || session.state === "not_started") {
-        throw new PresentationConflictError("Results are not ready");
+  return withTransactionRetry(() =>
+    db.transaction(async (tx) => {
+      if (visible) {
+        await ensurePresentationSnapshot(tx);
       }
-    }
-    await tx
-      .insert(participantResultSettings)
-      .values({ id: 1, visible })
-      .onConflictDoUpdate({ target: participantResultSettings.id, set: { visible } });
-    return { visible };
-  });
+      await tx
+        .insert(participantResultSettings)
+        .values({ id: 1, visible })
+        .onConflictDoUpdate({ target: participantResultSettings.id, set: { visible } });
+      return { visible };
+    }),
+  );
 }
 
 export async function getParticipantResult(participantId: number): Promise<ParticipantResult> {
@@ -384,11 +381,83 @@ export async function getPublicPresentation() {
   });
 }
 
+async function acquirePresentationSession(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+): Promise<typeof presentationSessions.$inferSelect> {
+  await tx
+    .insert(presentationSessions)
+    .values({
+      id: 1,
+      state: "not_started",
+      version: 0,
+      questionIndex: 0,
+      questionCount: 0,
+      projectionHidden: false,
+      presentationMode: "full",
+    })
+    .onConflictDoNothing({ target: presentationSessions.id });
+  // Serialize publication and presentation actions before any reads in the
+  // transaction, avoiding a deferred-transaction read-to-write upgrade.
+  await tx
+    .update(presentationSessions)
+    .set({ version: sql`${presentationSessions.version}` })
+    .where(eq(presentationSessions.id, 1));
+  const [session] = await tx
+    .select()
+    .from(presentationSessions)
+    .where(eq(presentationSessions.id, 1));
+  if (!session) throw new PresentationConflictError("Presentation session is unavailable");
+  return session;
+}
+
 async function startPresentation(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  previousSession?: typeof presentationSessions.$inferSelect,
+  acquiredSession: typeof presentationSessions.$inferSelect,
 ) {
+  const previousSession = await ensurePresentationSnapshot(tx, acquiredSession, true);
+  const state: PresentationState = previousSession.questionCount ? "question" : "podium_preview";
+  const version = previousSession.version + 1;
+  const updated = await tx
+    .update(presentationSessions)
+    .set({ state, version, questionIndex: 0 })
+    .where(
+      and(
+        eq(presentationSessions.id, 1),
+        eq(presentationSessions.version, previousSession.version),
+      ),
+    )
+    .returning({ id: presentationSessions.id });
+  if (!updated.length)
+    throw new PresentationConflictError("Presentation state changed concurrently");
+  return version;
+}
+
+async function ensurePresentationSnapshot(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  acquiredSession?: typeof presentationSessions.$inferSelect,
+  allowEmptyQuestions = false,
+): Promise<typeof presentationSessions.$inferSelect> {
+  const session = acquiredSession ?? (await acquirePresentationSession(tx));
+  const [snapshotQuestion] = await tx
+    .select({ position: presentationQuestions.position })
+    .from(presentationQuestions)
+    .where(eq(presentationQuestions.sessionId, 1))
+    .limit(1);
+  const [snapshotEntry] = await tx
+    .select({ participantId: presentationEntries.participantId })
+    .from(presentationEntries)
+    .where(eq(presentationEntries.sessionId, 1))
+    .limit(1);
+  if (snapshotQuestion || snapshotEntry) return session;
+  // A started session proves that start already froze the snapshot, even when
+  // that snapshot legitimately contains no question or participant rows.
+  if (session.state !== "not_started") return session;
+
   const currentQuestions = await tx.select().from(examQuestions).orderBy(asc(examQuestions.id));
+  if (!currentQuestions.length) {
+    if (!allowEmptyQuestions) throw new PresentationConflictError("Results are not ready");
+  }
+
   const participants = await tx.select().from(examParticipants).orderBy(asc(examParticipants.id));
   const submissions = await tx
     .select()
@@ -516,32 +585,6 @@ async function startPresentation(
     return { ...entry, rank: priorRank };
   });
 
-  const state: PresentationState = currentQuestions.length ? "question" : "podium_preview";
-  const version = (previousSession?.version ?? 0) + 1;
-  if (previousSession) {
-    const updated = await tx
-      .update(presentationSessions)
-      .set({ state, version, questionIndex: 0, questionCount: currentQuestions.length })
-      .where(
-        and(
-          eq(presentationSessions.id, 1),
-          eq(presentationSessions.version, previousSession.version),
-        ),
-      )
-      .returning({ id: presentationSessions.id });
-    if (!updated.length)
-      throw new PresentationConflictError("Presentation state changed concurrently");
-  } else {
-    await tx.insert(presentationSessions).values({
-      id: 1,
-      state,
-      version,
-      questionIndex: 0,
-      questionCount: currentQuestions.length,
-      projectionHidden: false,
-      presentationMode: "full",
-    });
-  }
   if (currentQuestions.length) {
     await tx.insert(presentationQuestions).values(
       currentQuestions.map((question, position) => ({
@@ -567,7 +610,17 @@ async function startPresentation(
       })),
     );
   }
-  return version;
+  await tx
+    .update(presentationSessions)
+    .set({ questionCount: currentQuestions.length })
+    .where(eq(presentationSessions.id, 1));
+  const [snapshottedSession] = await tx
+    .select()
+    .from(presentationSessions)
+    .where(eq(presentationSessions.id, 1));
+  if (!snapshottedSession)
+    throw new PresentationConflictError("Presentation session is unavailable");
+  return snapshottedSession;
 }
 
 async function nextNonemptyRank(
@@ -665,52 +718,108 @@ export async function operatePresentation(
     throw new PresentationConflictError("Presentation mode is required");
   }
   try {
-    return await db.transaction(async (tx) => {
-      const [operation] = await tx
-        .select()
-        .from(presentationOperations)
-        .where(eq(presentationOperations.operationId, operationId));
-      if (operation) {
-        if (
-          operation.action !== action ||
-          (action === "setMode" && operation.mode !== requestedMode)
-        )
-          throw new PresentationConflictError("Operation ID conflict");
-        return readAdminPresentation(tx);
-      }
-
-      const [session] = await tx
-        .select()
-        .from(presentationSessions)
-        .where(eq(presentationSessions.id, 1));
-      if (action === "start") {
-        if (session && session.state !== "not_started")
-          throw new PresentationConflictError("Presentation has already started");
-        const version = await startPresentation(tx, session);
-        await tx.insert(presentationOperations).values({ operationId, action, version });
-        return readAdminPresentation(tx);
-      }
-      if (action === "setMode") {
-        const presentationMode = requestedMode!;
-        if (!session) {
-          await tx.insert(presentationSessions).values({
-            id: 1,
-            state: "not_started",
-            version: 1,
-            questionIndex: 0,
-            questionCount: 0,
-            projectionHidden: false,
-            presentationMode,
-          });
-          await tx
-            .insert(presentationOperations)
-            .values({ operationId, action, mode: presentationMode, version: 1 });
+    return await withTransactionRetry(() =>
+      db.transaction(async (tx) => {
+        const session = await acquirePresentationSession(tx);
+        const [operation] = await tx
+          .select()
+          .from(presentationOperations)
+          .where(eq(presentationOperations.operationId, operationId));
+        if (operation) {
+          if (
+            operation.action !== action ||
+            (action === "setMode" && operation.mode !== requestedMode)
+          )
+            throw new PresentationConflictError("Operation ID conflict");
           return readAdminPresentation(tx);
         }
-        const version = session.version + 1;
+
+        if (action === "start") {
+          if (session.state !== "not_started")
+            throw new PresentationConflictError("Presentation has already started");
+          const version = await startPresentation(tx, session);
+          await tx.insert(presentationOperations).values({ operationId, action, version });
+          return readAdminPresentation(tx);
+        }
+        if (action === "setMode") {
+          const presentationMode = requestedMode!;
+          if (!session) {
+            await tx.insert(presentationSessions).values({
+              id: 1,
+              state: "not_started",
+              version: 1,
+              questionIndex: 0,
+              questionCount: 0,
+              projectionHidden: false,
+              presentationMode,
+            });
+            await tx
+              .insert(presentationOperations)
+              .values({ operationId, action, mode: presentationMode, version: 1 });
+            return readAdminPresentation(tx);
+          }
+          const version = session.version + 1;
+          const changed = await tx
+            .update(presentationSessions)
+            .set({ presentationMode, version })
+            .where(
+              and(
+                eq(presentationSessions.id, 1),
+                eq(presentationSessions.version, session.version),
+              ),
+            )
+            .returning({ id: presentationSessions.id });
+          if (!changed.length)
+            throw new PresentationConflictError("Presentation state changed concurrently");
+          await tx
+            .insert(presentationOperations)
+            .values({ operationId, action, mode: presentationMode, version });
+          return readAdminPresentation(tx);
+        }
+        if (action === "hide" || action === "show") {
+          const projectionHidden = action === "hide";
+          if (!session) {
+            await tx.insert(presentationSessions).values({
+              id: 1,
+              state: "not_started",
+              version: 1,
+              questionIndex: 0,
+              questionCount: 0,
+              projectionHidden,
+            });
+            await tx.insert(presentationOperations).values({ operationId, action, version: 1 });
+            return readAdminPresentation(tx);
+          }
+          const version = session.version + 1;
+          const changed = await tx
+            .update(presentationSessions)
+            .set({ projectionHidden, version })
+            .where(
+              and(
+                eq(presentationSessions.id, 1),
+                eq(presentationSessions.version, session.version),
+              ),
+            )
+            .returning({ id: presentationSessions.id });
+          if (!changed.length)
+            throw new PresentationConflictError("Presentation state changed concurrently");
+          await tx.insert(presentationOperations).values({ operationId, action, version });
+          return readAdminPresentation(tx);
+        }
+        if (!session || session.state === "not_started")
+          throw new PresentationConflictError("Presentation has not started");
+        const cursorState = session.state as PresentationState;
+        const next =
+          action === "previous"
+            ? await previousState(tx, cursorState, session.questionIndex, session.questionCount)
+            : await advanceState(tx, cursorState, session.questionIndex, session.questionCount);
         const changed = await tx
           .update(presentationSessions)
-          .set({ presentationMode, version })
+          .set({
+            state: next.state,
+            questionIndex: next.questionIndex,
+            version: session.version + 1,
+          })
           .where(
             and(eq(presentationSessions.id, 1), eq(presentationSessions.version, session.version)),
           )
@@ -719,58 +828,14 @@ export async function operatePresentation(
           throw new PresentationConflictError("Presentation state changed concurrently");
         await tx
           .insert(presentationOperations)
-          .values({ operationId, action, mode: presentationMode, version });
+          .values({ operationId, action, version: session.version + 1 });
         return readAdminPresentation(tx);
-      }
-      if (action === "hide" || action === "show") {
-        const projectionHidden = action === "hide";
-        if (!session) {
-          await tx.insert(presentationSessions).values({
-            id: 1,
-            state: "not_started",
-            version: 1,
-            questionIndex: 0,
-            questionCount: 0,
-            projectionHidden,
-          });
-          await tx.insert(presentationOperations).values({ operationId, action, version: 1 });
-          return readAdminPresentation(tx);
-        }
-        const version = session.version + 1;
-        const changed = await tx
-          .update(presentationSessions)
-          .set({ projectionHidden, version })
-          .where(
-            and(eq(presentationSessions.id, 1), eq(presentationSessions.version, session.version)),
-          )
-          .returning({ id: presentationSessions.id });
-        if (!changed.length)
-          throw new PresentationConflictError("Presentation state changed concurrently");
-        await tx.insert(presentationOperations).values({ operationId, action, version });
-        return readAdminPresentation(tx);
-      }
-      if (!session || session.state === "not_started")
-        throw new PresentationConflictError("Presentation has not started");
-      const cursorState = session.state as PresentationState;
-      const next =
-        action === "previous"
-          ? await previousState(tx, cursorState, session.questionIndex, session.questionCount)
-          : await advanceState(tx, cursorState, session.questionIndex, session.questionCount);
-      const changed = await tx
-        .update(presentationSessions)
-        .set({ state: next.state, questionIndex: next.questionIndex, version: session.version + 1 })
-        .where(
-          and(eq(presentationSessions.id, 1), eq(presentationSessions.version, session.version)),
-        )
-        .returning({ id: presentationSessions.id });
-      if (!changed.length)
-        throw new PresentationConflictError("Presentation state changed concurrently");
-      await tx
-        .insert(presentationOperations)
-        .values({ operationId, action, version: session.version + 1 });
-      return readAdminPresentation(tx);
-    });
+      }),
+    );
   } catch (error) {
+    // Lock contention is retried by starting a fresh transaction above. If all
+    // attempts are exhausted, preserve the database error for the caller.
+    if (isSqliteLockRace(error)) throw error;
     if (!isKnownTransactionRace(error)) throw error;
     return db.transaction(async (tx) => {
       const [operation] = await tx
@@ -788,6 +853,46 @@ export async function operatePresentation(
       throw new PresentationConflictError("Presentation state changed concurrently");
     });
   }
+}
+
+async function withTransactionRetry<T>(run: () => Promise<T>): Promise<T> {
+  const maxAttempts = 4;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      if (!isSqliteLockRace(error) || attempt >= maxAttempts - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+    }
+  }
+}
+
+function isSqliteLockRace(error: unknown) {
+  const pending: unknown[] = [error];
+  const visited = new Set<object>();
+  for (let depth = 0; pending.length > 0 && depth < 6; depth += 1) {
+    const current = pending.shift();
+    if (!current || typeof current !== "object" || visited.has(current)) continue;
+    visited.add(current);
+    const value = current as {
+      code?: unknown;
+      extendedCode?: unknown;
+      cause?: unknown;
+      originalError?: unknown;
+      original?: unknown;
+      error?: unknown;
+    };
+    const codes = [value.code, value.extendedCode].filter(
+      (code): code is string => typeof code === "string",
+    );
+    if (
+      codes.some((code) => /^SQLITE_BUSY(?:_|$)/.test(code) || /^SQLITE_LOCKED(?:_|$)/.test(code))
+    ) {
+      return true;
+    }
+    pending.push(value.cause, value.originalError, value.original, value.error);
+  }
+  return false;
 }
 
 function isKnownTransactionRace(error: unknown) {

@@ -448,9 +448,9 @@ export default function PresentationScreen({
       if (status === 401) recoverUnauthorized();
       else {
         setAdminMessage(
-          status === 409
-            ? "発表を開始して結果スナップショットを作成してから公開してください。"
-            : "結果公開状態を更新できませんでした。",
+          adminControls.participantResultsVisible
+            ? "結果公開状態を更新できませんでした。"
+            : "結果の準備または公開に失敗しました。結果は非公開のままです。",
         );
         try {
           await refreshAdmin();
@@ -751,21 +751,14 @@ export default function PresentationScreen({
               <button
                 type="button"
                 onClick={() => void toggleParticipantResults()}
-                disabled={
-                  adminBusy ||
-                  (!adminControls.participantResultsReady &&
-                    !adminControls.participantResultsVisible)
-                }
+                disabled={adminBusy}
                 aria-pressed={adminControls.participantResultsVisible}
               >
                 {adminControls.participantResultsVisible
                   ? "参加者結果を非公開"
                   : "参加者結果を公開"}
               </button>
-              {!adminControls.participantResultsReady &&
-                !adminControls.participantResultsVisible && (
-                  <span>公開するには先に発表を開始してください。</span>
-                )}
+              <span>初回公開時に結果を確定します。公開後の回答変更は結果に反映されません。</span>
             </div>
             <button
               type="button"

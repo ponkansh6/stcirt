@@ -53,6 +53,26 @@ async function commitWinnerThenRaiseAdapterUniqueConflict(operationId: string) {
   }
 }
 
+async function failFirstTransactionAfterCallback<T>(run: () => Promise<T>) {
+  const database = dbRef.db!;
+  const originalTransaction = database.transaction.bind(database);
+  let intercept = true;
+  const transactionSpy = vi.spyOn(database, "transaction");
+  transactionSpy.mockImplementation((callback, config) => {
+    if (!intercept) return originalTransaction(callback, config);
+    intercept = false;
+    return originalTransaction(async (tx) => {
+      await callback(tx);
+      throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    }, config);
+  });
+  try {
+    return await run();
+  } finally {
+    transactionSpy.mockRestore();
+  }
+}
+
 describe("presentation repository", () => {
   let testDb: TestDb;
 
@@ -300,31 +320,145 @@ describe("presentation repository", () => {
     expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
   });
 
-  it("requires a presentation snapshot before publication", async () => {
+  it("creates the participant result snapshot on publication and reuses it at start and republish", async () => {
     await addQuestions();
     const participant = await addParticipant("Participant");
     await addSubmission(participant, [0, 0]);
+    await setParticipantResultsVisible(true);
+    const published = await getAdminPresentation();
+    expect(published).toMatchObject({
+      state: "not_started",
+      version: 0,
+      questionIndex: 0,
+      questionCount: 2,
+      projectionHidden: false,
+      participantResultsVisible: true,
+      participantResultsReady: true,
+    });
+    expect(published.questions).toHaveLength(2);
+    expect(published.entries).toMatchObject([{ displayName: "Participant", score: 2, rank: 1 }]);
+
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ question: "Edited after publication" })
+      .where(eq(schema.examQuestions.id, 11));
+    await testDb.db
+      .update(schema.examSubmissionAnswers)
+      .set({ selectedIndex: 1 })
+      .where(eq(schema.examSubmissionAnswers.submissionId, `submission-${participant}-latest`));
+    const started = await operatePresentation("visibility-start", "start");
+    expect(started).toMatchObject({
+      state: "question",
+      version: 1,
+      participantResultsVisible: true,
+      participantResultsReady: true,
+    });
+    expect(started.questions).toEqual(published.questions);
+    expect(started.entries).toEqual(published.entries);
+
+    await setParticipantResultsVisible(false);
+    await testDb.db
+      .update(schema.examSubmissionAnswers)
+      .set({ selectedIndex: 1 })
+      .where(eq(schema.examSubmissionAnswers.questionId, 22));
+    await setParticipantResultsVisible(true);
+    const republished = await getAdminPresentation();
+    expect(republished.entries).toEqual(published.entries);
+    expect(republished.questions).toEqual(published.questions);
+  });
+
+  it("retries publication and start in fresh transactions after a lock error", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Retry participant");
+    await addSubmission(participant, [0, 1]);
+
+    await failFirstTransactionAfterCallback(() => setParticipantResultsVisible(true));
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      participantResultsVisible: true,
+      participantResultsReady: true,
+    });
+
+    const started = await failFirstTransactionAfterCallback(() =>
+      operatePresentation("retry-after-lock-start", "start"),
+    );
+    expect(started).toMatchObject({ state: "question", version: 1 });
+    await expect(testDb.db.select().from(schema.presentationOperations)).resolves.toHaveLength(1);
+  });
+
+  it("rolls back session and visibility when snapshot creation is not ready", async () => {
     await expect(setParticipantResultsVisible(true)).rejects.toMatchObject({
       message: "Results are not ready",
       status: 409,
     });
     await expect(getAdminPresentation()).resolves.toMatchObject({
+      state: "not_started",
       participantResultsVisible: false,
       participantResultsReady: false,
     });
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+  });
 
-    const started = await operatePresentation("visibility-start", "start");
-    await setParticipantResultsVisible(true);
-    await expect(getAdminPresentation()).resolves.toMatchObject({
-      version: started.version,
-      participantResultsVisible: true,
+  it("allows an empty presentation start and publishes its empty snapshot without rebuilding it", async () => {
+    await expect(setParticipantResultsVisible(true)).rejects.toMatchObject({
+      message: "Results are not ready",
+      status: 409,
+    });
+
+    const started = await operatePresentation("empty-start", "start");
+    expect(started).toMatchObject({
+      state: "podium_preview",
+      version: 1,
+      questionCount: 0,
       participantResultsReady: true,
     });
-    await setParticipantResultsVisible(false);
+    expect(started.questions).toEqual([]);
+    expect(started.entries).toEqual([]);
+
+    await addQuestions();
+    await setParticipantResultsVisible(true);
     await expect(getAdminPresentation()).resolves.toMatchObject({
-      version: started.version,
-      participantResultsVisible: false,
+      state: "podium_preview",
+      version: 1,
+      questionCount: 0,
+      participantResultsVisible: true,
       participantResultsReady: true,
+      questions: [],
+      entries: [],
+    });
+  });
+
+  it("rolls back a partial snapshot when a free response is still ungraded", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Waiting assessment");
+    await addSubmission(participant, [0, 0]);
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ key: "it-literacy-005", choices: [] })
+      .where(eq(schema.examQuestions.id, 22));
+    await testDb.db
+      .update(schema.examSubmissionAnswers)
+      .set({ answerKind: "freeText", selectedIndex: null, freeText: "pending response" })
+      .where(eq(schema.examSubmissionAnswers.questionId, 22));
+    await testDb.db.insert(schema.examAnswerAssessments).values({
+      submissionId: `submission-${participant}-latest`,
+      questionId: 22,
+      revision: 1,
+      answerText: "pending response",
+      state: "pending",
+      rubricVersion: "test-rubric",
+    });
+
+    await expect(setParticipantResultsVisible(true)).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      participantResultsVisible: false,
+      participantResultsReady: false,
     });
   });
 

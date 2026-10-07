@@ -26,6 +26,7 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
   let questionIndex = 0;
   let version = 0;
   let projectionHidden = false;
+  let snapshotExists = false;
   let presentationMode: "full" | "short" = "full";
   let participantResultsVisible = false;
   let failAdminRead = false;
@@ -67,7 +68,7 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
     projectionHidden,
     presentationMode,
     participantResultsVisible,
-    participantResultsReady: state !== "not_started",
+    participantResultsReady: snapshotExists,
   });
 
   return page
@@ -133,8 +134,10 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
           });
           releasePausedMutation = null;
         }
-        if (body.action === "start" && state === "not_started") state = "question";
-        else if (body.action === "advance") {
+        if (body.action === "start" && state === "not_started") {
+          snapshotExists = true;
+          state = "question";
+        } else if (body.action === "advance") {
           const next = stages.indexOf(state) + 1;
           if (next > 0 && next < stages.length) state = stages[next];
         } else if (body.action === "previous") {
@@ -191,10 +194,6 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
           await route.fulfill({ status: 400, json: { error: "Invalid request" } });
           return;
         }
-        if (body.visible && state === "not_started") {
-          await route.fulfill({ status: 409, json: { error: "Results are not ready" } });
-          return;
-        }
         if (failNextParticipantResultsMutation) {
           failNextParticipantResultsMutation = false;
           await route.fulfill({ status: 503, json: { error: "Unavailable" } });
@@ -208,6 +207,7 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
           });
           releasePausedParticipantResultsMutation = null;
         }
+        if (body.visible) snapshotExists = true;
         participantResultsVisible = body.visible;
         participantResultsMutations.push(body.visible);
         await route.fulfill({ json: { visible: participantResultsVisible } });
@@ -238,6 +238,7 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
       },
       releaseHeldProjection: () => releaseHeldProjection?.(),
       actionLog: actions,
+      getPresentationState: () => ({ state, version, projectionHidden }),
       participantResultsMutations,
       failNextResultsMutation: () => {
         failNextParticipantResultsMutation = true;
@@ -400,7 +401,7 @@ test("presenter single-flights rapid button and keyboard mutations", async ({ pa
   expect(mock.actionLog).toEqual(["start"]);
 });
 
-test("participant result publication waits for a snapshot, single-flights, and preserves server state on failure", async ({
+test("participant result publication creates a snapshot without changing presentation state", async ({
   page,
 }) => {
   const mock = await installAdminApiMock(page);
@@ -408,16 +409,19 @@ test("participant result publication waits for a snapshot, single-flights, and p
   await page.getByLabel("管理者 PIN").fill("2468");
   await page.getByRole("button", { name: "発表画面を始める" }).click();
 
-  await expect(page.getByText("公開するには先に発表を開始してください。")).toBeVisible();
+  await expect(
+    page.getByText("初回公開時に結果を確定します。公開後の回答変更は結果に反映されません。"),
+  ).toBeVisible();
   const publishButton = page.getByRole("button", { name: "参加者結果を公開" });
-  await expect(publishButton).toBeDisabled();
-
-  await page.getByRole("button", { name: "発表を始める" }).click();
   await expect(publishButton).toBeEnabled();
+  const stateBeforePublication = mock.getPresentationState();
   mock.failNextResultsMutation();
   await publishButton.click();
-  await expect(page.getByText("結果公開状態を更新できませんでした。")).toBeVisible();
+  await expect(
+    page.getByText("結果の準備または公開に失敗しました。結果は非公開のままです。"),
+  ).toBeVisible();
   await expect(publishButton).toHaveAttribute("aria-pressed", "false");
+  expect(mock.getPresentationState()).toEqual(stateBeforePublication);
 
   const mutationStarted = mock.pauseNextResultsMutation();
   await publishButton.click();
@@ -432,6 +436,8 @@ test("participant result publication waits for a snapshot, single-flights, and p
     "aria-pressed",
     "true",
   );
+  expect(mock.getPresentationState()).toEqual(stateBeforePublication);
+  await expect(page.getByText("待機中")).toBeVisible();
   expect(mock.participantResultsMutations).toEqual([true]);
 });
 
