@@ -156,7 +156,11 @@ export async function saveAnswerSubmission(input: {
         if (operation.submissionId !== input.submissionId || operation.payload !== payload) {
           throw new BatchSubmissionError("Operation ID was already used", 409);
         }
-        return { submissionId: input.submissionId, revision: operation.revision };
+        return {
+          submissionId: input.submissionId,
+          revision: operation.revision,
+          assessmentTarget: null,
+        };
       }
 
       if (
@@ -305,7 +309,11 @@ export async function saveAnswerSubmission(input: {
         payload,
         revision,
       });
-      return { submissionId: input.submissionId, revision };
+      return {
+        submissionId: input.submissionId,
+        revision,
+        assessmentTarget: freeResponse ? { submissionId: input.submissionId, revision } : null,
+      };
     });
   } catch (error) {
     if (error instanceof BatchSubmissionError || !isKnownSqliteConflict(error)) throw error;
@@ -381,7 +389,11 @@ async function recoverSubmissionConflict(
         throw new BatchSubmissionError("Submission not found", 404);
       }
       if (operation.submissionId === input.submissionId && operation.payload === payload) {
-        return { submissionId: input.submissionId, revision: operation.revision };
+        return {
+          submissionId: input.submissionId,
+          revision: operation.revision,
+          assessmentTarget: null,
+        };
       }
       throw new BatchSubmissionError("Operation ID was already used", 409);
     }
@@ -446,7 +458,10 @@ export async function getStats() {
 
 /** Process at most five durable jobs sequentially. Each request gets a unique
  * lease token so an expired worker cannot apply a late response. */
-export async function processDueAssessments(retryFailed = false) {
+export async function processDueAssessments(
+  retryFailed = false,
+  target?: { submissionId: string; revision: number },
+) {
   if (retryFailed)
     await db
       .update(examAnswerAssessments)
@@ -461,20 +476,23 @@ export async function processDueAssessments(retryFailed = false) {
   let graded = 0;
   let retried = 0;
   let failed = 0;
-  for (let index = 0; index < 5; index += 1) {
+  const maxJobs = target ? 1 : 5;
+  for (let index = 0; index < maxJobs; index += 1) {
     const now = new Date();
+    const dueConditions = [
+      or(eq(examAnswerAssessments.state, "pending"), eq(examAnswerAssessments.state, "processing")),
+      lte(examAnswerAssessments.nextAttemptAt, now),
+    ];
+    if (target) {
+      dueConditions.push(
+        eq(examAnswerAssessments.submissionId, target.submissionId),
+        eq(examAnswerAssessments.revision, target.revision),
+      );
+    }
     const [job] = await db
       .select()
       .from(examAnswerAssessments)
-      .where(
-        and(
-          or(
-            eq(examAnswerAssessments.state, "pending"),
-            eq(examAnswerAssessments.state, "processing"),
-          ),
-          lte(examAnswerAssessments.nextAttemptAt, now),
-        ),
-      )
+      .where(and(...dueConditions))
       .limit(1);
     if (!job) break;
     const attempts = job.attempts + 1;

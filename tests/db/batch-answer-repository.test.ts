@@ -101,8 +101,16 @@ describe("saveAnswerSubmission", () => {
       participantId,
       answers,
     };
-    await expect(saveAnswerSubmission(input)).resolves.toEqual({ submissionId, revision: 1 });
-    await expect(saveAnswerSubmission(input)).resolves.toEqual({ submissionId, revision: 1 });
+    await expect(saveAnswerSubmission(input)).resolves.toEqual({
+      submissionId,
+      revision: 1,
+      assessmentTarget: null,
+    });
+    await expect(saveAnswerSubmission(input)).resolves.toEqual({
+      submissionId,
+      revision: 1,
+      assessmentTarget: null,
+    });
 
     expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(5);
     expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);
@@ -164,7 +172,7 @@ describe("saveAnswerSubmission", () => {
         participantId,
         answers: revisedAnswers,
       }),
-    ).resolves.toEqual({ submissionId, revision: 2 });
+    ).resolves.toEqual({ submissionId, revision: 2, assessmentTarget: null });
 
     await expect(
       saveAnswerSubmission({
@@ -208,6 +216,7 @@ describe("saveAnswerSubmission", () => {
     await expect(commitWinnerThenRaiseAdapterUniqueConflict(input, input)).resolves.toEqual({
       submissionId,
       revision: 1,
+      assessmentTarget: null,
     });
     expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(5);
     expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);

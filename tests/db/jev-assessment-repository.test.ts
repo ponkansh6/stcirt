@@ -183,6 +183,44 @@ describe("durable free-response assessment and restoration", () => {
     });
   });
 
+  it("processes only the requested submission revision when answer submission triggers grading", async () => {
+    const otherSubmissionId = "00000000-0000-4000-8000-000000000103";
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    await saveAnswerSubmission({
+      submissionId: otherSubmissionId,
+      operationId: "00000000-0000-4000-8000-000000000104",
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    vi.mocked(gradeFreeResponse).mockResolvedValueOnce({
+      score: 1.4,
+      confidence: 0.99,
+      model: "jev-latest",
+    });
+
+    await expect(
+      processDueAssessments(false, { submissionId, revision: 1 }),
+    ).resolves.toMatchObject({
+      processed: 1,
+      graded: 1,
+    });
+    expect(gradeFreeResponse).toHaveBeenCalledTimes(1);
+    const assessments = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(assessments.find((assessment) => assessment.submissionId === submissionId)?.state).toBe(
+      "graded",
+    );
+    expect(
+      assessments.find((assessment) => assessment.submissionId === otherSubmissionId)?.state,
+    ).toBe("pending");
+  });
+
   it("requeues a terminal failure only when the privileged retry path requests it", async () => {
     await saveAnswerSubmission({
       submissionId,

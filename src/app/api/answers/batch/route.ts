@@ -1,9 +1,11 @@
+import { after } from "next/server";
 import { fail, ok, withErrorHandling } from "@/lib/api/response";
 import { submitAnswerBatchSchema } from "@/lib/api/schemas";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
 import {
   BatchSubmissionError,
   getAnswerSubmission,
+  processDueAssessments,
   saveAnswerSubmission,
 } from "@/lib/db/repository/answer-repository";
 import {
@@ -12,6 +14,8 @@ import {
   verifyParticipantSession,
 } from "@/lib/participants/security";
 import { z } from "zod";
+
+export const maxDuration = 60;
 
 export const GET = withErrorHandling(async function (request: Request) {
   const session = verifyParticipantSession(getParticipantCookie(request));
@@ -48,7 +52,26 @@ export const POST = withErrorHandling(async function (request: Request) {
   if (!parsed.success) return fail("Invalid parameters", 400);
 
   try {
-    return ok(await saveAnswerSubmission({ ...parsed.data, participantId: session.id }));
+    const saved = await saveAnswerSubmission({ ...parsed.data, participantId: session.id });
+    if (saved.assessmentTarget) {
+      const target = saved.assessmentTarget;
+      try {
+        after(async () => {
+          if (!process.env.TYPESAFE_API_KEY) {
+            console.warn("answer_assessment_skipped", { reason: "missing_api_key" });
+            return;
+          }
+          try {
+            await processDueAssessments(false, target);
+          } catch {
+            console.error("answer_assessment_failed", { reason: "worker_failed" });
+          }
+        });
+      } catch {
+        console.error("answer_assessment_failed", { reason: "schedule_failed" });
+      }
+    }
+    return ok({ submissionId: saved.submissionId, revision: saved.revision });
   } catch (error) {
     if (error instanceof BatchSubmissionError) {
       return fail(error.message, error.status);
