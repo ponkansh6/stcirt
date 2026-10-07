@@ -758,7 +758,9 @@ export default function PresentationScreen({
                   ? "参加者結果を非公開"
                   : "参加者結果を公開"}
               </button>
-              <span>初回公開時に結果を確定します。公開後の回答変更は結果に反映されません。</span>
+              <span>
+                公開するたびに、その時点の回答から結果を確定します。公開中の回答変更は次回の再公開で反映されます。
+              </span>
             </div>
             <button
               type="button"

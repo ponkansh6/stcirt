@@ -165,12 +165,30 @@ export async function setParticipantResultsVisible(visible: boolean) {
   return withTransactionRetry(() =>
     db.transaction(async (tx) => {
       if (visible) {
-        await ensurePresentationSnapshot(tx);
+        const session = await acquirePresentationSession(tx);
+        const [settings] = await tx
+          .select({
+            visible: participantResultSettings.visible,
+            everPublished: participantResultSettings.everPublished,
+          })
+          .from(participantResultSettings)
+          .where(eq(participantResultSettings.id, 1));
+        if (!settings?.visible) {
+          await ensurePresentationSnapshot(tx, session, false, settings?.everPublished ?? false);
+        }
+        await tx
+          .insert(participantResultSettings)
+          .values({ id: 1, visible: true, everPublished: true })
+          .onConflictDoUpdate({
+            target: participantResultSettings.id,
+            set: { visible: true, everPublished: true },
+          });
+      } else {
+        await tx
+          .update(participantResultSettings)
+          .set({ visible: false })
+          .where(eq(participantResultSettings.id, 1));
       }
-      await tx
-        .insert(participantResultSettings)
-        .values({ id: 1, visible })
-        .onConflictDoUpdate({ target: participantResultSettings.id, set: { visible } });
       return { visible };
     }),
   );
@@ -216,8 +234,6 @@ export async function getParticipantResult(participantId: number): Promise<Parti
     ) {
       return { state: "unavailable" as const };
     }
-
-    const answerByQuestionId = new Map<number, PresentationAnswerSnapshot>();
     const questionIds = new Set<number>();
     const positions = new Set<number>();
     for (const [index, question] of questionRows.entries()) {
@@ -233,6 +249,7 @@ export async function getParticipantResult(participantId: number): Promise<Parti
       positions.add(question.position);
       questionIds.add(question.sourceQuestionId);
     }
+    const answerByQuestionId = new Map<number, PresentationAnswerSnapshot>();
     for (const item of entry.answers as unknown[]) {
       if (
         !item ||
@@ -240,13 +257,14 @@ export async function getParticipantResult(participantId: number): Promise<Parti
         !("questionId" in item) ||
         typeof item.questionId !== "number" ||
         !Number.isInteger(item.questionId) ||
+        !questionIds.has(item.questionId) ||
         !("answerKind" in item) ||
         !["selected", "freeText", "legacy", "unanswered"].includes(String(item.answerKind)) ||
-        answerByQuestionId.has(item.questionId as number)
+        answerByQuestionId.has(item.questionId)
       ) {
         return { state: "unavailable" as const };
       }
-      answerByQuestionId.set(item.questionId as number, item as PresentationAnswerSnapshot);
+      answerByQuestionId.set(item.questionId, item as PresentationAnswerSnapshot);
     }
 
     const questions: ParticipantResultQuestion[] = [];
@@ -436,26 +454,29 @@ async function ensurePresentationSnapshot(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   acquiredSession?: typeof presentationSessions.$inferSelect,
   allowEmptyQuestions = false,
+  rebuild = false,
 ): Promise<typeof presentationSessions.$inferSelect> {
   const session = acquiredSession ?? (await acquirePresentationSession(tx));
-  const [snapshotQuestion] = await tx
-    .select({ position: presentationQuestions.position })
-    .from(presentationQuestions)
-    .where(eq(presentationQuestions.sessionId, 1))
-    .limit(1);
-  const [snapshotEntry] = await tx
-    .select({ participantId: presentationEntries.participantId })
-    .from(presentationEntries)
-    .where(eq(presentationEntries.sessionId, 1))
-    .limit(1);
-  if (snapshotQuestion || snapshotEntry) return session;
-  // A started session proves that start already froze the snapshot, even when
-  // that snapshot legitimately contains no question or participant rows.
-  if (session.state !== "not_started") return session;
+  if (!rebuild) {
+    const [snapshotQuestion] = await tx
+      .select({ position: presentationQuestions.position })
+      .from(presentationQuestions)
+      .where(eq(presentationQuestions.sessionId, 1))
+      .limit(1);
+    const [snapshotEntry] = await tx
+      .select({ participantId: presentationEntries.participantId })
+      .from(presentationEntries)
+      .where(eq(presentationEntries.sessionId, 1))
+      .limit(1);
+    if (snapshotQuestion || snapshotEntry) return session;
+  }
+  // A started session proves start already created a snapshot, even when it
+  // legitimately contains no question or participant rows.
+  if (!rebuild && session.state !== "not_started") return session;
 
   const currentQuestions = await tx.select().from(examQuestions).orderBy(asc(examQuestions.id));
-  if (!currentQuestions.length) {
-    if (!allowEmptyQuestions) throw new PresentationConflictError("Results are not ready");
+  if (!currentQuestions.length && !allowEmptyQuestions && session.state === "not_started") {
+    throw new PresentationConflictError("Results are not ready");
   }
 
   const participants = await tx.select().from(examParticipants).orderBy(asc(examParticipants.id));
@@ -585,6 +606,10 @@ async function ensurePresentationSnapshot(
     return { ...entry, rank: priorRank };
   });
 
+  if (rebuild) {
+    await tx.delete(presentationEntries).where(eq(presentationEntries.sessionId, 1));
+    await tx.delete(presentationQuestions).where(eq(presentationQuestions.sessionId, 1));
+  }
   if (currentQuestions.length) {
     await tx.insert(presentationQuestions).values(
       currentQuestions.map((question, position) => ({
@@ -610,9 +635,18 @@ async function ensurePresentationSnapshot(
       })),
     );
   }
+  const noQuestionsDuringQuestionStage =
+    currentQuestions.length === 0 && (session.state === "question" || session.state === "answer");
+  const questionIndex = currentQuestions.length
+    ? Math.max(0, Math.min(session.questionIndex, currentQuestions.length - 1))
+    : 0;
   await tx
     .update(presentationSessions)
-    .set({ questionCount: currentQuestions.length })
+    .set({
+      questionCount: currentQuestions.length,
+      questionIndex,
+      ...(noQuestionsDuringQuestionStage ? { state: "podium_preview" } : {}),
+    })
     .where(eq(presentationSessions.id, 1));
   const [snapshottedSession] = await tx
     .select()

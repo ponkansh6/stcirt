@@ -7,12 +7,21 @@ afterEach(() => vi.unstubAllGlobals());
 const visibleResult = {
   state: "visible" as const,
   rank: 2,
-  score: 1,
+  score: 1.5,
   questions: [
     {
       position: 0,
       question: "最初の問題",
-      answer: { kind: "selected" as const, value: "選択した回答", correctness: "correct" as const },
+      answer: {
+        kind: "selected" as const,
+        value: "選択した回答",
+        correctness: "incorrect" as const,
+      },
+    },
+    {
+      position: 4,
+      question: "自由記述の問題",
+      answer: { kind: "freeText" as const, value: "自由記述回答", score: 0.75 },
     },
   ],
 };
@@ -96,27 +105,28 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("2位")).toBeVisible();
   });
 
-  it("removes all visible details and shows 回答中 when a refresh observes that results are private", async () => {
+  it("removes rank and score and shows 回答中 when a refresh observes that results are private", async () => {
     mockPoll({ state: "waiting" });
 
     render(<ResultsPanel initial={visibleResult} />);
 
     expect(screen.getByText("2位")).toBeVisible();
-    expect(screen.getByText("1点")).toBeVisible();
-    expect(screen.getByText("問題 1")).toBeVisible();
+    expect(screen.getByText("1.5点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
-    expect(screen.getByText("正解")).toBeVisible();
+    expect(screen.getByText("不正解")).toBeVisible();
+    expect(screen.getByText("自由記述回答")).toBeVisible();
+    expect(screen.getByText(/記録済みスコア:/)).toHaveTextContent("0.75");
 
     expect(fetch).not.toHaveBeenCalled();
     setVisibility("visible");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("回答中"));
     expect(screen.queryByText("2位")).not.toBeInTheDocument();
-    expect(screen.queryByText("1点")).not.toBeInTheDocument();
-    expect(screen.queryByText("問題 1")).not.toBeInTheDocument();
+    expect(screen.queryByText("1.5点")).not.toBeInTheDocument();
     expect(screen.queryByText("最初の問題")).not.toBeInTheDocument();
     expect(screen.queryByText("選択した回答")).not.toBeInTheDocument();
-    expect(screen.queryByText("正解")).not.toBeInTheDocument();
+    expect(screen.queryByText("不正解")).not.toBeInTheDocument();
+    expect(screen.queryByText("自由記述回答")).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith("/api/participants/results", {
       cache: "no-store",
       credentials: "same-origin",
@@ -125,21 +135,31 @@ describe("ResultsPanel", () => {
 
   it.each([
     { label: "unknown state", payload: { state: "unexpected" } },
+    { label: "invalid rank", payload: { ...visibleResult, rank: 0 } },
+    { label: "negative score", payload: { ...visibleResult, score: -1 } },
+    { label: "score above question count", payload: { ...visibleResult, score: 6 } },
     { label: "empty questions", payload: { ...visibleResult, questions: [] } },
-    { label: "score above question count", payload: { ...visibleResult, score: 2 } },
     {
-      label: "malformed question",
+      label: "malformed answer",
       payload: {
         ...visibleResult,
-        questions: [{ position: -1, question: "不正な問題", answer: { kind: "unanswered" } }],
+        questions: [
+          { position: 0, question: "問題", answer: { kind: "unexpected" } },
+          {
+            position: 4,
+            question: "自由記述の問題",
+            answer: { kind: "freeText", value: "自由記述回答", score: 0.75 },
+          },
+        ],
       },
     },
-  ])("clears prior details when a refresh returns an $label payload", async ({ payload }) => {
+  ])("clears prior result when a refresh returns an $label payload", async ({ payload }) => {
     mockPoll(payload);
 
     render(<ResultsPanel initial={visibleResult} />);
 
     expect(screen.getByText("2位")).toBeVisible();
+    expect(screen.getByText("1.5点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
 
@@ -149,76 +169,22 @@ describe("ResultsPanel", () => {
       expect(screen.getByRole("heading", { name: "結果を確認できません" })).toBeVisible(),
     );
     expect(screen.queryByText("2位")).not.toBeInTheDocument();
-    expect(screen.queryByText("1点")).not.toBeInTheDocument();
-    expect(screen.queryByText("問題 1")).not.toBeInTheDocument();
+    expect(screen.queryByText("1.5点")).not.toBeInTheDocument();
     expect(screen.queryByText("最初の問題")).not.toBeInTheDocument();
     expect(screen.queryByText("選択した回答")).not.toBeInTheDocument();
   });
 
-  it("renders each answer kind, correctness label, null score text, and one-based question number", () => {
+  it("renders each question's answer and correctness without exposing other participants", () => {
     mockPoll({ state: "waiting" });
+    render(<ResultsPanel initial={visibleResult} />);
 
-    render(
-      <ResultsPanel
-        initial={{
-          state: "visible",
-          rank: 1,
-          score: 5,
-          questions: [
-            {
-              position: 0,
-              question: "正解の問題",
-              answer: { kind: "selected", value: "選択 A", correctness: "correct" },
-            },
-            {
-              position: 1,
-              question: "不正解の問題",
-              answer: { kind: "selected", value: "選択 B", correctness: "incorrect" },
-            },
-            {
-              position: 2,
-              question: "判定なしの問題",
-              answer: { kind: "selected", value: "選択 C", correctness: "unavailable" },
-            },
-            {
-              position: 3,
-              question: "自由記述の問題",
-              answer: { kind: "freeText", value: "自由記述回答", score: 0.75 },
-            },
-            {
-              position: 4,
-              question: "スコアなしの問題",
-              answer: { kind: "freeText", value: "記録なし回答", score: null },
-            },
-            {
-              position: 5,
-              question: "未回答の問題",
-              answer: { kind: "unanswered" },
-            },
-            {
-              position: 6,
-              question: "旧形式の問題",
-              answer: { kind: "legacy" },
-            },
-          ],
-        }}
-      />,
-    );
-
-    expect(screen.getByText("問題 1")).toBeVisible();
-    expect(screen.getByText("問題 7")).toBeVisible();
-    expect(screen.getByText("選択 A")).toBeVisible();
-    expect(screen.getByText("正解")).toBeVisible();
-    expect(screen.getByText("選択 B")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
+    expect(screen.getByText("1.5点")).toBeVisible();
+    expect(screen.getByText("最初の問題")).toBeVisible();
+    expect(screen.getByText("選択した回答")).toBeVisible();
     expect(screen.getByText("不正解")).toBeVisible();
-    expect(screen.getByText("回答を確認できません")).toBeVisible();
-    expect(screen.queryByText("選択 C")).not.toBeInTheDocument();
     expect(screen.getByText("自由記述回答")).toBeVisible();
-    expect(screen.getByText(/記録済みスコア:/)).toHaveTextContent("0.75");
-    expect(screen.getByText("記録なし回答")).toBeVisible();
-    expect(screen.getByText("設問別スコアは記録されていません")).toBeVisible();
-    expect(screen.getByText("未回答")).toBeVisible();
-    expect(screen.getByText("この回答の詳細は確認できません")).toBeVisible();
+    expect(screen.queryByText("全体ランキング")).not.toBeInTheDocument();
   });
 
   it("shows the unavailable state without inventing a zero score for a participant with no snapshot entry", () => {

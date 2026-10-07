@@ -15,7 +15,28 @@ export async function GET(request: Request) {
     );
   }
   try {
-    return NextResponse.json(await getParticipantResult(session.id), { headers: noStore });
+    const result = await getParticipantResult(session.id);
+    if (result.state === "visible") {
+      const questions = result.questions.map(({ position, question, answer }) => ({
+        position,
+        question,
+        answer:
+          answer.kind === "selected"
+            ? {
+                kind: "selected" as const,
+                value: answer.value,
+                correctness: answer.correctness,
+              }
+            : answer.kind === "freeText"
+              ? { kind: "freeText" as const, value: answer.value, score: answer.score }
+              : { kind: answer.kind },
+      }));
+      return NextResponse.json(
+        { state: "visible", rank: result.rank, score: result.score, questions },
+        { headers: noStore },
+      );
+    }
+    return NextResponse.json(result, { headers: noStore });
   } catch {
     return NextResponse.json(
       { error: "Results are unavailable" },

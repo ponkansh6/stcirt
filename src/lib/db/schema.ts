@@ -248,4 +248,5 @@ export const presentationOperations = sqliteTable("presentation_operations", {
 export const participantResultSettings = sqliteTable("participant_result_settings", {
   id: integer("id").primaryKey(),
   visible: integer("visible", { mode: "boolean" }).notNull().default(false),
+  everPublished: integer("ever_published", { mode: "boolean" }).notNull().default(false),
 });

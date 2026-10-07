@@ -320,7 +320,7 @@ describe("presentation repository", () => {
     expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
   });
 
-  it("creates the participant result snapshot on publication and reuses it at start and republish", async () => {
+  it("rebuilds the shared snapshot on republish while start and repeated publication reuse it", async () => {
     await addQuestions();
     const participant = await addParticipant("Participant");
     await addSubmission(participant, [0, 0]);
@@ -346,6 +346,10 @@ describe("presentation repository", () => {
       .update(schema.examSubmissionAnswers)
       .set({ selectedIndex: 1 })
       .where(eq(schema.examSubmissionAnswers.submissionId, `submission-${participant}-latest`));
+    await setParticipantResultsVisible(true);
+    const repeatedPublish = await getAdminPresentation();
+    expect(repeatedPublish.questions).toEqual(published.questions);
+    expect(repeatedPublish.entries).toEqual(published.entries);
     const started = await operatePresentation("visibility-start", "start");
     expect(started).toMatchObject({
       state: "question",
@@ -361,10 +365,89 @@ describe("presentation repository", () => {
       .update(schema.examSubmissionAnswers)
       .set({ selectedIndex: 1 })
       .where(eq(schema.examSubmissionAnswers.questionId, 22));
+    const hiddenState = await getAdminPresentation();
+    await expect(testDb.db.select().from(schema.participantResultSettings)).resolves.toMatchObject([
+      { id: 1, visible: false, everPublished: true },
+    ]);
     await setParticipantResultsVisible(true);
     const republished = await getAdminPresentation();
-    expect(republished.entries).toEqual(published.entries);
-    expect(republished.questions).toEqual(published.questions);
+    await expect(testDb.db.select().from(schema.participantResultSettings)).resolves.toMatchObject([
+      { id: 1, visible: true, everPublished: true },
+    ]);
+    expect(republished).toMatchObject({
+      state: hiddenState.state,
+      version: hiddenState.version,
+      questionIndex: hiddenState.questionIndex,
+      projectionHidden: hiddenState.projectionHidden,
+      presentationMode: hiddenState.presentationMode,
+      participantResultsVisible: true,
+    });
+    expect(republished.questions[0]).toMatchObject({
+      id: 11,
+      question: "Edited after publication",
+    });
+    expect(republished.entries).toMatchObject([{ displayName: "Participant", score: 0, rank: 1 }]);
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: hiddenState.state,
+      question: { id: 11, question: "Edited after publication" },
+    });
+    const participantResult = await getParticipantResult(participant);
+    expect(participantResult).toEqual({
+      state: "visible",
+      rank: 1,
+      score: 0,
+      questions: [
+        {
+          position: 0,
+          question: "Edited after publication",
+          answer: { kind: "selected", value: "Wrong 11", correctness: "incorrect" },
+        },
+        {
+          position: 1,
+          question: "Question 22",
+          answer: { kind: "selected", value: "Wrong 22", correctness: "incorrect" },
+        },
+      ],
+    });
+  });
+
+  it("keeps the old hidden snapshot when republishing fails during recalculation", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Participant");
+    await addSubmission(participant, [0, 0]);
+    await setParticipantResultsVisible(true);
+    const original = await getAdminPresentation();
+    await setParticipantResultsVisible(false);
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ key: "it-literacy-005", choices: [] })
+      .where(eq(schema.examQuestions.id, 22));
+    await testDb.db
+      .update(schema.examSubmissionAnswers)
+      .set({ answerKind: "freeText", selectedIndex: null, freeText: "pending response" })
+      .where(eq(schema.examSubmissionAnswers.questionId, 22));
+    await testDb.db.insert(schema.examAnswerAssessments).values({
+      submissionId: `submission-${participant}-latest`,
+      questionId: 22,
+      revision: 1,
+      answerText: "pending response",
+      state: "pending",
+      rubricVersion: "test-rubric",
+    });
+
+    await expect(setParticipantResultsVisible(true)).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      state: original.state,
+      version: original.version,
+      participantResultsVisible: false,
+      questions: original.questions,
+      entries: original.entries,
+    });
+    await expect(testDb.db.select().from(schema.participantResultSettings)).resolves.toMatchObject([
+      { id: 1, visible: false, everPublished: true },
+    ]);
   });
 
   it("retries publication and start in fresh transactions after a lock error", async () => {
@@ -417,6 +500,11 @@ describe("presentation repository", () => {
     expect(started.entries).toEqual([]);
 
     await addQuestions();
+    await testDb.db.insert(schema.participantResultSettings).values({
+      id: 1,
+      visible: false,
+      everPublished: false,
+    });
     await setParticipantResultsVisible(true);
     await expect(getAdminPresentation()).resolves.toMatchObject({
       state: "podium_preview",
@@ -426,6 +514,57 @@ describe("presentation repository", () => {
       participantResultsReady: true,
       questions: [],
       entries: [],
+    });
+  });
+
+  it("does not repair a malformed presentation snapshot on first publication", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Malformed result");
+    await addSubmission(participant, [0, 0]);
+    await operatePresentation("malformed-first-publish-start", "start");
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: [] })
+      .where(eq(schema.presentationEntries.participantId, participant));
+
+    await setParticipantResultsVisible(true);
+
+    await expect(getParticipantResult(participant)).resolves.toEqual({ state: "unavailable" });
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
+      { participantId: participant, answers: [] },
+    ]);
+  });
+
+  it("keeps the presenter on a valid stage and cursor when republish removes questions", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Cursor participant");
+    await addSubmission(participant, [0, 0]);
+    await setParticipantResultsVisible(true);
+    await operatePresentation("cursor-start", "start");
+    await operatePresentation("cursor-answer-1", "advance");
+    await operatePresentation("cursor-question-2", "advance");
+    await operatePresentation("cursor-answer-2", "advance");
+
+    await setParticipantResultsVisible(false);
+    await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 22));
+    await setParticipantResultsVisible(true);
+    const oneQuestion = await getAdminPresentation();
+    expect(oneQuestion).toMatchObject({
+      state: "answer",
+      questionIndex: 0,
+      questionCount: 1,
+      version: 4,
+    });
+
+    await setParticipantResultsVisible(false);
+    await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 11));
+    await setParticipantResultsVisible(true);
+    const noQuestions = await getAdminPresentation();
+    expect(noQuestions).toMatchObject({
+      state: "podium_preview",
+      questionIndex: 0,
+      questionCount: 0,
+      version: 4,
     });
   });
 
@@ -462,7 +601,7 @@ describe("presentation repository", () => {
     });
   });
 
-  it("returns only the cookie owner's result and fails closed on malformed snapshots", async () => {
+  it("returns the cookie owner's answers and correctness and fails closed on malformed snapshots", async () => {
     await addQuestions();
     const first = await addParticipant("First");
     const second = await addParticipant("Second");

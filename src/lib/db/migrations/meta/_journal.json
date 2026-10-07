@@ -85,6 +85,13 @@
       "when": 1791388800004,
       "tag": "0011_reset_exam_submissions",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1791388800005,
+      "tag": "0012_participant_results_ever_published",
+      "breakpoints": true
     }
   ]
 }

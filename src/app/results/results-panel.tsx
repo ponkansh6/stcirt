@@ -7,12 +7,7 @@ export type InitialResult =
   | { state: "waiting" }
   | { state: "unavailable" }
   | { state: "unauthenticated" }
-  | {
-      state: "visible";
-      score: number;
-      rank: number;
-      questions: ResultQuestion[];
-    };
+  | { state: "visible"; score: number; rank: number; questions: ResultQuestion[] };
 
 type ResultQuestion = {
   position: number;
@@ -130,24 +125,12 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
 
   const answerStatus = (correctness: "correct" | "incorrect" | "unavailable") => {
     if (correctness === "correct") {
-      return {
-        label: "正解",
-        icon: "✓",
-        className: "text-success",
-      };
+      return { label: "正解", icon: "✓", className: "text-success" };
     }
     if (correctness === "incorrect") {
-      return {
-        label: "不正解",
-        icon: "×",
-        className: "text-error",
-      };
+      return { label: "不正解", icon: "×", className: "text-error" };
     }
-    return {
-      label: "判定できません",
-      icon: "？",
-      className: "text-muted",
-    };
+    return { label: "判定できません", icon: "？", className: "text-muted" };
   };
 
   useEffect(() => {

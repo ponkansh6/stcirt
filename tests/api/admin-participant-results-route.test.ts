@@ -85,4 +85,17 @@ describe("POST /api/admin/participant-results", () => {
     );
     expect(conflict.status).toBe(409);
   });
+
+  it("forwards hide and republish transitions to the repository", async () => {
+    const cookie = authenticate();
+    for (const visible of [false, true]) {
+      const response = await POST(
+        request({ cookie, origin: "http://localhost", body: { visible } }),
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ visible });
+    }
+    expect(setParticipantResultsVisible).toHaveBeenNthCalledWith(1, false);
+    expect(setParticipantResultsVisible).toHaveBeenNthCalledWith(2, true);
+  });
 });

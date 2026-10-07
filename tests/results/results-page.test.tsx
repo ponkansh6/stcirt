@@ -27,18 +27,24 @@ beforeEach(() => {
 
 describe("/results server entry", () => {
   it("is dynamic and passes only the current participant's published result to the client panel", async () => {
-    vi.mocked(getParticipantResult).mockResolvedValueOnce({
-      state: "visible",
-      rank: 4,
-      score: 2.25,
-      questions: [
+    vi.mocked(getParticipantResult).mockResolvedValueOnce(
+      Object.assign(
+        { state: "visible" as const, rank: 4, score: 0.5 },
         {
-          position: 0,
-          question: "Question",
-          answer: { kind: "unanswered" },
+          questions: [
+            {
+              position: 0,
+              question: "Question",
+              answer: {
+                kind: "selected" as const,
+                value: "Choice",
+                correctness: "correct" as const,
+              },
+            },
+          ],
         },
-      ],
-    });
+      ),
+    );
 
     const element = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
 
@@ -46,8 +52,14 @@ describe("/results server entry", () => {
     expect(element.props.initial).toEqual({
       state: "visible",
       rank: 4,
-      score: 2.25,
-      questions: [{ position: 0, question: "Question", answer: { kind: "unanswered" } }],
+      score: 0.5,
+      questions: [
+        {
+          position: 0,
+          question: "Question",
+          answer: { kind: "selected", value: "Choice", correctness: "correct" },
+        },
+      ],
     });
     expect(findParticipantById).toHaveBeenCalledWith(12);
     expect(getParticipantResult).toHaveBeenCalledWith(12);

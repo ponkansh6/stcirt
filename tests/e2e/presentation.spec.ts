@@ -29,6 +29,7 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
   let snapshotExists = false;
   let presentationMode: "full" | "short" = "full";
   let participantResultsVisible = false;
+  let snapshotRevision = 0;
   let failAdminRead = false;
   let failNextMutationUnauthorized = false;
   let failNextMutationConflict = false;
@@ -136,6 +137,7 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
         }
         if (body.action === "start" && state === "not_started") {
           snapshotExists = true;
+          snapshotRevision += 1;
           state = "question";
         } else if (body.action === "advance") {
           const next = stages.indexOf(state) + 1;
@@ -162,7 +164,10 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
               id: 11,
               ordinal: 1,
               total: 1,
-              question: questions[0].question,
+              question:
+                snapshotRevision > 1
+                  ? `${questions[0].question}（snapshot ${snapshotRevision}）`
+                  : questions[0].question,
               choices: questions[0].choices,
               ...(state === "answer"
                 ? { correctAnswer: questions[0].correctAnswer, correctIndex: 1 }
@@ -207,7 +212,10 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
           });
           releasePausedParticipantResultsMutation = null;
         }
-        if (body.visible) snapshotExists = true;
+        if (body.visible && !participantResultsVisible) {
+          snapshotExists = true;
+          snapshotRevision += 1;
+        }
         participantResultsVisible = body.visible;
         participantResultsMutations.push(body.visible);
         await route.fulfill({ json: { visible: participantResultsVisible } });
@@ -238,7 +246,8 @@ function installAdminApiMock(page: import("@playwright/test").Page) {
       },
       releaseHeldProjection: () => releaseHeldProjection?.(),
       actionLog: actions,
-      getPresentationState: () => ({ state, version, projectionHidden }),
+      getPresentationState: () => ({ state, questionIndex, version, projectionHidden }),
+      getSnapshotRevision: () => snapshotRevision,
       participantResultsMutations,
       failNextResultsMutation: () => {
         failNextParticipantResultsMutation = true;
@@ -401,20 +410,24 @@ test("presenter single-flights rapid button and keyboard mutations", async ({ pa
   expect(mock.actionLog).toEqual(["start"]);
 });
 
-test("participant result publication creates a snapshot without changing presentation state", async ({
+test("republishing participant results refreshes their snapshot without changing presentation state", async ({
   page,
 }) => {
   const mock = await installAdminApiMock(page);
   await page.goto("/admin/presentation");
   await page.getByLabel("管理者 PIN").fill("2468");
   await page.getByRole("button", { name: "発表画面を始める" }).click();
+  await page.getByRole("button", { name: "発表を始める" }).click();
 
   await expect(
-    page.getByText("初回公開時に結果を確定します。公開後の回答変更は結果に反映されません。"),
+    page.getByText(
+      "公開するたびに、その時点の回答から結果を確定します。公開中の回答変更は次回の再公開で反映されます。",
+    ),
   ).toBeVisible();
   const publishButton = page.getByRole("button", { name: "参加者結果を公開" });
   await expect(publishButton).toBeEnabled();
   const stateBeforePublication = mock.getPresentationState();
+  await expect(page.getByRole("heading", { name: questions[0].question })).toBeVisible();
   mock.failNextResultsMutation();
   await publishButton.click();
   await expect(
@@ -422,6 +435,7 @@ test("participant result publication creates a snapshot without changing present
   ).toBeVisible();
   await expect(publishButton).toHaveAttribute("aria-pressed", "false");
   expect(mock.getPresentationState()).toEqual(stateBeforePublication);
+  expect(mock.getSnapshotRevision()).toBe(1);
 
   const mutationStarted = mock.pauseNextResultsMutation();
   await publishButton.click();
@@ -437,8 +451,32 @@ test("participant result publication creates a snapshot without changing present
     "true",
   );
   expect(mock.getPresentationState()).toEqual(stateBeforePublication);
-  await expect(page.getByText("待機中")).toBeVisible();
+  expect(mock.getSnapshotRevision()).toBe(2);
+  await expect(
+    page.getByRole("heading", { name: `${questions[0].question}（snapshot 2）` }),
+  ).toBeVisible();
   expect(mock.participantResultsMutations).toEqual([true]);
+
+  const publishedState = mock.getPresentationState();
+  await page.getByRole("button", { name: "参加者結果を非公開" }).click();
+  await expect(page.getByRole("button", { name: "参加者結果を公開" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  expect(mock.getPresentationState()).toEqual(publishedState);
+  expect(mock.getSnapshotRevision()).toBe(2);
+
+  await page.getByRole("button", { name: "参加者結果を公開" }).click();
+  await expect(page.getByRole("button", { name: "参加者結果を非公開" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(mock.getPresentationState()).toEqual(publishedState);
+  expect(mock.getSnapshotRevision()).toBe(3);
+  await expect(
+    page.getByRole("heading", { name: `${questions[0].question}（snapshot 3）` }),
+  ).toBeVisible();
+  expect(mock.participantResultsMutations).toEqual([true, false, true]);
 });
 
 test("presenter fullscreen targets the whole wrapper and keeps controls inside", async ({

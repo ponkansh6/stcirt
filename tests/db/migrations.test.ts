@@ -223,4 +223,36 @@ describe("database migrations", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("marks legacy result visibility rows as previously published", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stcirt-publish-marker-migration-"));
+    const client = createClient({ url: `file:${dir}/migration.db` });
+    try {
+      await client.execute(
+        "CREATE TABLE participant_result_settings (id integer PRIMARY KEY, visible integer DEFAULT false NOT NULL)",
+      );
+      await client.execute(
+        "INSERT INTO participant_result_settings (id, visible) VALUES (1, 0), (2, 1)",
+      );
+
+      const migration = readFileSync(
+        join(process.cwd(), "src/lib/db/migrations/0012_participant_results_ever_published.sql"),
+        "utf8",
+      );
+      for (const statement of migration.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.execute(statement);
+      }
+
+      const settings = await client.execute(
+        "SELECT id, visible, ever_published FROM participant_result_settings ORDER BY id",
+      );
+      expect(settings.rows).toEqual([
+        { id: 1, visible: 0, ever_published: 1 },
+        { id: 2, visible: 1, ever_published: 1 },
+      ]);
+    } finally {
+      client.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

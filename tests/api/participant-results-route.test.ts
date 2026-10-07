@@ -41,19 +41,25 @@ describe("GET /api/participants/results", () => {
     expect(getParticipantResult).toHaveBeenCalledWith(42);
   });
 
-  it("returns only the authenticated participant's published result", async () => {
-    vi.mocked(getParticipantResult).mockResolvedValueOnce({
-      state: "visible",
-      rank: 3,
-      score: 2.5,
-      questions: [
+  it("returns only the authenticated participant's rank, score, and question details", async () => {
+    vi.mocked(getParticipantResult).mockResolvedValueOnce(
+      Object.assign(
+        { state: "visible" as const, rank: 3, score: 0.5 },
         {
-          position: 0,
-          question: "Question",
-          answer: { kind: "selected", value: "My choice", correctness: "incorrect" },
+          questions: [
+            {
+              position: 0,
+              question: "Question",
+              answer: {
+                kind: "selected" as const,
+                value: "My choice",
+                correctness: "incorrect" as const,
+              },
+            },
+          ],
         },
-      ],
-    });
+      ),
+    );
     const response = await GET(
       new Request("http://localhost/api/participants/results?participantId=7", {
         headers: { Cookie: "stcirt_participant_session=valid-session" },
@@ -62,7 +68,7 @@ describe("GET /api/participants/results", () => {
     await expect(response.json()).resolves.toEqual({
       state: "visible",
       rank: 3,
-      score: 2.5,
+      score: 0.5,
       questions: [
         {
           position: 0,
@@ -71,6 +77,7 @@ describe("GET /api/participants/results", () => {
         },
       ],
     });
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(getParticipantResult).toHaveBeenCalledWith(42);
   });
 });
