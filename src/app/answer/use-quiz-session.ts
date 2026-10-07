@@ -47,6 +47,10 @@ type SaveAttempt = {
   selectedByQuestion: Record<number, number>;
   freeResponses: Record<number, string>;
 };
+type SelectedAnswer = AnswerSubmission["answers"][number] & {
+  answerKind: "selected";
+  selectedIndex: number;
+};
 
 class InvalidSavedSubmissionError extends Error {
   constructor() {
@@ -64,25 +68,16 @@ function copySelections(selections: Record<number, number | undefined>) {
 }
 
 function restoreDisplaySelections(
-  answers: AnswerSubmission["answers"],
+  answers: SelectedAnswer[],
   quizzes: LoadedQuiz[],
 ): Record<number, number> {
-  if (answers.length !== EXAM_SIZE) throw new Error("保存済み回答の数が正しくありません。");
   const restored: Record<number, number> = {};
   for (const answer of answers) {
-    if (answer.answerKind === "legacy" || answer.answerKind === "freeText") continue;
-    if (answer.selectedIndex === null)
-      throw new Error("保存済み回答を問題に対応づけられませんでした。");
-    const quiz = quizzes.find(({ question }) => question.id === answer.questionId);
-    const displayIndex = quiz?.shuffled.choiceIndices.indexOf(answer.selectedIndex) ?? -1;
+    const quiz = quizzes.find(({ question }) => question.id === answer.questionId)!;
+    const displayIndex = quiz.shuffled.choiceIndices.indexOf(answer.selectedIndex);
     if (displayIndex < 0) throw new Error("保存済み回答を問題に対応づけられませんでした。");
     restored[answer.questionId] = displayIndex;
   }
-  if (
-    Object.keys(restored).length !==
-    quizzes.filter(({ question }) => question.answerType === "selected").length
-  )
-    throw new Error("保存済み回答の設問が正しくありません。");
   return restored;
 }
 
@@ -114,8 +109,9 @@ function restoreSavedAnswers(
     }
 
     for (const { question } of quizzes) {
-      const answer = submission.answers.find((candidate) => candidate.questionId === question.id);
-      if (!answer) throw new Error("missing answer");
+      // The validated answer IDs form a duplicate-free subset of the quiz IDs
+      // with the same cardinality, so every quiz has exactly one matching answer.
+      const answer = submission.answers.find((candidate) => candidate.questionId === question.id)!;
       if (question.answerType === "freeText") {
         if (answer.answerKind === "legacy") {
           if (answer.selectedIndex === null || answer.freeText !== null) {
@@ -140,7 +136,11 @@ function restoreSavedAnswers(
       }
     }
 
-    const selections = restoreDisplaySelections(submission.answers, quizzes);
+    const selectedAnswers = submission.answers.filter(
+      (answer): answer is SelectedAnswer =>
+        answer.answerKind === "selected" && answer.selectedIndex !== null,
+    );
+    const selections = restoreDisplaySelections(selectedAnswers, quizzes);
     return {
       selections,
       freeResponses: Object.fromEntries(
@@ -172,6 +172,7 @@ export function useQuizSession() {
   const [revision, setRevision] = useState(0);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const mountedRef = useRef(false);
+  const sessionEpochRef = useRef(0);
   const busyRef = useRef(false);
   const checkingSubmissionRef = useRef(false);
   const quizzesRef = useRef(quizzes);
@@ -270,9 +271,7 @@ export function useQuizSession() {
   const resolveParticipant = useCallback(
     async (participant: Participant) => {
       if (busyRef.current || checkingSubmissionRef.current) return;
-      const resumingDraft =
-        resumeAfterAuthRef.current &&
-        (phaseRef.current.kind === "answering" || phaseRef.current.kind === "submitting");
+      const resumingDraft = resumeAfterAuthRef.current && phaseRef.current.kind === "answering";
       resumeAfterAuthRef.current = false;
       checkingSubmissionRef.current = true;
       resolvingParticipantIdRef.current = participant.id;
@@ -445,6 +444,7 @@ export function useQuizSession() {
     try {
       await deleteParticipantSession();
       if (!mountedRef.current) return;
+      sessionEpochRef.current += 1;
       quizzesRef.current = [];
       setQuizzes([]);
       setSelections({});
@@ -499,6 +499,8 @@ export function useQuizSession() {
   }, []);
 
   const saveAnswers = useCallback(async () => {
+    const currentSubmissionId = submissionIdRef.current;
+    if (!currentSubmissionId) return;
     const currentPhase = phaseRef.current;
     if (busyRef.current || currentPhase.kind !== "answering" || currentPhase.refreshRequired)
       return;
@@ -537,8 +539,7 @@ export function useQuizSession() {
       };
       failedAttemptRef.current = attempt;
     }
-    const currentSubmissionId = submissionIdRef.current;
-    if (!currentSubmissionId) return;
+    const sessionEpoch = sessionEpochRef.current;
     busyRef.current = true;
     setPhase({ kind: "submitting" });
     try {
@@ -548,7 +549,7 @@ export function useQuizSession() {
         expectedRevision: attempt.expectedRevision,
         answers: attempt.answers,
       });
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
       if (result.submissionId !== currentSubmissionId) {
         setRestoreError("保存済み回答と現在の設問が一致しないため、回答を復元できません。");
         failedAttemptRef.current = null;
@@ -567,7 +568,7 @@ export function useQuizSession() {
       setPhase({ kind: "complete" });
       setRestoreError(null);
     } catch (error) {
-      if (mountedRef.current) {
+      if (mountedRef.current && sessionEpoch === sessionEpochRef.current) {
         if (error instanceof ApiError && error.status === 401) {
           const currentAccess = accessRef.current;
           if (currentAccess.kind === "ready")
@@ -575,10 +576,8 @@ export function useQuizSession() {
         }
         if (error instanceof ApiError && error.status === 409) {
           try {
-            const currentSubmissionId = submissionIdRef.current;
-            if (!currentSubmissionId) throw new Error("提出情報を確認できませんでした。");
             const persisted = await fetchAnswerSubmission(currentSubmissionId);
-            if (!mountedRef.current) return;
+            if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
             const restored = restoreSavedAnswers(
               persisted,
               quizzesRef.current,
@@ -601,7 +600,7 @@ export function useQuizSession() {
                 "保存済み回答が更新されています。回答案を保持しました。内容を確認して再度確定してください。",
             });
           } catch (refreshError) {
-            if (mountedRef.current) {
+            if (mountedRef.current && sessionEpoch === sessionEpochRef.current) {
               if (refreshError instanceof InvalidSavedSubmissionError) {
                 setRestoreError(refreshError.message);
                 setPhase({ kind: "complete" });
@@ -646,16 +645,17 @@ export function useQuizSession() {
   }, []);
 
   const refreshSavedAnswers = useCallback(async () => {
+    const currentSubmissionId = submissionIdRef.current;
+    if (!currentSubmissionId) return;
     const currentPhase = phaseRef.current;
     if (busyRef.current || currentPhase.kind !== "answering" || !currentPhase.refreshRequired)
       return;
-    const currentSubmissionId = submissionIdRef.current;
-    if (!currentSubmissionId) return;
+    const sessionEpoch = sessionEpochRef.current;
     busyRef.current = true;
     setPhase({ kind: "refreshing" });
     try {
       const persisted = await fetchAnswerSubmission(currentSubmissionId);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
       const restored = restoreSavedAnswers(persisted, quizzesRef.current, currentSubmissionId);
       freeResponsesRef.current = restored.freeResponses;
       setFreeResponses(restored.freeResponses);
@@ -674,7 +674,7 @@ export function useQuizSession() {
           "保存済み回答を読み込みました。編集中の回答案は保持されています。内容を確認して確定してください。",
       });
     } catch (error) {
-      if (mountedRef.current) {
+      if (mountedRef.current && sessionEpoch === sessionEpochRef.current) {
         if (error instanceof InvalidSavedSubmissionError) {
           setRestoreError(error.message);
           setPhase({ kind: "complete" });

@@ -195,9 +195,6 @@ export async function saveAnswerSubmission(input: {
       ) {
         throw new BatchSubmissionError("Answers must match the submission's five questions", 400);
       }
-      if (!submission && examSet.length !== 5) {
-        throw new BatchSubmissionError("Five exam questions are required", 400);
-      }
       const questions = submission
         ? await tx
             .select({

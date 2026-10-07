@@ -74,6 +74,31 @@ async function failFirstTransactionAfterCallback<T>(run: () => Promise<T>) {
   }
 }
 
+async function failFirstTransactionWithUniqueConflict<T>(run: () => Promise<T>) {
+  const database = dbRef.db!;
+  const originalTransaction = database.transaction.bind(database);
+  let intercept = true;
+  const transactionSpy = vi.spyOn(database, "transaction");
+  transactionSpy.mockImplementation((callback, config) => {
+    if (!intercept) return originalTransaction(callback, config);
+    intercept = false;
+    return originalTransaction(async (tx) => {
+      await callback(tx);
+      throw Object.assign(new Error("adapter transaction failed"), {
+        cause: Object.assign(
+          new Error("UNIQUE constraint failed: presentation_operations.operation_id"),
+          { code: "SQLITE_CONSTRAINT" },
+        ),
+      });
+    }, config);
+  });
+  try {
+    return await run();
+  } finally {
+    transactionSpy.mockRestore();
+  }
+}
+
 async function failTransactionAtTable<T>(
   table: unknown,
   operation: "select" | "delete" | "insert" | "update",
@@ -119,6 +144,98 @@ async function failTransactionAtTable<T>(
                     selectedTable: unknown,
                   ) => unknown;
                   return Reflect.apply(from, queryTarget, [selectedTable]);
+                };
+              },
+            });
+          };
+        },
+      });
+      return callback(wrappedTx);
+    }, config),
+  );
+  try {
+    return await run();
+  } finally {
+    transactionSpy.mockRestore();
+  }
+}
+
+async function returnNoUpdatedRows<T>(table: unknown, run: () => Promise<T>) {
+  const database = dbRef.db!;
+  const originalTransaction = database.transaction.bind(database);
+  const transactionSpy = vi.spyOn(database, "transaction");
+  transactionSpy.mockImplementation((callback, config) =>
+    originalTransaction((tx) => {
+      const wrappedTx = new Proxy(tx, {
+        get(target, property, receiver) {
+          if (property !== "update") return Reflect.get(target, property, receiver);
+          return (selectedTable: unknown) => {
+            const builder = Reflect.apply(
+              Reflect.get(target, property, receiver) as (...args: unknown[]) => unknown,
+              target,
+              [selectedTable],
+            );
+            if (selectedTable !== table) return builder;
+            const wrapBuilder = (current: object): object =>
+              new Proxy(current, {
+                get(builderTarget, builderProperty, builderReceiver) {
+                  if (builderProperty === "returning") return async () => [];
+                  const method = Reflect.get(builderTarget, builderProperty, builderReceiver);
+                  if (typeof method !== "function") return method;
+                  return (...args: unknown[]) =>
+                    wrapBuilder(Reflect.apply(method, builderTarget, args));
+                },
+              });
+            return wrapBuilder(builder as object);
+          };
+        },
+      });
+      return callback(wrappedTx);
+    }, config),
+  );
+  try {
+    return await run();
+  } finally {
+    transactionSpy.mockRestore();
+  }
+}
+
+async function returnNoSelectedRows<T>(table: unknown, run: () => Promise<T>, readNumber = 1) {
+  const database = dbRef.db!;
+  const originalTransaction = database.transaction.bind(database);
+  const transactionSpy = vi.spyOn(database, "transaction");
+  let matchingReads = 0;
+  transactionSpy.mockImplementation((callback, config) =>
+    originalTransaction((tx) => {
+      const wrappedTx = new Proxy(tx, {
+        get(target, property, receiver) {
+          if (property !== "select") return Reflect.get(target, property, receiver);
+          return (...args: unknown[]) => {
+            const builder = Reflect.apply(
+              Reflect.get(target, property, target) as (...args: unknown[]) => object,
+              target,
+              args,
+            );
+            return new Proxy(builder, {
+              get(builderTarget, builderProperty, builderReceiver) {
+                if (builderProperty !== "from")
+                  return Reflect.get(builderTarget, builderProperty, builderReceiver);
+                return (selectedTable: unknown) => {
+                  const matchingRead = selectedTable === table ? ++matchingReads : 0;
+                  const query = Reflect.apply(
+                    Reflect.get(builderTarget, builderProperty, builderTarget) as (
+                      selectedTable: unknown,
+                    ) => object,
+                    builderTarget,
+                    [selectedTable],
+                  );
+                  if (selectedTable !== table || matchingRead !== readNumber) return query;
+                  return new Proxy(query, {
+                    get(queryTarget, queryProperty, queryReceiver) {
+                      if (queryProperty === "where") return async () => [];
+                      return Reflect.get(queryTarget, queryProperty, queryReceiver);
+                    },
+                  });
                 };
               },
             });
@@ -218,6 +335,57 @@ describe("presentation repository", () => {
     await addSubmission(tied, [0, 0]);
     await addSubmission(third, [0, 1]);
     return { first, tied, third, unanswered };
+  }
+
+  async function addFreeTextProjectionFixture(sourceKey?: string) {
+    await testDb.db.insert(schema.presentationSessions).values({
+      id: 1,
+      state: "answer",
+      version: 1,
+      questionIndex: 0,
+      questionCount: 1,
+    });
+    await testDb.db.insert(schema.presentationQuestions).values({
+      sessionId: 1,
+      position: 0,
+      sourceQuestionId: 105,
+      question: "Free-text question",
+      choices: [],
+      correctIndex: 0,
+      explanation: "Model answer",
+    });
+    if (sourceKey !== undefined) {
+      await testDb.db.insert(schema.examQuestions).values({
+        id: 105,
+        key: sourceKey,
+        question: "Current source question",
+        choices: [],
+        correctIndex: 0,
+        explanation: "Current explanation",
+      });
+    }
+    await testDb.db.insert(schema.presentationEntries).values({
+      sessionId: 1,
+      participantId: 1,
+      displayName: "Private Name",
+      score: 0.5,
+      rank: 1,
+      answers: [
+        {
+          questionId: 105,
+          answerKind: "freeText",
+          selectedIndex: null,
+          freeText: "Private response",
+          rawScore: 1,
+          normalizedScore: 0.5,
+        },
+      ],
+    });
+    await testDb.db.insert(schema.participantResultSettings).values({
+      id: 1,
+      visible: true,
+      everPublished: true,
+    });
   }
 
   async function op(action: "start" | "advance" | "previous" | "hide" | "show", id: string) {
@@ -326,6 +494,152 @@ describe("presentation repository", () => {
     await expect(operatePresentation("mode-short", "setMode", "full")).rejects.toMatchObject({
       status: 409,
     });
+  });
+
+  it("suppresses only the identified fifth-question responses in the public projection", async () => {
+    await addFreeTextProjectionFixture("it-literacy-005");
+
+    const projection = await getPublicPresentation();
+    expect(projection).toEqual({
+      state: "answer",
+      question: {
+        id: 105,
+        ordinal: 1,
+        total: 1,
+        question: "Free-text question",
+        choices: [],
+        answerType: "freeText",
+        expectedAnswer: "Model answer",
+      },
+    });
+    if (projection.state === "answer") {
+      expect(projection.question).not.toHaveProperty("responses");
+    }
+    const admin = await getAdminPresentation();
+    expect(admin.entries[0]?.answers).toContainEqual(
+      expect.objectContaining({ freeText: "Private response", rawScore: 1, normalizedScore: 0.5 }),
+    );
+    await expect(getParticipantResult(1)).resolves.toEqual({
+      state: "visible",
+      score: 0.5,
+      rank: 1,
+      questions: [
+        {
+          position: 0,
+          question: "Free-text question",
+          answer: { kind: "freeText", value: "Private response", score: 0.5 },
+        },
+      ],
+    });
+  });
+
+  it("keeps responses for another explicitly identified free-text question", async () => {
+    await addFreeTextProjectionFixture("another-free-text-question");
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "answer",
+      question: {
+        expectedAnswer: "Model answer",
+        responses: [
+          {
+            displayName: "Private Name",
+            answer: "Private response",
+            answerKind: "freeText",
+            similarity: 1,
+            score: 0.5,
+          },
+        ],
+      },
+    });
+  });
+
+  it("fails closed when the snapshot source question row is missing", async () => {
+    await addFreeTextProjectionFixture();
+
+    const projection = await getPublicPresentation();
+    expect(projection).toMatchObject({
+      state: "answer",
+      question: {
+        expectedAnswer: "Model answer",
+      },
+    });
+    if (projection.state === "answer") {
+      expect(projection.question).not.toHaveProperty("responses");
+    }
+  });
+
+  it("uses the unanswered response fallback when a snapshot answer is absent", async () => {
+    await addFreeTextProjectionFixture("another-free-text-question");
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: [] })
+      .where(eq(schema.presentationEntries.participantId, 1));
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "answer",
+      question: {
+        responses: [
+          expect.objectContaining({ displayName: "Private Name", answerKind: "unanswered" }),
+        ],
+      },
+    });
+  });
+
+  it("excludes incomplete submissions from scoring and snapshots them as unanswered", async () => {
+    await addQuestions();
+    const partialQuestionsParticipant = await addParticipant("Partial question set");
+    const partialAnswersParticipant = await addParticipant("Partial answers");
+    await testDb.db.insert(schema.examAnswerSubmissions).values([
+      {
+        id: "partial-question-set",
+        participantId: partialQuestionsParticipant,
+        questionIds: [11],
+        revision: 1,
+      },
+      {
+        id: "partial-answer-set",
+        participantId: partialAnswersParticipant,
+        questionIds: [11, 22],
+        revision: 1,
+      },
+    ]);
+    await testDb.db.insert(schema.examSubmissionAnswers).values([
+      {
+        submissionId: "partial-question-set",
+        questionId: 11,
+        selectedIndex: 0,
+      },
+      {
+        submissionId: "partial-answer-set",
+        questionId: 11,
+        selectedIndex: 0,
+      },
+    ]);
+
+    await operatePresentation("partial-submissions-start", "start");
+
+    const entries = await testDb.db.select().from(schema.presentationEntries);
+    expect(entries).toHaveLength(2);
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          participantId: partialQuestionsParticipant,
+          score: 0,
+          answers: [
+            expect.objectContaining({ questionId: 11, answerKind: "unanswered" }),
+            expect.objectContaining({ questionId: 22, answerKind: "unanswered" }),
+          ],
+        }),
+        expect.objectContaining({
+          participantId: partialAnswersParticipant,
+          score: 0,
+          answers: [
+            expect.objectContaining({ questionId: 11, answerKind: "unanswered" }),
+            expect.objectContaining({ questionId: 22, answerKind: "unanswered" }),
+          ],
+        }),
+      ]),
+    );
   });
 
   it("keeps the standby projection empty and restores the saved stage on show", async () => {
@@ -528,6 +842,24 @@ describe("presentation repository", () => {
     );
     expect(started).toMatchObject({ state: "question", version: 1 });
     await expect(testDb.db.select().from(schema.presentationOperations)).resolves.toHaveLength(1);
+  });
+
+  it("retries nested lock errors to the attempt limit and preserves the adapter error", async () => {
+    const nestedLock = Object.assign(new Error("adapter transaction failed"), {
+      cause: Object.assign(new Error("database is locked"), {
+        code: "SQLITE_LOCKED_SHAREDCACHE",
+      }),
+    });
+    const transactionSpy = vi.spyOn(dbRef.db!, "transaction").mockRejectedValue(nestedLock);
+
+    try {
+      await expect(operatePresentation("nested-lock-exhaustion", "setMode", "short")).rejects.toBe(
+        nestedLock,
+      );
+      expect(transactionSpy).toHaveBeenCalledTimes(4);
+    } finally {
+      transactionSpy.mockRestore();
+    }
   });
 
   it("attributes publication failures to the source read and snapshot write phases", async () => {
@@ -977,5 +1309,244 @@ describe("presentation repository", () => {
 
     expect(recovered).toMatchObject({ state: "answer", questionIndex: 0, version: 2 });
     expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
+  });
+
+  it("returns waiting before publication and unavailable for malformed result question data", async () => {
+    await expect(getParticipantResult(1)).resolves.toEqual({ state: "waiting" });
+    await addFreeTextProjectionFixture("another-free-text-question");
+
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ choices: "not-an-array" as never })
+      .where(eq(schema.presentationQuestions.position, 0));
+
+    await expect(getParticipantResult(1)).resolves.toEqual({ state: "unavailable" });
+  });
+
+  it("rejects selected answers for a free-text question and free-text snapshots without text", async () => {
+    await addFreeTextProjectionFixture("another-free-text-question");
+    const [entry] = await testDb.db.select().from(schema.presentationEntries);
+    const [snapshot] = entry!.answers;
+
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({
+        answers: [{ ...snapshot!, answerKind: "selected", selectedIndex: 0 }],
+      })
+      .where(eq(schema.presentationEntries.participantId, 1));
+    await expect(getParticipantResult(1)).resolves.toEqual({ state: "unavailable" });
+
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({
+        answers: [{ ...snapshot!, freeText: null }],
+      })
+      .where(eq(schema.presentationEntries.participantId, 1));
+    await expect(getParticipantResult(1)).resolves.toEqual({ state: "unavailable" });
+  });
+
+  it("returns a question stage without a question row when a stale cursor is read", async () => {
+    await testDb.db.insert(schema.presentationSessions).values({
+      id: 1,
+      state: "question",
+      version: 1,
+      questionIndex: 0,
+      questionCount: 1,
+    });
+
+    await expect(getPublicPresentation()).resolves.toEqual({ state: "question" });
+  });
+
+  it("skips older submissions for an already-ranked participant", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Multiple submissions");
+    await addSubmission(participant, [0, 0], 1, "older");
+    await addSubmission(participant, [0, 1], 2, "newer");
+
+    await operatePresentation("multiple-submissions-start", "start");
+
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
+      { participantId: participant, score: 1, rank: 1 },
+    ]);
+  });
+
+  it("rejects advancing and changing modes with invalid state and arguments", async () => {
+    await expect(operatePresentation("invalid-mode", "setMode")).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
+    await expect(operatePresentation("advance-before-start", "advance")).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
+  });
+
+  it("reports an unavailable session when the session read returns no row", async () => {
+    await expect(
+      returnNoSelectedRows(schema.presentationSessions, () =>
+        operatePresentation("session-read-missing", "setMode", "short"),
+      ),
+    ).rejects.toBeInstanceOf(PresentationConflictError);
+  });
+
+  it("reports an unavailable session when snapshot persistence cannot reread it", async () => {
+    await addQuestions();
+
+    await expect(
+      returnNoSelectedRows(
+        schema.presentationSessions,
+        () => setParticipantResultsVisible(true),
+        2,
+      ),
+    ).rejects.toBeInstanceOf(PresentationConflictError);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.participantResultSettings)).resolves.toHaveLength(
+      0,
+    );
+  });
+
+  it("rejects a second start with a different operation ID", async () => {
+    await addQuestions();
+    await operatePresentation("started-once", "start");
+
+    await expect(operatePresentation("started-twice", "start")).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
+  });
+
+  it("moves backward through answer and podium preview cursor states", async () => {
+    await addQuestions();
+    await operatePresentation("previous-states-start", "start");
+    await operatePresentation("previous-states-to-answer", "advance");
+    await operatePresentation("previous-states-question-two", "advance");
+    await operatePresentation("previous-states-answer-two", "advance");
+    await operatePresentation("previous-states-preview", "advance");
+    await expect(
+      operatePresentation("previous-states-preview-back", "previous"),
+    ).resolves.toMatchObject({ state: "answer", questionIndex: 1 });
+    await expect(
+      operatePresentation("previous-states-answer-back", "previous"),
+    ).resolves.toMatchObject({ state: "question", questionIndex: 1 });
+    await expect(
+      operatePresentation("previous-states-question-back", "previous"),
+    ).resolves.toMatchObject({ state: "answer", questionIndex: 0 });
+  });
+
+  it("returns to the podium preview when the third-place stage is reversed", async () => {
+    await addRankFixture();
+    await operatePresentation("third-place-start", "start");
+    await operatePresentation("third-place-answer-1", "advance");
+    await operatePresentation("third-place-question-2", "advance");
+    await operatePresentation("third-place-answer-2", "advance");
+    await operatePresentation("third-place-preview", "advance");
+    await expect(operatePresentation("third-place-stage", "advance")).resolves.toMatchObject({
+      state: "third",
+    });
+
+    await expect(operatePresentation("third-place-back", "previous")).resolves.toMatchObject({
+      state: "podium_preview",
+    });
+  });
+
+  it("returns from an empty finished presentation to its preview", async () => {
+    await operatePresentation("empty-finished-start", "start");
+    await expect(operatePresentation("empty-finished-end", "advance")).resolves.toMatchObject({
+      state: "finished",
+    });
+
+    await expect(operatePresentation("advance-finished", "advance")).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
+    await expect(operatePresentation("empty-finished-back", "previous")).resolves.toMatchObject({
+      state: "podium_preview",
+    });
+  });
+
+  it("rejects a start when its compare-and-swap update returns no rows", async () => {
+    await addQuestions();
+
+    await expect(
+      returnNoUpdatedRows(schema.presentationSessions, () =>
+        operatePresentation("start-cas-miss", "start"),
+      ),
+    ).rejects.toBeInstanceOf(PresentationConflictError);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(0);
+  });
+
+  it("rejects a mode change when its compare-and-swap update returns no rows", async () => {
+    await operatePresentation("mode-cas-initial", "setMode", "short");
+
+    await expect(
+      returnNoUpdatedRows(schema.presentationSessions, () =>
+        operatePresentation("mode-cas-miss", "setMode", "full"),
+      ),
+    ).rejects.toBeInstanceOf(PresentationConflictError);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+      { presentationMode: "short", version: 1 },
+    ]);
+  });
+
+  it("rejects a projection toggle when its compare-and-swap update returns no rows", async () => {
+    await operatePresentation("visibility-cas-initial", "hide");
+
+    await expect(
+      returnNoUpdatedRows(schema.presentationSessions, () =>
+        operatePresentation("visibility-cas-miss", "show"),
+      ),
+    ).rejects.toBeInstanceOf(PresentationConflictError);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+      { projectionHidden: true, version: 1 },
+    ]);
+  });
+
+  it("rejects a cursor action when its compare-and-swap update returns no rows", async () => {
+    await addQuestions();
+    await operatePresentation("advance-cas-start", "start");
+
+    await expect(
+      returnNoUpdatedRows(schema.presentationSessions, () =>
+        operatePresentation("advance-cas-miss", "advance"),
+      ),
+    ).rejects.toBeInstanceOf(PresentationConflictError);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+      { state: "question", version: 1, questionIndex: 0 },
+    ]);
+  });
+
+  it("reports a state conflict when a known adapter conflict has no committed operation", async () => {
+    await addQuestions();
+    await operatePresentation("unique-conflict-start", "start");
+
+    await expect(
+      failFirstTransactionWithUniqueConflict(() =>
+        operatePresentation("unique-conflict-no-winner", "advance"),
+      ),
+    ).rejects.toBeInstanceOf(PresentationConflictError);
+  });
+
+  it("reports an operation ID conflict when race recovery finds a different action", async () => {
+    await addQuestions();
+    await operatePresentation("reused-operation-id", "start");
+
+    const error = await returnNoSelectedRows(schema.presentationOperations, () =>
+      operatePresentation("reused-operation-id", "advance"),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PresentationConflictError);
+    expect(error).toHaveProperty("message", "Operation ID conflict");
+    expect(error).toHaveProperty("status", 409);
+  });
+
+  it("reports an operation ID conflict when race recovery finds a different mode", async () => {
+    await operatePresentation("reused-mode-operation-id", "setMode", "short");
+
+    const error = await returnNoSelectedRows(schema.presentationOperations, () =>
+      operatePresentation("reused-mode-operation-id", "setMode", "full"),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PresentationConflictError);
+    expect(error).toHaveProperty("message", "Operation ID conflict");
+    expect(error).toHaveProperty("status", 409);
   });
 });

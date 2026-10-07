@@ -60,6 +60,42 @@ afterEach(() => {
 });
 
 describe("POST /api/admin/participant-results", () => {
+  it("returns an uncached unavailable response when admin auth is not configured", async () => {
+    delete process.env.ADMIN_PRESENTATION_SESSION_SECRET;
+
+    const response = await POST(request({ body: { visible: true } }));
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, private");
+    expect(response.headers.get("Set-Cookie")).toBeNull();
+    await expect(response.json()).resolves.toEqual({
+      error: "Admin presentation is unavailable",
+    });
+    expect(setParticipantResultsVisible).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed JSON without calling the repository", async () => {
+    const cookie = authenticate();
+    const response = await POST(
+      new Request("http://localhost/api/admin/participant-results", {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          Origin: "http://localhost",
+          Host: "localhost",
+          "Content-Type": "application/json",
+        },
+        body: "{malformed",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, private");
+    expect(response.headers.get("Set-Cookie")).toBeNull();
+    await expect(response.json()).resolves.toEqual({ error: "Invalid request" });
+    expect(setParticipantResultsVisible).not.toHaveBeenCalled();
+  });
+
   it("requires admin authentication, same-origin mutation, and a boolean visibility value", async () => {
     expect((await POST(request({ body: { visible: true } }))).status).toBe(401);
     const cookie = authenticate();

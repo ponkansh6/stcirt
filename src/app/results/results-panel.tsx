@@ -123,14 +123,11 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
   );
   const [authorized, setAuthorized] = useState(initial.state !== "unauthenticated");
 
-  const answerStatus = (correctness: "correct" | "incorrect" | "unavailable") => {
+  const answerStatus = (correctness: "correct" | "incorrect") => {
     if (correctness === "correct") {
       return { label: "正解", icon: "✓", className: "text-success" };
     }
-    if (correctness === "incorrect") {
-      return { label: "不正解", icon: "×", className: "text-error" };
-    }
-    return { label: "判定できません", icon: "？", className: "text-muted" };
+    return { label: "不正解", icon: "×", className: "text-error" };
   };
 
   useEffect(() => {
@@ -244,7 +241,9 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
                             {item.answer.value}
                           </p>
                           {(() => {
-                            const status = answerStatus(item.answer.correctness);
+                            const status = answerStatus(
+                              item.answer.correctness === "correct" ? "correct" : "incorrect",
+                            );
                             return (
                               <p
                                 className={`mt-3 inline-flex items-center gap-2 text-sm font-semibold ${status.className}`}

@@ -67,6 +67,23 @@ describe("saveAnswerSubmission", () => {
     selectedIndex: index % 4,
   }));
 
+  async function expectInvalidSubmission(
+    input: Parameters<typeof saveAnswerSubmission>[0],
+    message: string,
+  ) {
+    const submissionsBefore = await testDb.db.select().from(schema.examAnswerSubmissions);
+    const answersBefore = await testDb.db.select().from(schema.examSubmissionAnswers);
+
+    await expect(saveAnswerSubmission(input)).rejects.toMatchObject({
+      name: "BatchSubmissionError",
+      status: 400,
+      message,
+    });
+    expect(await testDb.db.select().from(schema.examAnswerSubmissions)).toEqual(submissionsBefore);
+    expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toEqual(answersBefore);
+    expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(0);
+  }
+
   beforeEach(async () => {
     testDb = await createTestDb();
     dbRef.db = testDb.db;
@@ -92,6 +109,144 @@ describe("saveAnswerSubmission", () => {
   });
 
   afterEach(() => testDb.cleanup());
+
+  it.each([
+    {
+      label: "answer count other than five",
+      answers: answers.slice(0, 4),
+      message: "Exactly five distinct answers are required",
+    },
+    {
+      label: "duplicate question IDs",
+      answers: [...answers.slice(0, 4), { questionId: 4, selectedIndex: 1 }],
+      message: "Exactly five distinct answers are required",
+    },
+    {
+      label: "question IDs outside the exam set",
+      answers: [
+        { questionId: 1, selectedIndex: 0 },
+        { questionId: 2, selectedIndex: 1 },
+        { questionId: 3, selectedIndex: 2 },
+        { questionId: 4, selectedIndex: 3 },
+        { questionId: 6, selectedIndex: 0 },
+      ],
+      message: "Answers must match the submission's five questions",
+    },
+    {
+      label: "free text for a choice question",
+      answers: [...answers.slice(0, 4), { questionId: 5, freeText: "not a choice" }],
+      message: "Answer type does not match its question",
+    },
+    {
+      label: "choice index below zero",
+      answers: answers.map((answer, index) =>
+        index === 0 ? { questionId: 1, selectedIndex: -1 } : answer,
+      ),
+      message: "Answer type does not match its question",
+    },
+    {
+      label: "choice index past the available choices",
+      answers: answers.map((answer, index) =>
+        index === 0 ? { questionId: 1, selectedIndex: 4 } : answer,
+      ),
+      message: "Answer type does not match its question",
+    },
+  ])(
+    "rejects $label without writing a partial submission",
+    async ({ answers: invalidAnswers, message }) => {
+      await expectInvalidSubmission(
+        {
+          submissionId,
+          operationId: firstOperationId,
+          expectedRevision: 0,
+          participantId,
+          answers: invalidAnswers,
+        },
+        message,
+      );
+    },
+  );
+
+  it.each([
+    ["blank after trimming", "  \n  "],
+    ["longer than 1000 characters after trimming", ` ${"x".repeat(1001)} `],
+  ])(
+    "rejects free text that is %s without writing a partial submission",
+    async (_label, freeText) => {
+      await testDb.db
+        .update(schema.examQuestions)
+        .set({ key: "it-literacy-005" })
+        .where(eq(schema.examQuestions.id, 5));
+      await expectInvalidSubmission(
+        {
+          submissionId,
+          operationId: firstOperationId,
+          expectedRevision: 0,
+          participantId,
+          answers: [...answers.slice(0, 4), { questionId: 5, freeText }],
+        },
+        "Answer type does not match its question",
+      );
+    },
+  );
+
+  it("rejects choice answers for a free-text question without writing a partial submission", async () => {
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ key: "it-literacy-005" })
+      .where(eq(schema.examQuestions.id, 5));
+    await expectInvalidSubmission(
+      {
+        submissionId,
+        operationId: firstOperationId,
+        expectedRevision: 0,
+        participantId,
+        answers,
+      },
+      "Answer type does not match its question",
+    );
+  });
+
+  it("rejects a missing question referenced by an existing submission without changing it", async () => {
+    await testDb.db.insert(schema.examAnswerSubmissions).values({
+      id: submissionId,
+      participantId,
+      questionIds: [1, 2, 3, 4, 5],
+      revision: 1,
+    });
+    await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 5));
+
+    await expectInvalidSubmission(
+      {
+        submissionId,
+        operationId: firstOperationId,
+        expectedRevision: 1,
+        participantId,
+        answers,
+      },
+      "Answer type does not match its question",
+    );
+  });
+
+  it("rejects answer IDs that do not match an existing submission's question order", async () => {
+    await testDb.db.insert(schema.examAnswerSubmissions).values({
+      id: submissionId,
+      participantId,
+      questionIds: [2, 1, 3, 4, 5],
+      revision: 1,
+    });
+
+    await expectInvalidSubmission(
+      {
+        submissionId,
+        operationId: firstOperationId,
+        expectedRevision: 1,
+        participantId,
+        answers,
+      },
+      "Answers must match the submission's five questions",
+    );
+  });
 
   it("creates one five-answer submission and replays the same operation without duplicate writes", async () => {
     const input = {

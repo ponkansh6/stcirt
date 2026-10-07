@@ -74,4 +74,61 @@ describe("/results server entry", () => {
     expect(findParticipantById).not.toHaveBeenCalled();
     expect(getParticipantResult).not.toHaveBeenCalled();
   });
+
+  it("fails closed when the authenticated participant no longer exists", async () => {
+    vi.mocked(findParticipantById).mockResolvedValueOnce(null);
+
+    const element = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
+
+    expect(element.props.initial).toEqual({ state: "unauthenticated" });
+    expect(findParticipantById).toHaveBeenCalledWith(12);
+    expect(getParticipantResult).not.toHaveBeenCalled();
+  });
+
+  it("passes free-text and legacy answer shapes through without adding selected-answer fields", async () => {
+    vi.mocked(getParticipantResult).mockResolvedValueOnce({
+      state: "visible",
+      rank: 1,
+      score: 1,
+      questions: [
+        {
+          position: 0,
+          question: "自由記述",
+          answer: { kind: "freeText", value: "回答", score: null },
+        },
+        {
+          position: 1,
+          question: "以前の回答",
+          answer: { kind: "legacy" },
+        },
+      ],
+    });
+
+    const element = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
+
+    expect(element.props.initial).toEqual({
+      state: "visible",
+      rank: 1,
+      score: 1,
+      questions: [
+        {
+          position: 0,
+          question: "自由記述",
+          answer: { kind: "freeText", value: "回答", score: null },
+        },
+        { position: 1, question: "以前の回答", answer: { kind: "legacy" } },
+      ],
+    });
+  });
+
+  it("passes through a private result state and keeps waiting when server verification throws", async () => {
+    vi.mocked(getParticipantResult).mockResolvedValueOnce({ state: "unavailable" });
+    const unavailable = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
+    expect(unavailable.props.initial).toEqual({ state: "unavailable" });
+
+    vi.mocked(findParticipantById).mockRejectedValueOnce(new Error("database unavailable"));
+    const waiting = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
+    expect(waiting.props.initial).toEqual({ state: "waiting" });
+    expect(getParticipantResult).toHaveBeenCalledTimes(1);
+  });
 });

@@ -44,12 +44,17 @@ describe("participant shared rate limit", () => {
   });
 
   afterEach(() => {
-    testDb.cleanup();
-    dbRef.db = null;
-    for (const key of envKeys) {
-      const value = originalEnv[key];
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+    try {
+      testDb.cleanup();
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      dbRef.db = null;
+      for (const key of envKeys) {
+        const value = originalEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 
@@ -65,6 +70,66 @@ describe("participant shared rate limit", () => {
 
     const retry = await checkParticipantRateLimit("山田");
     expect(retry).toMatchObject({ available: true, allowed: true });
+  });
+
+  it("uses the default limit when the configured limit is unset", async () => {
+    delete process.env.PARTICIPANT_RATE_LIMIT_NAME;
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const reservation = await checkParticipantRateLimit("default-limit");
+      expect(reservation.available && reservation.allowed).toBe(true);
+      if (!reservation.available || !reservation.allowed)
+        throw new Error("expected an allowed reservation");
+      expect(await commitParticipantAuthFailure(reservation.reservation)).toBe(true);
+    }
+
+    const limited = await checkParticipantRateLimit("default-limit");
+    expect(limited.available && !limited.allowed).toBe(true);
+  });
+
+  it.each(["many", "0", "9007199254740992", "1.5"])(
+    "fails closed for invalid configured limits (%s)",
+    async (limit) => {
+      process.env.PARTICIPANT_RATE_LIMIT_NAME = limit;
+
+      await expect(checkParticipantRateLimit("invalid-limit")).resolves.toEqual({
+        available: false,
+      });
+      expect(await dbRef.db!.select().from(schema.participantRateLimits)).toHaveLength(0);
+    },
+  );
+
+  it("fails closed when participant key configuration is invalid", async () => {
+    process.env.PARTICIPANT_SESSION_SECRET = "too-short";
+
+    await expect(checkParticipantRateLimit("invalid-key-config")).resolves.toEqual({
+      available: false,
+    });
+  });
+
+  it("fails closed when the reservation row disappears after the upsert", async () => {
+    await testDb.client.execute(`
+      CREATE TRIGGER remove_rate_limit_reservation
+      AFTER INSERT ON participant_rate_limits
+      BEGIN
+        DELETE FROM participant_rate_limits WHERE fingerprint = NEW.fingerprint;
+      END;
+    `);
+
+    await expect(checkParticipantRateLimit("missing-reservation")).resolves.toEqual({
+      available: false,
+    });
+  });
+
+  it("rejects empty and multi-entry failed-attempt reservations", async () => {
+    const reservation = await checkParticipantRateLimit("invalid-reservation-length");
+    if (!reservation.available || !reservation.allowed)
+      throw new Error("expected an allowed reservation");
+
+    await expect(commitParticipantAuthFailure([])).resolves.toBe(false);
+    await expect(
+      commitParticipantAuthFailure([...reservation.reservation, ...reservation.reservation]),
+    ).resolves.toBe(false);
   });
 
   it("keeps failed reservations counted and enforces the five-attempt normalized-name limit", async () => {
@@ -91,6 +156,65 @@ describe("participant shared rate limit", () => {
       .where(eq(schema.participantRateLimits.fingerprint, persistedWindow.fingerprint));
     const afterWindow = await checkParticipantRateLimit("山田");
     expect(afterWindow).toMatchObject({ available: true, allowed: true });
+  });
+
+  it("expires the counter at the exact 15-minute window boundary", async () => {
+    const now = new Date("2026-10-07T00:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    const reservation = await checkParticipantRateLimit("境界");
+    if (!reservation.available || !reservation.allowed)
+      throw new Error("expected an allowed reservation");
+    await commitParticipantAuthFailure(reservation.reservation);
+    const [persisted] = await dbRef.db!.select().from(schema.participantRateLimits);
+    await dbRef
+      .db!.update(schema.participantRateLimits)
+      .set({ windowStartedAt: new Date(now.getTime() - 15 * 60 * 1000) })
+      .where(eq(schema.participantRateLimits.fingerprint, persisted.fingerprint));
+
+    const afterBoundary = await checkParticipantRateLimit("境界");
+
+    expect(afterBoundary.available && afterBoundary.allowed).toBe(true);
+    const [reset] = await dbRef.db!.select().from(schema.participantRateLimits);
+    expect(reset.attempts).toBe(1);
+    expect(reset.windowStartedAt.getTime()).toBe(now.getTime());
+  });
+
+  it("cleans up counters older than 24 hours after recording a failed attempt", async () => {
+    const now = new Date();
+    await dbRef.db!.insert(schema.participantRateLimits).values({
+      fingerprint: "old-fingerprint",
+      attempts: 2,
+      windowStartedAt: new Date(now.getTime() - 24 * 60 * 60 * 1000 - 60 * 1000),
+    });
+    const reservation = await checkParticipantRateLimit("cleanup");
+    if (!reservation.available || !reservation.allowed)
+      throw new Error("expected an allowed reservation");
+
+    expect(await commitParticipantAuthFailure(reservation.reservation)).toBe(true);
+    const rows = await dbRef.db!.select().from(schema.participantRateLimits);
+    expect(rows.map((row) => row.fingerprint)).not.toContain("old-fingerprint");
+    expect(rows).toHaveLength(1);
+  });
+
+  it("fails closed when the reservation database transaction fails", async () => {
+    vi.spyOn(dbRef.db!, "transaction").mockRejectedValue(new Error("database unavailable"));
+
+    await expect(checkParticipantRateLimit("database-error")).resolves.toEqual({
+      available: false,
+    });
+  });
+
+  it("returns false when failure cleanup or reservation release cannot reach the database", async () => {
+    const reservation = await checkParticipantRateLimit("cleanup-error");
+    if (!reservation.available || !reservation.allowed)
+      throw new Error("expected an allowed reservation");
+
+    vi.spyOn(dbRef.db!, "transaction").mockRejectedValue(new Error("database unavailable"));
+
+    await expect(commitParticipantAuthFailure(reservation.reservation)).resolves.toBe(false);
+    await expect(releaseParticipantAuthReservation(reservation.reservation)).resolves.toBe(false);
   });
 
   it("shares the same normalized-name limit across request sources", async () => {

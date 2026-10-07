@@ -70,6 +70,7 @@ describe("durable free-response assessment and restoration", () => {
 
   afterEach(async () => {
     vi.useRealTimers();
+    dbRef.db = testDb.db;
     await testDb.cleanup();
   });
 
@@ -180,6 +181,102 @@ describe("durable free-response assessment and restoration", () => {
       rawScore: 1.4,
       normalizedScore: 0.7,
       confidence: 0.99,
+    });
+  });
+
+  it("continues to the next due assessment when its claim loses a race", async () => {
+    const otherSubmissionId = "00000000-0000-4000-8000-000000000103";
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    await saveAnswerSubmission({
+      submissionId: otherSubmissionId,
+      operationId: "00000000-0000-4000-8000-000000000104",
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+
+    let hideClaimResult = true;
+    const wrapQuery = (query: object): object =>
+      new Proxy(query, {
+        get(target, property) {
+          const value = Reflect.get(target, property);
+          if (typeof value !== "function") return value;
+          if (property === "returning") {
+            return (...args: unknown[]) => {
+              const result = value.apply(target, args) as Promise<unknown>;
+              if (!hideClaimResult) return result;
+              hideClaimResult = false;
+              // Let the conditional update claim the row, as if another worker
+              // won just before this worker received its RETURNING result.
+              return result.then(() => []);
+            };
+          }
+          return (...args: unknown[]) => wrapQuery(value.apply(target, args));
+        },
+      });
+    dbRef.db = new Proxy(testDb.db, {
+      get(target, property) {
+        const value = Reflect.get(target, property);
+        if (property === "update") {
+          return (table: typeof schema.examAnswerAssessments) =>
+            wrapQuery(value.call(target, table));
+        }
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as TestDb["db"];
+    vi.mocked(gradeFreeResponse).mockResolvedValueOnce({
+      score: 1.4,
+      confidence: 0.99,
+      model: "jev-latest",
+    });
+
+    await expect(processDueAssessments()).resolves.toMatchObject({
+      processed: 1,
+      graded: 1,
+      retried: 0,
+      failed: 0,
+    });
+    expect(gradeFreeResponse).toHaveBeenCalledTimes(1);
+    const assessments = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(assessments.filter(({ state }) => state === "processing")).toHaveLength(1);
+    expect(assessments.filter(({ state }) => state === "graded")).toHaveLength(1);
+  });
+
+  it("ignores a provider failure after another worker has replaced its claim", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    const competingClaimToken = "00000000-0000-4000-8000-000000000105";
+    vi.mocked(gradeFreeResponse).mockImplementationOnce(async () => {
+      await testDb.db
+        .update(schema.examAnswerAssessments)
+        .set({ claimToken: competingClaimToken })
+        .where(eq(schema.examAnswerAssessments.submissionId, submissionId));
+      throw new Error("network down");
+    });
+
+    await expect(processDueAssessments()).resolves.toEqual({
+      processed: 0,
+      graded: 0,
+      retried: 0,
+      failed: 0,
+    });
+    const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(assessment).toMatchObject({
+      state: "processing",
+      attempts: 1,
+      claimToken: competingClaimToken,
+      errorCode: null,
     });
   });
 

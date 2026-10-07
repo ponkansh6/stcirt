@@ -49,11 +49,47 @@ describe("api client", () => {
     await expect(fetchNextQuestion()).rejects.toThrow("Storage unavailable");
   });
 
+  it.each([
+    { description: "an empty response", response: new Response(null, { status: 204 }) },
+    { description: "invalid JSON", response: new Response("{", { status: 200 }) },
+  ])("rejects when the successful response contains $description", async ({ response }) => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(response);
+    await expect(fetchNextQuestion()).rejects.toThrow(
+      "Failed to parse response from fetch next question",
+    );
+  });
+
+  it("rejects when the successful response does not match the expected schema", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: "1", question: "Q1" }), { status: 200 }),
+    );
+    await expect(fetchNextQuestion()).rejects.toThrow(
+      "Invalid response schema for fetch next question",
+    );
+  });
+
+  it("propagates network errors while fetching the next question", async () => {
+    vi.spyOn(global, "fetch").mockRejectedValueOnce(new TypeError("Network unavailable"));
+    await expect(fetchNextQuestion()).rejects.toThrow("Network unavailable");
+  });
+
   it("uses the request fallback when an error response is not JSON", async () => {
     vi.spyOn(global, "fetch").mockResolvedValueOnce(
       new Response("Service unavailable", { status: 503 }),
     );
     await expect(fetchNextQuestion()).rejects.toThrow("Failed to fetch next question: status 503");
+  });
+
+  it("uses the request fallback when an error response contains primitive JSON", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(new Response("null", { status: 503 }));
+    const error = await fetchNextQuestion().catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 503,
+      message: "Failed to fetch next question: status 503",
+      code: null,
+      retryAt: null,
+    });
   });
 
   it("preserves status and retryAt on structured API errors", async () => {

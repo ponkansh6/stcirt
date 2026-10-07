@@ -49,6 +49,13 @@ describe("JEV score adapter", () => {
     );
   });
 
+  it("fails closed when the provider API key is not configured", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(gradeFreeResponse("answer")).rejects.toThrow("jev_not_configured");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["negative token usage", { usage: { input_tokens: -1, output_tokens: 2 } }],
     ["fractional token usage", { usage: { input_tokens: 1.5, output_tokens: 2 } }],

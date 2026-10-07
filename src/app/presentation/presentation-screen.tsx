@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import styles from "./presentation-screen.module.css";
 
 type State =
@@ -62,7 +62,7 @@ type AdminControls = {
   participantResultsVisible: boolean;
   participantResultsReady: boolean;
 };
-type AdminAction = "start" | "advance" | "previous" | "hide" | "show" | "setMode";
+type AdminAction = "start" | "advance" | "previous" | "hide" | "show";
 type ScreenLock = {
   released: boolean;
   release: () => Promise<void>;
@@ -71,6 +71,18 @@ type ScreenLock = {
 type WakeLockNavigator = Navigator & {
   wakeLock?: { request: (type: "screen") => Promise<ScreenLock> };
 };
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return (
+    (target instanceof HTMLElement && target.isContentEditable) ||
+    Boolean(
+      target.closest(
+        "button, a, input, textarea, select, summary, [role='button'], [role='link'], [role='menuitem'], [role='tab'], [role='checkbox'], [role='radio'], [role='switch'], [role='combobox'], [role='listbox'], [role='option'], [role='dialog'], dialog, [data-no-slide-advance]",
+      ),
+    )
+  );
+}
 
 async function getProjection(): Promise<ProjectionData> {
   const response = await fetch("/api/presentation", { cache: "no-store", credentials: "omit" });
@@ -110,7 +122,7 @@ async function getAdminControls(): Promise<AdminControls> {
   };
 }
 
-async function requestAdminAction(action: AdminAction, mode?: PresentationMode) {
+async function requestAdminAction(action: AdminAction) {
   const response = await fetch("/api/admin/presentation", {
     method: "POST",
     cache: "no-store",
@@ -119,7 +131,6 @@ async function requestAdminAction(action: AdminAction, mode?: PresentationMode) 
     body: JSON.stringify({
       operationId: crypto.randomUUID(),
       action,
-      ...(action === "setMode" ? { mode } : {}),
     }),
   });
   if (!response.ok) {
@@ -148,16 +159,9 @@ async function requestParticipantResultsVisibility(visible: boolean) {
 }
 
 const rankTitle: Record<string, string> = { third: "第3位", second: "第2位", first: "第1位" };
-const NEXT_CONTROL_LABEL: Record<AdminState, string> = {
-  not_started: "発表を始める",
-  question: "正解を発表する",
-  answer: "次へ進む",
-  podium_preview: "第3位を発表する",
-  third: "第2位を発表する",
-  second: "第1位を発表する",
-  first: "締めの画面へ進む",
-  finished: "発表終了",
-};
+function isRankState(state: State): state is "third" | "second" | "first" {
+  return state === "third" || state === "second" || state === "first";
+}
 
 function announcementKeyFor(state: string, winners: Winner[] = []) {
   const winnerKey = winners
@@ -189,28 +193,36 @@ function QuestionPrompt({ question }: { question: PublicQuestion }) {
 
 function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
   if (question.answerType === "freeText") {
+    const showResponses = (question.responses?.length ?? 0) > 0;
     return (
-      <section className={styles.question} aria-labelledby="question-heading">
+      <section
+        className={`${styles.question} ${styles.answerReview}`}
+        aria-labelledby="question-heading"
+      >
         <p className={styles.kicker}>THE STORY BEHIND IT</p>
         <p className={styles.ordinal}>
           QUESTION <strong>{question.ordinal}</strong>
           <span> / {question.total}</span>
         </p>
-        <h1 id="question-heading">{question.question}</h1>
-        <h2>模範解答</h2>
-        <p>{question.expectedAnswer}</p>
-        <ul>
-          {question.responses?.map((response) => (
-            <li key={response.displayName}>
-              {response.displayName}：
-              {response.answerKind === "legacy"
-                ? "旧選択式回答（再採点なし）"
-                : response.answerKind === "unanswered"
-                  ? "未回答"
-                  : `${response.answer ?? ""} — 類似度 ${response.similarity?.toFixed(2) ?? "—"} / 得点 ${response.score?.toFixed(2) ?? "—"}`}
-            </li>
-          ))}
-        </ul>
+        <div className={styles.answerContent}>
+          <h1 id="question-heading">{question.question}</h1>
+          <h2>模範解答</h2>
+          <p>{question.expectedAnswer}</p>
+          {showResponses && (
+            <ul>
+              {question.responses?.map((response) => (
+                <li key={response.displayName}>
+                  {response.displayName}：
+                  {response.answerKind === "legacy"
+                    ? "旧選択式回答（再採点なし）"
+                    : response.answerKind === "unanswered"
+                      ? "未回答"
+                      : `${response.answer ?? ""} — 類似度 ${response.similarity?.toFixed(2) ?? "—"} / 得点 ${response.score?.toFixed(2) ?? "—"}`}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </section>
     );
   }
@@ -221,39 +233,44 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
     question.choices[question.correctIndex ?? -1] ?? question.correctAnswer ?? "";
 
   return (
-    <section className={styles.question} aria-labelledby="question-heading">
+    <section
+      className={`${styles.question} ${styles.answerReview}`}
+      aria-labelledby="question-heading"
+    >
       <p className={styles.kicker}>THE STORY BEHIND IT</p>
       <p className={styles.ordinal}>
         QUESTION <strong>{question.ordinal}</strong>
         <span> / {question.total}</span>
       </p>
-      <h1 id="question-heading">{question.question}</h1>
-      {isShortMode && (
-        <div className={styles.shortAnswer}>
-          <span className={styles.shortAnswerLabel}>正解</span>
-          <p>{question.correctAnswer || correctChoice}</p>
-        </div>
-      )}
-      <ol className={`${styles.choices} ${styles.answered}`}>
-        {question.choices.map((choice, index) => {
-          const isCorrect = index === question.correctIndex;
-          return (
-            <li key={`${index}-${choice}`} className={isCorrect ? styles.correct : ""}>
-              <span className={styles.choiceLetter}>{String.fromCharCode(65 + index)}</span>
-              <span className={styles.choiceText}>{choice}</span>
-              {isCorrect && <span className={styles.correctLabel}>正解</span>}
-            </li>
-          );
-        })}
-      </ol>
-      {!isShortMode && hasExplanation && (
-        <div className={styles.explanation}>
-          <span className={styles.explanationMark} aria-hidden="true">
-            ✦
-          </span>
-          <p>{question.explanation}</p>
-        </div>
-      )}
+      <div className={styles.answerContent}>
+        <h1 id="question-heading">{question.question}</h1>
+        {isShortMode && (
+          <div className={styles.shortAnswer}>
+            <span className={styles.shortAnswerLabel}>正解</span>
+            <p>{question.correctAnswer || correctChoice}</p>
+          </div>
+        )}
+        <ol className={`${styles.choices} ${styles.answered}`}>
+          {question.choices.map((choice, index) => {
+            const isCorrect = index === question.correctIndex;
+            return (
+              <li key={`${index}-${choice}`} className={isCorrect ? styles.correct : ""}>
+                <span className={styles.choiceLetter}>{String.fromCharCode(65 + index)}</span>
+                <span className={styles.choiceText}>{choice}</span>
+                {isCorrect && <span className={styles.correctLabel}>正解</span>}
+              </li>
+            );
+          })}
+        </ol>
+        {!isShortMode && hasExplanation && (
+          <div className={styles.explanation}>
+            <span className={styles.explanationMark} aria-hidden="true">
+              ✦
+            </span>
+            <p>{question.explanation}</p>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -265,69 +282,47 @@ export default function PresentationScreen({
 }) {
   const [data, setData] = useState<ProjectionData | null>(null);
   const [announcementKey, setAnnouncementKey] = useState<string | null>(null);
-  const previousState = useRef<State | null>(null);
-  const seenAnnouncements = useRef(new Set<string>());
-  const [connectionError, setConnectionError] = useState(false);
+  const announcementTimer = useRef<number | null>(null);
   const [adminControls, setAdminControls] = useState<AdminControls | null>(null);
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminMessage, setAdminMessage] = useState<string | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
   const wrapperRef = useRef<HTMLElement | null>(null);
+  const hasEnteredFullscreen = useRef(false);
+  const wasFullscreenActive = useRef(false);
+  const fullscreenReentryPending = useRef(false);
   const projectionSequence = useRef(0);
   const adminSequence = useRef(0);
   const mutationInFlight = useRef(false);
-  const [wakeStatus, setWakeStatus] = useState<
-    "pending" | "active" | "unavailable" | "unsupported"
-  >("pending");
+  const announceRank = useCallback((state: "third" | "second" | "first", winners?: Winner[]) => {
+    const eventKey = announcementKeyFor(state, winners);
+    setAnnouncementKey(eventKey);
+    announcementTimer.current = window.setTimeout(() => {
+      setAnnouncementKey(null);
+      announcementTimer.current = null;
+    }, 1200);
+  }, []);
+
+  const applyProjection = useCallback((projection: ProjectionData) => {
+    setData(projection);
+  }, []);
 
   useEffect(() => {
     let active = true;
     let timer = 0;
     const refresh = async () => {
+      if (!active) return;
+      if (mutationInFlight.current) {
+        timer = window.setTimeout(refresh, 1400);
+        return;
+      }
       const sequence = ++projectionSequence.current;
       try {
         const next = await getProjection();
         if (active && sequence === projectionSequence.current) {
-          const previous = previousState.current;
-          if (next.state === "third" || next.state === "second" || next.state === "first") {
-            const eventKey = announcementKeyFor(next.state, next.winners);
-            let hasBeenSeen = seenAnnouncements.current.has(eventKey);
-            try {
-              const saved = window.sessionStorage.getItem("stcirt:presentation:announcements");
-              const parsed: unknown = saved ? JSON.parse(saved) : [];
-              let storedAnnouncements: string[] = [];
-              if (Array.isArray(parsed)) {
-                storedAnnouncements = parsed.filter(
-                  (item): item is string => typeof item === "string",
-                );
-              }
-              for (const item of storedAnnouncements) seenAnnouncements.current.add(item);
-              hasBeenSeen = seenAnnouncements.current.has(eventKey);
-            } catch {
-              // The in-memory set still deduplicates announcements while this component is mounted.
-            }
-            if (previous !== null && previous !== next.state && !hasBeenSeen) {
-              setAnnouncementKey(eventKey);
-              window.setTimeout(() => setAnnouncementKey(null), 1400);
-            }
-            if (!hasBeenSeen) {
-              seenAnnouncements.current.add(eventKey);
-              try {
-                window.sessionStorage.setItem(
-                  "stcirt:presentation:announcements",
-                  JSON.stringify([...seenAnnouncements.current].slice(-30)),
-                );
-              } catch {
-                // Session persistence is best effort; the in-memory set remains available.
-              }
-            }
-          }
-          previousState.current = next.state;
-          setData(next);
-          setConnectionError(false);
+          applyProjection(next);
         }
       } catch {
-        if (active && sequence === projectionSequence.current) setConnectionError(true);
+        // Keep the last usable projection visible while the polling loop retries.
       } finally {
         if (active) timer = window.setTimeout(refresh, 1400);
       }
@@ -337,7 +332,7 @@ export default function PresentationScreen({
       active = false;
       window.clearTimeout(timer);
     };
-  }, []);
+  }, [applyProjection]);
 
   const refreshAdmin = useCallback(async () => {
     const sequence = ++adminSequence.current;
@@ -383,22 +378,86 @@ export default function PresentationScreen({
     setAdminMessage("管理者セッションの有効期限が切れました。観客表示に戻りました。");
   }, []);
 
+  const requestFullscreenForStart = useCallback(() => {
+    const element = wrapperRef.current;
+    if (!element?.requestFullscreen || document.fullscreenElement) return;
+    try {
+      void element
+        .requestFullscreen()
+        .then(() => {
+          hasEnteredFullscreen.current = true;
+          if (document.fullscreenElement !== element) fullscreenReentryPending.current = true;
+        })
+        .catch(() => {
+          if (hasEnteredFullscreen.current) fullscreenReentryPending.current = true;
+        });
+    } catch {
+      // Browser support and user permission are optional for projection.
+    }
+  }, []);
+
+  const requestFullscreenForIntent = useCallback(
+    (action: AdminAction) => {
+      if (action === "start" && !hasEnteredFullscreen.current) {
+        requestFullscreenForStart();
+        return;
+      }
+      if (
+        (action === "start" || action === "advance" || action === "previous") &&
+        hasEnteredFullscreen.current &&
+        fullscreenReentryPending.current
+      ) {
+        if (!wrapperRef.current?.requestFullscreen || document.fullscreenElement) return;
+        fullscreenReentryPending.current = false;
+        requestFullscreenForStart();
+      }
+    },
+    [requestFullscreenForStart],
+  );
+
   const operate = useCallback(
-    async (action: AdminAction, mode?: PresentationMode) => {
+    async (action: AdminAction) => {
       if (!adminControls || mutationInFlight.current) return;
+      const startingAdminState = adminControls.state;
+      const expectedRankTarget: State | null =
+        action === "advance"
+          ? startingAdminState === "podium_preview"
+            ? "third"
+            : startingAdminState === "third"
+              ? "second"
+              : startingAdminState === "second"
+                ? "first"
+                : null
+          : null;
+      if (announcementTimer.current !== null) {
+        window.clearTimeout(announcementTimer.current);
+        announcementTimer.current = null;
+        setAnnouncementKey(null);
+      }
+      requestFullscreenForIntent(action);
       mutationInFlight.current = true;
+      projectionSequence.current += 1;
       setAdminBusy(true);
       setAdminMessage(null);
       try {
-        await requestAdminAction(action, mode);
+        await requestAdminAction(action);
+        if (action === "start") wrapperRef.current?.focus({ preventScroll: true });
         const projectionRequest = (async () => {
-          const sequence = ++projectionSequence.current;
+          ++projectionSequence.current;
           const projection = await getProjection();
-          if (sequence === projectionSequence.current) {
-            previousState.current = projection.state;
-            setData(projection);
-            setConnectionError(false);
-          }
+          const stillForward =
+            action === "advance" &&
+            ((startingAdminState === "podium_preview" && expectedRankTarget === "third") ||
+              (startingAdminState === "third" && expectedRankTarget === "second") ||
+              (startingAdminState === "second" && expectedRankTarget === "first"));
+          if (
+            stillForward &&
+            expectedRankTarget === projection.state &&
+            isRankState(projection.state) &&
+            !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          )
+            announceRank(projection.state, projection.winners);
+          applyProjection(projection);
         })();
         await Promise.all([refreshAdmin(), projectionRequest]);
       } catch (error) {
@@ -406,15 +465,11 @@ export default function PresentationScreen({
         if (status === 401) recoverUnauthorized();
         else {
           try {
-            const sequence = ++projectionSequence.current;
+            ++projectionSequence.current;
             const projection = await getProjection();
-            if (sequence === projectionSequence.current) {
-              previousState.current = projection.state;
-              setData(projection);
-              setConnectionError(false);
-            }
+            applyProjection(projection);
           } catch {
-            setConnectionError(true);
+            // Keep the last usable projection visible while the next poll retries.
           }
           setAdminMessage(
             status === 409
@@ -432,26 +487,30 @@ export default function PresentationScreen({
         setAdminBusy(false);
       }
     },
-    [adminControls, recoverUnauthorized, refreshAdmin],
+    [
+      adminControls,
+      applyProjection,
+      announceRank,
+      recoverUnauthorized,
+      refreshAdmin,
+      requestFullscreenForIntent,
+    ],
   );
 
   const toggleParticipantResults = useCallback(async () => {
-    if (!adminControls || mutationInFlight.current) return;
+    if (!adminControls || adminControls.participantResultsVisible || mutationInFlight.current)
+      return;
     mutationInFlight.current = true;
     setAdminBusy(true);
     setAdminMessage(null);
     try {
-      await requestParticipantResultsVisibility(!adminControls.participantResultsVisible);
+      await requestParticipantResultsVisibility(true);
       await refreshAdmin();
     } catch (error) {
       const status = (error as { status?: number })?.status;
       if (status === 401) recoverUnauthorized();
       else {
-        setAdminMessage(
-          adminControls.participantResultsVisible
-            ? "結果公開状態を更新できませんでした。"
-            : "結果の準備または公開に失敗しました。結果は非公開のままです。",
-        );
+        setAdminMessage("結果の準備または公開に失敗しました。結果は非公開のままです。");
         try {
           await refreshAdmin();
         } catch {
@@ -469,12 +528,8 @@ export default function PresentationScreen({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
       const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        (target.isContentEditable ||
-          target.closest("input, textarea, select, [role='dialog'], dialog"))
-      )
-        return;
+      if (!(target instanceof Node) || !wrapperRef.current?.contains(target)) return;
+      if (isInteractiveTarget(target)) return;
       if (event.key === "ArrowRight") {
         event.preventDefault();
         if (adminControls.state !== "finished")
@@ -486,6 +541,10 @@ export default function PresentationScreen({
           !(adminControls.state === "question" && adminControls.questionIndex === 0) &&
           !(adminControls.state === "podium_preview" && adminControls.questionCount === 0);
         if (canGoPrevious) void operate("previous");
+      } else if ((event.key === " " || event.key === "Enter") && !event.isComposing) {
+        event.preventDefault();
+        if (adminControls.state !== "finished")
+          void operate(adminControls.state === "not_started" ? "start" : "advance");
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -502,7 +561,6 @@ export default function PresentationScreen({
       if (document.visibilityState !== "visible") return;
       if (requesting || (currentLock && !currentLock.released)) return;
       if (!wakeLock) {
-        setWakeStatus("unsupported");
         return;
       }
       requesting = true;
@@ -513,19 +571,17 @@ export default function PresentationScreen({
           return;
         }
         currentLock = lock;
-        setWakeStatus("active");
         lock.addEventListener(
           "release",
           () => {
             if (active && currentLock === lock) {
               currentLock = null;
-              setWakeStatus("unavailable");
             }
           },
           { once: true },
         );
       } catch {
-        if (active) setWakeStatus("unavailable");
+        // Wake Lock is an optional browser feature.
       } finally {
         requesting = false;
       }
@@ -544,32 +600,47 @@ export default function PresentationScreen({
     };
   }, []);
 
+  useEffect(
+    () => () => {
+      if (announcementTimer.current !== null) window.clearTimeout(announcementTimer.current);
+    },
+    [],
+  );
+
   useEffect(() => {
-    const updateFullscreen = () => setFullscreen(Boolean(document.fullscreenElement));
-    updateFullscreen();
-    document.addEventListener("fullscreenchange", updateFullscreen);
-    return () => document.removeEventListener("fullscreenchange", updateFullscreen);
+    const handleFullscreenChange = () => {
+      const active = document.fullscreenElement === wrapperRef.current;
+      if (active) {
+        hasEnteredFullscreen.current = true;
+        fullscreenReentryPending.current = false;
+      } else if (wasFullscreenActive.current && hasEnteredFullscreen.current) {
+        fullscreenReentryPending.current = true;
+      }
+      wasFullscreenActive.current = active;
+    };
+    handleFullscreenChange();
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
-  async function toggleFullscreen() {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else if (wrapperRef.current?.requestFullscreen) await wrapperRef.current.requestFullscreen();
-    } catch {
-      // Fullscreen is optional; the browser can deny it without affecting the presentation.
-    }
-  }
+  const handleSlideClick = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      if (!adminControls || isInteractiveTarget(event.target)) return;
+      if (adminControls.state === "finished") return;
+      wrapperRef.current?.focus({ preventScroll: true });
+      void operate(adminControls.state === "not_started" ? "start" : "advance");
+    },
+    [adminControls, operate],
+  );
 
   const state = data?.state;
-  const questionOrdinal =
-    data && (data.state === "question" || data.state === "answer")
-      ? (data.question?.ordinal ?? "·")
-      : "·";
-
   return (
     <main
       ref={wrapperRef}
-      className={`${styles.screen} ${presenterRequested && adminControls ? styles.presenterScreen : ""}`}
+      className={styles.screen}
+      tabIndex={0}
+      aria-label="プレゼンテーションスライド"
+      onClick={handleSlideClick}
       aria-live="polite"
       aria-atomic="true"
     >
@@ -637,11 +708,14 @@ export default function PresentationScreen({
                       className={styles.winner}
                       key={`${winner.rank}-${winner.displayName}-${index}`}
                     >
+                      <p className={styles.winnerRank}>{winner.rank}位</p>
+                      <p className={styles.winnerScore}>{winner.score.toFixed(2)} ポイント</p>
                       <h1>
-                        {winner.displayName}
-                        <span> さん</span>
+                        <span className={styles.winnerName}>
+                          {winner.displayName}
+                          <span className={styles.winnerHonorific}>&nbsp;さん</span>
+                        </span>
                       </h1>
-                      <p>{winner.score.toFixed(2)} ポイント</p>
                     </article>
                   ))
                 ) : (
@@ -674,125 +748,34 @@ export default function PresentationScreen({
             <span>WITH LOVE, ALWAYS</span>
             <span className={styles.bottomRule} />
           </div>
-          {connectionError && (
-            <p className={styles.connection} role="status">
-              接続を確認しています…
-            </p>
-          )}
         </div>
       </div>
-      {presenterRequested && adminControls && (
-        <footer className={styles.controls} aria-label="発表操作">
-          <div className={styles.controlStatus}>
-            <strong>
-              {adminControls.state === "not_started"
-                ? "待機中"
-                : adminControls.state === "finished"
-                  ? "発表終了"
-                  : `QUESTION ${questionOrdinal}`}
-            </strong>
-            {adminMessage && <span role="status">{adminMessage}</span>}
-          </div>
-          <div className={styles.controlButtons}>
+      {presenterRequested && adminControls?.state === "not_started" && (
+        <div className={styles.startControl} onClick={(event) => event.stopPropagation()}>
+          <button type="button" onClick={() => void operate("start")} disabled={adminBusy}>
+            {adminBusy ? "開始しています…" : "プレゼンを開始"}
+          </button>
+          {adminMessage && <p role="status">{adminMessage}</p>}
+        </div>
+      )}
+      {presenterRequested && adminControls?.state === "finished" && (
+        <div className={styles.startControl} onClick={(event) => event.stopPropagation()}>
+          {adminControls.participantResultsVisible ? (
+            <span className={styles.publishedStatus} role="status">
+              参加者結果は公開済みです
+            </span>
+          ) : (
             <button
               type="button"
-              onClick={() => void operate("previous")}
-              disabled={
-                adminBusy ||
-                adminControls.state === "not_started" ||
-                (adminControls.state === "question" && adminControls.questionIndex === 0) ||
-                (adminControls.state === "podium_preview" && adminControls.questionCount === 0)
-              }
-            >
-              ← 前へ
-            </button>
-            <button
-              className={styles.primaryControl}
-              type="button"
-              onClick={() =>
-                void operate(adminControls.state === "not_started" ? "start" : "advance")
-              }
-              disabled={adminBusy || adminControls.state === "finished"}
-            >
-              {adminBusy
-                ? "同期中…"
-                : adminControls.state === "not_started"
-                  ? "発表を始める"
-                  : adminControls.state === "finished"
-                    ? "発表終了"
-                    : NEXT_CONTROL_LABEL[adminControls.state]}
-            </button>
-            <button
-              type="button"
-              onClick={() => void operate(adminControls.projectionHidden ? "show" : "hide")}
+              onClick={() => void toggleParticipantResults()}
               disabled={adminBusy}
             >
-              {adminControls.projectionHidden ? "投影を表示" : "投影を隠す"}
+              {adminBusy ? "公開しています…" : "参加者結果を公開"}
             </button>
-            <div className={styles.modeControls} role="group" aria-label="答え合わせの表示モード">
-              <button
-                type="button"
-                aria-pressed={adminControls.presentationMode === "full"}
-                onClick={() => void operate("setMode", "full")}
-                disabled={adminBusy || adminControls.presentationMode === "full"}
-              >
-                通常
-              </button>
-              <button
-                type="button"
-                aria-pressed={adminControls.presentationMode === "short"}
-                onClick={() => void operate("setMode", "short")}
-                disabled={adminBusy || adminControls.presentationMode === "short"}
-              >
-                短縮
-              </button>
-            </div>
-            <div className={styles.resultControls}>
-              <button
-                type="button"
-                onClick={() => void toggleParticipantResults()}
-                disabled={adminBusy}
-                aria-pressed={adminControls.participantResultsVisible}
-              >
-                {adminControls.participantResultsVisible
-                  ? "参加者結果を非公開"
-                  : "参加者結果を公開"}
-              </button>
-              <span>
-                公開するたびに、その時点の回答から結果を確定します。公開中の回答変更は次回の再公開で反映されます。
-              </span>
-            </div>
-            <button
-              type="button"
-              className={styles.fullscreenControl}
-              onClick={toggleFullscreen}
-              aria-label={fullscreen ? "全画面表示を終了" : "全画面表示"}
-            >
-              {fullscreen ? "全画面を終了" : "⛶ 全画面"}
-            </button>
-          </div>
-        </footer>
+          )}
+          {adminMessage && <p role="status">{adminMessage}</p>}
+        </div>
       )}
-      {(!presenterRequested || !adminControls) && (
-        <button
-          className={styles.fullscreenButton}
-          type="button"
-          onClick={toggleFullscreen}
-          aria-label={fullscreen ? "全画面表示を終了" : "全画面表示"}
-          title={fullscreen ? "全画面表示を終了" : "全画面表示"}
-        >
-          <span aria-hidden="true">{fullscreen ? "↙" : "⛶"}</span>
-        </button>
-      )}
-      <p className={styles.wakeHint} aria-live="off">
-        {wakeStatus === "active"
-          ? "画面の自動消灯を防止中"
-          : wakeStatus === "pending"
-            ? "画面の点灯を準備中"
-            : wakeStatus === "unsupported"
-              ? "画面の自動消灯にご注意ください"
-              : "画面の点灯を維持できません。全画面表示をお使いください"}
-      </p>
     </main>
   );
 }

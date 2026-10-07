@@ -379,6 +379,21 @@ export async function getPublicPresentation() {
     if (admin.state === "question" || admin.state === "answer") {
       const row = admin.questions[admin.questionIndex];
       if (!row) return { state: admin.state };
+      let sourceQuestionKey: string | undefined;
+      if (admin.state === "answer" && row.answerType === "freeText") {
+        // Snapshot IDs are not foreign-keyed; resolve the key in one batch and
+        // suppress responses when the source identity cannot be confirmed.
+        const sourceQuestionKeys = await tx
+          .select({ id: examQuestions.id, key: examQuestions.key })
+          .from(examQuestions)
+          .where(
+            inArray(
+              examQuestions.id,
+              admin.questions.map(({ id }) => id),
+            ),
+          );
+        sourceQuestionKey = sourceQuestionKeys.find(({ id }) => id === row.id)?.key;
+      }
       const question = {
         id: row.id,
         ordinal: admin.questionIndex + 1,
@@ -390,16 +405,20 @@ export async function getPublicPresentation() {
           ? row.answerType === "freeText"
             ? {
                 expectedAnswer: row.explanation,
-                responses: admin.entries.map((entry) => {
-                  const answer = entry.answers?.find((item) => item.questionId === row.id);
-                  return {
-                    displayName: entry.displayName,
-                    answer: answer?.freeText,
-                    answerKind: answer?.answerKind ?? "unanswered",
-                    similarity: answer?.rawScore,
-                    score: answer?.normalizedScore,
-                  };
-                }),
+                ...(sourceQuestionKey === undefined || sourceQuestionKey === "it-literacy-005"
+                  ? {}
+                  : {
+                      responses: admin.entries.map((entry) => {
+                        const answer = entry.answers?.find((item) => item.questionId === row.id);
+                        return {
+                          displayName: entry.displayName,
+                          answer: answer?.freeText,
+                          answerKind: answer?.answerKind ?? "unanswered",
+                          similarity: answer?.rawScore,
+                          score: answer?.normalizedScore,
+                        };
+                      }),
+                    }),
               }
             : {
                 correctAnswer: row.correctAnswer,
@@ -478,13 +497,11 @@ async function startPresentation(
 
 async function ensurePresentationSnapshot(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  acquiredSession?: typeof presentationSessions.$inferSelect,
+  session: typeof presentationSessions.$inferSelect,
   allowEmptyQuestions = false,
   rebuild = false,
   setOperationPhase?: (phase: PresentationOperationPhase) => void,
 ): Promise<typeof presentationSessions.$inferSelect> {
-  if (!acquiredSession) setOperationPhase?.("acquire_session");
-  const session = acquiredSession ?? (await acquirePresentationSession(tx));
   if (!rebuild) {
     setOperationPhase?.("snapshot_probe_question");
     const [snapshotQuestion] = await tx
@@ -818,21 +835,6 @@ export async function operatePresentation(
         }
         if (action === "setMode") {
           const presentationMode = requestedMode!;
-          if (!session) {
-            await tx.insert(presentationSessions).values({
-              id: 1,
-              state: "not_started",
-              version: 1,
-              questionIndex: 0,
-              questionCount: 0,
-              projectionHidden: false,
-              presentationMode,
-            });
-            await tx
-              .insert(presentationOperations)
-              .values({ operationId, action, mode: presentationMode, version: 1 });
-            return readAdminPresentation(tx);
-          }
           const version = session.version + 1;
           const changed = await tx
             .update(presentationSessions)
@@ -853,18 +855,6 @@ export async function operatePresentation(
         }
         if (action === "hide" || action === "show") {
           const projectionHidden = action === "hide";
-          if (!session) {
-            await tx.insert(presentationSessions).values({
-              id: 1,
-              state: "not_started",
-              version: 1,
-              questionIndex: 0,
-              questionCount: 0,
-              projectionHidden,
-            });
-            await tx.insert(presentationOperations).values({ operationId, action, version: 1 });
-            return readAdminPresentation(tx);
-          }
           const version = session.version + 1;
           const changed = await tx
             .update(presentationSessions)
@@ -881,7 +871,7 @@ export async function operatePresentation(
           await tx.insert(presentationOperations).values({ operationId, action, version });
           return readAdminPresentation(tx);
         }
-        if (!session || session.state === "not_started")
+        if (session.state === "not_started")
           throw new PresentationConflictError("Presentation has not started");
         const cursorState = session.state as PresentationState;
         const next =
@@ -989,11 +979,6 @@ function isKnownTransactionRace(error: unknown) {
     const codes = [value.code, value.extendedCode].filter(
       (code): code is string => typeof code === "string",
     );
-    if (
-      codes.some((code) => /^SQLITE_BUSY(?:_|$)/.test(code) || /^SQLITE_LOCKED(?:_|$)/.test(code))
-    ) {
-      return true;
-    }
     if (
       codes.some(
         (code) => code === "SQLITE_CONSTRAINT_UNIQUE" || code === "SQLITE_CONSTRAINT_PRIMARYKEY",

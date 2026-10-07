@@ -16,6 +16,7 @@ vi.mock("@/lib/db", async (importOriginal) => {
 });
 
 import {
+  findParticipantById,
   getOrCreateParticipant,
   normalizeParticipantName,
 } from "@/lib/db/repository/participant-repository";
@@ -57,6 +58,50 @@ describe("participant-repository", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].normalizedName).toBe("élodie");
     expect(rows[0].displayName).toBe("e\u0301lodie");
+  });
+
+  it("finds a participant by id and returns null for a missing id", async () => {
+    const participant = await getOrCreateParticipant("Alice");
+
+    expect(participant).not.toBeNull();
+    await expect(findParticipantById(participant!.id)).resolves.toEqual({
+      id: participant!.id,
+      name: "Alice",
+    });
+    await expect(findParticipantById(-1)).resolves.toBeNull();
+    expect(await dbRef.db!.select().from(schema.examParticipants)).toHaveLength(1);
+  });
+
+  it("returns null for blank and whitespace-only names without inserting rows", async () => {
+    const existing = await getOrCreateParticipant("Existing participant");
+
+    await expect(getOrCreateParticipant("")).resolves.toBeNull();
+    await expect(getOrCreateParticipant("   \t\n  ")).resolves.toBeNull();
+
+    const rows = await dbRef.db!.select().from(schema.examParticipants);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: existing!.id,
+      displayName: "Existing participant",
+      normalizedName: "Existing participant",
+    });
+  });
+
+  it("returns null when an inserted participant disappears before lookup", async () => {
+    await testDb.client.execute(`
+      CREATE TRIGGER delete_inserted_participant
+      AFTER INSERT ON exam_participants
+      BEGIN
+        DELETE FROM exam_participants WHERE id = NEW.id;
+      END;
+    `);
+
+    try {
+      await expect(getOrCreateParticipant("Transient participant")).resolves.toBeNull();
+      expect(await testDb.db.select().from(schema.examParticipants)).toHaveLength(0);
+    } finally {
+      await testDb.client.execute("DROP TRIGGER IF EXISTS delete_inserted_participant");
+    }
   });
 
   it("does not merge case variants or names with different internal whitespace", async () => {

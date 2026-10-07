@@ -8,6 +8,7 @@ vi.mock("next/server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("next/server")>();
   return {
     ...actual,
+    NextResponse: actual.NextResponse,
     after: vi.fn((callback: () => Promise<void>) => {
       afterRef.callback = callback;
     }),
@@ -45,6 +46,7 @@ vi.mock("@/lib/participants/security", () => ({
 }));
 
 import {
+  BatchSubmissionError,
   getAnswerSubmission,
   processDueAssessments,
   saveAnswerSubmission,
@@ -111,6 +113,39 @@ describe("/api/answers/batch route handlers", () => {
     expect(getAnswerSubmission).toHaveBeenCalledWith(submissionId, 42);
   });
 
+  it("GET returns 404 when the submission is absent", async () => {
+    vi.mocked(getAnswerSubmission).mockResolvedValueOnce(null);
+
+    const response = await GET(
+      new Request(`http://localhost/api/answers/batch?submissionId=${submissionId}`, {
+        headers: { Cookie: headers.Cookie },
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Submission not found" });
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(getAnswerSubmission).toHaveBeenCalledWith(submissionId, 42);
+  });
+
+  it("GET rejects a deleted participant before looking up the submission", async () => {
+    vi.mocked(findParticipantById).mockResolvedValueOnce(null);
+
+    const response = await GET(
+      new Request(`http://localhost/api/answers/batch?submissionId=${submissionId}`, {
+        headers: { Cookie: headers.Cookie },
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Participant session required" });
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(findParticipantById).toHaveBeenCalledWith(42);
+    expect(getAnswerSubmission).not.toHaveBeenCalled();
+  });
+
   it("POST rejects an invalid Origin", async () => {
     const response = await POST(
       new Request("http://localhost/api/answers/batch", {
@@ -175,6 +210,78 @@ describe("/api/answers/batch route handlers", () => {
 
     expect(response.status).toBe(400);
     expect(saveAnswerSubmission).not.toHaveBeenCalled();
+  });
+
+  it("POST rejects malformed JSON without saving", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/answers/batch", {
+        method: "POST",
+        headers,
+        body: "{",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid parameters" });
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(saveAnswerSubmission).not.toHaveBeenCalled();
+    expect(afterRef.callback).toBeNull();
+  });
+
+  it.each([
+    [400, "Invalid answer batch"],
+    [404, "Submission not found"],
+    [409, "Submission revision conflict"],
+  ] as const)("POST maps BatchSubmissionError status %i", async (status, message) => {
+    vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(
+      new BatchSubmissionError(message, status),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/answers/batch", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
+      }),
+    );
+
+    expect(response.status).toBe(status);
+    await expect(response.json()).resolves.toEqual({ error: message });
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(saveAnswerSubmission).toHaveBeenCalledWith({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      answers,
+      participantId: 42,
+    });
+    expect(afterRef.callback).toBeNull();
+  });
+
+  it("POST returns a generic 500 when the repository fails unexpectedly", async () => {
+    vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(new Error("sensitive repository detail"));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const response = await POST(
+        new Request("http://localhost/api/answers/batch", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
+        }),
+      );
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({ error: "Internal server error" });
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expect(errorLog).toHaveBeenCalledWith("Error in POST /api/answers/batch:", expect.any(Error));
+      expect(afterRef.callback).toBeNull();
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   it("POST passes the authenticated participant to the repository and returns its result", async () => {

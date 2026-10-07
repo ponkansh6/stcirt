@@ -72,6 +72,26 @@ describe("question-repository", () => {
     });
   });
 
+  it("returns it-literacy-005 as free text without choices", async () => {
+    const [question] = await testDb.db
+      .insert(schema.examQuestions)
+      .values({
+        id: 1,
+        key: "it-literacy-005",
+        question: "自由記述の質問",
+        choices: [],
+        correctIndex: 0,
+      })
+      .returning({ id: schema.examQuestions.id });
+
+    expect(await getNextQuestion()).toEqual({
+      id: question!.id,
+      question: "自由記述の質問",
+      choices: [],
+      answerType: "freeText",
+    });
+  });
+
   it("returns the complete row for answer lookup", async () => {
     const id = await insertQuestion("Answer lookup");
     const question = await getQuestionById(id);

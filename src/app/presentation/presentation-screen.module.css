@@ -2,6 +2,9 @@
   position: fixed;
   z-index: 30;
   inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -10,6 +13,10 @@
   background: #ede9df;
   color: #23343c;
   font-family: var(--font-geist), "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+}
+.screen:focus-visible {
+  outline: 3px solid #315b66;
+  outline-offset: -5px;
 }
 .slideRegion {
   position: relative;
@@ -39,96 +46,54 @@
   isolation: isolate;
 }
 
-.presenterScreen {
-  justify-content: flex-start;
-}
-.presenterScreen .slideRegion {
-  flex: 1 1 0;
-}
-.controls {
-  z-index: 3;
-  display: flex;
-  width: 100%;
-  min-height: 76px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 10px clamp(12px, 2.2vw, 32px);
-  border-top: 1px solid #d7d1c4;
-  background: #f8f6ef;
-  color: #263741;
-  font-family: var(--font-geist), "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
-}
-.controlStatus {
+.startControl {
+  position: fixed;
+  z-index: 4;
+  bottom: max(22px, env(safe-area-inset-bottom));
+  left: 50%;
   display: grid;
-  min-width: 92px;
-  gap: 3px;
-  font-size: 0.82rem;
+  justify-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
 }
-.controlStatus span {
-  max-width: 25vw;
-  color: #815d32;
-  font-size: 0.7rem;
-}
-.controlButtons,
-.modeControls,
-.resultControls {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.resultControls span {
-  max-width: 150px;
-  color: #815d32;
-  font-size: 0.65rem;
-  line-height: 1.2;
-}
-.controlButtons button {
-  min-height: 42px;
-  padding: 0 13px;
-  border: 1px solid #bdb6a7;
-  border-radius: 8px;
-  background: #fffefa;
-  color: #34464e;
+.startControl button {
+  min-height: 52px;
+  padding: 0 26px;
+  border: 1px solid #315746;
+  border-radius: 999px;
+  background: #315746;
+  box-shadow: 0 8px 28px rgb(27 50 41 / 20%);
+  color: white;
   font: inherit;
-  font-size: 0.83rem;
-  font-weight: 750;
+  font-size: clamp(1rem, 1.5vw, 1.25rem);
+  font-weight: 800;
   white-space: nowrap;
   cursor: pointer;
 }
-.controlButtons button:hover:not(:disabled) {
-  background: #f0ece1;
+.startControl button:hover:not(:disabled) {
+  background: #254637;
 }
-.controlButtons button:focus-visible {
+.startControl button:focus-visible {
   outline: 3px solid #bb9147;
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
-.controlButtons button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
+.startControl button:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
-.controlButtons .primaryControl {
-  border-color: #365b4a;
-  background: #365b4a;
-  color: white;
+.startControl p,
+.publishedStatus {
+  max-width: min(90vw, 560px);
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgb(250 248 242 / 92%);
+  color: #815d32;
+  font-size: 0.85rem;
+  text-align: center;
 }
-.controlButtons .primaryControl:hover:not(:disabled) {
-  background: #294738;
-}
-.modeControls {
-  padding-left: 7px;
-  border-left: 1px solid #d6d0c3;
-}
-.controlButtons .modeControls button[aria-pressed="true"] {
-  border-color: #93805a;
-  background: #eee8d9;
-  color: #4d432e;
-}
-.controlButtons .fullscreenControl {
-  background: transparent;
-}
-.presenterScreen .wakeHint {
-  display: none;
+.publishedStatus {
+  color: #365b4a;
 }
 
 .canvas::before,
@@ -239,6 +204,61 @@
   justify-content: center;
   width: 100%;
   max-width: 1360px;
+}
+.answerReview {
+  display: flex;
+  height: 76%;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+.answerReview > .kicker,
+.answerReview > .ordinal {
+  flex: 0 0 auto;
+}
+.answerContent {
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: clamp(4px, 0.5vw, 8px);
+  scrollbar-color: #b89a5e rgb(184 154 94 / 12%);
+  scrollbar-width: thin;
+  overflow-wrap: anywhere;
+}
+.answerContent > h1 {
+  margin: 0;
+}
+.answerContent > h2 {
+  margin: clamp(14px, 2vh, 24px) 0 0;
+  color: #456d4c;
+  font-size: clamp(1rem, 1.8vw, 1.7rem);
+}
+.answerContent > p {
+  margin: 8px 0 0;
+  color: #244d35;
+  font-size: clamp(1.25rem, 2.6vw, 2.5rem);
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.answerContent > ul {
+  padding-left: 1.4em;
+  margin: 1rem 0 0;
+  overflow-wrap: anywhere;
+}
+.answerContent::-webkit-scrollbar {
+  width: 9px;
+}
+.answerContent::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 9px;
+  background: #b89a5e;
+  background-clip: padding-box;
+}
+.answerContent::-webkit-scrollbar-track {
+  background: rgb(184 154 94 / 12%);
 }
 .question .kicker {
   align-self: flex-start;
@@ -479,16 +499,36 @@
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
-.winner h1 span {
+.winner h1 .winnerName {
+  display: inline-block;
+  max-width: 100%;
+  font-size: inherit;
+  font-weight: inherit;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.winner h1 .winnerHonorific {
   font-size: 0.52em;
   font-weight: 500;
   white-space: nowrap;
 }
-.winner p {
-  margin: clamp(9px, 1.6vh, 17px) 0 0;
-  color: #687579;
-  font-size: clamp(0.95rem, 1.7vw, 1.55rem);
+.winnerRank {
+  margin: 0;
+  color: #9b7b40;
+  font-family: Georgia, "Yu Mincho", serif;
+  font-size: clamp(3rem, 5.8vw, 5.2rem);
+  line-height: 1;
+}
+.winnerScore {
+  margin: clamp(8px, 1.3vh, 16px) 0 0;
+  color: #59696d;
+  font-size: clamp(2rem, 3.5vw, 3.5rem);
+  font-weight: 800;
   letter-spacing: 0.03em;
+}
+.winner h1 {
+  margin-top: clamp(5px, 1vh, 12px);
+  font-size: clamp(1.5rem, 3.2vw, 3.2rem);
 }
 .noWinner {
   font-size: clamp(1.8rem, 3.8vw, 3.7rem);
@@ -505,7 +545,7 @@
   text-shadow: 0 5px 22px rgb(178 146 80 / 14%);
 }
 .grandWinner .winner h1 {
-  font-size: clamp(2rem, 6vw, 6rem);
+  font-size: clamp(1.5rem, 3.2vw, 3.2rem);
 }
 .rank {
   margin-top: clamp(9px, 1.4vh, 16px);
@@ -542,92 +582,7 @@
 .finished .decorativeRule:last-child {
   margin-top: clamp(27px, 5vh, 55px);
 }
-.connection {
-  position: absolute;
-  right: clamp(12px, 2vw, 25px);
-  bottom: 8px;
-  margin: 0;
-  color: #777b76;
-  font-size: clamp(0.62rem, 0.8vw, 0.8rem);
-}
-.fullscreenButton {
-  position: fixed;
-  z-index: 2;
-  right: 12px;
-  bottom: 12px;
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border: 1px solid rgb(107 102 88 / 28%);
-  border-radius: 50%;
-  background: rgb(250 248 242 / 78%);
-  color: #536168;
-  font-size: 1.3rem;
-  opacity: 0.18;
-  cursor: pointer;
-  transition:
-    opacity 0.2s ease,
-    background 0.2s ease;
-}
-.fullscreenButton:hover,
-.fullscreenButton:focus-visible {
-  background: #fffefa;
-  opacity: 1;
-}
-.wakeHint {
-  position: fixed;
-  z-index: 2;
-  bottom: 14px;
-  left: 17px;
-  max-width: min(54vw, 420px);
-  margin: 0;
-  padding: 5px 9px;
-  border-radius: 5px;
-  background: rgb(247 245 239 / 74%);
-  color: #7d807b;
-  font-size: clamp(0.57rem, 0.72vw, 0.7rem);
-  letter-spacing: 0.015em;
-  opacity: 0.72;
-}
-
 @media (max-width: 640px) {
-  .presenterScreen {
-    overflow: auto;
-  }
-  .presenterScreen .slideRegion {
-    height: 56.25vw;
-    min-height: 56.25vw;
-    flex: 0 0 auto;
-  }
-  .presenterScreen .canvas {
-    width: 100cqw;
-    height: 100cqh;
-  }
-  .controls {
-    min-height: 0;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-    padding: 9px;
-  }
-  .controlStatus {
-    display: flex;
-    justify-content: space-between;
-  }
-  .controlStatus span {
-    max-width: 70%;
-    text-align: right;
-  }
-  .controlButtons {
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-  .controlButtons button {
-    min-height: 40px;
-    padding: 0 10px;
-    font-size: 0.75rem;
-  }
   .canvas {
     padding: 5vw;
   }
@@ -685,39 +640,13 @@
     font-size: clamp(2.4rem, 12vw, 4rem);
   }
   .winner h1 {
-    font-size: clamp(2rem, 8vw, 3rem);
+    font-size: clamp(1.35rem, 4.6vw, 2rem);
   }
-  .fullscreenButton {
-    right: 5px;
-    bottom: 5px;
-    width: 34px;
-    height: 34px;
+  .winnerRank {
+    font-size: clamp(2.5rem, 9vw, 4rem);
   }
-  .wakeHint {
-    bottom: 9px;
-    left: 7px;
-    max-width: calc(100vw - 58px);
-    font-size: 0.55rem;
-  }
-}
-
-@media (min-width: 641px) and (max-width: 900px) {
-  .controls {
-    flex-wrap: wrap;
-  }
-  .controlStatus {
-    width: 100%;
-    grid-template-columns: auto 1fr;
-    align-items: center;
-  }
-  .controlStatus span {
-    max-width: none;
-    text-align: right;
-  }
-  .controlButtons {
-    width: 100%;
-    flex-wrap: wrap;
-    justify-content: center;
+  .winnerScore {
+    font-size: clamp(1.7rem, 5vw, 2.6rem);
   }
 }
 
@@ -737,8 +666,5 @@
   .podiumMarks span:nth-child(2),
   .podiumMarks span:nth-child(3) {
     transform: none;
-  }
-  .fullscreenButton {
-    transition: none;
   }
 }

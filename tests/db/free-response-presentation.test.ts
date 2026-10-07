@@ -194,14 +194,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       state: "answer",
       question: { answerType: "freeText", expectedAnswer: "Fifth model answer" },
     });
-    expect(answer).toMatchObject({
-      question: {
-        responses: expect.arrayContaining([
-          expect.objectContaining({ displayName: "Legacy", answerKind: "legacy" }),
-          expect.objectContaining({ displayName: "Unanswered", answerKind: "unanswered" }),
-        ]),
-      },
-    });
+    expect(answer.question).not.toHaveProperty("responses");
     expect(JSON.stringify(answer)).not.toMatch(
       /confidence|rubric|assessment|answer_match|probabilities|usage/i,
     );

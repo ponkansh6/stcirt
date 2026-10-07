@@ -21,7 +21,7 @@ vi.mock("@/lib/presentation/admin-auth", () => ({
   createAdminPresentationSession: vi.fn(() => state.session),
   isAdminPresentationAuthConfigured: vi.fn(() => state.configured),
   isAdminPresentationRequest: vi.fn(() => state.authenticatedRequest),
-  verifyAdminPresentationPin: vi.fn(() => state.validPin),
+  verifyAdminPresentationPin: vi.fn((pin: unknown) => state.validPin && typeof pin === "string"),
 }));
 
 vi.mock("@/lib/participants/security", () => ({
@@ -111,6 +111,17 @@ describe("/api/admin/session route", () => {
     expect(state.cookie.set).not.toHaveBeenCalled();
   });
 
+  it("rejects non-object JSON bodies and non-string PIN values", async () => {
+    for (const body of ["null", JSON.stringify("2468"), JSON.stringify({ pin: 2468 })]) {
+      const response = await POST(request("POST", { origin: "http://localhost", body }));
+
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toEqual({ error: "Invalid PIN" });
+    }
+
+    expect(state.cookie.set).not.toHaveBeenCalled();
+  });
+
   it("issues a strict HttpOnly admin cookie after a valid PIN", async () => {
     const response = await POST(
       request("POST", { origin: "http://localhost", body: JSON.stringify({ pin: "2468" }) }),
@@ -128,6 +139,30 @@ describe("/api/admin/session route", () => {
         path: "/",
         maxAge: 28_800,
       }),
+    );
+  });
+
+  it("marks the admin cookie secure in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const response = await POST(request("POST", { origin: "http://localhost" }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ authenticated: true });
+    expect(state.cookie.set).toHaveBeenCalledWith(
+      "stcirt_admin_presentation",
+      "signed-admin-session",
+      expect.objectContaining({ secure: true }),
+    );
+
+    state.cookie.set.mockClear();
+    const logout = await DELETE(request("DELETE", { origin: "http://localhost" }));
+
+    expect(logout.status).toBe(200);
+    await expect(logout.json()).resolves.toEqual({ authenticated: false });
+    expect(state.cookie.set).toHaveBeenCalledWith(
+      "stcirt_admin_presentation",
+      "",
+      expect.objectContaining({ secure: true }),
     );
   });
 

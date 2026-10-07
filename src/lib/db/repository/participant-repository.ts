@@ -7,7 +7,9 @@ export function normalizeParticipantName(name: string) {
   return { displayName, normalizedName: displayName.normalize("NFC") };
 }
 
-export async function findParticipantById(id: number) {
+export async function findParticipantById(
+  id: number,
+): Promise<{ id: number; name: string } | null> {
   const rows = await db
     .select({ id: examParticipants.id, name: examParticipants.displayName })
     .from(examParticipants)

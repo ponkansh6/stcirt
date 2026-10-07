@@ -60,7 +60,11 @@ import {
   commitParticipantAuthFailure,
   releaseParticipantAuthReservation,
 } from "@/lib/participants/rate-limit";
-import { verifyEventPin } from "@/lib/participants/security";
+import {
+  createParticipantSession,
+  participantSessionLifetimeSeconds,
+  verifyEventPin,
+} from "@/lib/participants/security";
 
 const request = (body?: unknown, origin = "http://localhost") =>
   new Request("http://localhost/api/participants/session", {
@@ -70,6 +74,13 @@ const request = (body?: unknown, origin = "http://localhost") =>
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+
+const rawRequest = (body: string) =>
+  new Request("http://localhost/api/participants/session", {
+    method: "POST",
+    headers: { Origin: "http://localhost", "Content-Type": "application/json" },
+    body,
   });
 
 beforeEach(() => {
@@ -113,10 +124,64 @@ describe("participant session API", () => {
     expect(checkParticipantRateLimit).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed JSON before checking the rate limit", async () => {
+    const response = await POST(rawRequest("{"));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid request" });
+    expect(checkParticipantRateLimit).not.toHaveBeenCalled();
+    expect(getOrCreateParticipant).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-object JSON body before checking the rate limit", async () => {
+    const response = await POST(request(null));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "Invalid request" });
+    expect(checkParticipantRateLimit).not.toHaveBeenCalled();
+    expect(getOrCreateParticipant).not.toHaveBeenCalled();
+  });
+
+  it("rejects missing or blank names before checking the rate limit", async () => {
+    const missing = await POST(request({ pin: "0427" }));
+    const blank = await POST(request({ name: "   ", pin: "0427" }));
+
+    expect(missing.status).toBe(400);
+    expect(blank.status).toBe(400);
+    expect(checkParticipantRateLimit).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-string PIN before rate limiting or authentication side effects", async () => {
+    const response = await POST(request({ name: "山田", pin: 427 }));
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ error: "名前またはPINを確認してください" });
+    expect(checkParticipantRateLimit).not.toHaveBeenCalled();
+    expect(verifyEventPin).not.toHaveBeenCalled();
+    expect(commitParticipantAuthFailure).not.toHaveBeenCalled();
+    expect(releaseParticipantAuthReservation).not.toHaveBeenCalled();
+    expect(getOrCreateParticipant).not.toHaveBeenCalled();
+    expect(findParticipantById).not.toHaveBeenCalled();
+    expect(createParticipantSession).not.toHaveBeenCalled();
+    expect(state.cookie.set).not.toHaveBeenCalled();
+  });
+
   it("fails closed when event authentication settings are missing", async () => {
     state.configured = false;
     const response = await POST(request({ name: "山田", pin: "0427" }));
     expect(response.status).toBe(503);
+    expect(getOrCreateParticipant).not.toHaveBeenCalled();
+    expect(state.cookie.set).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the configured session lifetime is unavailable", async () => {
+    vi.mocked(participantSessionLifetimeSeconds).mockReturnValueOnce(null);
+
+    const response = await POST(request({ name: "山田", pin: "0427" }));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: "Participant sign-in is unavailable" });
+    expect(checkParticipantRateLimit).not.toHaveBeenCalled();
     expect(getOrCreateParticipant).not.toHaveBeenCalled();
     expect(state.cookie.set).not.toHaveBeenCalled();
   });
@@ -145,6 +210,59 @@ describe("participant session API", () => {
     expect(getOrCreateParticipant).not.toHaveBeenCalled();
   });
 
+  it("fails closed when the rate limit service is unavailable", async () => {
+    state.rate = { available: false, allowed: false };
+
+    const response = await POST(request({ name: "山田", pin: "0427" }));
+
+    expect(response.status).toBe(503);
+    expect(verifyEventPin).not.toHaveBeenCalled();
+    expect(getOrCreateParticipant).not.toHaveBeenCalled();
+    expect(state.cookie.set).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when recording an invalid PIN attempt fails", async () => {
+    vi.mocked(commitParticipantAuthFailure).mockResolvedValueOnce(false);
+
+    const response = await POST(request({ name: "山田", pin: "9999" }));
+
+    expect(response.status).toBe(503);
+    expect(getOrCreateParticipant).not.toHaveBeenCalled();
+    expect(state.cookie.set).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a valid PIN reservation cannot be released", async () => {
+    vi.mocked(releaseParticipantAuthReservation).mockResolvedValueOnce(false);
+
+    const response = await POST(request({ name: "山田", pin: "0427" }));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: "Participant sign-in is unavailable" });
+    expect(releaseParticipantAuthReservation).toHaveBeenCalledOnce();
+    expect(getOrCreateParticipant).not.toHaveBeenCalled();
+    expect(findParticipantById).not.toHaveBeenCalled();
+    expect(state.cookie.set).not.toHaveBeenCalled();
+  });
+
+  it("does not issue a session when the participant repository returns no participant", async () => {
+    vi.mocked(getOrCreateParticipant).mockResolvedValueOnce(null);
+
+    const response = await POST(request({ name: "山田", pin: "0427" }));
+
+    expect(response.status).toBe(400);
+    expect(state.cookie.set).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when session creation fails", async () => {
+    vi.mocked(createParticipantSession).mockReturnValueOnce(null);
+
+    const response = await POST(request({ name: "山田", pin: "0427" }));
+
+    expect(response.status).toBe(503);
+    expect(getOrCreateParticipant).toHaveBeenCalledOnce();
+    expect(state.cookie.set).not.toHaveBeenCalled();
+  });
+
   it("returns the participant for a valid signed cookie and null for an invalid one", async () => {
     const valid = await GET(new Request("http://localhost/api/participants/session"));
     expect(await valid.json()).toEqual({ participant: { id: 7, name: "山田" } });
@@ -153,6 +271,17 @@ describe("participant session API", () => {
     state.token = "tampered";
     const invalid = await GET(new Request("http://localhost/api/participants/session"));
     expect(await invalid.json()).toEqual({ participant: null });
+  });
+
+  it("returns a null participant when authentication is unconfigured", async () => {
+    state.configured = false;
+
+    const response = await GET(new Request("http://localhost/api/participants/session"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ participant: null });
+    expect(findParticipantById).not.toHaveBeenCalled();
+    expect(state.cookie.set).not.toHaveBeenCalled();
   });
 
   it("clears the participant cookie on logout and requires a matching Origin", async () => {

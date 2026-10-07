@@ -101,7 +101,7 @@ CHANGED=$(printf '%s\n' "$CHANGED" | sed '/^$/d' | sort -u)
 changed_match() { printf '%s\n' "$CHANGED" | grep -qE "$1"; }
 
 NEED_TEST=0; NEED_BUILD=0; NEED_E2E=0; NEED_DRIFT=0
-if changed_match '^(src/|tests/|vitest\.config\.ts$|tsconfig\.json$|package\.json$)'; then
+if changed_match '^(src/|tests/|vitest\.config\.ts$|tsconfig\.json$|package\.json$|scripts/check-coverage-completeness\.mjs$)'; then
   NEED_TEST=1
 fi
 if changed_match '^(src/|next\.config\.ts$|postcss\.config\.|tsconfig\.json$|package\.json$|vercel\.json$)'; then
@@ -156,7 +156,7 @@ PID_PRE=$!
 
 PID_TEST=""
 if [ "$NEED_TEST" = "1" ]; then
-  ( set -e; vitest run --coverage; node scripts/check-coverage-tiers.mjs ) >"$LOG_TEST" 2>&1 &
+  ( set -e; vitest run --coverage; node scripts/check-coverage-tiers.mjs; node scripts/check-coverage-completeness.mjs ) >"$LOG_TEST" 2>&1 &
   PID_TEST=$!
 fi
 
