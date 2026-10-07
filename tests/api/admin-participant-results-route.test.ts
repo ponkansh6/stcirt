@@ -11,6 +11,7 @@ vi.mock("@/lib/db/repository/presentation-repository", () => ({
 }));
 
 import { setParticipantResultsVisible } from "@/lib/db/repository/presentation-repository";
+import { makePresentationOperationError } from "@/lib/presentation/operation-diagnostics";
 
 const envKeys = ["ADMIN_PRESENTATION_PIN", "ADMIN_PRESENTATION_SESSION_SECRET"] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
@@ -80,10 +81,16 @@ describe("POST /api/admin/participant-results", () => {
     vi.mocked(setParticipantResultsVisible).mockRejectedValueOnce(
       new Conflict("Presentation is locked"),
     );
-    const conflict = await POST(
-      request({ cookie, origin: "http://localhost", body: { visible: true } }),
-    );
-    expect(conflict.status).toBe(409);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const conflict = await POST(
+        request({ cookie, origin: "http://localhost", body: { visible: true } }),
+      );
+      expect(conflict.status).toBe(409);
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("forwards hide and republish transitions to the repository", async () => {
@@ -97,5 +104,77 @@ describe("POST /api/admin/participant-results", () => {
     }
     expect(setParticipantResultsVisible).toHaveBeenNthCalledWith(1, false);
     expect(setParticipantResultsVisible).toHaveBeenNthCalledWith(2, true);
+  });
+
+  it("returns the generic failure and logs only safe structured diagnostics", async () => {
+    const cookie = authenticate();
+    const error = makePresentationOperationError("source_questions_read", {
+      code: "SQLITE_BUSY_SNAPSHOT",
+      message: "private row and secret details",
+    });
+    vi.mocked(setParticipantResultsVisible).mockRejectedValueOnce(error);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await POST(
+        new Request("http://localhost/api/admin/participant-results", {
+          method: "POST",
+          headers: {
+            Cookie: cookie,
+            Origin: "http://localhost",
+            Host: "localhost",
+            "Content-Type": "application/json",
+            "x-vercel-id": "hnd1::safe-request-id",
+          },
+          body: JSON.stringify({ visible: true }),
+        }),
+      );
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        error: "Admin presentation is unavailable",
+      });
+      expect(log).toHaveBeenCalledTimes(1);
+      const logged = String(log.mock.calls[0]?.[0]);
+      expect(JSON.parse(logged)).toEqual({
+        event: "admin_participant_results_failed",
+        vercelRequestId: "hnd1::safe-request-id",
+        phase: "source_questions_read",
+        errorKind: "database",
+        databaseCode: "SQLITE_BUSY_SNAPSHOT",
+      });
+      expect(logged).not.toContain("private row");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("uses a generated correlation ID when x-vercel-id is missing or malformed", async () => {
+    const cookie = authenticate();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const vercelId of [undefined, "malformed id"]) {
+        vi.mocked(setParticipantResultsVisible).mockRejectedValueOnce(new Error("private detail"));
+        const outgoingRequest = vercelId
+          ? new Request("http://localhost/api/admin/participant-results", {
+              method: "POST",
+              headers: {
+                Cookie: cookie,
+                Origin: "http://localhost",
+                Host: "localhost",
+                "Content-Type": "application/json",
+                "x-vercel-id": vercelId,
+              },
+              body: JSON.stringify({ visible: true }),
+            })
+          : request({ cookie, origin: "http://localhost", body: { visible: true } });
+        await POST(outgoingRequest);
+        const logged = JSON.parse(String(log.mock.calls.at(-1)?.[0])) as {
+          vercelRequestId: string;
+        };
+        expect(logged.vercelRequestId).toMatch(/^generated:[0-9a-f-]{36}$/);
+      }
+      expect(String(log.mock.calls[0]?.[0])).not.toContain("private detail");
+    } finally {
+      log.mockRestore();
+    }
   });
 });

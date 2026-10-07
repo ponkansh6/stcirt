@@ -1,6 +1,10 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
+  makePresentationOperationError,
+  type PresentationOperationPhase,
+} from "@/lib/presentation/operation-diagnostics";
+import {
   examAnswerSubmissions,
   examAnswerAssessments,
   examParticipants,
@@ -162,36 +166,58 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
 }
 
 export async function setParticipantResultsVisible(visible: boolean) {
-  return withTransactionRetry(() =>
-    db.transaction(async (tx) => {
-      if (visible) {
-        const session = await acquirePresentationSession(tx);
-        const [settings] = await tx
-          .select({
-            visible: participantResultSettings.visible,
-            everPublished: participantResultSettings.everPublished,
-          })
-          .from(participantResultSettings)
-          .where(eq(participantResultSettings.id, 1));
-        if (!settings?.visible) {
-          await ensurePresentationSnapshot(tx, session, false, settings?.everPublished ?? false);
+  let phase: PresentationOperationPhase = "transaction_begin";
+  try {
+    return await withTransactionRetry(() => {
+      // Reset this before every attempt so a failed transaction cannot leak a
+      // phase from the attempt that is being retried.
+      phase = "transaction_begin";
+      return db.transaction(async (tx) => {
+        if (visible) {
+          phase = "acquire_session";
+          const session = await acquirePresentationSession(tx);
+          phase = "read_visibility";
+          const [settings] = await tx
+            .select({
+              visible: participantResultSettings.visible,
+              everPublished: participantResultSettings.everPublished,
+            })
+            .from(participantResultSettings)
+            .where(eq(participantResultSettings.id, 1));
+          if (!settings?.visible) {
+            await ensurePresentationSnapshot(
+              tx,
+              session,
+              false,
+              settings?.everPublished ?? false,
+              (nextPhase) => {
+                phase = nextPhase;
+              },
+            );
+          }
+          phase = "write_visibility";
+          await tx
+            .insert(participantResultSettings)
+            .values({ id: 1, visible: true, everPublished: true })
+            .onConflictDoUpdate({
+              target: participantResultSettings.id,
+              set: { visible: true, everPublished: true },
+            });
+        } else {
+          phase = "hide_results";
+          await tx
+            .update(participantResultSettings)
+            .set({ visible: false })
+            .where(eq(participantResultSettings.id, 1));
         }
-        await tx
-          .insert(participantResultSettings)
-          .values({ id: 1, visible: true, everPublished: true })
-          .onConflictDoUpdate({
-            target: participantResultSettings.id,
-            set: { visible: true, everPublished: true },
-          });
-      } else {
-        await tx
-          .update(participantResultSettings)
-          .set({ visible: false })
-          .where(eq(participantResultSettings.id, 1));
-      }
-      return { visible };
-    }),
-  );
+        phase = "transaction_commit";
+        return { visible };
+      });
+    });
+  } catch (error) {
+    if (error instanceof PresentationConflictError) throw error;
+    throw makePresentationOperationError(phase, error);
+  }
 }
 
 export async function getParticipantResult(participantId: number): Promise<ParticipantResult> {
@@ -455,14 +481,18 @@ async function ensurePresentationSnapshot(
   acquiredSession?: typeof presentationSessions.$inferSelect,
   allowEmptyQuestions = false,
   rebuild = false,
+  setOperationPhase?: (phase: PresentationOperationPhase) => void,
 ): Promise<typeof presentationSessions.$inferSelect> {
+  if (!acquiredSession) setOperationPhase?.("acquire_session");
   const session = acquiredSession ?? (await acquirePresentationSession(tx));
   if (!rebuild) {
+    setOperationPhase?.("snapshot_probe_question");
     const [snapshotQuestion] = await tx
       .select({ position: presentationQuestions.position })
       .from(presentationQuestions)
       .where(eq(presentationQuestions.sessionId, 1))
       .limit(1);
+    setOperationPhase?.("snapshot_probe_entry");
     const [snapshotEntry] = await tx
       .select({ participantId: presentationEntries.participantId })
       .from(presentationEntries)
@@ -474,12 +504,15 @@ async function ensurePresentationSnapshot(
   // legitimately contains no question or participant rows.
   if (!rebuild && session.state !== "not_started") return session;
 
+  setOperationPhase?.("source_questions_read");
   const currentQuestions = await tx.select().from(examQuestions).orderBy(asc(examQuestions.id));
   if (!currentQuestions.length && !allowEmptyQuestions && session.state === "not_started") {
     throw new PresentationConflictError("Results are not ready");
   }
 
+  setOperationPhase?.("participants_read");
   const participants = await tx.select().from(examParticipants).orderBy(asc(examParticipants.id));
+  setOperationPhase?.("submissions_read");
   const submissions = await tx
     .select()
     .from(examAnswerSubmissions)
@@ -491,12 +524,14 @@ async function ensurePresentationSnapshot(
       desc(examAnswerSubmissions.id),
     );
   const submissionIds = submissions.map(({ id }) => id);
+  if (submissionIds.length) setOperationPhase?.("answers_read");
   const savedAnswers = submissionIds.length
     ? await tx
         .select()
         .from(examSubmissionAnswers)
         .where(inArray(examSubmissionAnswers.submissionId, submissionIds))
     : [];
+  if (submissionIds.length) setOperationPhase?.("assessments_read");
   const assessments = submissionIds.length
     ? await tx
         .select()
@@ -607,10 +642,13 @@ async function ensurePresentationSnapshot(
   });
 
   if (rebuild) {
+    setOperationPhase?.("delete_entries");
     await tx.delete(presentationEntries).where(eq(presentationEntries.sessionId, 1));
+    setOperationPhase?.("delete_questions");
     await tx.delete(presentationQuestions).where(eq(presentationQuestions.sessionId, 1));
   }
   if (currentQuestions.length) {
+    setOperationPhase?.("insert_questions");
     await tx.insert(presentationQuestions).values(
       currentQuestions.map((question, position) => ({
         sessionId: 1,
@@ -624,6 +662,7 @@ async function ensurePresentationSnapshot(
     );
   }
   if (ranked.length) {
+    setOperationPhase?.("insert_entries");
     await tx.insert(presentationEntries).values(
       ranked.map(({ participant, score, rank, answers }) => ({
         sessionId: 1,
@@ -640,6 +679,7 @@ async function ensurePresentationSnapshot(
   const questionIndex = currentQuestions.length
     ? Math.max(0, Math.min(session.questionIndex, currentQuestions.length - 1))
     : 0;
+  setOperationPhase?.("update_session");
   await tx
     .update(presentationSessions)
     .set({
@@ -648,6 +688,7 @@ async function ensurePresentationSnapshot(
       ...(noQuestionsDuringQuestionStage ? { state: "podium_preview" } : {}),
     })
     .where(eq(presentationSessions.id, 1));
+  setOperationPhase?.("read_session");
   const [snapshottedSession] = await tx
     .select()
     .from(presentationSessions)

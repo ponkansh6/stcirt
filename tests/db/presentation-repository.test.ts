@@ -24,6 +24,7 @@ import {
   PresentationConflictError,
   setParticipantResultsVisible,
 } from "@/lib/db/repository/presentation-repository";
+import { getPresentationOperationDiagnostics } from "@/lib/presentation/operation-diagnostics";
 
 async function commitWinnerThenRaiseAdapterUniqueConflict(operationId: string) {
   const database = dbRef.db!;
@@ -66,6 +67,67 @@ async function failFirstTransactionAfterCallback<T>(run: () => Promise<T>) {
       throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
     }, config);
   });
+  try {
+    return await run();
+  } finally {
+    transactionSpy.mockRestore();
+  }
+}
+
+async function failTransactionAtTable<T>(
+  table: unknown,
+  operation: "select" | "delete" | "insert" | "update",
+  run: () => Promise<T>,
+) {
+  const database = dbRef.db!;
+  const originalTransaction = database.transaction.bind(database);
+  const transactionSpy = vi.spyOn(database, "transaction");
+  transactionSpy.mockImplementation((callback, config) =>
+    originalTransaction((tx) => {
+      const wrappedTx = new Proxy(tx, {
+        get(target, property, receiver) {
+          if (property !== operation) return Reflect.get(target, property, receiver);
+          if (operation !== "select") {
+            return (selectedTable: unknown) => {
+              if (selectedTable === table) {
+                throw Object.assign(new Error("private database detail"), {
+                  code: "SQLITE_ERROR",
+                });
+              }
+              const method = Reflect.get(target, property, receiver) as (
+                selectedTable: unknown,
+              ) => unknown;
+              return Reflect.apply(method, target, [selectedTable]);
+            };
+          }
+          return (...args: unknown[]) => {
+            const method = Reflect.get(target, property, receiver) as (
+              ...args: unknown[]
+            ) => object;
+            const query = Reflect.apply(method, target, args);
+            return new Proxy(query, {
+              get(queryTarget, queryProperty, queryReceiver) {
+                if (queryProperty !== "from")
+                  return Reflect.get(queryTarget, queryProperty, queryReceiver);
+                return (selectedTable: unknown) => {
+                  if (selectedTable === table) {
+                    throw Object.assign(new Error("private database detail"), {
+                      code: "SQLITE_ERROR",
+                    });
+                  }
+                  const from = Reflect.get(queryTarget, queryProperty, queryTarget) as (
+                    selectedTable: unknown,
+                  ) => unknown;
+                  return Reflect.apply(from, queryTarget, [selectedTable]);
+                };
+              },
+            });
+          };
+        },
+      });
+      return callback(wrappedTx);
+    }, config),
+  );
   try {
     return await run();
   } finally {
@@ -466,6 +528,65 @@ describe("presentation repository", () => {
     );
     expect(started).toMatchObject({ state: "question", version: 1 });
     await expect(testDb.db.select().from(schema.presentationOperations)).resolves.toHaveLength(1);
+  });
+
+  it("attributes publication failures to the source read and snapshot write phases", async () => {
+    await addQuestions();
+    const sourceReadFailure = await failTransactionAtTable(schema.examQuestions, "select", () =>
+      setParticipantResultsVisible(true),
+    ).catch((error: unknown) => error);
+    expect(getPresentationOperationDiagnostics(sourceReadFailure)).toEqual({
+      phase: "source_questions_read",
+      errorKind: "database",
+      databaseCode: "SQLITE_ERROR",
+    });
+
+    await setParticipantResultsVisible(true);
+    await setParticipantResultsVisible(false);
+    const snapshotWriteFailure = await failTransactionAtTable(
+      schema.presentationEntries,
+      "delete",
+      () => setParticipantResultsVisible(true),
+    ).catch((error: unknown) => error);
+    expect(getPresentationOperationDiagnostics(snapshotWriteFailure)).toEqual({
+      phase: "delete_entries",
+      errorKind: "database",
+      databaseCode: "SQLITE_ERROR",
+    });
+  });
+
+  it("resets the diagnostic phase before every retry attempt", async () => {
+    const database = dbRef.db!;
+    const originalTransaction = database.transaction.bind(database);
+    let attempts = 0;
+    const transactionSpy = vi.spyOn(database, "transaction");
+    transactionSpy.mockImplementation((callback, config) => {
+      attempts += 1;
+      if (attempts === 1) {
+        return originalTransaction(async (tx) => {
+          await callback(tx);
+          throw Object.assign(new Error("retry this transaction"), { code: "SQLITE_BUSY" });
+        }, config);
+      }
+      return Promise.reject(
+        Object.assign(new Error("private database detail"), {
+          code: "SQLITE_ERROR",
+        }),
+      );
+    });
+    try {
+      const retryFailure = await setParticipantResultsVisible(false).catch(
+        (error: unknown) => error,
+      );
+      expect(getPresentationOperationDiagnostics(retryFailure)).toEqual({
+        phase: "transaction_begin",
+        errorKind: "database",
+        databaseCode: "SQLITE_ERROR",
+      });
+      expect(attempts).toBe(2);
+    } finally {
+      transactionSpy.mockRestore();
+    }
   });
 
   it("rolls back session and visibility when snapshot creation is not ready", async () => {
