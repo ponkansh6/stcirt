@@ -32,7 +32,6 @@ function controls(overrides: Record<string, unknown> = {}) {
     questionIndex: 0,
     questionCount: 2,
     projectionHidden: false,
-    presentationMode: "full",
     participantResultsVisible: false,
     participantResultsReady: true,
     ...overrides,
@@ -289,7 +288,7 @@ describe("PresentationScreen", () => {
     expect(screen.getByRole("list")).toHaveTextContent("A海B山");
   });
 
-  it("renders full and short selected-answer reviews, including explanation fallbacks", async () => {
+  it("renders the selected-answer review and explanation without a presentation mode", async () => {
     installApi({
       projection: {
         state: "answer",
@@ -301,19 +300,11 @@ describe("PresentationScreen", () => {
         },
       },
     });
-    const view = render(<PresentationScreen />);
+    render(<PresentationScreen />);
     expect(await screen.findByText("家族旅行で訪れました。")).toBeInTheDocument();
     expect(screen.getAllByText("正解")).toHaveLength(1);
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
     expect(screen.getByText("山")).toBeInTheDocument();
-
-    installApi({ projection: { state: "answer", question: { ...question, correctAnswer: "海" } } });
-    view.unmount();
-    render(<PresentationScreen />);
-    const shortAnswer = await screen.findByText(
-      (_, element) => element?.tagName === "P" && element.textContent === "海",
-    );
-    expect(shortAnswer).toBeInTheDocument();
   });
 
   it("renders free-text responses with missing optional scores and empty response lists", async () => {
@@ -476,15 +467,6 @@ describe("PresentationScreen", () => {
     expect(adminCalls).toBe(2);
     expect(screen.queryByRole("button", { name: "プレゼンを開始" })).not.toBeInTheDocument();
     expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
-  });
-
-  it("accepts short presentation mode in admin controls", async () => {
-    const api = installApi({ admin: controls({ presentationMode: "short" }) });
-    render(<PresentationScreen presenterRequested />);
-    expect(await screen.findByRole("button", { name: "プレゼンを開始" })).toBeInTheDocument();
-    await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
-    );
   });
 
   it("does not refresh admin controls when a queued interval callback runs after unmount", async () => {
@@ -877,7 +859,6 @@ describe("PresentationScreen", () => {
         questionIndex: "0",
         questionCount: "2",
         projectionHidden: "true",
-        presentationMode: "unknown",
         participantResultsVisible: 1,
         participantResultsReady: "true",
       },

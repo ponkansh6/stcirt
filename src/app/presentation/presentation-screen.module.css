@@ -340,33 +340,6 @@
   background: #487456;
   color: white;
 }
-.shortAnswer {
-  display: flex;
-  min-height: clamp(60px, 9vh, 92px);
-  align-items: center;
-  gap: clamp(12px, 2vw, 24px);
-  margin-top: clamp(14px, 2.2vh, 24px);
-  padding: 10px clamp(14px, 2vw, 25px);
-  border: 1px solid #78957c;
-  border-radius: 10px;
-  background: #e9f2e8;
-  color: #244d35;
-}
-.shortAnswerLabel {
-  flex: 0 0 auto;
-  color: #456d4c;
-  font-size: clamp(0.78rem, 1.25vw, 1.1rem);
-  font-weight: 900;
-  letter-spacing: 0.1em;
-}
-.shortAnswer p {
-  margin: 0;
-  font-size: clamp(1.3rem, 2.8vw, 2.7rem);
-  font-weight: 850;
-  letter-spacing: 0.01em;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
 .correctLabel {
   margin-left: auto;
   padding: 5px 9px;
@@ -612,19 +585,6 @@
   }
   .correctLabel {
     padding: 3px 4px;
-  }
-  .shortAnswer {
-    min-height: 46px;
-    gap: 8px;
-    margin-top: 9px;
-    padding: 7px 9px;
-    border-radius: 7px;
-  }
-  .shortAnswerLabel {
-    font-size: 0.68rem;
-  }
-  .shortAnswer p {
-    font-size: clamp(1.1rem, 4vw, 1.6rem);
   }
   .explanation {
     max-height: 15vh;

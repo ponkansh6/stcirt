@@ -52,13 +52,11 @@ type AdminState = Extract<
   | "first"
   | "finished"
 >;
-type PresentationMode = "full" | "short";
 type AdminControls = {
   state: AdminState;
   questionIndex: number;
   questionCount: number;
   projectionHidden: boolean;
-  presentationMode: PresentationMode;
   participantResultsVisible: boolean;
   participantResultsReady: boolean;
 };
@@ -116,7 +114,6 @@ async function getAdminControls(): Promise<AdminControls> {
     questionIndex: typeof admin.questionIndex === "number" ? admin.questionIndex : 0,
     questionCount: typeof admin.questionCount === "number" ? admin.questionCount : 0,
     projectionHidden: admin.projectionHidden === true,
-    presentationMode: admin.presentationMode === "short" ? "short" : "full",
     participantResultsVisible: admin.participantResultsVisible === true,
     participantResultsReady: admin.participantResultsReady === true,
   };
@@ -226,11 +223,8 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
       </section>
     );
   }
-  const isShortMode = !Object.prototype.hasOwnProperty.call(question, "explanation");
   const hasExplanation =
     typeof question.explanation === "string" && question.explanation.trim().length > 0;
-  const correctChoice =
-    question.choices[question.correctIndex ?? -1] ?? question.correctAnswer ?? "";
 
   return (
     <section
@@ -244,12 +238,6 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
       </p>
       <div className={styles.answerContent}>
         <h1 id="question-heading">{question.question}</h1>
-        {isShortMode && (
-          <div className={styles.shortAnswer}>
-            <span className={styles.shortAnswerLabel}>正解</span>
-            <p>{question.correctAnswer || correctChoice}</p>
-          </div>
-        )}
         <ol className={`${styles.choices} ${styles.answered}`}>
           {question.choices.map((choice, index) => {
             const isCorrect = index === question.correctIndex;
@@ -262,7 +250,7 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
             );
           })}
         </ol>
-        {!isShortMode && hasExplanation && (
+        {hasExplanation && (
           <div className={styles.explanation}>
             <span className={styles.explanationMark} aria-hidden="true">
               ✦

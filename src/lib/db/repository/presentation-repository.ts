@@ -26,8 +26,8 @@ export type PresentationState =
   | "second"
   | "first"
   | "finished";
-export type PresentationMode = "full" | "short";
-export type PresentationAction = "start" | "advance" | "previous" | "hide" | "show" | "setMode";
+export type PresentationAction = "start" | "advance" | "previous" | "hide" | "show";
+const presentationActions = new Set<string>(["start", "advance", "previous", "hide", "show"]);
 
 export class PresentationConflictError extends Error {
   readonly status = 409;
@@ -39,7 +39,6 @@ type AdminPresentation = {
   questionIndex: number;
   questionCount: number;
   projectionHidden: boolean;
-  presentationMode: PresentationMode;
   participantResultsVisible: boolean;
   participantResultsReady: boolean;
   questions: {
@@ -114,7 +113,6 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
       questionIndex: 0,
       questionCount: 0,
       projectionHidden: false,
-      presentationMode: "full",
       participantResultsVisible: resultSettings?.visible ?? false,
       participantResultsReady: false,
       questions: [],
@@ -143,7 +141,6 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
     questionIndex: session.questionIndex,
     questionCount: session.questionCount,
     projectionHidden: session.projectionHidden,
-    presentationMode: session.presentationMode as PresentationMode,
     participantResultsVisible: resultSettings?.visible ?? false,
     participantResultsReady:
       session.state !== "not_started" || questions.length > 0 || entries.length > 0,
@@ -423,7 +420,7 @@ export async function getPublicPresentation() {
             : {
                 correctAnswer: row.correctAnswer,
                 correctIndex: row.correctIndex,
-                ...(admin.presentationMode === "full" ? { explanation: row.explanation } : {}),
+                explanation: row.explanation,
               }
           : {}),
       };
@@ -456,7 +453,6 @@ async function acquirePresentationSession(
       questionIndex: 0,
       questionCount: 0,
       projectionHidden: false,
-      presentationMode: "full",
     })
     .onConflictDoNothing({ target: presentationSessions.id });
   // Serialize publication and presentation actions before any reads in the
@@ -801,14 +797,9 @@ async function previousState(
   throw new PresentationConflictError("Presentation is already at its first state");
 }
 
-export async function operatePresentation(
-  operationId: string,
-  action: PresentationAction,
-  requestedMode?: PresentationMode,
-) {
-  if (action === "setMode" && requestedMode !== "full" && requestedMode !== "short") {
-    throw new PresentationConflictError("Presentation mode is required");
-  }
+export async function operatePresentation(operationId: string, action: PresentationAction) {
+  if (!presentationActions.has(action))
+    throw new PresentationConflictError("Unsupported presentation action");
   try {
     return await withTransactionRetry(() =>
       db.transaction(async (tx) => {
@@ -818,10 +809,7 @@ export async function operatePresentation(
           .from(presentationOperations)
           .where(eq(presentationOperations.operationId, operationId));
         if (operation) {
-          if (
-            operation.action !== action ||
-            (action === "setMode" && operation.mode !== requestedMode)
-          )
+          if (operation.action !== action)
             throw new PresentationConflictError("Operation ID conflict");
           return readAdminPresentation(tx);
         }
@@ -831,26 +819,6 @@ export async function operatePresentation(
             throw new PresentationConflictError("Presentation has already started");
           const version = await startPresentation(tx, session);
           await tx.insert(presentationOperations).values({ operationId, action, version });
-          return readAdminPresentation(tx);
-        }
-        if (action === "setMode") {
-          const presentationMode = requestedMode!;
-          const version = session.version + 1;
-          const changed = await tx
-            .update(presentationSessions)
-            .set({ presentationMode, version })
-            .where(
-              and(
-                eq(presentationSessions.id, 1),
-                eq(presentationSessions.version, session.version),
-              ),
-            )
-            .returning({ id: presentationSessions.id });
-          if (!changed.length)
-            throw new PresentationConflictError("Presentation state changed concurrently");
-          await tx
-            .insert(presentationOperations)
-            .values({ operationId, action, mode: presentationMode, version });
           return readAdminPresentation(tx);
         }
         if (action === "hide" || action === "show") {
@@ -908,10 +876,7 @@ export async function operatePresentation(
         .from(presentationOperations)
         .where(eq(presentationOperations.operationId, operationId));
       if (operation) {
-        if (
-          operation.action !== action ||
-          (action === "setMode" && operation.mode !== requestedMode)
-        )
+        if (operation.action !== action)
           throw new PresentationConflictError("Operation ID conflict");
         return readAdminPresentation(tx);
       }

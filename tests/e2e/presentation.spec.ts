@@ -51,7 +51,6 @@ async function installAdminApiMock(
   let version = 0;
   let projectionHidden = false;
   let snapshotExists = false;
-  let presentationMode: "full" | "short" = "full";
   let participantResultsVisible = false;
   let winnerEntries = [
     { displayName: "花子", score: 1, rank: 1 },
@@ -95,7 +94,6 @@ async function installAdminApiMock(
     questions,
     entries: winnerEntries,
     projectionHidden,
-    presentationMode,
     participantResultsVisible,
     participantResultsReady: snapshotExists,
   });
@@ -132,7 +130,6 @@ async function installAdminApiMock(
         const body = route.request().postDataJSON() as {
           operationId?: string;
           action?: string;
-          mode?: "full" | "short";
         };
         if (failNextMutationUnauthorized) {
           failNextMutationUnauthorized = false;
@@ -174,8 +171,7 @@ async function installAdminApiMock(
         } else if (body.action === "previous") {
           const previous = stages.indexOf(state) - 1;
           if (previous >= 1) state = stages[previous];
-        } else if (body.action === "setMode" && body.mode) presentationMode = body.mode;
-        else if (body.action === "hide") projectionHidden = true;
+        } else if (body.action === "hide") projectionHidden = true;
         else if (body.action === "show") projectionHidden = false;
         version += 1;
         await route.fulfill({ json: payload() });

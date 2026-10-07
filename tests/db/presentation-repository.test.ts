@@ -464,12 +464,14 @@ describe("presentation repository", () => {
     });
   });
 
-  it("persists short mode before start and omits explanation only in answer projection", async () => {
+  it("always includes answer explanations even when the legacy stored mode is short", async () => {
     await addQuestions();
-    await expect(getAdminPresentation()).resolves.toMatchObject({ presentationMode: "full" });
-    const short = await operatePresentation("mode-short", "setMode", "short");
-    expect(short).toMatchObject({ state: "not_started", presentationMode: "short" });
     await operatePresentation("start-short", "start");
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ presentationMode: "short" })
+      .where(eq(schema.presentationSessions.id, 1));
+    await expect(getAdminPresentation()).resolves.not.toHaveProperty("presentationMode");
 
     const question = await getPublicPresentation();
     expect(question).toMatchObject({ state: "question" });
@@ -482,17 +484,8 @@ describe("presentation repository", () => {
         choices: ["Correct 11", "Wrong 11"],
         correctAnswer: "Correct 11",
         correctIndex: 0,
+        explanation: "Explanation 11",
       },
-    });
-    expect(answer).not.toHaveProperty("question.explanation");
-
-    await operatePresentation("mode-full", "setMode", "full");
-    await expect(getPublicPresentation()).resolves.toMatchObject({
-      state: "answer",
-      question: { explanation: "Explanation 11" },
-    });
-    await expect(operatePresentation("mode-short", "setMode", "full")).rejects.toMatchObject({
-      status: 409,
     });
   });
 
@@ -755,7 +748,6 @@ describe("presentation repository", () => {
       version: hiddenState.version,
       questionIndex: hiddenState.questionIndex,
       projectionHidden: hiddenState.projectionHidden,
-      presentationMode: hiddenState.presentationMode,
       participantResultsVisible: true,
     });
     expect(republished.questions[0]).toMatchObject({
@@ -853,9 +845,7 @@ describe("presentation repository", () => {
     const transactionSpy = vi.spyOn(dbRef.db!, "transaction").mockRejectedValue(nestedLock);
 
     try {
-      await expect(operatePresentation("nested-lock-exhaustion", "setMode", "short")).rejects.toBe(
-        nestedLock,
-      );
+      await expect(operatePresentation("nested-lock-exhaustion", "hide")).rejects.toBe(nestedLock);
       expect(transactionSpy).toHaveBeenCalledTimes(4);
     } finally {
       transactionSpy.mockRestore();
@@ -1370,8 +1360,8 @@ describe("presentation repository", () => {
     ]);
   });
 
-  it("rejects advancing and changing modes with invalid state and arguments", async () => {
-    await expect(operatePresentation("invalid-mode", "setMode")).rejects.toBeInstanceOf(
+  it("rejects deprecated mode actions and advancing with invalid state", async () => {
+    await expect(operatePresentation("invalid-mode", "setMode" as never)).rejects.toBeInstanceOf(
       PresentationConflictError,
     );
     await expect(operatePresentation("advance-before-start", "advance")).rejects.toBeInstanceOf(
@@ -1382,7 +1372,7 @@ describe("presentation repository", () => {
   it("reports an unavailable session when the session read returns no row", async () => {
     await expect(
       returnNoSelectedRows(schema.presentationSessions, () =>
-        operatePresentation("session-read-missing", "setMode", "short"),
+        operatePresentation("session-read-missing", "hide"),
       ),
     ).rejects.toBeInstanceOf(PresentationConflictError);
   });
@@ -1474,19 +1464,6 @@ describe("presentation repository", () => {
     await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(0);
   });
 
-  it("rejects a mode change when its compare-and-swap update returns no rows", async () => {
-    await operatePresentation("mode-cas-initial", "setMode", "short");
-
-    await expect(
-      returnNoUpdatedRows(schema.presentationSessions, () =>
-        operatePresentation("mode-cas-miss", "setMode", "full"),
-      ),
-    ).rejects.toBeInstanceOf(PresentationConflictError);
-    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
-      { presentationMode: "short", version: 1 },
-    ]);
-  });
-
   it("rejects a projection toggle when its compare-and-swap update returns no rows", async () => {
     await operatePresentation("visibility-cas-initial", "hide");
 
@@ -1531,18 +1508,6 @@ describe("presentation repository", () => {
 
     const error = await returnNoSelectedRows(schema.presentationOperations, () =>
       operatePresentation("reused-operation-id", "advance"),
-    ).catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(PresentationConflictError);
-    expect(error).toHaveProperty("message", "Operation ID conflict");
-    expect(error).toHaveProperty("status", 409);
-  });
-
-  it("reports an operation ID conflict when race recovery finds a different mode", async () => {
-    await operatePresentation("reused-mode-operation-id", "setMode", "short");
-
-    const error = await returnNoSelectedRows(schema.presentationOperations, () =>
-      operatePresentation("reused-mode-operation-id", "setMode", "full"),
     ).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(PresentationConflictError);

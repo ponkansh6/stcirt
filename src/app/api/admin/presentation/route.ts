@@ -62,23 +62,15 @@ export async function POST(request: Request) {
       value.action !== "advance" &&
       value.action !== "previous" &&
       value.action !== "hide" &&
-      value.action !== "show" &&
-      value.action !== "setMode") ||
-    (value.action === "setMode"
-      ? value.mode !== "full" && value.mode !== "short"
-      : value.mode !== undefined)
+      value.action !== "show") ||
+    value.mode !== undefined
   ) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400, headers: noStore });
   }
   try {
-    return NextResponse.json(
-      await operatePresentation(
-        value.operationId,
-        value.action,
-        value.action === "setMode" ? (value.mode as "full" | "short") : undefined,
-      ),
-      { headers: noStore },
-    );
+    return NextResponse.json(await operatePresentation(value.operationId, value.action), {
+      headers: noStore,
+    });
   } catch (error) {
     if (error instanceof PresentationConflictError) {
       return NextResponse.json({ error: error.message }, { status: 409, headers: noStore });

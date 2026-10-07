@@ -33,7 +33,6 @@ const adminPayload = {
   questionIndex: 0,
   questionCount: 1,
   projectionHidden: false,
-  presentationMode: "full",
   participantResultsVisible: false,
   participantResultsReady: false,
   questions: [],
@@ -132,6 +131,8 @@ describe("/api/admin/presentation route", () => {
       { operationId, action: "reset" },
       { operationId, action: "setMode" },
       { operationId, action: "setMode", mode: "fast" },
+      { operationId, action: "setMode", mode: "full" },
+      { operationId, action: "setMode", mode: "short" },
       { operationId, action: "start", mode: "full" },
     ];
     for (const body of invalidBodies) {
@@ -150,19 +151,9 @@ describe("/api/admin/presentation route", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store, private");
       await expect(response.json()).resolves.toEqual(adminPayload);
-      expect(operatePresentation).toHaveBeenCalledWith(operationId, action, undefined);
+      expect(operatePresentation).toHaveBeenCalledWith(operationId, action);
     },
   );
-
-  it.each(["full", "short"] as const)("accepts setMode %s", async (mode) => {
-    const response = await POST(
-      request("POST", { body: { operationId, action: "setMode", mode } }),
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual(adminPayload);
-    expect(operatePresentation).toHaveBeenCalledWith(operationId, "setMode", mode);
-  });
 
   it("returns state conflicts as 409", async () => {
     vi.mocked(operatePresentation).mockRejectedValueOnce(
