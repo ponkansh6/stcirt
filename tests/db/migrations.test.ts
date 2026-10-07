@@ -155,4 +155,72 @@ describe("database migrations", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("migration 0011 clears old answers and presentation snapshots while keeping operation history", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stcirt-reset-migration-test-"));
+    const client = createClient({ url: `file:${dir}/migration.db` });
+    try {
+      await client.execute("PRAGMA foreign_keys = ON");
+      await client.execute(
+        "CREATE TABLE exam_answer_logs (id integer PRIMARY KEY, selected_index integer NOT NULL)",
+      );
+      await client.execute(
+        "CREATE TABLE exam_answer_submissions (id text PRIMARY KEY, participant_id integer NOT NULL)",
+      );
+      await client.execute("CREATE TABLE presentation_sessions (id integer PRIMARY KEY)");
+      await client.execute(`
+        CREATE TABLE presentation_questions (
+          session_id integer NOT NULL REFERENCES presentation_sessions(id) ON DELETE CASCADE,
+          position integer NOT NULL,
+          PRIMARY KEY (session_id, position)
+        )
+      `);
+      await client.execute(`
+        CREATE TABLE presentation_entries (
+          session_id integer NOT NULL REFERENCES presentation_sessions(id) ON DELETE CASCADE,
+          participant_id integer NOT NULL,
+          PRIMARY KEY (session_id, participant_id)
+        )
+      `);
+      await client.execute("CREATE TABLE presentation_operations (operation_id text PRIMARY KEY)");
+      await client.execute(
+        "CREATE TABLE participant_result_settings (id integer PRIMARY KEY, visible integer NOT NULL)",
+      );
+      await client.execute("INSERT INTO exam_answer_logs VALUES (1, 2)");
+      await client.execute("INSERT INTO exam_answer_submissions VALUES ('submission-1', 7)");
+      await client.execute("INSERT INTO presentation_sessions VALUES (1)");
+      await client.execute("INSERT INTO presentation_questions VALUES (1, 0)");
+      await client.execute("INSERT INTO presentation_entries VALUES (1, 7)");
+      await client.execute("INSERT INTO presentation_operations VALUES ('operation-1')");
+      await client.execute("INSERT INTO participant_result_settings VALUES (1, 1)");
+
+      const migration = readFileSync(
+        join(process.cwd(), "src/lib/db/migrations/0011_reset_exam_submissions.sql"),
+        "utf8",
+      );
+      for (const statement of migration.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.execute(statement);
+      }
+
+      for (const table of [
+        "exam_answer_logs",
+        "exam_answer_submissions",
+        "presentation_sessions",
+        "presentation_questions",
+        "presentation_entries",
+      ]) {
+        const rows = await client.execute(`SELECT * FROM ${table}`);
+        expect(rows.rows, `${table} should be cleared`).toHaveLength(0);
+      }
+      const settings = await client.execute(
+        "SELECT visible FROM participant_result_settings WHERE id = 1",
+      );
+      expect(settings.rows[0]?.visible).toBe(0);
+      const operations = await client.execute("SELECT operation_id FROM presentation_operations");
+      expect(operations.rows).toEqual([{ operation_id: "operation-1" }]);
+    } finally {
+      client.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

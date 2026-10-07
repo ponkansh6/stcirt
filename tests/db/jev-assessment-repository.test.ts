@@ -5,6 +5,7 @@ import * as schema from "@/lib/db/schema";
 
 const dbRef = vi.hoisted(() => ({ db: null as TestDb["db"] | null }));
 const gradeMock = vi.hoisted(() => vi.fn());
+const rubricVersion = vi.hoisted(() => "test-rubric-v1");
 
 vi.mock("@/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/db")>();
@@ -16,7 +17,10 @@ vi.mock("@/lib/db", async (importOriginal) => {
     },
   };
 });
-vi.mock("@/lib/jev/adapter", () => ({ gradeFreeResponse: gradeMock }));
+vi.mock("@/lib/jev/adapter", () => ({
+  gradeFreeResponse: gradeMock,
+  JEV_RUBRIC_VERSION: rubricVersion,
+}));
 
 import {
   BatchSubmissionError,
@@ -24,7 +28,7 @@ import {
   processDueAssessments,
   saveAnswerSubmission,
 } from "@/lib/db/repository/answer-repository";
-import { gradeFreeResponse } from "@/lib/jev/adapter";
+import { gradeFreeResponse, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
 
 const submissionId = "00000000-0000-4000-8000-000000000101";
 const operationId = "00000000-0000-4000-8000-000000000102";
@@ -104,6 +108,7 @@ describe("durable free-response assessment and restoration", () => {
     expect(assessment).toMatchObject({
       revision: 1,
       answerText: "上司に確認し、承認済み環境を使います。",
+      rubricVersion: JEV_RUBRIC_VERSION,
       state: "pending",
       attempts: 0,
     });

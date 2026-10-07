@@ -9,7 +9,7 @@ import {
   examSubmissionOperations,
 } from "../schema";
 import { jstDayStart } from "../../date";
-import { gradeFreeResponse } from "@/lib/jev/adapter";
+import { gradeFreeResponse, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
 import { randomUUID } from "node:crypto";
 
 export type BatchAnswer =
@@ -276,7 +276,7 @@ export async function saveAnswerSubmission(input: {
             revision,
             answerText: freeResponse.freeText.trim(),
             state: "pending",
-            rubricVersion: "customer-data-home-work-v1",
+            rubricVersion: JEV_RUBRIC_VERSION,
             attempts: 0,
             nextAttemptAt: new Date(0),
           })
@@ -295,7 +295,7 @@ export async function saveAnswerSubmission(input: {
               gradedAt: null,
               errorCode: null,
               claimToken: null,
-              rubricVersion: "customer-data-home-work-v1",
+              rubricVersion: JEV_RUBRIC_VERSION,
             },
           });
       }

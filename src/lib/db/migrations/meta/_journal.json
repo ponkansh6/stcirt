@@ -64,6 +64,27 @@
       "when": 1791388800001,
       "tag": "0008_participant_results_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791388800002,
+      "tag": "0009_omiwatari_question",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791388800003,
+      "tag": "0010_nagano_quiz",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1791388800004,
+      "tag": "0011_reset_exam_submissions",
+      "breakpoints": true
     }
   ]
 }

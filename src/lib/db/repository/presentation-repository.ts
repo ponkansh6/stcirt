@@ -162,12 +162,14 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
 
 export async function setParticipantResultsVisible(visible: boolean) {
   return db.transaction(async (tx) => {
-    const [session] = await tx
-      .select({ state: presentationSessions.state })
-      .from(presentationSessions)
-      .where(eq(presentationSessions.id, 1));
-    if (visible && (!session || session.state === "not_started")) {
-      throw new PresentationConflictError("Results are not ready");
+    if (visible) {
+      const [session] = await tx
+        .select({ state: presentationSessions.state })
+        .from(presentationSessions)
+        .where(eq(presentationSessions.id, 1));
+      if (!session || session.state === "not_started") {
+        throw new PresentationConflictError("Results are not ready");
+      }
     }
     await tx
       .insert(participantResultSettings)
@@ -183,11 +185,7 @@ export async function getParticipantResult(participantId: number): Promise<Parti
       .select({ visible: participantResultSettings.visible })
       .from(participantResultSettings)
       .where(eq(participantResultSettings.id, 1));
-    const [session] = await tx
-      .select({ state: presentationSessions.state })
-      .from(presentationSessions)
-      .where(eq(presentationSessions.id, 1));
-    if (!settings?.visible || !session || session.state === "not_started") {
+    if (!settings?.visible) {
       return { state: "waiting" as const };
     }
     const [entry] = await tx

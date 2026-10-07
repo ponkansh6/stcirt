@@ -65,8 +65,19 @@ describe("POST /api/admin/participant-results", () => {
     expect(setParticipantResultsVisible).not.toHaveBeenCalled();
   });
 
-  it("persists the requested state and reports an unavailable snapshot as a conflict", async () => {
+  it("rejects publication before a snapshot exists and maps repository conflicts to 409", async () => {
     const cookie = authenticate();
+    const Conflict = (await import("@/lib/db/repository/presentation-repository"))
+      .PresentationConflictError;
+    vi.mocked(setParticipantResultsVisible).mockRejectedValueOnce(
+      new Conflict("Results are not ready"),
+    );
+    const notReady = await POST(
+      request({ cookie, origin: "http://localhost", body: { visible: true } }),
+    );
+    expect(notReady.status).toBe(409);
+    await expect(notReady.json()).resolves.toEqual({ error: "Results are not ready" });
+
     const response = await POST(
       request({ cookie, origin: "http://localhost", body: { visible: true } }),
     );
@@ -75,10 +86,8 @@ describe("POST /api/admin/participant-results", () => {
     await expect(response.json()).resolves.toEqual({ visible: true });
     expect(setParticipantResultsVisible).toHaveBeenCalledWith(true);
 
-    const Conflict = (await import("@/lib/db/repository/presentation-repository"))
-      .PresentationConflictError;
     vi.mocked(setParticipantResultsVisible).mockRejectedValueOnce(
-      new Conflict("Results are not ready"),
+      new Conflict("Presentation is locked"),
     );
     const conflict = await POST(
       request({ cookie, origin: "http://localhost", body: { visible: true } }),

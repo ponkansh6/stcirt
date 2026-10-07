@@ -300,13 +300,19 @@ describe("presentation repository", () => {
     expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
   });
 
-  it("keeps participant result publication private until a snapshot exists", async () => {
+  it("requires a presentation snapshot before publication", async () => {
     await addQuestions();
     const participant = await addParticipant("Participant");
     await addSubmission(participant, [0, 0]);
-    await expect(setParticipantResultsVisible(true)).rejects.toBeInstanceOf(
-      PresentationConflictError,
-    );
+    await expect(setParticipantResultsVisible(true)).rejects.toMatchObject({
+      message: "Results are not ready",
+      status: 409,
+    });
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      participantResultsVisible: false,
+      participantResultsReady: false,
+    });
+
     const started = await operatePresentation("visibility-start", "start");
     await setParticipantResultsVisible(true);
     await expect(getAdminPresentation()).resolves.toMatchObject({
