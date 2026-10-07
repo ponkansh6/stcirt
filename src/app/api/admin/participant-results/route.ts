@@ -48,6 +48,14 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     if (error instanceof PresentationConflictError) {
+      const vercelRequestId = getVercelRequestId(request);
+      console.error(
+        JSON.stringify({
+          event: "admin_participant_results_conflict",
+          vercelRequestId,
+          reason: getConflictReason(error.message),
+        }),
+      );
       return NextResponse.json({ error: error.message }, { status: 409, headers: noStore });
     }
     const vercelRequestId = getVercelRequestId(request);
@@ -67,6 +75,19 @@ export async function POST(request: Request) {
       { error: "Admin presentation is unavailable" },
       { status: 503, headers: noStore },
     );
+  }
+}
+
+function getConflictReason(message: string) {
+  switch (message) {
+    case "Presentation session is unavailable":
+      return "session_unavailable";
+    case "Results are not ready":
+      return "results_not_ready";
+    case "Free-response assessments must finish before presentation starts":
+      return "free_response_pending";
+    default:
+      return "other_conflict";
   }
 }
 

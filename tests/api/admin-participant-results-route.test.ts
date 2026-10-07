@@ -16,7 +16,14 @@ import { makePresentationOperationError } from "@/lib/presentation/operation-dia
 const envKeys = ["ADMIN_PRESENTATION_PIN", "ADMIN_PRESENTATION_SESSION_SECRET"] as const;
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
-function request(options: { cookie?: string; origin?: string; body?: unknown } = {}) {
+function request(
+  options: {
+    cookie?: string;
+    origin?: string;
+    body?: unknown;
+    vercelId?: string;
+  } = {},
+) {
   return new Request("http://localhost/api/admin/participant-results", {
     method: "POST",
     headers: {
@@ -24,6 +31,7 @@ function request(options: { cookie?: string; origin?: string; body?: unknown } =
       ...(options.origin === undefined ? {} : { Origin: options.origin }),
       Host: "localhost",
       "Content-Type": "application/json",
+      ...(options.vercelId ? { "x-vercel-id": options.vercelId } : {}),
     },
     body: JSON.stringify(options.body),
   });
@@ -84,10 +92,53 @@ describe("POST /api/admin/participant-results", () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const conflict = await POST(
-        request({ cookie, origin: "http://localhost", body: { visible: true } }),
+        request({
+          cookie,
+          origin: "http://localhost",
+          body: { visible: true },
+          vercelId: "hnd1::conflict-request-id",
+        }),
       );
       expect(conflict.status).toBe(409);
-      expect(log).not.toHaveBeenCalled();
+      await expect(conflict.json()).resolves.toEqual({ error: "Presentation is locked" });
+      expect(log).toHaveBeenCalledOnce();
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+        event: "admin_participant_results_conflict",
+        vercelRequestId: "hnd1::conflict-request-id",
+        reason: "other_conflict",
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it.each([
+    ["Presentation session is unavailable", "session_unavailable"],
+    ["Results are not ready", "results_not_ready"],
+    ["Free-response assessments must finish before presentation starts", "free_response_pending"],
+  ])("logs a safe fixed reason for %s", async (message, reason) => {
+    const cookie = authenticate();
+    const Conflict = (await import("@/lib/db/repository/presentation-repository"))
+      .PresentationConflictError;
+    vi.mocked(setParticipantResultsVisible).mockRejectedValueOnce(new Conflict(message));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await POST(
+        request({
+          cookie,
+          origin: "http://localhost",
+          body: { visible: true },
+          vercelId: "hnd1::known-conflict-id",
+        }),
+      );
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({ error: message });
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+        event: "admin_participant_results_conflict",
+        vercelRequestId: "hnd1::known-conflict-id",
+        reason,
+      });
+      expect(String(log.mock.calls[0]?.[0])).not.toContain(message);
     } finally {
       log.mockRestore();
     }
