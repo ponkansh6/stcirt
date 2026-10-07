@@ -1,15 +1,20 @@
-import { and, asc, count, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { db } from "../index";
 import {
   examAnswerLogs,
+  examAnswerAssessments,
   examAnswerSubmissions,
   examQuestions,
   examSubmissionAnswers,
   examSubmissionOperations,
 } from "../schema";
 import { jstDayStart } from "../../date";
+import { gradeFreeResponse } from "@/lib/jev/adapter";
+import { randomUUID } from "node:crypto";
 
-export type BatchAnswer = { questionId: number; selectedIndex: number };
+export type BatchAnswer =
+  | { questionId: number; selectedIndex: number }
+  | { questionId: number; freeText: string };
 
 export class BatchSubmissionError extends Error {
   constructor(
@@ -33,13 +38,85 @@ export async function getAnswerSubmission(submissionId: string, participantId: n
       .select({
         questionId: examSubmissionAnswers.questionId,
         selectedIndex: examSubmissionAnswers.selectedIndex,
+        freeText: examSubmissionAnswers.freeText,
+        answerKind: examSubmissionAnswers.answerKind,
       })
       .from(examSubmissionAnswers)
       .where(eq(examSubmissionAnswers.submissionId, submissionId));
     const answerByQuestion = new Map(storedAnswers.map((answer) => [answer.questionId, answer]));
-    const answers = submission.questionIds.flatMap((questionId) => {
+    type RestoredAnswer = {
+      questionId: number;
+      answerKind: "selected" | "legacy" | "freeText";
+      selectedIndex: number | null;
+      freeText: string | null;
+    };
+    const answers = submission.questionIds.flatMap<RestoredAnswer>((questionId) => {
       const answer = answerByQuestion.get(questionId);
-      return answer ? [answer] : [];
+      if (!answer) return [];
+      if (answer.answerKind === "freeText")
+        return [
+          { questionId, answerKind: "freeText", selectedIndex: null, freeText: answer.freeText },
+        ];
+      return [
+        {
+          questionId,
+          answerKind: answer.answerKind as "selected" | "legacy",
+          selectedIndex: answer.selectedIndex,
+          freeText: null,
+        },
+      ];
+    });
+    return { submissionId: submission.id, revision: submission.revision, answers };
+  });
+}
+
+/** Return the participant's deterministically latest saved answer set. */
+export async function getLatestAnswerSubmission(participantId: number) {
+  return db.transaction(async (tx) => {
+    const [submission] = await tx
+      .select()
+      .from(examAnswerSubmissions)
+      .where(eq(examAnswerSubmissions.participantId, participantId))
+      .orderBy(
+        desc(examAnswerSubmissions.updatedAt),
+        desc(examAnswerSubmissions.revision),
+        desc(examAnswerSubmissions.createdAt),
+        desc(examAnswerSubmissions.id),
+      )
+      .limit(1);
+    if (!submission) return null;
+
+    const storedAnswers = await tx
+      .select({
+        questionId: examSubmissionAnswers.questionId,
+        selectedIndex: examSubmissionAnswers.selectedIndex,
+        freeText: examSubmissionAnswers.freeText,
+        answerKind: examSubmissionAnswers.answerKind,
+      })
+      .from(examSubmissionAnswers)
+      .where(eq(examSubmissionAnswers.submissionId, submission.id));
+    const answerByQuestion = new Map(storedAnswers.map((answer) => [answer.questionId, answer]));
+    type RestoredAnswer = {
+      questionId: number;
+      answerKind: "selected" | "legacy" | "freeText";
+      selectedIndex: number | null;
+      freeText: string | null;
+    };
+    const answers = submission.questionIds.flatMap<RestoredAnswer>((questionId) => {
+      const answer = answerByQuestion.get(questionId);
+      if (!answer) return [];
+      if (answer.answerKind === "freeText")
+        return [
+          { questionId, answerKind: "freeText", selectedIndex: null, freeText: answer.freeText },
+        ];
+      return [
+        {
+          questionId,
+          answerKind: answer.answerKind as "selected" | "legacy",
+          selectedIndex: answer.selectedIndex,
+          freeText: null,
+        },
+      ];
     });
     return { submissionId: submission.id, revision: submission.revision, answers };
   });
@@ -101,7 +178,7 @@ export async function saveAnswerSubmission(input: {
       }
 
       const examSet = await tx
-        .select({ id: examQuestions.id, choices: examQuestions.choices })
+        .select({ id: examQuestions.id, key: examQuestions.key, choices: examQuestions.choices })
         .from(examQuestions)
         .orderBy(asc(examQuestions.id))
         .limit(5);
@@ -119,7 +196,11 @@ export async function saveAnswerSubmission(input: {
       }
       const questions = submission
         ? await tx
-            .select({ id: examQuestions.id, choices: examQuestions.choices })
+            .select({
+              id: examQuestions.id,
+              key: examQuestions.key,
+              choices: examQuestions.choices,
+            })
             .from(examQuestions)
             .where(inArray(examQuestions.id, expectedQuestionIds))
         : examSet;
@@ -127,13 +208,21 @@ export async function saveAnswerSubmission(input: {
       if (
         canonicalAnswers.some((answer) => {
           const question = questionById.get(answer.questionId);
+          if (!question) return true;
+          if (question.key === "it-literacy-005")
+            return (
+              !("freeText" in answer) ||
+              answer.freeText.trim().length === 0 ||
+              answer.freeText.trim().length > 1000
+            );
           return (
-            !question || answer.selectedIndex < 0 || answer.selectedIndex >= question.choices.length
+            !("selectedIndex" in answer) ||
+            answer.selectedIndex < 0 ||
+            answer.selectedIndex >= question.choices.length
           );
         })
-      ) {
-        throw new BatchSubmissionError("Selected answer is outside the question's choices", 400);
-      }
+      )
+        throw new BatchSubmissionError("Answer type does not match its question", 400);
 
       const revision = submission ? submission.revision + 1 : 1;
 
@@ -172,9 +261,44 @@ export async function saveAnswerSubmission(input: {
         canonicalAnswers.map((answer) => ({
           submissionId: input.submissionId,
           questionId: answer.questionId,
-          selectedIndex: answer.selectedIndex,
+          selectedIndex: "selectedIndex" in answer ? answer.selectedIndex : null,
+          freeText: "freeText" in answer ? answer.freeText.trim() : null,
+          answerKind: "freeText" in answer ? "freeText" : "selected",
         })),
       );
+      const freeResponse = canonicalAnswers.find((answer) => "freeText" in answer);
+      if (freeResponse && "freeText" in freeResponse) {
+        await tx
+          .insert(examAnswerAssessments)
+          .values({
+            submissionId: input.submissionId,
+            questionId: freeResponse.questionId,
+            revision,
+            answerText: freeResponse.freeText.trim(),
+            state: "pending",
+            rubricVersion: "customer-data-home-work-v1",
+            attempts: 0,
+            nextAttemptAt: new Date(0),
+          })
+          .onConflictDoUpdate({
+            target: [examAnswerAssessments.submissionId, examAnswerAssessments.questionId],
+            set: {
+              revision,
+              answerText: freeResponse.freeText.trim(),
+              state: "pending",
+              rawScore: null,
+              normalizedScore: null,
+              confidence: null,
+              model: null,
+              attempts: 0,
+              nextAttemptAt: new Date(0),
+              gradedAt: null,
+              errorCode: null,
+              claimToken: null,
+              rubricVersion: "customer-data-home-work-v1",
+            },
+          });
+      }
       await tx.insert(examSubmissionOperations).values({
         operationId: input.operationId,
         submissionId: input.submissionId,
@@ -318,4 +442,137 @@ export async function getStats() {
     todayAnswers,
     todayAccuracy,
   };
+}
+
+/** Process at most five durable jobs sequentially. Each request gets a unique
+ * lease token so an expired worker cannot apply a late response. */
+export async function processDueAssessments(retryFailed = false) {
+  if (retryFailed)
+    await db
+      .update(examAnswerAssessments)
+      .set({
+        state: "pending",
+        attempts: 0,
+        nextAttemptAt: new Date(0),
+        errorCode: null,
+        claimToken: null,
+      })
+      .where(eq(examAnswerAssessments.state, "failed"));
+  let graded = 0;
+  let retried = 0;
+  let failed = 0;
+  for (let index = 0; index < 5; index += 1) {
+    const now = new Date();
+    const [job] = await db
+      .select()
+      .from(examAnswerAssessments)
+      .where(
+        and(
+          or(
+            eq(examAnswerAssessments.state, "pending"),
+            eq(examAnswerAssessments.state, "processing"),
+          ),
+          lte(examAnswerAssessments.nextAttemptAt, now),
+        ),
+      )
+      .limit(1);
+    if (!job) break;
+    const attempts = job.attempts + 1;
+    const claimToken = randomUUID();
+    const claim = await db
+      .update(examAnswerAssessments)
+      .set({
+        state: "processing",
+        attempts,
+        claimToken,
+        nextAttemptAt: new Date(Date.now() + 45_000),
+      })
+      .where(
+        and(
+          eq(examAnswerAssessments.submissionId, job.submissionId),
+          eq(examAnswerAssessments.questionId, job.questionId),
+          eq(examAnswerAssessments.revision, job.revision),
+          eq(examAnswerAssessments.answerText, job.answerText),
+          eq(examAnswerAssessments.state, job.state),
+          lte(examAnswerAssessments.nextAttemptAt, now),
+        ),
+      )
+      .returning({ submissionId: examAnswerAssessments.submissionId });
+    if (!claim.length) continue;
+    try {
+      const result = await gradeFreeResponse(job.answerText);
+      const current = await db
+        .select({ revision: examAnswerSubmissions.revision })
+        .from(examAnswerSubmissions)
+        .where(eq(examAnswerSubmissions.id, job.submissionId));
+      const applied =
+        current[0]?.revision === job.revision
+          ? await db
+              .update(examAnswerAssessments)
+              .set({
+                state: "graded",
+                rawScore: result.score,
+                normalizedScore: result.score / 2,
+                confidence: result.confidence,
+                model: result.model,
+                gradedAt: new Date(),
+                nextAttemptAt: null,
+                errorCode: null,
+                claimToken: null,
+              })
+              .where(
+                and(
+                  eq(examAnswerAssessments.submissionId, job.submissionId),
+                  eq(examAnswerAssessments.questionId, job.questionId),
+                  eq(examAnswerAssessments.revision, job.revision),
+                  eq(examAnswerAssessments.answerText, job.answerText),
+                  eq(examAnswerAssessments.state, "processing"),
+                  eq(examAnswerAssessments.claimToken, claimToken),
+                ),
+              )
+              .returning({ submissionId: examAnswerAssessments.submissionId })
+          : [];
+      if (applied.length) graded += 1;
+    } catch (error) {
+      const code =
+        error instanceof Error && error.message.startsWith("jev_")
+          ? error.message
+          : "jev_transport_error";
+      const permanent = [
+        "jev_validation",
+        "jev_invalid_json",
+        "jev_invalid_response",
+        "jev_not_configured",
+      ].includes(code);
+      const terminal = permanent || attempts >= 8;
+      const nextAttemptAt = terminal
+        ? null
+        : new Date(Date.now() + Math.min(60 * 60_000, 30_000 * 2 ** Math.min(attempts - 1, 7)));
+      const changed = await db
+        .update(examAnswerAssessments)
+        .set({
+          state: terminal ? "failed" : "pending",
+          attempts,
+          nextAttemptAt,
+          errorCode: code,
+          claimToken: null,
+        })
+        .where(
+          and(
+            eq(examAnswerAssessments.submissionId, job.submissionId),
+            eq(examAnswerAssessments.questionId, job.questionId),
+            eq(examAnswerAssessments.revision, job.revision),
+            eq(examAnswerAssessments.answerText, job.answerText),
+            eq(examAnswerAssessments.state, "processing"),
+            eq(examAnswerAssessments.claimToken, claimToken),
+          ),
+        )
+        .returning({ submissionId: examAnswerAssessments.submissionId });
+      if (changed.length) {
+        if (terminal) failed += 1;
+        else retried += 1;
+      }
+    }
+  }
+  return { processed: graded + retried + failed, graded, retried, failed };
 }

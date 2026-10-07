@@ -1,17 +1,20 @@
 import { z } from "zod";
-import { QuizQuestion, AnswerResult } from "@/types/quiz";
-import { answerBatchResultSchema, answerSubmissionSchema } from "./schemas";
+import { QuizQuestion } from "@/types/quiz";
+import {
+  answerBatchResultSchema,
+  answerSubmissionSchema,
+  latestAnswerSubmissionSchema,
+} from "./schemas";
 
 export const quizQuestionSchema = z.object({
   id: z.number(),
   question: z.string(),
   choices: z.array(z.string()),
+  answerType: z.enum(["selected", "freeText"]),
 });
 
 export const answerResultSchema = z.object({
-  isCorrect: z.boolean(),
-  correctIndex: z.number(),
-  explanation: z.string().nullable(),
+  recorded: z.literal(true),
 });
 
 type RequestOptions = { customErrorMsg?: string; allowNotFound?: boolean };
@@ -181,7 +184,7 @@ export async function deleteParticipantSession(): Promise<void> {
 export async function submitAnswer(
   questionId: number,
   selectedIndex: number,
-): Promise<AnswerResult> {
+): Promise<{ recorded: true }> {
   return request(
     "/api/answers",
     {
@@ -198,7 +201,10 @@ export type AnswerBatchInput = {
   submissionId: string;
   operationId: string;
   expectedRevision: number;
-  answers: { questionId: number; selectedIndex: number }[];
+  answers: (
+    | { questionId: number; selectedIndex: number }
+    | { questionId: number; freeText: string }
+  )[];
 };
 
 export type AnswerBatchResult = { submissionId: string; revision: number };
@@ -225,4 +231,14 @@ export async function fetchAnswerSubmission(submissionId: string): Promise<Answe
     "fetch answer submission",
     answerSubmissionSchema,
   );
+}
+
+export async function fetchLatestAnswerSubmission(): Promise<AnswerSubmission | null> {
+  const result = await request(
+    "/api/answers/latest",
+    undefined,
+    "fetch latest answer submission",
+    latestAnswerSubmissionSchema,
+  );
+  return result.submission;
 }

@@ -1,4 +1,4 @@
-import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { sql, desc } from "drizzle-orm";
 
 export const knowledge = sqliteTable("knowledge", {
@@ -131,10 +131,43 @@ export const examSubmissionAnswers = sqliteTable(
     questionId: integer("question_id")
       .notNull()
       .references(() => examQuestions.id, { onDelete: "cascade" }),
-    selectedIndex: integer("selected_index").notNull(),
+    selectedIndex: integer("selected_index"),
+    freeText: text("free_text"),
+    answerKind: text("answer_kind").notNull().default("selected"),
   },
   (t) => ({
     pk: primaryKey({ columns: [t.submissionId, t.questionId] }),
+  }),
+);
+
+// One durable row per current free-response revision. Pending rows are retried
+// by the authenticated internal worker; stale revisions cannot be applied.
+export const examAnswerAssessments = sqliteTable(
+  "exam_answer_assessments",
+  {
+    submissionId: text("submission_id")
+      .notNull()
+      .references(() => examAnswerSubmissions.id, { onDelete: "cascade" }),
+    questionId: integer("question_id")
+      .notNull()
+      .references(() => examQuestions.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    answerText: text("answer_text").notNull(),
+    state: text("state").notNull(),
+    claimToken: text("claim_token"),
+    rawScore: real("raw_score"),
+    normalizedScore: real("normalized_score"),
+    confidence: real("confidence"),
+    model: text("model"),
+    rubricVersion: text("rubric_version").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp" }),
+    gradedAt: integer("graded_at", { mode: "timestamp" }),
+    errorCode: text("error_code"),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.submissionId, t.questionId] }),
+    dueIdx: index("exam_answer_assessments_due_idx").on(t.state, t.nextAttemptAt),
   }),
 );
 
@@ -187,11 +220,18 @@ export const presentationEntries = sqliteTable(
       .references(() => presentationSessions.id, { onDelete: "cascade" }),
     participantId: integer("participant_id").notNull(),
     displayName: text("display_name").notNull(),
-    score: integer("score").notNull(),
+    score: real("score").notNull(),
     rank: integer("rank").notNull(),
-    answers: text("answers", { mode: "json" })
-      .notNull()
-      .$type<{ questionId: number; selectedIndex: number | null }[]>(),
+    answers: text("answers", { mode: "json" }).notNull().$type<
+      {
+        questionId: number;
+        answerKind: "selected" | "freeText" | "legacy" | "unanswered";
+        selectedIndex: number | null;
+        freeText: string | null;
+        rawScore: number | null;
+        normalizedScore: number | null;
+      }[]
+    >(),
   },
   (t) => ({ pk: primaryKey({ columns: [t.sessionId, t.participantId] }) }),
 );

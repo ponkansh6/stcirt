@@ -21,6 +21,7 @@ type Question = {
   choices: string[];
   correctAnswer: string;
   explanation: string | null;
+  answerType?: "selected" | "freeText";
 };
 
 type Entry = { displayName: string; score: number; rank: number };
@@ -413,22 +414,30 @@ export default function PresentationAdmin() {
                   QUESTION {data.questionIndex + 1} <span>/ {data.questionCount}</span>
                 </p>
                 <h3>{currentQuestion.question}</h3>
-                <ol className={styles.choices}>
-                  {currentQuestion.choices.map((choice, index) => (
-                    <li
-                      key={`${index}-${choice}`}
-                      className={
-                        answerVisible && choice === currentQuestion.correctAnswer
-                          ? styles.correctChoice
-                          : ""
-                      }
-                    >
-                      <span>{String.fromCharCode(65 + index)}</span>
-                      {choice}
-                      {answerVisible && choice === currentQuestion.correctAnswer && <b>正解</b>}
-                    </li>
-                  ))}
-                </ol>
+                {currentQuestion.answerType === "freeText" ? (
+                  <section className={styles.explanation}>
+                    <h3>第5問の模範解答</h3>
+                    <p>{currentQuestion.explanation}</p>
+                    <p>類似度の採点結果と得点は発表投影で答え合わせ段階に表示されます。</p>
+                  </section>
+                ) : (
+                  <ol className={styles.choices}>
+                    {currentQuestion.choices.map((choice, index) => (
+                      <li
+                        key={`${index}-${choice}`}
+                        className={
+                          answerVisible && choice === currentQuestion.correctAnswer
+                            ? styles.correctChoice
+                            : ""
+                        }
+                      >
+                        <span>{String.fromCharCode(65 + index)}</span>
+                        {choice}
+                        {answerVisible && choice === currentQuestion.correctAnswer && <b>正解</b>}
+                      </li>
+                    ))}
+                  </ol>
+                )}
                 {answerVisible && (
                   <div className={styles.explanation}>
                     <p className={styles.overline}>HOST NOTE · 解説</p>
@@ -459,7 +468,7 @@ export default function PresentationAdmin() {
                     currentEntries.map((entry) => (
                       <div key={`${entry.rank}-${entry.displayName}`}>
                         <h3>{entry.displayName}</h3>
-                        <p>{entry.score} ポイント</p>
+                        <p>{entry.score.toFixed(2)} ポイント</p>
                         <span className={styles.winnerRank}>{entry.rank}位</span>
                       </div>
                     ))

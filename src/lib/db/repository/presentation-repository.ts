@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   examAnswerSubmissions,
+  examAnswerAssessments,
   examParticipants,
   examQuestions,
   examSubmissionAnswers,
@@ -41,8 +42,30 @@ type AdminPresentation = {
     correctIndex: number;
     correctAnswer: string;
     explanation: string | null;
+    answerType: "selected" | "freeText";
   }[];
-  entries: { displayName: string; score: number; rank: number }[];
+  entries: {
+    displayName: string;
+    score: number;
+    rank: number;
+    answers?: {
+      questionId: number;
+      answerKind: "selected" | "freeText" | "legacy" | "unanswered";
+      selectedIndex: number | null;
+      freeText: string | null;
+      rawScore: number | null;
+      normalizedScore: number | null;
+    }[];
+  }[];
+};
+
+type PresentationAnswerSnapshot = {
+  questionId: number;
+  answerKind: "selected" | "freeText" | "legacy" | "unanswered";
+  selectedIndex: number | null;
+  freeText: string | null;
+  rawScore: number | null;
+  normalizedScore: number | null;
 };
 
 function stageForRank(rank: number): PresentationState {
@@ -96,8 +119,14 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
       correctIndex: question.correctIndex,
       correctAnswer: question.choices[question.correctIndex] ?? "",
       explanation: question.explanation,
+      answerType: question.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
     })),
-    entries: entries.map(({ displayName, score, rank }) => ({ displayName, score, rank })),
+    entries: entries.map(({ displayName, score, rank, answers }) => ({
+      displayName,
+      score,
+      rank,
+      answers,
+    })),
   } satisfies AdminPresentation;
 }
 
@@ -122,12 +151,27 @@ export async function getPublicPresentation() {
         total: admin.questionCount,
         question: row.question,
         choices: row.choices,
+        answerType: row.answerType,
         ...(admin.state === "answer"
-          ? {
-              correctAnswer: row.correctAnswer,
-              correctIndex: row.correctIndex,
-              ...(admin.presentationMode === "full" ? { explanation: row.explanation } : {}),
-            }
+          ? row.answerType === "freeText"
+            ? {
+                expectedAnswer: row.explanation,
+                responses: admin.entries.map((entry) => {
+                  const answer = entry.answers?.find((item) => item.questionId === row.id);
+                  return {
+                    displayName: entry.displayName,
+                    answer: answer?.freeText,
+                    answerKind: answer?.answerKind ?? "unanswered",
+                    similarity: answer?.rawScore,
+                    score: answer?.normalizedScore,
+                  };
+                }),
+              }
+            : {
+                correctAnswer: row.correctAnswer,
+                correctIndex: row.correctIndex,
+                ...(admin.presentationMode === "full" ? { explanation: row.explanation } : {}),
+              }
           : {}),
       };
       return { state: admin.state, question };
@@ -170,38 +214,99 @@ async function startPresentation(
         .from(examSubmissionAnswers)
         .where(inArray(examSubmissionAnswers.submissionId, submissionIds))
     : [];
-  const answersBySubmission = new Map<string, Map<number, number>>();
+  const assessments = submissionIds.length
+    ? await tx
+        .select()
+        .from(examAnswerAssessments)
+        .where(inArray(examAnswerAssessments.submissionId, submissionIds))
+    : [];
+  const assessmentBySubmission = new Map(
+    assessments.map((assessment) => [assessment.submissionId, assessment]),
+  );
+  const answersBySubmission = new Map<string, Map<number, (typeof savedAnswers)[number]>>();
   for (const answer of savedAnswers) {
-    const answers = answersBySubmission.get(answer.submissionId) ?? new Map<number, number>();
-    answers.set(answer.questionId, answer.selectedIndex);
+    const answers =
+      answersBySubmission.get(answer.submissionId) ??
+      new Map<number, (typeof savedAnswers)[number]>();
+    answers.set(answer.questionId, answer);
     answersBySubmission.set(answer.submissionId, answers);
+  }
+
+  const firstSubmissionByParticipant = new Set<number>();
+  for (const submission of submissions) {
+    if (firstSubmissionByParticipant.has(submission.participantId)) continue;
+    firstSubmissionByParticipant.add(submission.participantId);
+    const q5 = currentQuestions.find((question) => question.key === "it-literacy-005");
+    const answer = q5 ? answersBySubmission.get(submission.id)?.get(q5.id) : undefined;
+    if (answer?.answerKind === "freeText") {
+      const assessment = assessmentBySubmission.get(submission.id);
+      if (
+        !assessment ||
+        assessment.revision !== submission.revision ||
+        assessment.state !== "graded"
+      ) {
+        throw new PresentationConflictError(
+          "Free-response assessments must finish before presentation starts",
+        );
+      }
+    }
   }
 
   const scored = participants.map((participant) => {
     const submission = submissions.find((candidate) => {
       if (candidate.participantId !== participant.id) return false;
       const answers = answersBySubmission.get(candidate.id);
+      const assessment = assessmentBySubmission.get(candidate.id);
       return (
         candidate.questionIds.length === currentQuestions.length &&
         currentQuestions.every((question) => candidate.questionIds.includes(question.id)) &&
         answers?.size === currentQuestions.length &&
         currentQuestions.every((question) => {
           const selected = answers?.get(question.id);
-          return selected !== undefined && selected >= 0 && selected < question.choices.length;
+          return question.key === "it-literacy-005"
+            ? selected?.answerKind === "legacy" ||
+                (selected?.answerKind === "freeText" &&
+                  assessment?.revision === candidate.revision &&
+                  assessment.state === "graded")
+            : selected?.answerKind === "selected" &&
+                selected.selectedIndex !== null &&
+                selected.selectedIndex >= 0 &&
+                selected.selectedIndex < question.choices.length;
         })
       );
     });
     const answers = submission ? answersBySubmission.get(submission.id) : undefined;
     const validCompleteSet = Boolean(submission);
-    const answerSnapshot = currentQuestions.map((question) => ({
-      questionId: question.id,
-      selectedIndex: validCompleteSet ? (answers?.get(question.id) ?? null) : null,
-    }));
+    const assessment = submission ? assessmentBySubmission.get(submission.id) : undefined;
+    const answerSnapshot: PresentationAnswerSnapshot[] = currentQuestions.map((question) => {
+      const answer = validCompleteSet ? answers?.get(question.id) : undefined;
+      const answerKind: PresentationAnswerSnapshot["answerKind"] =
+        answer?.answerKind === "selected" ||
+        answer?.answerKind === "freeText" ||
+        answer?.answerKind === "legacy"
+          ? answer.answerKind
+          : "unanswered";
+      return {
+        questionId: question.id,
+        answerKind,
+        selectedIndex: answer?.selectedIndex ?? null,
+        freeText: answer?.freeText ?? null,
+        rawScore:
+          question.key === "it-literacy-005" && assessment?.state === "graded"
+            ? assessment.rawScore
+            : null,
+        normalizedScore:
+          question.key === "it-literacy-005" && assessment?.state === "graded"
+            ? assessment.normalizedScore
+            : null,
+      };
+    });
     const score = validCompleteSet
-      ? currentQuestions.reduce(
-          (sum, question) => sum + Number(answers?.get(question.id) === question.correctIndex),
-          0,
-        )
+      ? currentQuestions.reduce((sum, question) => {
+          if (question.key === "it-literacy-005")
+            return sum + (assessment?.state === "graded" ? Number(assessment.normalizedScore) : 0);
+          return sum + Number(answers?.get(question.id)?.selectedIndex === question.correctIndex);
+        }, 0)
       : 0;
     return { participant, answers: answerSnapshot, score };
   });

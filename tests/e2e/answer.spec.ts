@@ -5,10 +5,16 @@ const questionFor = (id: number) =>
   makeQuestion({
     id,
     question: `Question ${id}?`,
-    choices: [`Option ${id}A`, `Option ${id}B`, `Option ${id}C`, `Option ${id}D`],
+    choices: id === 5 ? [] : [`Option ${id}A`, `Option ${id}B`, `Option ${id}C`, `Option ${id}D`],
+    answerType: id === 5 ? "freeText" : "selected",
   });
 
-type BatchAnswer = { questionId: number; selectedIndex: number };
+type BatchAnswer =
+  | { questionId: number; selectedIndex: number }
+  | { questionId: number; freeText: string };
+type SavedBatchAnswer =
+  | { questionId: number; answerKind: "selected"; selectedIndex: number; freeText: null }
+  | { questionId: number; answerKind: "freeText"; selectedIndex: null; freeText: string };
 type BatchPayload = {
   submissionId: string;
   operationId: string;
@@ -16,10 +22,29 @@ type BatchPayload = {
   answers: BatchAnswer[];
 };
 
-async function mockParticipantSession(page: Page, initialName: string | null = null) {
+async function mockParticipantSession(
+  page: Page,
+  initialName: string | null = null,
+  latestSubmission: {
+    submissionId: string;
+    revision: number;
+    answers: SavedBatchAnswer[];
+  } | null = null,
+) {
+  let activeLatestSubmission = latestSubmission;
   let activeParticipant = initialName ? { id: 17, name: initialName } : null;
+  let activeCredentials = initialName ? { name: initialName, pin: "0123" } : null;
   const loginRequests: unknown[] = [];
   let logoutRequests = 0;
+  let nextParticipantId = 18;
+
+  await page.route("**/api/answers/latest", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ submission: activeLatestSubmission }),
+    });
+  });
 
   await page.route("**/api/participants/session", async (route) => {
     const method = route.request().method();
@@ -34,7 +59,14 @@ async function mockParticipantSession(page: Page, initialName: string | null = n
     if (method === "POST") {
       const body = route.request().postDataJSON();
       loginRequests.push(body);
-      activeParticipant = { id: 17 + loginRequests.length, name: body.name };
+      const sameCredentials =
+        activeCredentials !== null &&
+        activeCredentials.name === body.name &&
+        activeCredentials.pin === body.pin;
+      activeParticipant = sameCredentials
+        ? activeParticipant
+        : { id: nextParticipantId++, name: body.name };
+      activeCredentials = { name: body.name, pin: body.pin };
       await page.context().addCookies([
         {
           name: "stcirt_participant_session",
@@ -60,6 +92,7 @@ async function mockParticipantSession(page: Page, initialName: string | null = n
     if (method === "DELETE") {
       logoutRequests += 1;
       activeParticipant = null;
+      activeCredentials = null;
       await route.fulfill({
         status: 204,
         headers: {
@@ -73,6 +106,9 @@ async function mockParticipantSession(page: Page, initialName: string | null = n
 
   return {
     loginRequests,
+    setLatestSubmission(submission: typeof latestSubmission) {
+      activeLatestSubmission = submission;
+    },
     get logoutRequests() {
       return logoutRequests;
     },
@@ -104,11 +140,13 @@ async function signIn(page: Page, name = "Test Participant", pin = "0123") {
   await page.getByLabel("お名前").fill(name);
   await page.getByLabel("4桁PIN").fill(pin);
   await page.getByRole("button", { name: "はじめる" }).click();
-  await expect(page.getByRole("heading", { name: `${name}さん` })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /受検票|問題が足りません|問題を読み込めませんでした/ }),
+  ).toBeVisible();
 }
 
 async function startQuiz(page: Page) {
-  await page.getByRole("button", { name: "検定をはじめる" }).click();
+  await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
 }
 
 async function selectRadio(page: Page, name: RegExp) {
@@ -117,7 +155,15 @@ async function selectRadio(page: Page, name: RegExp) {
   await expect(radio).toBeChecked();
 }
 
-test("direct answer access requires name and four digit PIN before the explicit start action", async ({
+async function answerQuestion(page: Page, id: number, choice: string) {
+  if (id === 5) {
+    await page.getByRole("textbox", { name: "回答（1000字以内）" }).fill(`自由記載${choice}`);
+  } else {
+    await selectRadio(page, new RegExp(`Option ${id}${choice}`));
+  }
+}
+
+test("direct answer access requires name and four digit PIN before loading the quiz", async ({
   page,
 }) => {
   const { loginRequests } = await mockParticipantSession(page);
@@ -127,15 +173,19 @@ test("direct answer access requires name and four digit PIN before the explicit 
   await page.goto("/answer");
   await expect(page.getByRole("heading", { name: "参加して検定を受ける" })).toBeVisible();
   const sharedHeader = page.locator("body > header");
-  await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
+  await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
   await expect(page.getByLabel("4桁PIN")).toHaveAttribute("inputmode", "numeric");
   await expect(page.getByLabel("4桁PIN")).toHaveAttribute("pattern", "[0-9]{4}");
   await signIn(page, "Aki", "0123");
 
   expect(loginRequests).toEqual([{ name: "Aki", pin: "0123" }]);
-  expect(requests).toEqual([]);
-  await expect(page.getByRole("button", { name: "検定をはじめる" })).toBeVisible();
-  await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
+  expect(requests).toEqual([
+    "/api/questions/next",
+    "/api/questions/next?afterId=1",
+    "/api/questions/next?afterId=2",
+    "/api/questions/next?afterId=3",
+    "/api/questions/next?afterId=4",
+  ]);
   await startQuiz(page);
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   expect(requests).toEqual([
@@ -159,16 +209,13 @@ test("direct answer access explains when five questions are unavailable", async 
 
   await page.goto("/answer");
   await signIn(page);
-  await startQuiz(page);
   await expect(page.getByRole("heading", { name: "問題が足りません" })).toBeVisible();
   await expect(
     page.getByText(
       "全5問をそろえられないため、検定を開始できません。問題が5問そろったら、もう一度お試しください。",
     ),
   ).toBeVisible();
-  await expect(
-    page.locator("body > header").getByRole("link", { name: "ホームへ" }),
-  ).toHaveAttribute("href", "/");
+  await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
 });
 
 test("keeps choices local, blocks an incomplete batch, then confirms all five with the participant cookie", async ({
@@ -178,14 +225,15 @@ test("keeps choices local, blocks an incomplete batch, then confirms all five wi
   await mockQuestions(page);
   const submitted: Array<{ body: BatchPayload; cookie: string | undefined }> = [];
   await page.route("**/api/answers/batch", async (route) => {
+    const body = route.request().postDataJSON() as BatchPayload;
     submitted.push({
-      body: route.request().postDataJSON() as BatchPayload,
+      body,
       cookie: route.request().headers().cookie,
     });
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ submissionId: "00000000-0000-4000-8000-000000000001", revision: 1 }),
+      body: JSON.stringify({ submissionId: body.submissionId, revision: 1 }),
     });
   });
 
@@ -195,15 +243,15 @@ test("keeps choices local, blocks an incomplete batch, then confirms all five wi
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   const confirm = page.getByRole("button", { name: "5問の回答を確定する" });
   await expect(confirm).toBeDisabled();
-  await selectRadio(page, /Option 1B/);
+  await answerQuestion(page, 1, "B");
   expect(submitted).toHaveLength(0);
-  for (let id = 2; id <= 5; id += 1) await selectRadio(page, new RegExp(`Option ${id}B`));
+  for (let id = 2; id <= 5; id += 1) await answerQuestion(page, id, "B");
   await expect(confirm).toBeEnabled();
   await confirm.click();
 
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "設問へ移動" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
+  await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
   await expect(page.getByText(/正解！|不正解|解説:|正答率|合格/)).toHaveCount(0);
   expect(submitted).toHaveLength(1);
   expect(submitted[0].body).toMatchObject({ expectedRevision: 0 });
@@ -211,11 +259,8 @@ test("keeps choices local, blocks an incomplete batch, then confirms all five wi
   expect(
     submitted[0].body.answers.map((answer: { questionId: number }) => answer.questionId),
   ).toEqual([1, 2, 3, 4, 5]);
-  expect(
-    submitted[0].body.answers.every(
-      (answer: { selectedIndex: number }) => answer.selectedIndex >= 0 && answer.selectedIndex < 4,
-    ),
-  ).toBe(true);
+  expect(submitted[0].body.answers.filter((answer) => "selectedIndex" in answer)).toHaveLength(4);
+  expect(submitted[0].body.answers[4]).toMatchObject({ questionId: 5, freeText: "自由記載B" });
   expect(submitted[0].cookie).toContain("stcirt_participant_session=mock-session");
 });
 
@@ -233,20 +278,21 @@ test("locks the full answer sheet while its batch request is pending", async ({ 
     releaseAnswer = resolve;
   });
   await page.route("**/api/answers/batch", async (route) => {
+    const body = route.request().postDataJSON() as BatchPayload;
     answerCalls += 1;
     markRequestStarted();
     await answerGate;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ submissionId: "00000000-0000-4000-8000-000000000001", revision: 1 }),
+      body: JSON.stringify({ submissionId: body.submissionId, revision: 1 }),
     });
   });
 
   await page.goto("/answer");
   await signIn(page);
   await startQuiz(page);
-  for (let id = 1; id <= 5; id += 1) await selectRadio(page, new RegExp(`Option ${id}B`));
+  for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "B");
   const confirm = page.getByRole("button", { name: "5問の回答を確定する" });
   await confirm.click();
   await requestStarted;
@@ -275,19 +321,24 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   await page.route("**/api/questions/next*", async (route) => {
     const url = new URL(route.request().url());
     const afterId = Number(url.searchParams.get("afterId") ?? 0);
+    const id = afterId + 1;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(
         makeQuestion({
-          id: afterId + 1,
+          id,
           question: "長文の設問です。".repeat(20),
-          choices: [
-            "長文の選択肢Aです。".repeat(20),
-            "長文の選択肢Bです。".repeat(20),
-            "長文の選択肢Cです。".repeat(20),
-            "長文の選択肢Dです。".repeat(20),
-          ],
+          choices:
+            id === 5
+              ? []
+              : [
+                  "長文の選択肢Aです。".repeat(20),
+                  "長文の選択肢Bです。".repeat(20),
+                  "長文の選択肢Cです。".repeat(20),
+                  "長文の選択肢Dです。".repeat(20),
+                ],
+          answerType: id === 5 ? "freeText" : "selected",
         }),
       ),
     });
@@ -295,13 +346,13 @@ test("supports native radio keyboard operation and reflows long Japanese text at
 
   await page.goto("/answer");
   await signIn(page);
-  await startQuiz(page);
 
   const group = page.locator("#question-1 fieldset");
   await expect(group).toBeVisible();
   await expect(group.getByRole("radio")).toHaveCount(4);
   const radios = page.getByRole("radio");
-  await expect(radios).toHaveCount(20);
+  await expect(radios).toHaveCount(16);
+  await expect(page.getByRole("textbox", { name: "回答（1000字以内）" })).toBeVisible();
   const firstRadio = radios.nth(0);
   await expect(firstRadio).toHaveAttribute("name", "answer-1");
   await expect(firstRadio).toHaveAttribute("value", "0");
@@ -312,7 +363,7 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   const radioNames = await radios.evaluateAll((inputs) => [
     ...new Set(inputs.map((input) => (input as HTMLInputElement).name)),
   ]);
-  expect(radioNames).toEqual(["answer-1", "answer-2", "answer-3", "answer-4", "answer-5"]);
+  expect(radioNames).toEqual(["answer-1", "answer-2", "answer-3", "answer-4"]);
 
   const navigation = page.getByRole("navigation", { name: "設問へ移動" });
   await firstRadio.locator("xpath=ancestor::label").click();
@@ -368,12 +419,13 @@ test("shows neutral completion after one batch and can reopen the same answer se
   await mockQuestions(page);
   const submissions: BatchPayload[] = [];
   await page.route("**/api/answers/batch", async (route) => {
-    submissions.push(route.request().postDataJSON() as BatchPayload);
+    const request = route.request().postDataJSON() as BatchPayload;
+    submissions.push(request);
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        submissionId: "00000000-0000-4000-8000-000000000001",
+        submissionId: request.submissionId,
         revision: submissions.length,
       }),
     });
@@ -382,7 +434,7 @@ test("shows neutral completion after one batch and can reopen the same answer se
   await page.goto("/answer");
   await signIn(page);
   await startQuiz(page);
-  for (let id = 1; id <= 5; id += 1) await selectRadio(page, new RegExp(`Option ${id}A`));
+  for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "A");
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();
 
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
@@ -395,13 +447,163 @@ test("shows neutral completion after one batch and can reopen the same answer se
   expect(await page.getByRole("radio", { name: /Option 1A/ }).isChecked()).toBe(true);
 });
 
+test("revisits a saved submission, restores it, and posts a correction to the same revisioned submission", async ({
+  page,
+}) => {
+  const submissionId = "00000000-0000-4000-8000-000000000023";
+  const savedAnswers: SavedBatchAnswer[] = [
+    ...[1, 2, 3, 4].map((questionId) => ({
+      questionId,
+      answerKind: "selected" as const,
+      selectedIndex: questionId - 1,
+      freeText: null,
+    })),
+    {
+      questionId: 5,
+      answerKind: "freeText",
+      selectedIndex: null,
+      freeText: "保存済みの回答です。",
+    },
+  ];
+  await mockParticipantSession(page, "Returning Participant", {
+    submissionId,
+    revision: 2,
+    answers: savedAnswers,
+  });
+  await mockQuestions(page);
+  const updates: BatchPayload[] = [];
+  await page.route("**/api/answers/batch", async (route) => {
+    updates.push(route.request().postDataJSON() as BatchPayload);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ submissionId, revision: 3 }),
+    });
+  });
+
+  await page.goto("/answer");
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  const edit = page.getByRole("button", { name: "回答を修正する" });
+  await expect(edit).toBeEnabled();
+  await edit.click();
+  await expect(page.locator("#question-1 input[type=radio]:checked")).toHaveCount(1);
+  const response = page.getByRole("textbox", { name: "回答（1000字以内）" });
+  await expect(response).toHaveValue("保存済みの回答です。");
+
+  await answerQuestion(page, 1, "B");
+  await response.fill("修正後の回答です。");
+  await page.getByRole("button", { name: "修正内容を確定する" }).click();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  expect(updates).toHaveLength(1);
+  expect(updates[0]).toMatchObject({
+    submissionId,
+    expectedRevision: 2,
+  });
+  expect(updates[0]?.answers.find((answer) => answer.questionId === 2)).toMatchObject({
+    questionId: 2,
+    selectedIndex: 1,
+  });
+  expect(updates[0]?.answers.find((answer) => answer.questionId === 5)).toEqual({
+    questionId: 5,
+    freeText: "修正後の回答です。",
+  });
+});
+
+test("restores the latest saved answers after a same-participant re-login on correction 401", async ({
+  page,
+}) => {
+  const initialSubmissionId = "00000000-0000-4000-8000-000000000031";
+  const latestSubmissionId = "00000000-0000-4000-8000-000000000032";
+  const savedAnswers = (questionOneIndex: number, freeText: string): SavedBatchAnswer[] => [
+    ...[1, 2, 3, 4].map((questionId) => ({
+      questionId,
+      answerKind: "selected" as const,
+      selectedIndex: questionId === 1 ? questionOneIndex : questionId - 1,
+      freeText: null,
+    })),
+    {
+      questionId: 5,
+      answerKind: "freeText" as const,
+      selectedIndex: null,
+      freeText,
+    },
+  ];
+  const session = await mockParticipantSession(page, "Returning Participant", {
+    submissionId: initialSubmissionId,
+    revision: 2,
+    answers: savedAnswers(0, "確認済みの保存回答です。"),
+  });
+  await mockQuestions(page);
+  let answerCalls = 0;
+  const posts: BatchPayload[] = [];
+  await page.route("**/api/answers/batch", async (route) => {
+    answerCalls += 1;
+    posts.push(route.request().postDataJSON() as BatchPayload);
+    session.setLatestSubmission({
+      submissionId: latestSubmissionId,
+      revision: 3,
+      answers: savedAnswers(2, "再認証後の保存回答です。"),
+    });
+    if (answerCalls > 1) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ submissionId: latestSubmissionId, revision: 4 }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Authentication required" }),
+    });
+  });
+
+  await page.goto("/answer");
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  await page.getByRole("button", { name: "回答を修正する" }).click();
+  await answerQuestion(page, 1, "B");
+  await page
+    .getByRole("textbox", { name: "回答（1000字以内）" })
+    .fill("送信に失敗した未保存の回答。");
+  await page.getByRole("button", { name: "修正内容を確定する" }).click();
+  await expect(page.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "回答（1000字以内）" })).toHaveValue(
+    "送信に失敗した未保存の回答。",
+  );
+
+  await page.getByLabel("4桁PIN").fill("0123");
+  await page.getByRole("button", { name: "再ログインする" }).click();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  expect(session.loginRequests).toEqual([{ name: "Returning Participant", pin: "0123" }]);
+  expect(answerCalls).toBe(1);
+
+  await page.getByRole("button", { name: "回答を修正する" }).click();
+  await expect(page.locator("#question-1 input[type=radio]:checked")).toHaveCount(1);
+  await expect(page.getByRole("textbox", { name: "回答（1000字以内）" })).toHaveValue(
+    "再認証後の保存回答です。",
+  );
+  await page.getByRole("button", { name: "修正内容を確定する" }).click();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  expect(posts[1]).toMatchObject({ submissionId: latestSubmissionId, expectedRevision: 3 });
+  expect(posts[1]?.answers.find((answer) => answer.questionId === 1)).toEqual({
+    questionId: 1,
+    selectedIndex: 2,
+  });
+  expect(posts[1]?.answers.find((answer) => answer.questionId === 5)).toEqual({
+    questionId: 5,
+    freeText: "再認証後の保存回答です。",
+  });
+});
+
 test("loads the canonical batch after a revision conflict while preserving the local draft", async ({
   page,
 }) => {
   await mockParticipantSession(page);
   await mockQuestions(page);
   const posts: BatchPayload[] = [];
-  let savedAnswers: BatchAnswer[] = [];
+  let savedAnswers: SavedBatchAnswer[] = [];
+  let canonicalSubmissionId: string | undefined;
   await page.route("**/api/answers/batch**", async (route) => {
     const request = route.request();
     if (request.method() === "GET") {
@@ -409,7 +611,7 @@ test("loads the canonical batch after a revision conflict while preserving the l
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          submissionId: "00000000-0000-4000-8000-000000000001",
+          submissionId: canonicalSubmissionId,
           revision: 2,
           answers: savedAnswers,
         }),
@@ -418,7 +620,12 @@ test("loads the canonical batch after a revision conflict while preserving the l
     }
     const body = request.postDataJSON() as BatchPayload;
     if (posts.length === 0) {
-      savedAnswers = body.answers;
+      canonicalSubmissionId = body.submissionId;
+      savedAnswers = body.answers.map((answer) =>
+        "freeText" in answer
+          ? { ...answer, answerKind: "freeText" as const, selectedIndex: null }
+          : { ...answer, answerKind: "selected" as const, freeText: null },
+      );
       posts.push(body);
       await route.fulfill({
         status: 200,
@@ -447,7 +654,7 @@ test("loads the canonical batch after a revision conflict while preserving the l
   await page.goto("/answer");
   await signIn(page);
   await startQuiz(page);
-  for (let id = 1; id <= 5; id += 1) await selectRadio(page, new RegExp(`Option ${id}A`));
+  for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "A");
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
 
@@ -457,12 +664,22 @@ test("loads the canonical batch after a revision conflict while preserving the l
   await page.getByRole("button", { name: "修正内容を確定する" }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "保存済み回答が更新されています。" }),
-  ).toContainText("回答案を保持しました");
+  ).toContainText("回答案は保持しています。内容を確認して、もう一度確定してください。");
   await expect(q1Alternate).toBeChecked();
   expect(posts).toHaveLength(2);
   expect(posts[1]?.submissionId).toBe(posts[0]?.submissionId);
   expect(posts[1]?.expectedRevision).toBe(1);
-  expect(posts[1]?.answers[0]?.selectedIndex).not.toBe(posts[0]?.answers[0]?.selectedIndex);
+  const originalFirstAnswer = posts[0]?.answers[0];
+  const revisedFirstAnswer = posts[1]?.answers[0];
+  if (
+    !originalFirstAnswer ||
+    !revisedFirstAnswer ||
+    !("selectedIndex" in originalFirstAnswer) ||
+    !("selectedIndex" in revisedFirstAnswer)
+  ) {
+    throw new Error("Expected the first answer to be a selected answer");
+  }
+  expect(revisedFirstAnswer.selectedIndex).not.toBe(originalFirstAnswer.selectedIndex);
 
   const editedAnswers = posts[1]!.answers;
   await page.getByRole("button", { name: "修正内容を確定する" }).click();
@@ -470,24 +687,6 @@ test("loads the canonical batch after a revision conflict while preserving the l
   expect(posts).toHaveLength(3);
   expect(posts[2]?.expectedRevision).toBe(2);
   expect(posts[2]?.answers).toEqual(editedAnswers);
-});
-
-test("allows a different participant after ending the current session", async ({ page }) => {
-  const session = await mockParticipantSession(page, "First Participant");
-  await mockQuestions(page);
-
-  await page.goto("/answer");
-  await expect(page.getByRole("heading", { name: "First Participantさん" })).toBeVisible();
-  const sharedHeader = page.locator("body > header");
-  await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
-  await expect(page.getByRole("button", { name: "検定をはじめる" })).toBeVisible();
-  await page.getByRole("button", { name: "別の名前で参加" }).click();
-  await expect(page.getByRole("heading", { name: "参加して検定を受ける" })).toBeVisible();
-  await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveAttribute("href", "/");
-  await signIn(page, "Second Participant", "0042");
-  expect(session.logoutRequests).toBe(1);
-  expect(session.loginRequests).toEqual([{ name: "Second Participant", pin: "0042" }]);
-  await expect(page.getByRole("button", { name: "検定をはじめる" })).toBeVisible();
 });
 
 test("retains all choices through reauthentication and resubmits the batch only after an explicit action", async ({
@@ -506,17 +705,18 @@ test("retains all choices through reauthentication and resubmits the batch only 
       });
       return;
     }
+    const body = route.request().postDataJSON() as BatchPayload;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ submissionId: "00000000-0000-4000-8000-000000000001", revision: 1 }),
+      body: JSON.stringify({ submissionId: body.submissionId, revision: 1 }),
     });
   });
 
   await page.goto("/answer");
-  await expect(page.getByRole("heading", { name: "Akiさん" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "受検票" })).toBeVisible();
   await startQuiz(page);
-  for (let id = 1; id <= 5; id += 1) await selectRadio(page, new RegExp(`Option ${id}C`));
+  for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "C");
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();
   await expect(page.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeVisible();
   await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeChecked();
@@ -557,11 +757,8 @@ test("retries only missing questions after a prefetch network failure", async ({
 
   await page.goto("/answer");
   await signIn(page);
-  await startQuiz(page);
   await expect(page.getByRole("button", { name: "不足分を再読み込み" })).toBeVisible();
-  await expect(
-    page.locator("body > header").getByRole("link", { name: "ホームへ" }),
-  ).toHaveAttribute("href", "/");
+  await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
   await page.getByRole("button", { name: "不足分を再読み込み" }).click();
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   expect(requests).toEqual([

@@ -6,7 +6,12 @@ vi.mock("@/lib/db/repository/question-repository", () => ({
   getNextQuestion: vi.fn(),
 }));
 
-const question = { id: 7, question: "Question?", choices: ["A", "B", "C", "D"] };
+const question = {
+  id: 7,
+  question: "Question?",
+  choices: ["A", "B", "C", "D"],
+  answerType: "selected" as const,
+};
 
 describe("GET /api/questions/next route handler", () => {
   beforeEach(() => {

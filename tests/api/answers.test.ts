@@ -42,7 +42,7 @@ beforeEach(() => {
 });
 
 describe("POST /api/answers route handler", () => {
-  it("1. Valid request -> 200 with grading", async () => {
+  it("1. Valid request -> 200 without exposing grading", async () => {
     vi.mocked(getQuestionById).mockResolvedValueOnce({
       id: 1,
       key: "it-literacy-001",
@@ -63,11 +63,7 @@ describe("POST /api/answers route handler", () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json).toEqual({
-      isCorrect: true,
-      correctIndex: 1,
-      explanation: "Explanation 1",
-    });
+    expect(json).toEqual({ recorded: true });
     expect(recordAnswer).toHaveBeenCalledWith({
       questionId: 1,
       selectedIndex: 1,
@@ -76,7 +72,7 @@ describe("POST /api/answers route handler", () => {
     });
   });
 
-  it("2. Wrong answer -> isCorrect false", async () => {
+  it("2. Wrong answer is logged without returning correctness", async () => {
     vi.mocked(getQuestionById).mockResolvedValueOnce({
       id: 1,
       key: "it-literacy-001",
@@ -97,13 +93,34 @@ describe("POST /api/answers route handler", () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json.isCorrect).toBe(false);
+    expect(json).toEqual({ recorded: true });
     expect(recordAnswer).toHaveBeenCalledWith({
       questionId: 1,
       selectedIndex: 0,
       isCorrect: false,
       participantId: 42,
     });
+  });
+
+  it("rejects a selected answer for the free-response question", async () => {
+    vi.mocked(getQuestionById).mockResolvedValueOnce({
+      id: 5,
+      key: "it-literacy-005",
+      question: "Explain your response",
+      choices: [],
+      correctIndex: 0,
+      explanation: "Model answer",
+      createdAt: new Date(),
+    });
+    const response = await POST(
+      new Request("http://localhost/api/answers", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ questionId: 5, selectedIndex: 0 }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(recordAnswer).not.toHaveBeenCalled();
   });
 
   it("3. Invalid selectedIndex (out of range) -> 400", async () => {

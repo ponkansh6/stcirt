@@ -145,7 +145,7 @@ describe("presentation repository", () => {
 
     const started = await op("start", "start");
     expect(started.questions.map(({ id }) => id)).toEqual([11, 22]);
-    expect(started.entries).toEqual([
+    expect(started.entries).toMatchObject([
       { displayName: "First", score: 2, rank: 1 },
       { displayName: "Tied", score: 2, rank: 1 },
       { displayName: "Third", score: 1, rank: 3 },
@@ -173,7 +173,7 @@ describe("presentation repository", () => {
       question: "Question 11",
       explanation: "Explanation 11",
     });
-    expect(restored.entries[0]).toEqual({ displayName: "First", score: 2, rank: 1 });
+    expect(restored.entries[0]).toMatchObject({ displayName: "First", score: 2, rank: 1 });
   });
 
   it("keeps correct answers private on question stages and exposes only announced winners", async () => {
@@ -189,6 +189,7 @@ describe("presentation repository", () => {
         total: 2,
         question: "Question 11",
         choices: ["Correct 11", "Wrong 11"],
+        answerType: "selected",
       },
     });
     expect(JSON.stringify(question)).not.toContain("correctAnswer");

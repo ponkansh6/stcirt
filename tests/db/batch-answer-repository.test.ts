@@ -19,6 +19,7 @@ vi.mock("@/lib/db", async (importOriginal) => {
 import {
   BatchSubmissionError,
   getAnswerSubmission,
+  getLatestAnswerSubmission,
   saveAnswerSubmission,
 } from "@/lib/db/repository/answer-repository";
 
@@ -106,12 +107,41 @@ describe("saveAnswerSubmission", () => {
     expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(5);
     expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);
     expect(await testDb.db.select().from(schema.examAnswerLogs)).toHaveLength(0);
-    await expect(getAnswerSubmission(submissionId, participantId)).resolves.toEqual({
+    await expect(getAnswerSubmission(submissionId, participantId)).resolves.toMatchObject({
       submissionId,
       revision: 1,
-      answers,
+      answers: answers.map((answer) => ({ ...answer, answerKind: "selected", freeText: null })),
     });
     await expect(getAnswerSubmission(submissionId, participantId + 1)).resolves.toBeNull();
+  });
+
+  it("selects the participant's latest submission with the documented stable ordering", async () => {
+    const updatedAt = new Date("2026-10-01T00:00:00.000Z");
+    await testDb.db.insert(schema.examAnswerSubmissions).values([
+      {
+        id: "00000000-0000-4000-8000-000000000010",
+        participantId,
+        questionIds: [1, 2, 3, 4, 5],
+        revision: 1,
+        createdAt: updatedAt,
+        updatedAt,
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000011",
+        participantId,
+        questionIds: [1, 2, 3, 4, 5],
+        revision: 2,
+        createdAt: updatedAt,
+        updatedAt,
+      },
+    ]);
+
+    await expect(getLatestAnswerSubmission(participantId)).resolves.toMatchObject({
+      submissionId: "00000000-0000-4000-8000-000000000011",
+      revision: 2,
+      answers: [],
+    });
+    await expect(getLatestAnswerSubmission(participantId + 1)).resolves.toBeNull();
   });
 
   it("revises the same five rows and rejects a payload mismatch or stale revision", async () => {

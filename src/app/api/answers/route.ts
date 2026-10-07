@@ -39,6 +39,9 @@ export const POST = withErrorHandling(async function (request: Request) {
   if (!question) {
     return fail("Question not found", 404);
   }
+  if (question.choices.length === 0 || selectedIndex >= question.choices.length) {
+    return fail("Invalid parameters", 400);
+  }
 
   const isCorrect = selectedIndex === question.correctIndex;
 
@@ -49,9 +52,5 @@ export const POST = withErrorHandling(async function (request: Request) {
     participantId: session.id,
   });
 
-  return ok({
-    isCorrect,
-    correctIndex: question.correctIndex,
-    explanation: question.explanation,
-  });
+  return ok({ recorded: true });
 }, "POST /api/answers");

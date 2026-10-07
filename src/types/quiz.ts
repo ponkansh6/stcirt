@@ -6,6 +6,7 @@ export interface QuizQuestion {
   id: number;
   question: string;
   choices: string[];
+  answerType: "selected" | "freeText";
 }
 
 export interface AnswerResult {

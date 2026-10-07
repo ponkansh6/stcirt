@@ -26,7 +26,15 @@ export const submitAnswerBatchSchema = z
               .min(0)
               .max(QUIZ_CHOICES_PER_QUESTION - 1),
           })
-          .strict(),
+          .strict()
+          .or(
+            z
+              .object({
+                questionId: z.number().int().positive(),
+                freeText: z.string().trim().min(1).max(1000),
+              })
+              .strict(),
+          ),
       )
       .length(5),
   })
@@ -45,11 +53,13 @@ export const answerSubmissionSchema = answerBatchResultSchema.extend({
   answers: z.array(
     z.object({
       questionId: z.number().int().positive(),
-      selectedIndex: z
-        .number()
-        .int()
-        .min(0)
-        .max(QUIZ_CHOICES_PER_QUESTION - 1),
+      answerKind: z.enum(["selected", "freeText", "legacy"]),
+      selectedIndex: z.number().int().nullable(),
+      freeText: z.string().nullable(),
     }),
   ),
+});
+
+export const latestAnswerSubmissionSchema = z.object({
+  submission: answerSubmissionSchema.nullable(),
 });

@@ -5,7 +5,6 @@ import { useQuizSession } from "./use-quiz-session";
 import ChoiceButton from "@/components/ChoiceButton";
 import { choiceLabel } from "@/lib/choice-label";
 import { Button } from "@/components/Button";
-import { NavLink } from "@/components/NavLink";
 import { Spinner } from "@/components/Spinner";
 import { ApiError } from "@/lib/api/client";
 import { HeaderPortal } from "./header-portal";
@@ -14,35 +13,30 @@ export default function QuizRunner() {
   const {
     access,
     phase,
+    restoreError,
     quizzes,
     selections,
+    freeResponses,
+    legacyAnswerIds,
     savedSelections,
     answeredCount,
-    start,
     select,
+    setFreeResponse,
     saveAnswers,
     refreshSavedAnswers,
     editAnswers,
     retryLoad,
+    retrySubmissionCheck,
     login,
-    switchParticipant,
   } = useQuizSession();
   const questionRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
-  const [switchError, setSwitchError] = useState<string | null>(null);
   const isSubmitting = phase.kind === "submitting";
   const isRefreshing = phase.kind === "refreshing";
-  const unanswered = quizzes.filter(({ question }) => selections[question.id] === undefined);
-
-  async function handleSwitchParticipant() {
-    setSwitchError(null);
-    try {
-      await switchParticipant();
-    } catch (error) {
-      setSwitchError(
-        error instanceof Error ? error.message : "参加状態を切り替えられませんでした。",
-      );
-    }
-  }
+  const unanswered = quizzes.filter(({ question }) =>
+    question.answerType === "freeText"
+      ? !freeResponses[question.id]?.trim()
+      : selections[question.id] === undefined,
+  );
 
   function jumpToQuestion(questionId: number) {
     questionRefs.current[questionId]?.scrollIntoView({ behavior: "auto", block: "start" });
@@ -51,156 +45,135 @@ export default function QuizRunner() {
 
   if (access.kind === "checking") {
     return (
-      <>
-        <HeaderHomeLink />
-        <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
-          <p className="w-full text-center text-muted" role="status" aria-live="polite">
-            参加状態を確認しています…
-          </p>
-        </main>
-      </>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
+        <p className="w-full text-center text-muted" role="status" aria-live="polite">
+          参加状態を確認しています…
+        </p>
+      </main>
     );
   }
 
   if (access.kind === "login") {
     return (
-      <>
-        <HeaderHomeLink />
-        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-          <ParticipantCard>
-            <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-            <h1 className="text-3xl font-bold tracking-tight">参加して検定を受ける</h1>
-            <p className="mt-4 max-w-xl leading-relaxed text-muted">
-              回答を記録するため、お名前と主催者から案内された4桁PINを入力してください。
-            </p>
-            <ParticipantForm onLogin={login} message={access.message} />
-          </ParticipantCard>
-        </main>
-      </>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+        <ParticipantCard>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <h1 className="text-3xl font-bold tracking-tight">参加して検定を受ける</h1>
+          <p className="mt-4 max-w-xl leading-relaxed text-muted">
+            回答を記録するため、お名前と主催者から案内された4桁PINを入力してください。
+          </p>
+          <ParticipantForm onLogin={login} message={access.message} />
+        </ParticipantCard>
+      </main>
     );
   }
 
   if (access.kind === "switching") {
     return (
-      <>
-        <HeaderHomeLink />
-        <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
-          <p className="w-full text-center text-muted" role="status" aria-live="polite">
-            参加状態を切り替えています…
-          </p>
-        </main>
-      </>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
+        <p className="w-full text-center text-muted" role="status" aria-live="polite">
+          参加状態を切り替えています…
+        </p>
+      </main>
     );
   }
 
-  if (access.kind === "ready" && phase.kind === "ready") {
+  if (phase.kind === "checking-submission" || (phase.kind === "ready" && access.kind === "ready")) {
     return (
-      <>
-        <HeaderHomeLink />
-        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-          <ParticipantCard>
-            <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-            <h1 className="text-3xl font-bold tracking-tight">{access.participant.name}さん</h1>
-            <p className="mt-3 text-muted">
-              全5問に回答し、最後にまとめて確定します。回答は確定前に何度でも見直せます。
-            </p>
-            {switchError && (
-              <p className="mt-4 text-sm font-medium text-error" role="alert">
-                {switchError}
-              </p>
-            )}
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Button onClick={start}>検定をはじめる</Button>
-              <Button onClick={() => void handleSwitchParticipant()} variant="ghost">
-                別の名前で参加
-              </Button>
-            </div>
-          </ParticipantCard>
-        </main>
-      </>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
+        <p className="w-full text-center text-muted" role="status" aria-live="polite">
+          保存済みの回答状況を確認しています…
+        </p>
+      </main>
+    );
+  }
+
+  if (phase.kind === "submission-error") {
+    return (
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+        <ParticipantCard>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <h1 className="text-3xl font-bold tracking-tight">回答状況を確認できませんでした</h1>
+          <p className="mt-4 text-muted" role="alert">
+            {phase.message}
+          </p>
+          <Button onClick={retrySubmissionCheck} className="mt-8">
+            もう一度確認する
+          </Button>
+        </ParticipantCard>
+      </main>
     );
   }
 
   if (phase.kind === "loading") {
     return (
-      <>
-        <HeaderHomeLink />
-        <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
-          <p className="w-full text-center text-muted" role="status" aria-live="polite">
-            全5問を準備しています…
-          </p>
-        </main>
-      </>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
+        <p className="w-full text-center text-muted" role="status" aria-live="polite">
+          全5問を準備しています…
+        </p>
+      </main>
     );
   }
 
   if (phase.kind === "shortage") {
     return (
-      <>
-        <HeaderHomeLink />
-        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-          <ParticipantCard>
-            <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-            <h1 className="text-3xl font-bold tracking-tight">問題が足りません</h1>
-            <p className="mt-4 text-muted">
-              全5問をそろえられないため、検定を開始できません。問題が5問そろったら、もう一度お試しください。
-            </p>
-          </ParticipantCard>
-        </main>
-      </>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+        <ParticipantCard>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <h1 className="text-3xl font-bold tracking-tight">問題が足りません</h1>
+          <p className="mt-4 text-muted">
+            全5問をそろえられないため、検定を開始できません。問題が5問そろったら、もう一度お試しください。
+          </p>
+        </ParticipantCard>
+      </main>
     );
   }
 
   if (phase.kind === "load-error") {
     const hasLoadedQuestions = quizzes.length > 0;
     return (
-      <>
-        <HeaderHomeLink />
-        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-          <ParticipantCard>
-            <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-            <h1 className="text-3xl font-bold tracking-tight">問題を読み込めませんでした</h1>
-            <p className="mt-4 text-muted" role="alert">
-              {phase.message}
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+        <ParticipantCard>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <h1 className="text-3xl font-bold tracking-tight">問題を読み込めませんでした</h1>
+          <p className="mt-4 text-muted" role="alert">
+            {phase.message}
+          </p>
+          {hasLoadedQuestions && (
+            <p className="mt-3 text-sm leading-relaxed text-muted" role="status" aria-live="polite">
+              取得済みの{quizzes.length}問は保持しています。不足分から再開できます。
             </p>
-            {hasLoadedQuestions && (
-              <p
-                className="mt-3 text-sm leading-relaxed text-muted"
-                role="status"
-                aria-live="polite"
-              >
-                取得済みの{quizzes.length}問は保持しています。不足分から再開できます。
-              </p>
-            )}
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Button onClick={retryLoad}>
-                {hasLoadedQuestions ? "不足分を再読み込み" : "もう一度読み込む"}
-              </Button>
-            </div>
-          </ParticipantCard>
-        </main>
-      </>
+          )}
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <Button onClick={retryLoad}>
+              {hasLoadedQuestions ? "不足分を再読み込み" : "もう一度読み込む"}
+            </Button>
+          </div>
+        </ParticipantCard>
+      </main>
     );
   }
 
   if (phase.kind === "complete") {
     return (
-      <>
-        <HeaderHomeLink />
-        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-          <ParticipantCard>
-            <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-            <h1 className="text-3xl font-bold tracking-tight">回答完了</h1>
-            <p className="mt-4 text-muted">全5問の回答を記録しました。</p>
-            <p className="mt-2 text-sm leading-relaxed text-muted">
-              回答を見直す場合は、同じ5問の回答を復元して修正できます。
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+        <ParticipantCard>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <h1 className="text-3xl font-bold tracking-tight">回答完了</h1>
+          <p className="mt-4 text-muted">全5問の回答を記録しました。</p>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            回答を見直す場合は、同じ5問の回答を復元して修正できます。
+          </p>
+          {restoreError && (
+            <p className="mt-4 text-sm font-medium text-error" role="alert">
+              {restoreError}
             </p>
-            <Button onClick={editAnswers} className="mt-8">
-              回答を修正する
-            </Button>
-          </ParticipantCard>
-        </main>
-      </>
+          )}
+          <Button onClick={editAnswers} className="mt-8" disabled={Boolean(restoreError)}>
+            回答を修正する
+          </Button>
+        </ParticipantCard>
+      </main>
     );
   }
 
@@ -208,7 +181,9 @@ export default function QuizRunner() {
   const refreshRequired = phase.kind === "answering" && phase.refreshRequired;
   const isLocked = isSubmitting || isRefreshing || retryRequired || refreshRequired;
   const authExpired = access.kind === "reauthentication";
-  const hasSavedAnswers = Object.keys(savedSelections).length === 5;
+  const hasSavedAnswers =
+    Object.keys(savedSelections).length ===
+    quizzes.filter(({ question }) => question.answerType === "selected").length;
 
   return (
     <>
@@ -216,7 +191,10 @@ export default function QuizRunner() {
         <nav aria-label="設問へ移動">
           <ol className="grid grid-cols-5 gap-2">
             {quizzes.map(({ question }, index) => {
-              const answered = selections[question.id] !== undefined;
+              const answered =
+                question.answerType === "freeText"
+                  ? Boolean(freeResponses[question.id]?.trim())
+                  : selections[question.id] !== undefined;
               return (
                 <li key={question.id}>
                   <a
@@ -324,20 +302,48 @@ export default function QuizRunner() {
                     <span className="sr-only">第{index + 1}問 / 全5問：</span>
                     {question.question}
                   </legend>
-                  {shuffled.choices.map((choice, choiceIndex) => (
-                    <ChoiceButton
-                      key={choiceIndex}
-                      id={`answer-${question.id}-${choiceIndex}`}
-                      name={`answer-${question.id}`}
-                      value={String(choiceIndex)}
-                      label={choiceLabel(choiceIndex)}
-                      text={choice}
-                      variant={selectedIndex === choiceIndex ? "selected" : "idle"}
-                      checked={selectedIndex === choiceIndex}
-                      onChange={() => select(question.id, choiceIndex)}
-                      disabled={isLocked}
-                    />
-                  ))}
+                  {question.answerType === "freeText" ? (
+                    <div>
+                      <label
+                        htmlFor={`answer-${question.id}`}
+                        className="mb-2 block text-sm font-semibold"
+                      >
+                        回答（1000字以内）
+                      </label>
+                      {legacyAnswerIds.includes(question.id) && (
+                        <p className="mb-3 text-sm text-muted">
+                          以前の保存回答は旧選択式です。自由記載へ変換・再採点せず、以下に新しい回答を入力できます。
+                        </p>
+                      )}
+                      <textarea
+                        id={`answer-${question.id}`}
+                        name={`answer-${question.id}`}
+                        maxLength={1000}
+                        rows={6}
+                        value={freeResponses[question.id] ?? ""}
+                        onChange={(event) =>
+                          setFreeResponse(question.id, event.currentTarget.value)
+                        }
+                        className="min-h-36 w-full resize-y rounded-lg border border-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+                        disabled={isLocked}
+                      />
+                    </div>
+                  ) : (
+                    shuffled.choices.map((choice, choiceIndex) => (
+                      <ChoiceButton
+                        key={choiceIndex}
+                        id={`answer-${question.id}-${choiceIndex}`}
+                        name={`answer-${question.id}`}
+                        value={String(choiceIndex)}
+                        label={choiceLabel(choiceIndex)}
+                        text={choice}
+                        variant={selectedIndex === choiceIndex ? "selected" : "idle"}
+                        checked={selectedIndex === choiceIndex}
+                        onChange={() => select(question.id, choiceIndex)}
+                        disabled={isLocked}
+                      />
+                    ))
+                  )}
                 </fieldset>
               </section>
             );
@@ -434,21 +440,6 @@ export default function QuizRunner() {
         </section>
       </main>
     </>
-  );
-}
-
-function HeaderHomeLink() {
-  return (
-    <HeaderPortal>
-      <NavLink
-        href="/"
-        variant="bare"
-        className="font-bold text-lg hover:text-primary transition duration-200 ease-[var(--ease-out-soft)] motion-safe:active:scale-[0.98]"
-        pendingClassName="opacity-50"
-      >
-        ホームへ
-      </NavLink>
-    </HeaderPortal>
   );
 }
 

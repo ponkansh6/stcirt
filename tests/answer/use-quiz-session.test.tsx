@@ -2,16 +2,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useQuizSession } from "@/app/answer/use-quiz-session";
 
+vi.mock("@/lib/api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/client")>();
+  return { ...actual, fetchLatestAnswerSubmission: vi.fn(async () => null) };
+});
+import { fetchLatestAnswerSubmission } from "@/lib/api/client";
+
 describe("useQuizSession hook", () => {
   const participant = { id: 7, name: "参加者" };
   const question = (id: number) => ({
     id,
     question: `Question ${id}?`,
     choices: ["A", "B", "C", "D"],
+    answerType: "selected" as const,
   });
   const submissionId = "00000000-0000-4000-8000-000000000001";
 
   beforeEach(() => {
+    vi.mocked(fetchLatestAnswerSubmission).mockClear();
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue(null);
     let uuidSequence = 0;
     vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(
       () => `00000000-0000-4000-8000-${String(++uuidSequence).padStart(12, "0")}`,
@@ -22,6 +31,7 @@ describe("useQuizSession hook", () => {
     overrides: {
       batch?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
       getSubmission?: () => unknown | Promise<unknown>;
+      freeTextFifth?: boolean;
     } = {},
   ) {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -30,7 +40,13 @@ describe("useQuizSession hook", () => {
       }
       if (url.startsWith("/api/questions/next")) {
         const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return { ok: true, json: async () => question(id) };
+        return {
+          ok: true,
+          json: async () =>
+            id === 5 && overrides.freeTextFifth
+              ? { ...question(id), choices: [], answerType: "freeText" }
+              : question(id),
+        };
       }
       if (url.startsWith("/api/answers/batch") && !init?.method) {
         const result = await overrides.getSubmission?.();
@@ -50,7 +66,6 @@ describe("useQuizSession hook", () => {
   async function start() {
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("ready"));
-    act(() => hook.result.current.start());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
     return hook;
   }
@@ -84,7 +99,6 @@ describe("useQuizSession hook", () => {
 
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("ready"));
-    act(() => hook.result.current.start());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
     act(() => hook.result.current.retryLoad());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
@@ -204,7 +218,12 @@ describe("useQuizSession hook", () => {
       getSubmission: () => ({
         submissionId,
         revision: 1,
-        answers: [1, 2, 3, 4, 5].map((questionId) => ({ questionId, selectedIndex: 1 })),
+        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+          questionId,
+          answerKind: "selected",
+          selectedIndex: 1,
+          freeText: null,
+        })),
       }),
     });
     const { result } = await start();
@@ -231,6 +250,7 @@ describe("useQuizSession hook", () => {
     expect(revisedBody.answers[0].selectedIndex).toBe(1);
 
     // Simulate an optimistic concurrency conflict, followed by restoring canonical display indices.
+    let conflictSubmissionId = "";
     const conflictFetch = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
@@ -244,15 +264,21 @@ describe("useQuizSession hook", () => {
         return {
           ok: true,
           json: async () => ({
-            submissionId,
+            submissionId: conflictSubmissionId,
             revision: 3,
-            answers: [1, 2, 3, 4, 5].map((questionId) => ({ questionId, selectedIndex: 3 })),
+            answers: [1, 2, 3, 4, 5].map((questionId) => ({
+              questionId,
+              answerKind: "selected",
+              selectedIndex: 3,
+              freeText: null,
+            })),
           }),
         };
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", conflictFetch);
     const conflictHook = await start();
+    conflictSubmissionId = conflictHook.result.current.submissionId!;
     await answerAll(conflictHook.result);
     await act(async () => conflictHook.result.current.saveAnswers());
     expect(conflictHook.result.current.phase.kind).toBe("answering");
@@ -267,6 +293,79 @@ describe("useQuizSession hook", () => {
         String(url).startsWith("/api/answers/batch?submissionId="),
       ),
     ).toBe(true);
+  });
+
+  it("replaces a legacy Q5 answer with new free text when revising a saved submission", async () => {
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue({
+      submissionId,
+      revision: 4,
+      answers: [
+        ...[1, 2, 3, 4].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 1,
+          freeText: null,
+        })),
+        {
+          questionId: 5,
+          answerKind: "legacy" as const,
+          selectedIndex: 2,
+          freeText: null,
+        },
+      ],
+    });
+    const fetchMock = setupFetch({
+      freeTextFifth: true,
+      batch: () => ({ submissionId, revision: 5 }),
+    });
+    const { result } = renderHook(() => useQuizSession());
+
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    expect(result.current.submissionId).toBe(submissionId);
+    expect(result.current.revision).toBe(4);
+    expect(result.current.legacyAnswerIds).toEqual([5]);
+    expect(result.current.freeResponses[5]).toBeUndefined();
+
+    act(() => result.current.editAnswers());
+    expect(result.current.phase.kind).toBe("answering");
+    act(() => result.current.setFreeResponse(5, "新しい自由記載回答"));
+    await act(async () => result.current.saveAnswers());
+
+    expect(result.current.phase.kind).toBe("complete");
+    expect(result.current.revision).toBe(5);
+    const posts = fetchMock.mock.calls.filter(
+      ([url, init]) => url === "/api/answers/batch" && init?.method === "POST",
+    );
+    expect(posts).toHaveLength(1);
+    const body = JSON.parse(String(posts[0]?.[1]?.body));
+    expect(body).toMatchObject({ submissionId, expectedRevision: 4 });
+    expect(body.answers[4]).toEqual({ questionId: 5, freeText: "新しい自由記載回答" });
+    expect(body.answers[4]).not.toHaveProperty("selectedIndex");
+    expect(body.answers[4]).not.toHaveProperty("answerKind");
+  });
+
+  it("locks correction when a successful POST returns a different submission ID", async () => {
+    const fetchMock = setupFetch({
+      batch: (body) =>
+        body.expectedRevision === 0
+          ? { submissionId, revision: 1 }
+          : { submissionId: "00000000-0000-4000-8000-000000000002", revision: 2 },
+    });
+    const { result } = await start();
+    await answerAll(result);
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase).toEqual({ kind: "complete" });
+
+    act(() => result.current.editAnswers());
+    act(() => result.current.select(1, 0));
+    await act(async () => result.current.saveAnswers());
+
+    expect(result.current.phase).toEqual({ kind: "complete" });
+    expect(result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(result.current.revision).toBe(1);
+    act(() => result.current.editAnswers());
+    expect(result.current.phase).toEqual({ kind: "complete" });
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/answers/batch")).toHaveLength(2);
   });
 
   it("shows login after session lookup failure and keeps login errors visible", async () => {
@@ -306,7 +405,6 @@ describe("useQuizSession hook", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.access.kind).toBe("ready"));
-    act(() => result.current.start());
     await waitFor(() => expect(result.current.phase.kind).toBe("shortage"));
     expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([1]);
   });
@@ -352,29 +450,118 @@ describe("useQuizSession hook", () => {
     expect(attempts[0]?.operationId).not.toBe(attempts[1]?.operationId);
   });
 
-  it("requires reauthentication after an unauthorized batch response while retaining the draft", async () => {
+  it("retains Q5 free text and resends the same operation after same-participant reauthentication", async () => {
+    const attempts: Record<string, unknown>[] = [];
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && init?.method === "POST")
+        return {
+          ok: true,
+          json: async () => ({ participant, expiresAt: "2030-01-01T00:00:00.000Z" }),
+        };
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url.startsWith("/api/questions/next")) {
+        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
+        return {
+          ok: true,
+          json: async () =>
+            id === 5
+              ? { ...question(5), choices: [], answerType: "freeText" as const }
+              : question(id),
+        };
+      }
+      if (url === "/api/answers/batch" && init?.method === "POST") {
+        attempts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        if (attempts.length > 1)
+          return { ok: true, json: async () => ({ submissionId, revision: 1 }) };
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ message: "ログイン期限が切れました" }),
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = await start();
+    for (const quiz of result.current.quizzes.filter(
+      ({ question: item }) => item.answerType === "selected",
+    )) {
+      act(() => result.current.select(quiz.question.id, 2));
+    }
+    act(() => result.current.setFreeResponse(5, "  監査済みの端末を利用します。  "));
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.access).toEqual({ kind: "reauthentication", participant });
+    expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
+    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.freeResponses[5]).toBe("  監査済みの端末を利用します。  ");
+
+    await act(async () => result.current.login("参加者", "1234"));
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
+    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.freeResponses[5]).toBe("  監査済みの端末を利用します。  ");
+    expect(vi.mocked(fetchLatestAnswerSubmission)).toHaveBeenCalledTimes(2);
+
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase.kind).toBe("complete");
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]?.operationId).toBe(attempts[0]?.operationId);
+    expect(attempts[1]?.answers).toEqual(attempts[0]?.answers);
+    expect(attempts[1]?.answers).toContainEqual({
+      questionId: 5,
+      freeText: "監査済みの端末を利用します。",
+    });
+  });
+
+  it("clears the previous participant draft when reauthentication succeeds as another participant", async () => {
+    const otherParticipant = { id: 8, name: "別の参加者" };
+    const attempts: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && init?.method === "POST")
+        return {
+          ok: true,
+          json: async () => ({
+            participant: otherParticipant,
+            expiresAt: "2030-01-01T00:00:00.000Z",
+          }),
+        };
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
       if (url.startsWith("/api/questions/next")) {
         const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
         return { ok: true, json: async () => question(id) };
       }
-      if (url === "/api/answers/batch" && init?.method === "POST")
-        return {
-          ok: false,
-          status: 401,
-          json: async () => ({ message: "ログイン期限が切れました" }),
-        };
+      if (url === "/api/answers/batch" && init?.method === "POST") {
+        attempts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return attempts.length === 1
+          ? { ok: false, status: 401, json: async () => ({ message: "expired" }) }
+          : { ok: true, json: async () => ({ submissionId, revision: 1 }) };
+      }
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
     const { result } = await start();
     await answerAll(result);
+    const previousSubmissionId = result.current.submissionId;
     await act(async () => result.current.saveAnswers());
     expect(result.current.access).toEqual({ kind: "reauthentication", participant });
-    expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
-    expect(result.current.answeredCount).toBe(5);
+
+    await act(async () => result.current.login("別の参加者", "5678"));
+    await waitFor(() =>
+      expect(result.current.access).toEqual({ kind: "ready", participant: otherParticipant }),
+    );
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    expect(result.current.selections).toEqual({});
+    expect(result.current.answeredCount).toBe(0);
+    expect(result.current.submissionId).not.toBe(previousSubmissionId);
+    expect(vi.mocked(fetchLatestAnswerSubmission)).toHaveBeenCalledTimes(2);
+
+    await answerAll(result);
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase.kind).toBe("complete");
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]?.operationId).not.toBe(attempts[0]?.operationId);
   });
 
   it("retains a draft when conflict refresh fails, then refreshes saved answers on request", async () => {
@@ -402,7 +589,12 @@ describe("useQuizSession hook", () => {
           json: async () => ({
             submissionId,
             revision: 4,
-            answers: [1, 2, 3, 4, 5].map((questionId) => ({ questionId, selectedIndex: 0 })),
+            answers: [1, 2, 3, 4, 5].map((questionId) => ({
+              questionId,
+              answerKind: "selected",
+              selectedIndex: 0,
+              freeText: null,
+            })),
           }),
         };
       }
@@ -456,10 +648,10 @@ describe("useQuizSession hook", () => {
   });
 
   it("ignores actions that do not match the current session phase", async () => {
+    vi.mocked(fetchLatestAnswerSubmission).mockReset().mockResolvedValue(null);
     const fetchMock = setupFetch();
     const { result } = renderHook(() => useQuizSession());
     act(() => {
-      result.current.start();
       result.current.select(1, 0);
       void result.current.saveAnswers();
       void result.current.refreshSavedAnswers();
@@ -471,15 +663,18 @@ describe("useQuizSession hook", () => {
       fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/questions/next")),
     ).toBe(false);
     await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    await waitFor(() => expect(result.current.quizzes).toHaveLength(5));
+    const initialPhase = result.current.phase;
+    const initialSelections = result.current.selections;
     act(() => {
-      result.current.select(1, 0);
       void result.current.saveAnswers();
       void result.current.refreshSavedAnswers();
       result.current.editAnswers();
       result.current.retryLoad();
     });
-    expect(result.current.phase.kind).toBe("ready");
-    expect(result.current.selections).toEqual({});
+    expect(result.current.phase).toEqual(initialPhase);
+    expect(result.current.selections).toEqual(initialSelections);
   });
 
   it("blocks selection while a submit is pending", async () => {
@@ -500,13 +695,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.phase.kind).toBe("complete");
   });
 
-  it("rejects malformed saved answer counts, unknown questions, and duplicate question IDs", async () => {
-    const malformedPayloads = [
-      [1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
-      [1, 2, 3, 4, 99].map((questionId) => ({ questionId, selectedIndex: 0 })),
-      [1, 1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
-    ];
-    let payloadIndex = 0;
+  it("keeps completion locked when conflict recovery returns a different submission", async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
@@ -520,9 +709,14 @@ describe("useQuizSession hook", () => {
         return {
           ok: true,
           json: async () => ({
-            submissionId,
-            revision: 2 + payloadIndex,
-            answers: malformedPayloads[payloadIndex++]!,
+            submissionId: "00000000-0000-4000-8000-000000000002",
+            revision: 2,
+            answers: [1, 2, 3, 4, 5].map((questionId) => ({
+              questionId,
+              answerKind: "selected",
+              selectedIndex: 0,
+              freeText: null,
+            })),
           }),
         };
       throw new Error(`Unexpected request: ${url}`);
@@ -531,21 +725,11 @@ describe("useQuizSession hook", () => {
     const { result } = await start();
     await answerAll(result);
     await act(async () => result.current.saveAnswers());
-    expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
-    expect(result.current.phase).toMatchObject({
-      message: expect.stringContaining("保存済み回答を読み込めませんでした"),
-    });
-    await act(async () => result.current.refreshSavedAnswers());
-    expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
-    expect(result.current.phase).toMatchObject({
-      message: expect.stringContaining("保存済み回答を問題に対応づけられませんでした"),
-    });
-    await act(async () => result.current.refreshSavedAnswers());
-    expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
-    expect(result.current.phase).toMatchObject({
-      message: expect.stringContaining("保存済み回答の設問が正しくありません"),
-    });
+    expect(result.current.phase).toEqual({ kind: "complete" });
+    expect(result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
     expect(result.current.answeredCount).toBe(5);
+    act(() => result.current.editAnswers());
+    expect(result.current.phase).toEqual({ kind: "complete" });
   });
 
   it("requires reauthentication when conflict recovery and manual refresh return 401", async () => {
@@ -618,7 +802,6 @@ describe("useQuizSession hook", () => {
     await waitFor(() => expect(result.current.access.kind).toBe("login"));
     await act(async () => result.current.login("参加者", "1234"));
     expect(result.current.access).toEqual({ kind: "ready", participant });
-    act(() => result.current.start());
     await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
     await answerAll(result);
     await act(async () => result.current.saveAnswers());
@@ -628,5 +811,133 @@ describe("useQuizSession hook", () => {
       await expect(result.current.login("参加者", "0000")).rejects.toThrow("PIN error");
     });
     expect(result.current.access.kind).toBe("reauthentication");
+  });
+
+  it("retains, retries, and edits a fifth-question free-text answer", async () => {
+    const posts: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url.startsWith("/api/questions/next")) {
+        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
+        return {
+          ok: true,
+          json: async () =>
+            id === 5 ? { ...question(5), choices: [], answerType: "freeText" } : question(id),
+        };
+      }
+      if (url === "/api/answers/batch" && init?.method === "POST") {
+        posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        if (posts.length === 1)
+          return { ok: false, status: 503, json: async () => ({ message: "一時的な通信エラー" }) };
+        return { ok: true, json: async () => ({ submissionId, revision: 1 }) };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = await start();
+    for (const quiz of result.current.quizzes.filter(
+      ({ question: item }) => item.answerType === "selected",
+    )) {
+      act(() => result.current.select(quiz.question.id, 1));
+    }
+    act(() => result.current.setFreeResponse(5, "  承認済みの環境を上司に確認します。  "));
+    expect(result.current.answeredCount).toBe(5);
+
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
+    expect(result.current.freeResponses[5]).toBe("  承認済みの環境を上司に確認します。  ");
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase.kind).toBe("complete");
+    const retriedPayload = posts[1];
+    expect(retriedPayload?.operationId).toBe(posts[0]?.operationId);
+    expect(retriedPayload?.answers).toContainEqual({
+      questionId: 5,
+      freeText: "承認済みの環境を上司に確認します。",
+    });
+    if (!retriedPayload) throw new Error("Expected a retry payload");
+    const submittedFifthAnswer = (
+      retriedPayload.answers as { questionId: number; selectedIndex?: number; freeText?: string }[]
+    ).find(({ questionId }) => questionId === 5);
+    expect(submittedFifthAnswer).toEqual({
+      questionId: 5,
+      freeText: "承認済みの環境を上司に確認します。",
+    });
+
+    act(() => result.current.editAnswers());
+    expect(result.current.freeResponses[5]).toBe("  承認済みの環境を上司に確認します。  ");
+  });
+
+  it("revisits the latest saved submission in completion and restores answers for correction", async () => {
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce({
+      submissionId,
+      revision: 3,
+      answers: [
+        ...[1, 2, 3, 4].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: questionId % 4,
+          freeText: null,
+        })),
+        {
+          questionId: 5,
+          answerKind: "freeText" as const,
+          selectedIndex: null,
+          freeText: "回答を保存しました。",
+        },
+      ],
+    });
+    setupFetch({ freeTextFifth: true });
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.submissionId).toBe(submissionId);
+    expect(result.current.revision).toBe(3);
+    expect(result.current.selections).toEqual(
+      Object.fromEntries(
+        result.current.quizzes
+          .slice(0, 4)
+          .map(({ question, shuffled }) => [
+            question.id,
+            shuffled.choiceIndices.indexOf(question.id % 4),
+          ]),
+      ),
+    );
+    expect(result.current.freeResponses[5]).toBe("回答を保存しました。");
+    expect(result.current.restoreError).toBeNull();
+
+    act(() => result.current.editAnswers());
+    expect(result.current.phase.kind).toBe("answering");
+    expect(result.current.selections).toEqual(result.current.savedSelections);
+  });
+
+  it("keeps malformed latest submissions complete and disables answer restoration", async () => {
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce({
+      submissionId,
+      revision: 1,
+      answers: [],
+    });
+    setupFetch();
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    expect(result.current.restoreError).toMatch(/復元できません/);
+    expect(result.current.submissionId).toBe(submissionId);
+  });
+
+  it("does not start an attempt after a latest-submission failure and retries the lookup", async () => {
+    vi.mocked(fetchLatestAnswerSubmission)
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce(null);
+    const fetchMock = setupFetch();
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("submission-error"));
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/questions/next")),
+    ).toBe(false);
+
+    act(() => result.current.retrySubmissionCheck());
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/questions/next")).toBe(true);
   });
 });

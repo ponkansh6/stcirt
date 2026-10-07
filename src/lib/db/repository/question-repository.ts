@@ -23,11 +23,19 @@ export async function getNextQuestion(afterId?: number): Promise<QuizQuestion | 
       id: examQuestions.id,
       question: examQuestions.question,
       choices: examQuestions.choices,
+      key: examQuestions.key,
     })
     .from(examQuestions);
 
   const [question] = await (afterId === undefined
     ? query.orderBy(asc(examQuestions.id)).limit(1)
     : query.where(gt(examQuestions.id, afterId)).orderBy(asc(examQuestions.id)).limit(1));
-  return question ?? null;
+  return question
+    ? {
+        id: question.id,
+        question: question.question,
+        choices: question.choices,
+        answerType: question.key === "it-literacy-005" ? "freeText" : "selected",
+      }
+    : null;
 }

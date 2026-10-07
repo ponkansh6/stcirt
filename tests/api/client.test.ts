@@ -4,13 +4,27 @@ import {
   createParticipantSession,
   deleteParticipantSession,
   fetchNextQuestion,
+  fetchLatestAnswerSubmission,
   fetchParticipantSession,
   submitAnswer,
 } from "@/lib/api/client";
 
 describe("api client", () => {
+  it("fetches the participant's latest saved submission, including an explicit empty result", async () => {
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ submission: null }), { status: 200 }));
+    await expect(fetchLatestAnswerSubmission()).resolves.toBeNull();
+    expect(fetchSpy).toHaveBeenCalledWith("/api/answers/latest", { credentials: "same-origin" });
+  });
+
   it("fetches the first question when no cursor is provided", async () => {
-    const question = { id: 1, question: "Q1", choices: ["A", "B", "C", "D"] };
+    const question = {
+      id: 1,
+      question: "Q1",
+      choices: ["A", "B", "C", "D"],
+      answerType: "selected",
+    };
     const fetchSpy = vi
       .spyOn(global, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify(question), { status: 200 }));
@@ -98,8 +112,8 @@ describe("api client", () => {
     });
   });
 
-  it("submits answers and returns feedback", async () => {
-    const result = { isCorrect: true, correctIndex: 0, explanation: null };
+  it("submits answers without returning grading details", async () => {
+    const result = { recorded: true };
     const fetchSpy = vi
       .spyOn(global, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify(result), { status: 200 }));

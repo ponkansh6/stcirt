@@ -69,7 +69,15 @@ describe("/api/answers/batch route handlers", () => {
   });
 
   it("GET returns the participant's submission", async () => {
-    const submission = { submissionId, revision: 1, answers };
+    const submission = {
+      submissionId,
+      revision: 1,
+      answers: answers.map((answer) => ({
+        ...answer,
+        answerKind: "selected" as const,
+        freeText: null,
+      })),
+    };
     vi.mocked(getAnswerSubmission).mockResolvedValueOnce(submission);
 
     const response = await GET(

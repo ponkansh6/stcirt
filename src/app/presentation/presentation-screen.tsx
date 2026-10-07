@@ -22,9 +22,18 @@ type PublicQuestion = {
   choices: string[];
 };
 type PublicAnswerQuestion = PublicQuestion & {
-  correctAnswer: string;
-  correctIndex: number;
+  correctAnswer?: string;
+  correctIndex?: number;
   explanation?: string | null;
+  answerType?: "selected" | "freeText";
+  expectedAnswer?: string | null;
+  responses?: {
+    displayName: string;
+    answer?: string | null;
+    answerKind: "selected" | "freeText" | "legacy" | "unanswered";
+    similarity: number | null;
+    score: number | null;
+  }[];
 };
 
 type Winner = { displayName: string; score: number; rank: number };
@@ -88,10 +97,37 @@ function QuestionPrompt({ question }: { question: PublicQuestion }) {
 }
 
 function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
+  if (question.answerType === "freeText") {
+    return (
+      <section className={styles.question} aria-labelledby="question-heading">
+        <p className={styles.kicker}>THE STORY BEHIND IT</p>
+        <p className={styles.ordinal}>
+          QUESTION <strong>{question.ordinal}</strong>
+          <span> / {question.total}</span>
+        </p>
+        <h1 id="question-heading">{question.question}</h1>
+        <h2>模範解答</h2>
+        <p>{question.expectedAnswer}</p>
+        <ul>
+          {question.responses?.map((response) => (
+            <li key={response.displayName}>
+              {response.displayName}：
+              {response.answerKind === "legacy"
+                ? "旧選択式回答（再採点なし）"
+                : response.answerKind === "unanswered"
+                  ? "未回答"
+                  : `${response.answer ?? ""} — 類似度 ${response.similarity?.toFixed(2) ?? "—"} / 得点 ${response.score?.toFixed(2) ?? "—"}`}
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+  }
   const isShortMode = !Object.prototype.hasOwnProperty.call(question, "explanation");
   const hasExplanation =
     typeof question.explanation === "string" && question.explanation.trim().length > 0;
-  const correctChoice = question.choices[question.correctIndex] ?? question.correctAnswer;
+  const correctChoice =
+    question.choices[question.correctIndex ?? -1] ?? question.correctAnswer ?? "";
 
   return (
     <section className={styles.question} aria-labelledby="question-heading">
@@ -339,7 +375,7 @@ export default function PresentationScreen() {
                       {winner.displayName}
                       <span> さん</span>
                     </h1>
-                    <p>{winner.score} ポイント</p>
+                    <p>{winner.score.toFixed(2)} ポイント</p>
                   </article>
                 ))
               ) : (

@@ -62,11 +62,13 @@ describe("question-repository", () => {
       id: firstId,
       question: "First question",
       choices: ["A", "B", "C", "D"],
+      answerType: "selected",
     });
     expect(await getNextQuestion(firstId)).toEqual({
       id: secondId,
       question: "Second question",
       choices: ["A", "B", "C", "D"],
+      answerType: "selected",
     });
   });
 
