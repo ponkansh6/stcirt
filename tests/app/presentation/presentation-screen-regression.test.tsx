@@ -612,7 +612,7 @@ describe("PresentationScreen", () => {
     }
   });
 
-  it("expires the swipe click guard so a later slide click advances", async () => {
+  it("restarts the swipe click guard for each intentional swipe", async () => {
     vi.useFakeTimers();
     const api = installApi({
       projection: { state: "question", question },
@@ -623,22 +623,57 @@ describe("PresentationScreen", () => {
     render(<PresentationScreen presenterRequested />);
     await flush();
     const main = screen.getByRole("main");
+    const swipeLeft = (pointerId: number) => {
+      fireEvent.pointerDown(main, {
+        pointerId,
+        isPrimary: true,
+        button: 0,
+        clientX: 220,
+        clientY: 100,
+      });
+      fireEvent.pointerUp(main, { pointerId, isPrimary: true, clientX: 100, clientY: 102 });
+    };
+    swipeLeft(14);
+    await flush();
+    expect(api.actions).toHaveLength(1);
 
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    swipeLeft(17);
+    await flush();
+    expect(api.actions).toHaveLength(2);
+    expect(api.actions.map((action) => (action as { action: string }).action)).toEqual([
+      "advance",
+      "advance",
+    ]);
+
+    // The original 450ms deadline has passed, but the restarted deadline has not.
+    await act(async () => vi.advanceTimersByTimeAsync(150));
+    fireEvent.click(main);
+    await flush();
+    expect(api.actions).toHaveLength(2);
+  });
+
+  it("expires the swipe click guard when no synthetic click consumes it", async () => {
+    vi.useFakeTimers();
+    const api = installApi({
+      projection: { state: "question", question },
+      actionProjection: { state: "answer", question },
+      admin: controls({ state: "question", questionIndex: 1 }),
+      actionAdmin: controls({ state: "answer", questionIndex: 1 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main");
     fireEvent.pointerDown(main, {
-      pointerId: 14,
+      pointerId: 18,
       isPrimary: true,
       button: 0,
       clientX: 220,
       clientY: 100,
     });
-    fireEvent.pointerUp(main, { pointerId: 14, isPrimary: true, clientX: 100, clientY: 102 });
+    fireEvent.pointerUp(main, { pointerId: 18, isPrimary: true, clientX: 100, clientY: 102 });
     await flush();
     expect(api.actions).toHaveLength(1);
-
-    fireEvent.click(main);
-    await flush();
-    expect(api.actions).toHaveLength(1);
-
     await act(async () => vi.advanceTimersByTimeAsync(450));
     fireEvent.click(main);
     await flush();

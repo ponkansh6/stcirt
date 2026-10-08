@@ -526,6 +526,39 @@ describe("presentation admin console", () => {
     expect(screen.getByText("現在の状態：進行中：問題")).toBeInTheDocument();
   });
 
+  it("shows an action failure when the projection action endpoint rejects the request", async () => {
+    let actionAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/presentation" && init?.method === "POST") {
+        actionAttempts += 1;
+        return response(503, {});
+      }
+      if (path === "/api/admin/presentation")
+        return response(200, {
+          state: "question",
+          questionIndex: 0,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: true,
+        });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+
+    expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "投影を一時非表示" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "操作を反映できませんでした。状態を再確認してから再試行してください。",
+    );
+    expect(actionAttempts).toBe(1);
+    expect(screen.getByText("現在の状態：進行中：問題")).toBeInTheDocument();
+  });
+
   it("shows the loading console while the authenticated admin state is pending", async () => {
     let finishState: ((value: Response) => void) | undefined;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
