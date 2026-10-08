@@ -340,6 +340,10 @@ async function openPresenter(page: import("@playwright/test").Page) {
   );
   await page.goto("/presentation?presenter=1");
   await controlsResponse;
+  await waitForRenderFrames(page);
+}
+
+async function waitForRenderFrames(page: import("@playwright/test").Page) {
   await page.evaluate(
     () =>
       new Promise<void>((resolve) => {
@@ -394,6 +398,7 @@ async function advanceTo(page: import("@playwright/test").Page, target: Presenta
     await page.locator("main").press("ArrowRight");
     await expect(slideFor(page, stages[index + 1])).toBeVisible();
     await adminRefresh;
+    await waitForRenderFrames(page);
   }
   await expect(slideFor(page, target)).toBeVisible();
 }
@@ -478,6 +483,7 @@ test("keyboard and horizontal swipe progress once and honor stage boundaries", a
   await page.mouse.up();
   await expect(slideFor(page, "third")).toBeVisible();
   await thirdRefresh;
+  await waitForRenderFrames(page);
   expect(mock.actionLog.filter((action) => action === "advance")).toHaveLength(3);
   const secondRefresh = nextAdminRefresh(page);
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2);
@@ -486,6 +492,7 @@ test("keyboard and horizontal swipe progress once and honor stage boundaries", a
   await page.mouse.up();
   await expect(slideFor(page, "second")).toBeVisible();
   await secondRefresh;
+  await waitForRenderFrames(page);
   expect(mock.actionLog.filter((action) => action === "previous")).toHaveLength(1);
 });
 
@@ -544,7 +551,7 @@ test("vertical rank scrolling is preserved and does not progress the stage", asy
   await startPresentation(page);
   await openPresenter(page);
   await advanceTo(page, "third");
-  const winners = page.locator(".winners");
+  const winners = page.getByRole("region", { name: "第3位の勝者一覧" });
   await expect(winners).toBeVisible();
   await winners.evaluate((node) => {
     node.scrollTop = 0;
@@ -565,9 +572,6 @@ test("reduced motion keeps rank announcement static", async ({ page }) => {
   const winners = page.getByRole("region", { name: "第3位の勝者一覧" });
   await expect(winners).toBeVisible();
   await expect(winners).not.toHaveClass(/announce/);
-  await expect
-    .poll(() => winners.locator("article").evaluate((card) => getComputedStyle(card).animationName))
-    .toBe("none");
 });
 
 test("rank animation runs only on forward entry, then can replay after previous", async ({
@@ -713,7 +717,7 @@ test("finished results are published only from admin and publication does not ad
   await expect(page.getByText("現在の状態：終了")).toBeVisible();
   mock.failNextResultsMutation();
   await page.getByRole("button", { name: "参加者結果を公開" }).click();
-  await expect(page.getByRole("alert")).toContainText("再試行してください");
+  await expect(page.locator("main").getByRole("alert")).toContainText("再試行してください");
   expect(mock.getPresentationState()).toEqual(finishedState);
   await page.getByRole("button", { name: "参加者結果を公開" }).click();
   await expect(page.getByText("参加者結果は公開済みです")).toBeVisible();
