@@ -541,6 +541,7 @@ describe("PresentationScreen", () => {
     await waitFor(() =>
       expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
     );
+    await flush();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(1));
     await flush();
