@@ -224,6 +224,39 @@ describe("presentation admin console", () => {
     expect(await screen.findByLabelText("管理者 PIN")).toBeInTheDocument();
   });
 
+  it("keeps publication retryable when the failed response has invalid JSON", async () => {
+    let publicationAttempts = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/presentation")
+        return response(200, {
+          state: "finished",
+          questionIndex: 5,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: true,
+        });
+      if (path === "/api/admin/participant-results" && init?.method === "POST") {
+        publicationAttempts += 1;
+        return new Response("not JSON", { status: 503 });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+
+    await user.click(await screen.findByRole("button", { name: "参加者結果を公開" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("結果の準備または公開に失敗しました");
+    expect(alert).not.toHaveTextContent("not JSON");
+    expect(screen.getByText("現在の状態：終了")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "参加者結果を公開" })).toBeInTheDocument();
+    expect(publicationAttempts).toBe(1);
+  });
+
   it("keeps the expired-session message when a failed action refresh finds no session", async () => {
     let publishAttempted = false;
     vi.stubGlobal(
