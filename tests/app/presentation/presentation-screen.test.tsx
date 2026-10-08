@@ -174,6 +174,118 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("exposes a single slide region without persistent presentation chrome", async () => {
+    setup();
+    render(<PresentationScreen />);
+
+    expect(await screen.findByRole("region", { name: "現在のスライド" })).toBeInTheDocument();
+    expect(screen.queryByText("STCIRT")).not.toBeInTheDocument();
+    expect(screen.queryByText("CELEBRATION QUIZ")).not.toBeInTheDocument();
+    expect(screen.queryByText("WITH LOVE, ALWAYS")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["standby", { state: "standby" }, ["ただいま休憩中です", "まもなく再開します"]],
+    [
+      "not_started",
+      { state: "not_started" },
+      ["ふたりの思い出を", "振り返る時間", "発表が始まるまで、少々お待ちください"],
+    ],
+    [
+      "question",
+      {
+        state: "question",
+        question: {
+          id: 2,
+          ordinal: 2,
+          total: 5,
+          question: "一緒に見た最初の映画は？",
+          choices: ["作品A", "作品B", "作品C"],
+        },
+      },
+      ["QUESTION 2", "/ 5", "一緒に見た最初の映画は？", "作品A", "作品B", "作品C"],
+    ],
+    [
+      "answer",
+      {
+        state: "answer",
+        question: {
+          id: 2,
+          ordinal: 2,
+          total: 5,
+          question: "一緒に見た最初の映画は？",
+          choices: ["作品A", "作品B", "作品C"],
+          correctIndex: 1,
+          explanation: "共通の友人にすすめられた作品です。",
+        },
+      },
+      [
+        "QUESTION 2",
+        "一緒に見た最初の映画は？",
+        "作品A",
+        "作品B",
+        "作品C",
+        "正解",
+        "共通の友人にすすめられた作品です。",
+      ],
+    ],
+    [
+      "podium_preview",
+      { state: "podium_preview" },
+      ["いよいよ、結果発表です", "これから入賞者を発表します。どうぞお楽しみに"],
+    ],
+    [
+      "third",
+      { state: "third", winners: [{ displayName: "葵", score: 8.25, rank: 3 }] },
+      ["3位", "8.25 ポイント", "葵", "第3位", "おめでとうございます"],
+    ],
+    [
+      "second",
+      { state: "second", winners: [{ displayName: "凛", score: 9.5, rank: 2 }] },
+      ["2位", "9.50 ポイント", "凛", "第2位", "おめでとうございます"],
+    ],
+    [
+      "first",
+      { state: "first", winners: [{ displayName: "悠", score: 10, rank: 1 }] },
+      ["1位", "10.00 ポイント", "悠", "第1位", "おめでとうございます"],
+    ],
+    [
+      "finished",
+      { state: "finished" },
+      [
+        "ご参加",
+        "ありがとうございました",
+        "ふたりの思い出を一緒に祝ってくださり、心から感謝します",
+      ],
+    ],
+  ] as const)(
+    "preserves the meaning and labels of the %s slide",
+    async (_state, projection, contents) => {
+      setup({ projection });
+      render(<PresentationScreen />);
+
+      const slide = await screen.findByRole("region", { name: "現在のスライド" });
+      for (const content of contents) expect(slide).toHaveTextContent(content);
+      if (projection.state === "answer") {
+        const correctChoice = screen.getByText("正解").closest("li");
+        expect(correctChoice).toHaveTextContent("B作品B");
+      }
+      if (
+        projection.state === "third" ||
+        projection.state === "second" ||
+        projection.state === "first"
+      ) {
+        const winner = slide.querySelector("article");
+        expect(winner?.textContent?.indexOf("位")).toBeLessThan(
+          winner?.textContent?.indexOf("ポイント") ?? -1,
+        );
+        expect(winner?.textContent?.indexOf("ポイント")).toBeLessThan(
+          winner?.textContent?.indexOf(projection.winners[0]!.displayName) ?? -1,
+        );
+      }
+    },
+  );
+
   it("removes start and publication controls from the presenter projection", async () => {
     const api = setup({
       projection: { state: "not_started" },
@@ -443,7 +555,7 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.getByRole("main")).toBeInTheDocument();
   });
 
-  it("announces a rank slide without a winners array", async () => {
+  it("renders a rank slide without winners statically", async () => {
     const api = setup({
       projection: { state: "podium_preview" },
       admin: { state: "podium_preview", questionIndex: 5, questionCount: 5 },
@@ -472,7 +584,7 @@ describe("presentation projection and presenter progression", () => {
     await settled();
 
     expect(screen.getByText("該当する受賞者はいません")).toBeInTheDocument();
-    expect(region).toHaveClass(/announce/);
+    expect(region).not.toHaveClass(/announce/);
     expect(
       api.calls.filter(
         ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
@@ -721,7 +833,7 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.queryByText(/回答|類似度|得点/)).not.toBeInTheDocument();
   });
 
-  it("renders rank, points, then name and plays entrance motion only for forward operations", async () => {
+  it("renders rank, points, then name immediately after a forward operation", async () => {
     const api = setup({
       projection: { state: "podium_preview" },
       admin: { state: "podium_preview", questionIndex: 5, questionCount: 5 },
@@ -738,7 +850,7 @@ describe("presentation projection and presenter progression", () => {
     expect(await screen.findByText("3位")).toBeInTheDocument();
     expect(screen.getByText("12.50 ポイント")).toBeInTheDocument();
     expect(screen.getByText("葵", { exact: false })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "第3位の勝者一覧" })).toHaveClass(/announce/);
+    expect(screen.getByRole("region", { name: "第3位の勝者一覧" })).not.toHaveClass(/announce/);
   });
 
   it("keeps initial and previous-stage rank renders static", async () => {
@@ -754,7 +866,7 @@ describe("presentation projection and presenter progression", () => {
     expect(region).not.toHaveClass(/announce/);
   });
 
-  it("does not add rank motion classes under reduced motion", async () => {
+  it("keeps rank content static under reduced motion", async () => {
     vi.stubGlobal(
       "matchMedia",
       vi.fn(() => ({ matches: true, addListener: vi.fn(), removeListener: vi.fn() })),

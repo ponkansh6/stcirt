@@ -171,17 +171,6 @@ async function requestAdminAction(action: AdminAction) {
 }
 
 const rankTitle: Record<string, string> = { third: "第3位", second: "第2位", first: "第1位" };
-function isRankState(state: State): state is "third" | "second" | "first" {
-  return state === "third" || state === "second" || state === "first";
-}
-
-function announcementKeyFor(state: string, winners: Winner[] = []) {
-  const winnerKey = winners
-    .map((winner) => [winner.displayName, winner.score] as const)
-    .sort(([nameA], [nameB]) => (nameA < nameB ? -1 : nameA > nameB ? 1 : 0));
-  return JSON.stringify([state, winnerKey]);
-}
-
 function QuestionPrompt({ question }: { question: PublicQuestion }) {
   return (
     <section className={styles.question} aria-labelledby="question-heading">
@@ -267,9 +256,6 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
         </ol>
         {hasExplanation && (
           <div className={styles.explanation}>
-            <span className={styles.explanationMark} aria-hidden="true">
-              ✦
-            </span>
             <p>{question.explanation}</p>
           </div>
         )}
@@ -284,8 +270,6 @@ export default function PresentationScreen({
   presenterRequested?: boolean;
 }) {
   const [data, setData] = useState<ProjectionData | null>(null);
-  const [announcementKey, setAnnouncementKey] = useState<string | null>(null);
-  const announcementTimer = useRef<number | null>(null);
   const [adminControls, setAdminControls] = useState<AdminControls | null>(null);
   const [presenterDeck, setPresenterDeck] = useState<PresenterDeck | null>(null);
   const [deckLoadError, setDeckLoadError] = useState(false);
@@ -305,15 +289,6 @@ export default function PresentationScreen({
   const adminSequence = useRef(0);
   const mutationInFlight = useRef(false);
   const mutationGeneration = useRef(0);
-  const announceRank = useCallback((state: "third" | "second" | "first", winners?: Winner[]) => {
-    const eventKey = announcementKeyFor(state, winners);
-    setAnnouncementKey(eventKey);
-    announcementTimer.current = window.setTimeout(() => {
-      setAnnouncementKey(null);
-      announcementTimer.current = null;
-    }, 1200);
-  }, []);
-
   const applyProjection = useCallback((projection: ProjectionData) => {
     setData(projection);
   }, []);
@@ -442,11 +417,6 @@ export default function PresentationScreen({
     async (action: AdminAction) => {
       if (!adminControls || !presenterDeckRef.current || !presenterDeck || mutationInFlight.current)
         return;
-      if (announcementTimer.current !== null) {
-        window.clearTimeout(announcementTimer.current);
-        announcementTimer.current = null;
-        setAnnouncementKey(null);
-      }
       requestFullscreenForIntent();
       mutationGeneration.current += 1;
       mutationInFlight.current = true;
@@ -461,14 +431,6 @@ export default function PresentationScreen({
           : presenterDeck.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
       if (optimisticSlide) {
         setData(optimisticSlide.projection);
-        if (
-          isRankState(optimisticSlide.state) &&
-          action === "advance" &&
-          !window.matchMedia("(prefers-reduced-motion: reduce)").matches
-        ) {
-          const projection = optimisticSlide.projection;
-          announceRank(optimisticSlide.state, "winners" in projection ? projection.winners : []);
-        }
       }
       try {
         await requestAdminAction(action);
@@ -488,14 +450,7 @@ export default function PresentationScreen({
         mutationInFlight.current = false;
       }
     },
-    [
-      adminControls,
-      presenterDeck,
-      announceRank,
-      recoverUnauthorized,
-      refreshAdmin,
-      requestFullscreenForIntent,
-    ],
+    [adminControls, presenterDeck, recoverUnauthorized, refreshAdmin, requestFullscreenForIntent],
   );
 
   useEffect(() => {
@@ -577,7 +532,6 @@ export default function PresentationScreen({
 
   useEffect(
     () => () => {
-      if (announcementTimer.current !== null) window.clearTimeout(announcementTimer.current);
       window.clearTimeout(suppressClickTimer.current);
     },
     [],
@@ -677,17 +631,15 @@ export default function PresentationScreen({
       aria-atomic="true"
     >
       <div className={styles.slideRegion}>
-        <div className={styles.canvas} data-testid="presentation-canvas">
-          <div className={styles.topline} aria-hidden="true">
-            <span>STCIRT</span>
-            <span className={styles.toplineRule} />
-            <span>CELEBRATION QUIZ</span>
-          </div>
-
+        <div
+          className={styles.canvas}
+          data-testid="presentation-canvas"
+          role="region"
+          aria-label="現在のスライド"
+        >
           {loadingPresenterDeck && (
             <section className={styles.waiting} aria-live="polite">
               <p className={styles.kicker}>PREPARING PRESENTATION</p>
-              <span className={styles.decorativeRule} aria-hidden="true" />
               <h1>
                 {deckLoadError ? "スライドを読み込めませんでした" : "スライドを読み込んでいます"}
               </h1>
@@ -700,7 +652,6 @@ export default function PresentationScreen({
           {state === "standby" && (
             <section className={styles.waiting} aria-labelledby="standby-title">
               <p className={styles.kicker}>TAKE A MOMENT</p>
-              <span className={styles.decorativeRule} aria-hidden="true" />
               <h1 id="standby-title">ただいま休憩中です</h1>
               <p className={styles.subtitle}>まもなく再開します</p>
             </section>
@@ -709,7 +660,6 @@ export default function PresentationScreen({
           {!loadingPresenterDeck && (!data || state === "not_started") && (
             <section className={styles.waiting} aria-labelledby="presentation-title">
               <p className={styles.kicker}>A MOMENT TO CELEBRATE</p>
-              <span className={styles.decorativeRule} aria-hidden="true" />
               <h1 id="presentation-title">
                 ふたりの思い出を
                 <br />
@@ -725,22 +675,14 @@ export default function PresentationScreen({
           {state === "podium_preview" && (
             <section className={styles.podiumPreview} aria-labelledby="podium-title">
               <p className={styles.kicker}>THE MOMENT IS HERE</p>
-              <span className={styles.decorativeRule} aria-hidden="true" />
               <h1 id="podium-title">いよいよ、結果発表です</h1>
               <p className={styles.subtitle}>これから入賞者を発表します。どうぞお楽しみに</p>
-              <div className={styles.podiumMarks} aria-hidden="true">
-                <span>Ⅲ</span>
-                <span>Ⅱ</span>
-                <span>Ⅰ</span>
-              </div>
             </section>
           )}
 
           {(state === "third" || state === "second" || state === "first") && (
             <section
-              className={`${styles.winners} ${state === "first" ? styles.grandWinner : ""} ${
-                announcementKey === announcementKeyFor(state, data?.winners) ? styles.announce : ""
-              }`}
+              className={styles.winners}
               role="region"
               aria-label={`${rankTitle[state]}の勝者一覧`}
               tabIndex={0}
@@ -775,7 +717,6 @@ export default function PresentationScreen({
           {state === "finished" && (
             <section className={styles.finished} aria-labelledby="finished-title">
               <p className={styles.kicker}>WITH LOVE AND GRATITUDE</p>
-              <span className={styles.decorativeRule} aria-hidden="true" />
               <h1 id="finished-title">
                 ご参加
                 <br />
@@ -784,15 +725,8 @@ export default function PresentationScreen({
               <p className={styles.subtitle}>
                 ふたりの思い出を一緒に祝ってくださり、心から感謝します
               </p>
-              <span className={styles.decorativeRule} aria-hidden="true" />
             </section>
           )}
-
-          <div className={styles.bottomline} aria-hidden="true">
-            <span className={styles.bottomRule} />
-            <span>WITH LOVE, ALWAYS</span>
-            <span className={styles.bottomRule} />
-          </div>
         </div>
       </div>
     </main>

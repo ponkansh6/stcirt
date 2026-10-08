@@ -630,7 +630,7 @@ test("vertical rank scrolling is preserved and does not progress the stage", asy
   expect(mock.getPresentationState().state).toBe("third");
 });
 
-test("reduced motion keeps rank announcement static", async ({ page }) => {
+test("rank content is static on every entry and the slide fits the viewport", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await installAdminApiMock(page);
   await signIn(page);
@@ -640,21 +640,36 @@ test("reduced motion keeps rank announcement static", async ({ page }) => {
   const winners = page.getByRole("region", { name: "第3位の勝者一覧" });
   await expect(winners).toBeVisible();
   await expect(winners).not.toHaveClass(/announce/);
-});
-
-test("rank animation runs only on forward entry, then can replay after previous", async ({
-  page,
-}) => {
-  await installAdminApiMock(page);
-  await signIn(page);
-  await startPresentation(page);
-  await openPresenter(page);
-  await advanceTo(page, "second");
-  const winners = page.getByRole("region", { name: "第2位の勝者一覧" });
-  await expect(winners).toHaveClass(/announce/);
-  await expect
-    .poll(() => winners.evaluate((node) => node.className.includes("announce")), { timeout: 2_000 })
-    .toBe(false);
+  for (const viewport of [
+    { width: 1920, height: 1080 },
+    { width: 1366, height: 768 },
+    { width: 480, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const geometry = await page.getByTestId("presentation-canvas").evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        width: rect.width,
+        height: rect.height,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        documentWidth: document.documentElement.scrollWidth,
+        documentHeight: document.documentElement.scrollHeight,
+        hasTopline: Boolean(node.querySelector('[class*="topline"]')),
+        hasBottomline: Boolean(node.querySelector('[class*="bottomline"]')),
+        background: getComputedStyle(node).backgroundColor,
+        aspectRatio: rect.width / rect.height,
+      };
+    });
+    expect(geometry.width).toBeLessThanOrEqual(geometry.viewportWidth);
+    expect(geometry.height).toBeLessThanOrEqual(geometry.viewportHeight);
+    expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth);
+    expect(geometry.documentHeight).toBeLessThanOrEqual(geometry.viewportHeight);
+    expect(geometry.aspectRatio).toBeCloseTo(16 / 9, 2);
+    expect(geometry.hasTopline).toBe(false);
+    expect(geometry.hasBottomline).toBe(false);
+    expect(geometry.background).toBe("rgb(255, 255, 255)");
+  }
   const previousRefresh = nextAdminRefresh(page);
   await page.locator("main").press("ArrowLeft");
   await expect(slideFor(page, "third")).toBeVisible();
@@ -664,7 +679,7 @@ test("rank animation runs only on forward entry, then can replay after previous"
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "second")).toBeVisible();
   await replayRefresh;
-  await expect(winners).toHaveClass(/announce/);
+  await expect(page.getByRole("region", { name: "第2位の勝者一覧" })).not.toHaveClass(/announce/);
 });
 
 test("tied rank cards keep rank, points, and long participant names paired in the viewport", async ({
@@ -726,6 +741,84 @@ test("tied rank cards keep rank, points, and long participant names paired in th
   ).toBe(true);
   expect(geometry.width).toBeLessThanOrEqual(geometry.innerWidth);
   expect(geometry.height).toBeLessThanOrEqual(geometry.innerHeight);
+});
+
+test("long answer content remains complete in its internal scroll region", async ({ page }) => {
+  const explanation = Array.from(
+    { length: 36 },
+    (_, index) => `解説段落${index + 1}：思い出の内容を省略せずに表示します。`,
+  ).join("\n");
+  const lastLine = "解説段落36：思い出の内容を省略せずに表示します。";
+  await page.route("**/api/presentation", async (route) =>
+    route.fulfill({
+      json: {
+        state: "answer",
+        question: {
+          id: 11,
+          ordinal: 1,
+          total: 1,
+          question: "ふたりが初めて出会った場所は？",
+          choices: ["カフェ", "大学", "駅"],
+          correctIndex: 1,
+          explanation,
+        },
+      },
+    }),
+  );
+  await page.goto("/presentation");
+
+  const answerContent = page.locator('[class*="answerContent"]');
+  const finalExplanation = answerContent.locator("p").last();
+  await expect(finalExplanation).toContainText(lastLine);
+  await expect(answerContent).toContainText("解説段落1：思い出の内容を省略せずに表示します。");
+  const beforeScroll = await answerContent.evaluate((node) => ({
+    scrollHeight: node.scrollHeight,
+    clientHeight: node.clientHeight,
+    text: node.textContent ?? "",
+  }));
+  expect(beforeScroll.scrollHeight).toBeGreaterThan(beforeScroll.clientHeight);
+  expect(beforeScroll.text).toContain(lastLine);
+
+  await answerContent.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect.poll(() => answerContent.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  await expect(finalExplanation).toBeInViewport();
+});
+
+test("a long tied-winner list keeps every rank card available through internal scrolling", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  const winners = Array.from({ length: 14 }, (_, index) => ({
+    displayName: `同順位の受賞者${String(index + 1).padStart(2, "0")}`,
+    score: 0.75,
+    rank: 3,
+  }));
+  mock.setWinnerEntries(winners);
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+  await advanceTo(page, "third");
+
+  const winnerRegion = page.getByRole("region", { name: "第3位の勝者一覧" });
+  const cards = winnerRegion.locator("article");
+  await expect(cards).toHaveCount(winners.length);
+  await expect(cards.last()).toContainText("同順位の受賞者14");
+  await expect(cards.last()).toContainText("0.75 ポイント");
+  const beforeScroll = await winnerRegion.evaluate((node) => ({
+    scrollHeight: node.scrollHeight,
+    clientHeight: node.clientHeight,
+    text: node.textContent ?? "",
+  }));
+  expect(beforeScroll.scrollHeight).toBeGreaterThan(beforeScroll.clientHeight);
+  for (const winner of winners) expect(beforeScroll.text).toContain(winner.displayName);
+
+  await winnerRegion.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect.poll(() => winnerRegion.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  await expect(cards.last()).toBeInViewport();
 });
 
 test("fifth free-text answer projection keeps the model answer and hides response rows", async ({

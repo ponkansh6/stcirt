@@ -770,7 +770,7 @@ describe("PresentationScreen", () => {
     }
   });
 
-  it("announces a podium advance when tied winners arrive in a different name order", async () => {
+  it("renders tied winners immediately when the podium advances", async () => {
     vi.stubGlobal(
       "matchMedia",
       vi.fn(() => ({ matches: false })),
@@ -809,10 +809,10 @@ describe("PresentationScreen", () => {
     expect(winnerRegion.textContent!.indexOf("凛")).toBeLessThan(
       winnerRegion.textContent!.indexOf("葵"),
     );
-    expect(winnerRegion.className).toContain("announce");
+    expect(winnerRegion.className).not.toContain("announce");
   });
 
-  it("announces the first-place winner when advancing from second place", async () => {
+  it("renders the first-place winner immediately when advancing from second place", async () => {
     vi.stubGlobal(
       "matchMedia",
       vi.fn(() => ({ matches: false })),
@@ -852,7 +852,7 @@ describe("PresentationScreen", () => {
     expect(api.actions[0]).toMatchObject({ action: "advance" });
     const winnerRegion = await screen.findByRole("region", { name: "第1位の勝者一覧" });
     expect(winnerRegion).toHaveTextContent("葵");
-    expect(winnerRegion.className).toContain("announce");
+    expect(winnerRegion.className).not.toContain("announce");
   });
 
   it("does not advance from interactive descendants and advances on a slide click", async () => {
@@ -1158,12 +1158,9 @@ describe("PresentationScreen", () => {
     expect(api.actions).toHaveLength(0);
   });
 
-  it("reannounces a forward podium transition and expires the announcement", async () => {
+  it("renders podium content immediately without an announcement timer", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn(() => ({ matches: false })),
-    );
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
     installApi({
       projection: { state: "podium_preview" },
       admin: controls({ state: "podium_preview" }),
@@ -1181,65 +1178,10 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
     const winnerRegion = screen.getByRole("region", { name: "第3位の勝者一覧" });
-    expect(winnerRegion.className).toContain("announce");
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1200);
-    });
+    expect(winnerRegion).toHaveTextContent("9.00 ポイント");
     expect(winnerRegion.className).not.toContain("announce");
-  });
-
-  it("restarts the announcement timeout when the next rank is announced", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn(() => ({ matches: false })),
-    );
-    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
-    const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
-    try {
-      const api = installApi({
-        projection: { state: "podium_preview" },
-        deckSlides: [
-          {
-            state: "third",
-            questionIndex: 0,
-            projection: { state: "third", winners: [{ displayName: "葵", score: 9, rank: 3 }] },
-          },
-          {
-            state: "second",
-            questionIndex: 0,
-            projection: { state: "second", winners: [{ displayName: "凛", score: 12, rank: 2 }] },
-          },
-        ],
-        admin: controls({ state: "podium_preview" }),
-        actionAdmin: controls({ state: "third" }),
-      });
-      render(<PresentationScreen presenterRequested />);
-      await flush();
-      const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
-      fireEvent.keyDown(main, { key: "ArrowRight" });
-      await flush();
-      const rankAnnouncementTimer =
-        setTimeoutSpy.mock.results[
-          setTimeoutSpy.mock.calls.findIndex(([, delay]) => delay === 1200)
-        ]?.value;
-      expect(rankAnnouncementTimer).toBeDefined();
-      await act(async () => vi.advanceTimersByTimeAsync(700));
-
-      api.setActionAdmin(controls({ state: "second" }));
-      fireEvent.keyDown(main, { key: "ArrowRight" });
-      await flush();
-      expect(clearTimeoutSpy).toHaveBeenCalledWith(rankAnnouncementTimer);
-      const winnerRegion = screen.getByRole("region", { name: "第2位の勝者一覧" });
-      expect(winnerRegion.className).toContain("announce");
-      await act(async () => vi.advanceTimersByTimeAsync(500));
-      expect(winnerRegion.className).toContain("announce");
-      await act(async () => vi.advanceTimersByTimeAsync(700));
-      expect(winnerRegion.className).not.toContain("announce");
-    } finally {
-      setTimeoutSpy.mockRestore();
-      clearTimeoutSpy.mockRestore();
-    }
+    expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 1200)).toBe(false);
+    setTimeoutSpy.mockRestore();
   });
 
   it("acquires a wake lock when visible, retries on visibility, and releases it on unmount", async () => {
