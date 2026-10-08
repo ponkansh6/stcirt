@@ -18,6 +18,8 @@ vi.mock("@/lib/db", async (importOriginal) => {
 
 import {
   getAdminPresentation,
+  getAdminPresentationControls,
+  getAdminPresentationDeck,
   getParticipantResult,
   getPublicPresentation,
   operatePresentation,
@@ -337,6 +339,26 @@ describe("presentation repository", () => {
     return { first, tied, third, unanswered };
   }
 
+  it("returns compact presenter controls and their defaults without an active row", async () => {
+    await expect(getAdminPresentationControls()).resolves.toEqual({
+      state: "not_started",
+      version: 0,
+      questionIndex: 0,
+      questionCount: 0,
+      projectionHidden: false,
+    });
+
+    await addQuestions();
+    await op("start", "controls-start");
+    await expect(getAdminPresentationControls()).resolves.toMatchObject({
+      state: "question",
+      version: 1,
+      questionIndex: 0,
+      questionCount: 2,
+      projectionHidden: false,
+    });
+  });
+
   async function addFreeTextProjectionFixture(sourceKey?: string) {
     await testDb.db.insert(schema.presentationSessions).values({
       id: 1,
@@ -461,6 +483,38 @@ describe("presentation repository", () => {
     await expect(getPublicPresentation()).resolves.toEqual({
       state: "third",
       winners: [{ displayName: "Third", score: 1, rank: 3 }],
+    });
+  });
+
+  it("preloads every question, answer, podium and completion slide into the presenter deck", async () => {
+    await addRankFixture();
+    await op("start", "deck-start");
+
+    const deck = await getAdminPresentationDeck();
+
+    expect(deck).toMatchObject({ questionCount: 2, questionIndex: 0 });
+    expect(deck.slides.map(({ state, questionIndex }) => [state, questionIndex])).toEqual([
+      ["question", 0],
+      ["answer", 0],
+      ["question", 1],
+      ["answer", 1],
+      ["podium_preview", 0],
+      ["third", 0],
+      ["first", 0],
+      ["finished", 0],
+    ]);
+    expect(deck.slides[0]?.projection).toMatchObject({
+      state: "question",
+      question: { question: "Question 11" },
+    });
+    expect(deck.slides[0]?.projection).not.toHaveProperty("question.correctAnswer");
+    expect(deck.slides[1]?.projection).toMatchObject({
+      state: "answer",
+      question: { correctAnswer: "Correct 11", explanation: "Explanation 11" },
+    });
+    expect(deck.slides.find(({ state }) => state === "third")?.projection).toMatchObject({
+      state: "third",
+      winners: [{ displayName: "Third", rank: 3 }],
     });
   });
 
@@ -978,6 +1032,13 @@ describe("presentation repository", () => {
     });
     expect(started.questions).toEqual([]);
     expect(started.entries).toEqual([]);
+    await expect(getAdminPresentationDeck()).resolves.toMatchObject({
+      questionCount: 0,
+      slides: [
+        { state: "podium_preview", projection: { state: "podium_preview" } },
+        { state: "finished", projection: { state: "finished" } },
+      ],
+    });
 
     await addQuestions();
     await testDb.db.insert(schema.participantResultSettings).values({

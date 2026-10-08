@@ -2,6 +2,28 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PresentationScreen from "@/app/presentation/presentation-screen";
 
+type WinnerFixture = { displayName: string; score: number; rank: number };
+type DeckProjectionFixture =
+  | { state: "question" | "answer"; question?: unknown }
+  | { state: "third" | "second" | "first"; winners: WinnerFixture[] }
+  | {
+      state: "standby" | "not_started" | "podium_preview" | "finished";
+      winners?: WinnerFixture[];
+    };
+type DeckSlideFixture = {
+  state: DeckProjectionFixture["state"];
+  questionIndex: number;
+  projection: DeckProjectionFixture;
+};
+
+function deckSlide(
+  state: DeckProjectionFixture["state"],
+  questionIndex: number,
+  projection: DeckProjectionFixture,
+): DeckSlideFixture {
+  return { state, questionIndex, projection };
+}
+
 function response(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), { status });
 }
@@ -10,10 +32,12 @@ function setup(
   options: {
     projection?: Record<string, unknown>;
     admin?: Record<string, unknown>;
+    actionAdmin?: Record<string, unknown>;
     authenticated?: boolean;
     actionStatus?: number;
     actionGate?: () => Promise<void>;
     projectionGetter?: () => Promise<Response>;
+    deckSlides?: DeckSlideFixture[];
   } = {},
 ) {
   let projection = options.projection ?? {
@@ -26,6 +50,50 @@ function setup(
       choices: ["海", "山"],
     },
   };
+  let admin = options.admin ?? {
+    state: "question",
+    questionIndex: 0,
+    questionCount: 5,
+    projectionHidden: false,
+  };
+  const slideProjection = (state: DeckProjectionFixture["state"]): DeckProjectionFixture =>
+    state === "question" || state === "answer"
+      ? ({ ...(projection as Record<string, unknown>), state } as DeckProjectionFixture)
+      : state === "third" || state === "second" || state === "first"
+        ? { state, winners: [] }
+        : { state };
+  const deckSlides: DeckSlideFixture[] = [
+    ...Array.from({ length: Number(admin.questionCount ?? 0) }, (_, questionIndex) => [
+      deckSlide("question", questionIndex, slideProjection("question")),
+      deckSlide("answer", questionIndex, slideProjection("answer")),
+    ]).flat(),
+    deckSlide(
+      "podium_preview",
+      Number(admin.questionIndex ?? 0),
+      slideProjection("podium_preview"),
+    ),
+    deckSlide("third", Number(admin.questionIndex ?? 0), slideProjection("third")),
+    deckSlide("second", Number(admin.questionIndex ?? 0), slideProjection("second")),
+    deckSlide("first", Number(admin.questionIndex ?? 0), slideProjection("first")),
+    deckSlide("finished", Number(admin.questionIndex ?? 0), slideProjection("finished")),
+  ];
+  const slideIndex = deckSlides.findIndex(
+    (slide) => slide.state === admin.state && slide.questionIndex === admin.questionIndex,
+  );
+  if (slideIndex >= 0)
+    deckSlides[slideIndex] = deckSlide(
+      deckSlides[slideIndex]!.state,
+      deckSlides[slideIndex]!.questionIndex,
+      projection as unknown as DeckProjectionFixture,
+    );
+  for (const slide of options.deckSlides ?? []) {
+    const existing = deckSlides.findIndex(
+      (candidate) =>
+        candidate.state === slide.state && candidate.questionIndex === slide.questionIndex,
+    );
+    if (existing >= 0) deckSlides[existing] = slide;
+    else deckSlides.push(slide);
+  }
   const calls: { path: string; init?: RequestInit }[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
@@ -36,24 +104,33 @@ function setup(
       return response({ authenticated: options.authenticated ?? true });
     if (path === "/api/admin/presentation" && init?.method === "POST") {
       await options.actionGate?.();
+      if (options.actionAdmin) admin = options.actionAdmin;
       return response({}, options.actionStatus ?? 200);
     }
-    if (path === "/api/admin/presentation")
-      return response(
-        options.admin ?? {
-          state: "question",
-          questionIndex: 0,
-          questionCount: 5,
-        },
-      );
+    if (path === "/api/admin/presentation?view=controls") return response(admin);
+    if (path === "/api/admin/presentation/deck")
+      return response({
+        questionCount: admin.questionCount,
+        questionIndex: admin.questionIndex,
+        slides: deckSlides,
+      });
     throw new Error(`Unexpected request: ${path}`);
   });
   vi.stubGlobal("fetch", fetchMock);
   return {
     calls,
     fetchMock,
-    setProjection(value: Record<string, unknown>) {
-      projection = value;
+    setDeckSlide(
+      state: DeckProjectionFixture["state"],
+      questionIndex: number,
+      value: DeckProjectionFixture,
+    ) {
+      const slide = deckSlide(state, questionIndex, value);
+      const existing = deckSlides.findIndex(
+        (candidate) => candidate.state === state && candidate.questionIndex === questionIndex,
+      );
+      if (existing >= 0) deckSlides[existing] = slide;
+      else deckSlides.push(slide);
     },
   };
 }
@@ -85,7 +162,7 @@ describe("presentation projection and presenter progression", () => {
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     fireEvent.click(screen.getByTestId("presentation-canvas"));
     await settled();
-    expect(api.calls.some(({ path }) => path === "/api/admin/presentation")).toBe(false);
+    expect(api.calls.some(({ path }) => path.startsWith("/api/admin/presentation"))).toBe(false);
     expect(
       api.calls.some(
         ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
@@ -242,7 +319,7 @@ describe("presentation projection and presenter progression", () => {
     await settled();
   });
 
-  it("reschedules a projection poll while a presenter mutation is in flight", async () => {
+  it("loads the presenter deck once and refreshes only controls while a mutation is in flight", async () => {
     vi.useFakeTimers();
     let release!: () => void;
     let started!: () => void;
@@ -264,26 +341,24 @@ describe("presentation projection and presenter progression", () => {
     await actionStarted;
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(1400);
+      await vi.advanceTimersByTimeAsync(2500);
     });
-    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(1);
+    expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(1);
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(0);
 
     await act(async () => {
       release();
       await Promise.resolve();
     });
     await settled();
-    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(2);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1400);
-    });
-    await settled();
+    expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(1);
     expect(
-      api.calls.filter(({ path }) => path === "/api/presentation").length,
-    ).toBeGreaterThanOrEqual(3);
+      api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls").length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(0);
   });
 
-  it("synchronizes projection after a 409 without retrying the operation", async () => {
+  it("refreshes controls after a 409 without refetching slides or retrying the operation", async () => {
     const api = setup({ actionStatus: 409 });
     render(<PresentationScreen presenterRequested />);
     await settled();
@@ -296,70 +371,11 @@ describe("presentation projection and presenter progression", () => {
       ).toHaveLength(1),
     );
     await settled();
+    expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(1);
     expect(
-      api.calls.filter(({ path }) => path === "/api/presentation").length,
+      api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls").length,
     ).toBeGreaterThanOrEqual(2);
-    expect(
-      api.calls.filter(
-        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
-      ),
-    ).toHaveLength(1);
-  });
-
-  it("ignores a stale projection poll that resolves after an operation refresh", async () => {
-    let releaseFirst!: () => void;
-    let firstStarted!: () => void;
-    let reads = 0;
-    const firstStartedPromise = new Promise<void>((resolve) => {
-      firstStarted = resolve;
-    });
-    const staleResponse = new Promise<Response>((resolve) => {
-      releaseFirst = () =>
-        resolve(
-          response({
-            state: "question",
-            question: { id: 1, ordinal: 1, total: 5, question: "stale question", choices: [] },
-          }),
-        );
-    });
-    const api = setup({
-      projectionGetter: async () => {
-        reads += 1;
-        if (reads === 1) {
-          firstStarted();
-          return staleResponse;
-        }
-        return response({
-          state: "answer",
-          question: {
-            id: 1,
-            ordinal: 1,
-            total: 5,
-            question: "fresh answer",
-            choices: ["A"],
-            correctIndex: 0,
-          },
-        });
-      },
-    });
-    render(<PresentationScreen presenterRequested />);
-    await firstStartedPromise;
-    await waitFor(() =>
-      expect(
-        api.calls.some(
-          ({ path, init }) => path === "/api/admin/presentation" && init?.method !== "POST",
-        ),
-      ).toBe(true),
-    );
-    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "fresh answer" })).toBeInTheDocument(),
-    );
-    await act(async () => {
-      releaseFirst();
-      await Promise.resolve();
-    });
-    expect(screen.queryByRole("heading", { name: "stale question" })).not.toBeInTheDocument();
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(0);
     expect(
       api.calls.filter(
         ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
@@ -478,8 +494,12 @@ describe("presentation projection and presenter progression", () => {
     const api = setup({
       projection: { state: "podium_preview" },
       admin: { state: "podium_preview", questionIndex: 5, questionCount: 5 },
+      actionAdmin: { state: "third", questionIndex: 5, questionCount: 5 },
     });
-    api.setProjection({ state: "third", winners: [{ displayName: "葵", score: 12.5, rank: 3 }] });
+    api.setDeckSlide("third", 5, {
+      state: "third",
+      winners: [{ displayName: "葵", score: 12.5, rank: 3 }],
+    });
     render(<PresentationScreen presenterRequested />);
     await settled();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
@@ -512,7 +532,10 @@ describe("presentation projection and presenter progression", () => {
       projection: { state: "podium_preview" },
       admin: { state: "podium_preview", questionIndex: 5, questionCount: 5 },
     });
-    api.setProjection({ state: "third", winners: [{ displayName: "葵", score: 12.5, rank: 3 }] });
+    api.setDeckSlide("third", 5, {
+      state: "third",
+      winners: [{ displayName: "葵", score: 12.5, rank: 3 }],
+    });
     render(<PresentationScreen presenterRequested />);
     await settled();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });

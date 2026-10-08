@@ -9,6 +9,7 @@ vi.mock("@/lib/presentation/admin-auth", () => ({
 
 vi.mock("@/lib/db/repository/presentation-repository", () => ({
   getAdminPresentation: vi.fn(),
+  getAdminPresentationControls: vi.fn(),
   operatePresentation: vi.fn(),
   PresentationConflictError: class PresentationConflictError extends Error {
     readonly status = 409;
@@ -17,6 +18,7 @@ vi.mock("@/lib/db/repository/presentation-repository", () => ({
 
 import {
   getAdminPresentation,
+  getAdminPresentationControls,
   operatePresentation,
   PresentationConflictError,
 } from "@/lib/db/repository/presentation-repository";
@@ -60,6 +62,13 @@ beforeEach(() => {
   vi.mocked(isAdminPresentationRequest).mockReturnValue(true);
   vi.mocked(isValidAdminMutation).mockReturnValue(true);
   vi.mocked(getAdminPresentation).mockResolvedValue(adminPayload);
+  vi.mocked(getAdminPresentationControls).mockResolvedValue({
+    state: "question",
+    version: 1,
+    questionIndex: 0,
+    questionCount: 1,
+    projectionHidden: false,
+  });
   vi.mocked(operatePresentation).mockResolvedValue(adminPayload);
 });
 
@@ -88,6 +97,41 @@ describe("/api/admin/presentation route", () => {
     expect(response.headers.get("cache-control")).toBe("no-store, private");
     await expect(response.json()).resolves.toEqual(adminPayload);
     expect(getAdminPresentation).toHaveBeenCalledOnce();
+  });
+
+  it("returns compact controls when view=controls is requested", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/admin/presentation?view=controls", {
+        headers: { Host: "localhost" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store, private");
+    await expect(response.json()).resolves.toEqual({
+      state: "question",
+      version: 1,
+      questionIndex: 0,
+      questionCount: 1,
+      projectionHidden: false,
+    });
+    expect(getAdminPresentationControls).toHaveBeenCalledOnce();
+    expect(getAdminPresentation).not.toHaveBeenCalled();
+  });
+
+  it("returns unavailable when loading presenter controls fails", async () => {
+    vi.mocked(getAdminPresentationControls).mockRejectedValueOnce(
+      new Error("database unavailable"),
+    );
+
+    const response = await GET(
+      new Request("http://localhost/api/admin/presentation?view=controls", {
+        headers: { Host: "localhost" },
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toBe("no-store, private");
   });
 
   it("returns unavailable when loading the admin payload fails", async () => {
@@ -150,7 +194,13 @@ describe("/api/admin/presentation route", () => {
 
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store, private");
-      await expect(response.json()).resolves.toEqual(adminPayload);
+      await expect(response.json()).resolves.toEqual({
+        state: adminPayload.state,
+        version: adminPayload.version,
+        questionIndex: adminPayload.questionIndex,
+        questionCount: adminPayload.questionCount,
+        projectionHidden: adminPayload.projectionHidden,
+      });
       expect(operatePresentation).toHaveBeenCalledWith(operationId, action);
     },
   );

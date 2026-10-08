@@ -63,6 +63,10 @@ type AdminControls = {
   state: AdminState;
   questionIndex: number;
   questionCount: number;
+  projectionHidden: boolean;
+};
+type PresenterDeck = {
+  slides: { state: AdminState; questionIndex: number; projection: ProjectionData }[];
 };
 type AdminAction = "advance" | "previous";
 type ScreenLock = {
@@ -103,7 +107,7 @@ async function getProjection(): Promise<ProjectionData> {
 }
 
 async function getAdminControls(): Promise<AdminControls> {
-  const response = await fetch("/api/admin/presentation", {
+  const response = await fetch("/api/admin/presentation?view=controls", {
     cache: "no-store",
     credentials: "same-origin",
   });
@@ -117,7 +121,35 @@ async function getAdminControls(): Promise<AdminControls> {
     state: admin.state as AdminState,
     questionIndex: typeof admin.questionIndex === "number" ? admin.questionIndex : 0,
     questionCount: typeof admin.questionCount === "number" ? admin.questionCount : 0,
+    projectionHidden: admin.projectionHidden === true,
   };
+}
+
+async function getPresenterDeck(): Promise<PresenterDeck> {
+  const response = await fetch("/api/admin/presentation/deck", {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok)
+    throw Object.assign(new Error("スライドを読み込めませんでした。"), { status: response.status });
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    !("slides" in payload) ||
+    !Array.isArray(payload.slides)
+  )
+    throw new Error("スライドを読み込めませんでした。");
+  return payload as unknown as PresenterDeck;
+}
+
+function projectionForControl(deck: PresenterDeck, controls: AdminControls): ProjectionData {
+  if (controls.projectionHidden) return { state: "standby" };
+  return (
+    deck.slides.find(
+      (slide) => slide.state === controls.state && slide.questionIndex === controls.questionIndex,
+    )?.projection ?? { state: controls.state }
+  );
 }
 
 async function requestAdminAction(action: AdminAction) {
@@ -255,6 +287,10 @@ export default function PresentationScreen({
   const [announcementKey, setAnnouncementKey] = useState<string | null>(null);
   const announcementTimer = useRef<number | null>(null);
   const [adminControls, setAdminControls] = useState<AdminControls | null>(null);
+  const [presenterDeck, setPresenterDeck] = useState<PresenterDeck | null>(null);
+  const [deckLoadError, setDeckLoadError] = useState(false);
+  const presenterDeckRef = useRef<PresenterDeck | null>(null);
+  const presenterDeckRequest = useRef<Promise<PresenterDeck> | null>(null);
   const wrapperRef = useRef<HTMLElement | null>(null);
   const fullscreenAttempted = useRef(false);
   const pointerStart = useRef<{
@@ -284,6 +320,7 @@ export default function PresentationScreen({
   }, []);
 
   useEffect(() => {
+    if (presenterRequested) return;
     let active = true;
     let timer = 0;
     const refresh = async () => {
@@ -309,10 +346,12 @@ export default function PresentationScreen({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [applyProjection]);
+  }, [applyProjection, presenterRequested]);
 
   const refreshAdmin = useCallback(async () => {
     const sequence = ++adminSequence.current;
+    let controls: AdminControls | null = null;
+    let loadingDeck = false;
     try {
       const sessionResponse = await fetch("/api/admin/session", {
         cache: "no-store",
@@ -322,13 +361,45 @@ export default function PresentationScreen({
         authenticated?: unknown;
       } | null;
       if (!sessionResponse.ok || session?.authenticated !== true) {
-        if (sequence === adminSequence.current) setAdminControls(null);
+        if (sequence === adminSequence.current) {
+          presenterDeckRef.current = null;
+          presenterDeckRequest.current = null;
+          setPresenterDeck(null);
+          setAdminControls(null);
+          setDeckLoadError(false);
+          setData({ state: "standby" });
+        }
         return;
       }
-      const controls = await getAdminControls();
-      if (sequence === adminSequence.current) setAdminControls(controls);
+      controls = await getAdminControls();
+      if (sequence !== adminSequence.current) return;
+      setAdminControls(controls);
+      if (controls.state === "not_started") {
+        setDeckLoadError(false);
+        setData({ state: "not_started" });
+        return;
+      }
+      let deck = presenterDeckRef.current;
+      if (!deck) {
+        loadingDeck = true;
+        const request = presenterDeckRequest.current ?? getPresenterDeck();
+        presenterDeckRequest.current = request;
+        try {
+          deck = await request;
+        } finally {
+          if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
+        }
+        if (sequence !== adminSequence.current) return;
+        presenterDeckRef.current = deck;
+        setPresenterDeck(deck);
+        setDeckLoadError(false);
+      }
+      setData(projectionForControl(deck, controls));
     } catch {
-      if (sequence === adminSequence.current) setAdminControls(null);
+      if (sequence === adminSequence.current) {
+        if (loadingDeck && controls) setDeckLoadError(true);
+        else setAdminControls(null);
+      }
     }
   }, []);
 
@@ -340,7 +411,7 @@ export default function PresentationScreen({
     let active = true;
     const refresh = async () => {
       if (!active) return;
-      await refreshAdmin();
+      if (!mutationInFlight.current) await refreshAdmin();
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
@@ -352,6 +423,11 @@ export default function PresentationScreen({
 
   const recoverUnauthorized = useCallback(() => {
     setAdminControls(null);
+    presenterDeckRef.current = null;
+    presenterDeckRequest.current = null;
+    setPresenterDeck(null);
+    setDeckLoadError(false);
+    setData({ state: "standby" });
   }, []);
 
   const requestFullscreenForIntent = useCallback(() => {
@@ -369,17 +445,6 @@ export default function PresentationScreen({
   const operate = useCallback(
     async (action: AdminAction) => {
       if (!adminControls || mutationInFlight.current) return;
-      const startingAdminState = adminControls.state;
-      const expectedRankTarget: State | null =
-        action === "advance"
-          ? startingAdminState === "podium_preview"
-            ? "third"
-            : startingAdminState === "third"
-              ? "second"
-              : startingAdminState === "second"
-                ? "first"
-                : null
-          : null;
       if (announcementTimer.current !== null) {
         window.clearTimeout(announcementTimer.current);
         announcementTimer.current = null;
@@ -389,39 +454,35 @@ export default function PresentationScreen({
       mutationGeneration.current += 1;
       mutationInFlight.current = true;
       projectionSequence.current += 1;
+      const currentSlideIndex =
+        presenterDeck?.slides.findIndex(
+          (slide) =>
+            slide.state === adminControls.state &&
+            slide.questionIndex === adminControls.questionIndex,
+        ) ?? -1;
+      const optimisticSlide =
+        currentSlideIndex < 0
+          ? undefined
+          : presenterDeck?.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
+      if (optimisticSlide) {
+        setData(optimisticSlide.projection);
+        if (
+          isRankState(optimisticSlide.state) &&
+          action === "advance" &&
+          !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ) {
+          const projection = optimisticSlide.projection;
+          announceRank(optimisticSlide.state, "winners" in projection ? projection.winners : []);
+        }
+      }
       try {
         await requestAdminAction(action);
-        const projectionRequest = (async () => {
-          ++projectionSequence.current;
-          const projection = await getProjection();
-          const stillForward =
-            action === "advance" &&
-            ((startingAdminState === "podium_preview" && expectedRankTarget === "third") ||
-              (startingAdminState === "third" && expectedRankTarget === "second") ||
-              (startingAdminState === "second" && expectedRankTarget === "first"));
-          if (
-            stillForward &&
-            expectedRankTarget === projection.state &&
-            isRankState(projection.state) &&
-            !window.matchMedia("(prefers-reduced-motion: reduce)").matches
-          )
-            announceRank(projection.state, projection.winners);
-          applyProjection(projection);
-        })();
-        await Promise.all([refreshAdmin(), projectionRequest]);
+        await refreshAdmin();
       } catch (error) {
         const status = (error as { status?: number })?.status;
         if (status === 401) recoverUnauthorized();
-        else {
-          try {
-            ++projectionSequence.current;
-            const projection = await getProjection();
-            applyProjection(projection);
-          } catch {
-            // Keep the last usable projection visible while the next poll retries.
-          }
-        }
         if (status !== 401) {
+          if (presenterDeck) setData(projectionForControl(presenterDeck, adminControls));
           try {
             await refreshAdmin();
           } catch {
@@ -434,7 +495,7 @@ export default function PresentationScreen({
     },
     [
       adminControls,
-      applyProjection,
+      presenterDeck,
       announceRank,
       recoverUnauthorized,
       refreshAdmin,
@@ -600,6 +661,11 @@ export default function PresentationScreen({
   );
 
   const state = data?.state;
+  const loadingPresenterDeck =
+    presenterRequested &&
+    adminControls !== null &&
+    adminControls.state !== "not_started" &&
+    presenterDeck === null;
   return (
     <main
       ref={wrapperRef}
@@ -623,6 +689,19 @@ export default function PresentationScreen({
             <span>CELEBRATION QUIZ</span>
           </div>
 
+          {loadingPresenterDeck && (
+            <section className={styles.waiting} aria-live="polite">
+              <p className={styles.kicker}>PREPARING PRESENTATION</p>
+              <span className={styles.decorativeRule} aria-hidden="true" />
+              <h1>
+                {deckLoadError ? "スライドを読み込めませんでした" : "スライドを読み込んでいます"}
+              </h1>
+              <p className={styles.subtitle}>
+                {deckLoadError ? "接続を確認しています。自動で再試行します" : "少々お待ちください"}
+              </p>
+            </section>
+          )}
+
           {state === "standby" && (
             <section className={styles.waiting} aria-labelledby="standby-title">
               <p className={styles.kicker}>TAKE A MOMENT</p>
@@ -632,7 +711,7 @@ export default function PresentationScreen({
             </section>
           )}
 
-          {(!data || state === "not_started") && (
+          {!loadingPresenterDeck && (!data || state === "not_started") && (
             <section className={styles.waiting} aria-labelledby="presentation-title">
               <p className={styles.kicker}>A MOMENT TO CELEBRATE</p>
               <span className={styles.decorativeRule} aria-hidden="true" />

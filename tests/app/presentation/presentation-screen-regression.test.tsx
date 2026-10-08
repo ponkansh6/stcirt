@@ -3,6 +3,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PresentationScreen from "@/app/presentation/presentation-screen";
 
 type Projection = Record<string, unknown>;
+type WinnerFixture = { displayName: string; score: number; rank: number };
+type DeckProjectionFixture =
+  | { state: "question" | "answer"; question?: unknown }
+  | { state: "third" | "second" | "first"; winners: WinnerFixture[] }
+  | {
+      state: "standby" | "not_started" | "podium_preview" | "finished";
+      winners?: WinnerFixture[];
+    };
+type DeckSlideFixture = {
+  state: DeckProjectionFixture["state"];
+  questionIndex: number;
+  projection: DeckProjectionFixture;
+};
+
+function deckSlide(
+  state: DeckProjectionFixture["state"],
+  questionIndex: number,
+  projection: DeckProjectionFixture,
+): DeckSlideFixture {
+  return { state, questionIndex, projection };
+}
 
 const question = {
   id: 1,
@@ -52,10 +73,39 @@ function installApi(
     visibilityError?: number;
     visibilityErrorBody?: unknown;
     visibilityErrorResponse?: () => Promise<Response>;
+    deckSlides?: DeckSlideFixture[];
   } = {},
 ) {
   let projection = options.projection ?? { state: "not_started" };
   let admin = options.admin ?? controls();
+  const deckSlides: DeckSlideFixture[] = [
+    ...Array.from({ length: Number(admin.questionCount ?? 0) }, (_, questionIndex) => [
+      deckSlide("question", questionIndex, { state: "question", question }),
+      deckSlide("answer", questionIndex, { state: "answer", question }),
+    ]).flat(),
+    deckSlide("podium_preview", Number(admin.questionIndex ?? 0), { state: "podium_preview" }),
+    deckSlide("third", Number(admin.questionIndex ?? 0), { state: "third", winners: [] }),
+    deckSlide("second", Number(admin.questionIndex ?? 0), { state: "second", winners: [] }),
+    deckSlide("first", Number(admin.questionIndex ?? 0), { state: "first", winners: [] }),
+    deckSlide("finished", Number(admin.questionIndex ?? 0), { state: "finished" }),
+  ];
+  const slideIndex = deckSlides.findIndex(
+    (slide) => slide.state === admin.state && slide.questionIndex === admin.questionIndex,
+  );
+  if (slideIndex >= 0)
+    deckSlides[slideIndex] = deckSlide(
+      deckSlides[slideIndex]!.state,
+      deckSlides[slideIndex]!.questionIndex,
+      projection as unknown as DeckProjectionFixture,
+    );
+  for (const slide of options.deckSlides ?? []) {
+    const existing = deckSlides.findIndex(
+      (candidate) =>
+        candidate.state === slide.state && candidate.questionIndex === slide.questionIndex,
+    );
+    if (existing >= 0) deckSlides[existing] = slide;
+    else deckSlides.push(slide);
+  }
   let actionProjection = options.actionProjection;
   let actionAdmin = options.actionAdmin;
   let actionError = options.actionError;
@@ -83,8 +133,14 @@ function installApi(
       if (actionAdmin) admin = actionAdmin;
       return response({ ok: true });
     }
-    if (path === "/api/admin/presentation")
+    if (path === "/api/admin/presentation?view=controls")
       return options.adminResponse ? options.adminResponse() : response(admin);
+    if (path === "/api/admin/presentation/deck")
+      return response({
+        questionCount: admin.questionCount,
+        questionIndex: admin.questionIndex,
+        slides: deckSlides,
+      });
     if (path === "/api/admin/participant-results") {
       if (options.visibilityErrorResponse) return options.visibilityErrorResponse();
       if (visibilityError) {
@@ -101,8 +157,17 @@ function installApi(
   return {
     actions,
     fetchMock,
-    setProjection(value: Projection) {
-      projection = value;
+    setDeckSlide(
+      state: DeckProjectionFixture["state"],
+      questionIndex: number,
+      value: DeckProjectionFixture,
+    ) {
+      const slide = deckSlide(state, questionIndex, value);
+      const existing = deckSlides.findIndex(
+        (candidate) => candidate.state === state && candidate.questionIndex === questionIndex,
+      );
+      if (existing >= 0) deckSlides[existing] = slide;
+      else deckSlides.push(slide);
     },
     setActionProjection(value: Projection) {
       actionProjection = value;
@@ -313,7 +378,10 @@ describe("PresentationScreen", () => {
     const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
     await flush();
 
-    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+    expect(api.fetchMock).toHaveBeenCalledWith(
+      "/api/admin/presentation?view=controls",
+      expect.anything(),
+    );
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await flush();
     expect(api.actions).toHaveLength(0);
@@ -328,7 +396,10 @@ describe("PresentationScreen", () => {
     const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
     await flush();
 
-    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+    expect(api.fetchMock).toHaveBeenCalledWith(
+      "/api/admin/presentation?view=controls",
+      expect.anything(),
+    );
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await flush();
     expect(api.actions).toHaveLength(0);
@@ -356,7 +427,10 @@ describe("PresentationScreen", () => {
     render(<PresentationScreen presenterRequested />);
     await flush();
 
-    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+    expect(api.fetchMock).toHaveBeenCalledWith(
+      "/api/admin/presentation?view=controls",
+      expect.anything(),
+    );
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
     expect(api.actions).toHaveLength(0);
@@ -397,7 +471,10 @@ describe("PresentationScreen", () => {
     await flush();
     expect(api.actions).toHaveLength(1);
     expect(api.actions[0]).toMatchObject({ action: "previous" });
-    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+    expect(api.fetchMock).toHaveBeenCalledWith(
+      "/api/admin/presentation?view=controls",
+      expect.anything(),
+    );
   });
 
   it("does not refresh admin controls when a queued interval callback runs after unmount", async () => {
@@ -450,7 +527,10 @@ describe("PresentationScreen", () => {
     await act(async () => vi.advanceTimersByTimeAsync(2500));
     await flush();
     expect(sessionCalls).toBe(2);
-    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+    expect(api.fetchMock).toHaveBeenCalledWith(
+      "/api/admin/presentation?view=controls",
+      expect.anything(),
+    );
     await act(async () => {
       rejectFirstSession(new Error("stale session failure"));
       await Promise.resolve();
@@ -485,7 +565,10 @@ describe("PresentationScreen", () => {
     await act(async () => vi.advanceTimersByTimeAsync(2500));
     await flush();
     expect(sessionReads).toBe(2);
-    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+    expect(api.fetchMock).toHaveBeenCalledWith(
+      "/api/admin/presentation?view=controls",
+      expect.anything(),
+    );
 
     await act(async () => {
       resolveOldSession(response({ authenticated: false }));
@@ -539,7 +622,10 @@ describe("PresentationScreen", () => {
     });
     render(<PresentationScreen presenterRequested />);
     await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+      expect(api.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      ),
     );
     await flush();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
@@ -559,14 +645,21 @@ describe("PresentationScreen", () => {
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
 
     await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+      expect(api.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      ),
     );
     await flush();
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await flush();
 
-    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /ふたりの思い出を/ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: question.question })).not.toBeInTheDocument();
     expect(api.actions).toHaveLength(0);
+    expect(api.fetchMock.mock.calls.some(([path]) => String(path) === "/api/presentation")).toBe(
+      false,
+    );
   });
 
   it("does not enable presenter actions when session JSON is malformed", async () => {
@@ -584,9 +677,11 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await flush();
 
-    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "ただいま休憩中です" })).toBeInTheDocument();
     expect(
-      api.fetchMock.mock.calls.some(([path]) => String(path) === "/api/admin/presentation"),
+      api.fetchMock.mock.calls.some(
+        ([path]) => String(path) === "/api/admin/presentation?view=controls",
+      ),
     ).toBe(false);
     expect(api.actions).toHaveLength(0);
   });
@@ -603,7 +698,10 @@ describe("PresentationScreen", () => {
     const slide = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
     try {
       await waitFor(() =>
-        expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+        expect(api.fetchMock).toHaveBeenCalledWith(
+          "/api/admin/presentation?view=controls",
+          expect.anything(),
+        ),
       );
       await flush();
       expect(windowAddSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
@@ -657,7 +755,10 @@ describe("PresentationScreen", () => {
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
     try {
       await waitFor(() =>
-        expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+        expect(api.fetchMock).toHaveBeenCalledWith(
+          "/api/admin/presentation?view=controls",
+          expect.anything(),
+        ),
       );
       await flush();
       expect(windowAddSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
@@ -684,7 +785,7 @@ describe("PresentationScreen", () => {
         state: "third",
         winners: [{ displayName: "悠", score: 10, rank: 3 }],
       },
-      actionProjection: { state: "second", winners },
+      deckSlides: [{ state: "second", questionIndex: 0, projection: { state: "second", winners } }],
       admin: controls({ state: "third" }),
       actionAdmin: controls({ state: "second" }),
     });
@@ -693,7 +794,10 @@ describe("PresentationScreen", () => {
     const initialWinnerRegion = await screen.findByRole("region", { name: "第3位の勝者一覧" });
     expect(initialWinnerRegion).toHaveTextContent("悠");
     await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+      expect(api.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      ),
     );
     await flush();
     fireEvent.keyDown(main, { key: "ArrowRight" });
@@ -718,10 +822,16 @@ describe("PresentationScreen", () => {
         state: "second",
         winners: [{ displayName: "凛", score: 12, rank: 2 }],
       },
-      actionProjection: {
-        state: "first",
-        winners: [{ displayName: "葵", score: 15, rank: 1 }],
-      },
+      deckSlides: [
+        {
+          state: "first",
+          questionIndex: 0,
+          projection: {
+            state: "first",
+            winners: [{ displayName: "葵", score: 15, rank: 1 }],
+          },
+        },
+      ],
       admin: controls({ state: "second" }),
       actionAdmin: controls({ state: "first" }),
     });
@@ -729,7 +839,10 @@ describe("PresentationScreen", () => {
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
     expect(await screen.findByRole("region", { name: "第2位の勝者一覧" })).toHaveTextContent("凛");
     await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+      expect(api.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      ),
     );
     await flush();
 
@@ -751,7 +864,10 @@ describe("PresentationScreen", () => {
     render(<PresentationScreen presenterRequested />);
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
     await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+      expect(api.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      ),
     );
     const button = document.createElement("button");
     main.append(button);
@@ -770,7 +886,10 @@ describe("PresentationScreen", () => {
     render(<PresentationScreen presenterRequested />);
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
     await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+      expect(api.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      ),
     );
     const textTarget = document.createTextNode("slide text");
     screen.getByTestId("presentation-canvas").append(textTarget);
@@ -789,7 +908,10 @@ describe("PresentationScreen", () => {
     render(<PresentationScreen presenterRequested />);
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
     await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+      expect(api.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      ),
     );
     await flush();
     const textTarget = document.createTextNode("keyboard slide text");
@@ -827,8 +949,17 @@ describe("PresentationScreen", () => {
         await actionGate;
         return response({ ok: true });
       }
-      if (path === "/api/admin/presentation")
+      if (path === "/api/admin/presentation?view=controls")
         return response(controls({ state: "answer", questionIndex: 1 }));
+      if (path === "/api/admin/presentation/deck")
+        return response({
+          questionCount: 2,
+          questionIndex: 1,
+          slides: [
+            { state: "question", questionIndex: 1, projection: { state: "question", question } },
+            { state: "answer", questionIndex: 1, projection: { state: "answer", question } },
+          ],
+        });
       throw new Error(`Unexpected fetch: ${path}`);
     });
     const windowAddSpy = vi.spyOn(window, "addEventListener");
@@ -837,7 +968,10 @@ describe("PresentationScreen", () => {
       const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
       await screen.findByRole("heading", { name: question.question });
       await waitFor(() =>
-        expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+        expect(api.fetchMock).toHaveBeenCalledWith(
+          "/api/admin/presentation?view=controls",
+          expect.anything(),
+        ),
       );
       await waitFor(() =>
         expect(windowAddSpy).toHaveBeenCalledWith("keydown", expect.any(Function)),
@@ -974,7 +1108,10 @@ describe("PresentationScreen", () => {
     });
     render(<PresentationScreen presenterRequested />);
     await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+      expect(api.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      ),
     );
     fireEvent.click(screen.getByTestId("presentation-canvas"));
     await flush();
@@ -1027,13 +1164,20 @@ describe("PresentationScreen", () => {
       "matchMedia",
       vi.fn(() => ({ matches: false })),
     );
-    const api = installApi({
+    installApi({
       projection: { state: "podium_preview" },
       admin: controls({ state: "podium_preview" }),
+      deckSlides: [
+        {
+          state: "third",
+          questionIndex: 0,
+          projection: { state: "third", winners: [{ displayName: "葵", score: 9, rank: 3 }] },
+        },
+      ],
+      actionAdmin: controls({ state: "third" }),
     });
     render(<PresentationScreen presenterRequested />);
     await flush();
-    api.setProjection({ state: "third", winners: [{ displayName: "葵", score: 9, rank: 3 }] });
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
     const winnerRegion = screen.getByRole("region", { name: "第3位の勝者一覧" });
@@ -1055,7 +1199,18 @@ describe("PresentationScreen", () => {
     try {
       const api = installApi({
         projection: { state: "podium_preview" },
-        actionProjection: { state: "third", winners: [{ displayName: "葵", score: 9, rank: 3 }] },
+        deckSlides: [
+          {
+            state: "third",
+            questionIndex: 0,
+            projection: { state: "third", winners: [{ displayName: "葵", score: 9, rank: 3 }] },
+          },
+          {
+            state: "second",
+            questionIndex: 0,
+            projection: { state: "second", winners: [{ displayName: "凛", score: 12, rank: 2 }] },
+          },
+        ],
         admin: controls({ state: "podium_preview" }),
         actionAdmin: controls({ state: "third" }),
       });
@@ -1071,10 +1226,6 @@ describe("PresentationScreen", () => {
       expect(rankAnnouncementTimer).toBeDefined();
       await act(async () => vi.advanceTimersByTimeAsync(700));
 
-      api.setActionProjection({
-        state: "second",
-        winners: [{ displayName: "凛", score: 12, rank: 2 }],
-      });
       api.setActionAdmin(controls({ state: "second" }));
       fireEvent.keyDown(main, { key: "ArrowRight" });
       await flush();
@@ -1359,7 +1510,10 @@ describe("PresentationScreen", () => {
       views.push(activeView);
       await flush();
       expect(firstApi.fetchMock).toHaveBeenCalledWith("/api/admin/session", expect.anything());
-      expect(firstApi.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+      expect(firstApi.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      );
       fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
       await flush();
       expect(firstApi.fetchMock).toHaveBeenCalledWith(
@@ -1380,7 +1534,7 @@ describe("PresentationScreen", () => {
       views.push(render(<PresentationScreen presenterRequested />));
       await flush();
       expect(secondApi.fetchMock).toHaveBeenCalledWith(
-        "/api/admin/presentation",
+        "/api/admin/presentation?view=controls",
         expect.anything(),
       );
       fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
@@ -1397,7 +1551,7 @@ describe("PresentationScreen", () => {
     }
   });
 
-  it("cleans up presenter polling, projection polling and keyboard listeners", async () => {
+  it("cleans up presenter controls polling without starting public slide polling", async () => {
     const addSpy = vi.spyOn(document, "addEventListener");
     const removeSpy = vi.spyOn(document, "removeEventListener");
     const windowAddSpy = vi.spyOn(window, "addEventListener");
@@ -1405,7 +1559,6 @@ describe("PresentationScreen", () => {
     const setIntervalSpy = vi.spyOn(window, "setInterval");
     const clearIntervalSpy = vi.spyOn(window, "clearInterval");
     const setTimeoutSpy = vi.spyOn(window, "setTimeout");
-    const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
     const api = installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 1 }),
@@ -1415,23 +1568,30 @@ describe("PresentationScreen", () => {
       view = render(<PresentationScreen presenterRequested />);
       await flush();
       expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/session", expect.anything());
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+      expect(api.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      );
       await flush();
       expect(windowAddSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
       expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 2500);
+      expect(
+        api.fetchMock.mock.calls.filter(
+          ([path]) => String(path) === "/api/admin/presentation/deck",
+        ),
+      ).toHaveLength(1);
+      expect(
+        api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/presentation"),
+      ).toHaveLength(0);
       const adminIntervalIndex = setIntervalSpy.mock.calls.findIndex(([, delay]) => delay === 2500);
       const adminInterval = setIntervalSpy.mock.results[adminIntervalIndex]?.value;
-      const projectionTimeoutIndex = setTimeoutSpy.mock.calls.findIndex(
-        ([, delay]) => delay === 1400,
-      );
-      const projectionTimeout = setTimeoutSpy.mock.results[projectionTimeoutIndex]?.value;
+      expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 1400)).toBe(false);
       view.unmount();
       view = undefined;
       expect(removeSpy).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
       expect(addSpy).not.toHaveBeenCalledWith("fullscreenchange", expect.any(Function));
       expect(windowRemoveSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
       expect(clearIntervalSpy).toHaveBeenCalledWith(adminInterval);
-      expect(clearTimeoutSpy).toHaveBeenCalledWith(projectionTimeout);
       expect(windowAddSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
     } finally {
       view?.unmount();
@@ -1442,7 +1602,6 @@ describe("PresentationScreen", () => {
       setIntervalSpy.mockRestore();
       clearIntervalSpy.mockRestore();
       setTimeoutSpy.mockRestore();
-      clearTimeoutSpy.mockRestore();
     }
   });
 });

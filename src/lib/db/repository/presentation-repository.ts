@@ -365,7 +365,196 @@ export async function getAdminPresentation() {
   return db.transaction((tx) => readAdminPresentation(tx));
 }
 
-export async function getPublicPresentation() {
+export async function getAdminPresentationControls() {
+  return db.transaction(async (tx) => {
+    const [session] = await tx
+      .select({
+        state: presentationSessions.state,
+        version: presentationSessions.version,
+        questionIndex: presentationSessions.questionIndex,
+        questionCount: presentationSessions.questionCount,
+        projectionHidden: presentationSessions.projectionHidden,
+      })
+      .from(presentationSessions)
+      .where(eq(presentationSessions.id, 1));
+    return (
+      session ?? {
+        state: "not_started" as const,
+        version: 0,
+        questionIndex: 0,
+        questionCount: 0,
+        projectionHidden: false,
+      }
+    );
+  });
+}
+
+type PublicProjection =
+  | { state: "question"; question?: PublicProjectedQuestion }
+  | { state: "answer"; question?: PublicProjectedQuestion }
+  | { state: "third" | "second" | "first"; winners: Winner[]; question?: PublicProjectedQuestion }
+  | {
+      state: Exclude<PresentationState, "question" | "answer" | "third" | "second" | "first">;
+      question?: PublicProjectedQuestion;
+    };
+
+type Winner = { displayName: string; score: number; rank: number };
+type PublicProjectedQuestion = {
+  id: number;
+  ordinal: number;
+  total: number;
+  question: string;
+  choices: string[];
+  answerType: "selected" | "freeText";
+  correctAnswer?: string;
+  correctIndex?: number;
+  explanation?: string | null;
+  expectedAnswer?: string | null;
+  responses?: {
+    displayName: string;
+    answer: string | null | undefined;
+    answerKind: "selected" | "freeText" | "legacy" | "unanswered";
+    similarity: number | null | undefined;
+    score: number | null | undefined;
+  }[];
+};
+
+function buildPublicProjection(
+  admin: AdminPresentation,
+  state: PresentationState,
+  questionIndex: number,
+  sourceQuestions: Map<number, { key: string; explanation: string | null }>,
+): PublicProjection {
+  if (state === "question" || state === "answer") {
+    const row = admin.questions[questionIndex];
+    if (!row) return { state };
+    const sourceQuestion = sourceQuestions.get(row.id);
+    const explanation = row.explanation?.trim() ? row.explanation : sourceQuestion?.explanation;
+    const question = {
+      id: row.id,
+      ordinal: questionIndex + 1,
+      total: admin.questionCount,
+      question: row.question,
+      choices: row.choices,
+      answerType: row.answerType,
+      ...(state === "answer"
+        ? row.answerType === "freeText"
+          ? {
+              expectedAnswer: explanation,
+              ...(sourceQuestion?.key === "it-literacy-005"
+                ? {}
+                : {
+                    responses: admin.entries.map((entry) => {
+                      const answer = entry.answers?.find((item) => item.questionId === row.id);
+                      return {
+                        displayName: entry.displayName,
+                        answer: answer?.freeText,
+                        answerKind: answer?.answerKind ?? "unanswered",
+                        similarity: answer?.rawScore,
+                        score: answer?.normalizedScore,
+                      };
+                    }),
+                  }),
+            }
+          : {
+              correctAnswer: row.correctAnswer,
+              correctIndex: row.correctIndex,
+              explanation,
+            }
+        : {}),
+    };
+    return { state, question };
+  }
+  const rank = rankForStage(state);
+  if (rank !== null) {
+    const winners = admin.entries
+      .filter((entry) => entry.rank === rank)
+      .map(({ displayName, score, rank: winnerRank }) => ({
+        displayName,
+        score,
+        rank: winnerRank,
+      }));
+    return { state, winners };
+  }
+  return {
+    state: state as Exclude<
+      PresentationState,
+      "question" | "answer" | "third" | "second" | "first"
+    >,
+  };
+}
+
+export async function getAdminPresentationDeck() {
+  return db.transaction(async (tx) => {
+    const admin = await readAdminPresentation(tx);
+    const questionIds = admin.questions.map(({ id }) => id);
+    const sourceRows = questionIds.length
+      ? await tx
+          .select({
+            id: examQuestions.id,
+            key: examQuestions.key,
+            explanation: examQuestions.explanation,
+          })
+          .from(examQuestions)
+          .where(inArray(examQuestions.id, questionIds))
+      : [];
+    const sourceQuestions = new Map(
+      sourceRows.map(({ id, key, explanation }) => [id, { key, explanation }]),
+    );
+    const slides: {
+      state: PresentationState;
+      questionIndex: number;
+      projection: PublicProjection;
+    }[] = [];
+    for (let index = 0; index < admin.questionCount; index += 1) {
+      slides.push(
+        {
+          state: "question",
+          questionIndex: index,
+          projection: buildPublicProjection(admin, "question", index, sourceQuestions),
+        },
+        {
+          state: "answer",
+          questionIndex: index,
+          projection: buildPublicProjection(admin, "answer", index, sourceQuestions),
+        },
+      );
+    }
+    slides.push({
+      state: "podium_preview",
+      questionIndex: admin.questionIndex,
+      projection: buildPublicProjection(
+        admin,
+        "podium_preview",
+        admin.questionIndex,
+        sourceQuestions,
+      ),
+    });
+    for (const [state, rank] of [
+      ["third", 3],
+      ["second", 2],
+      ["first", 1],
+    ] as const) {
+      if (admin.entries.some((entry) => entry.rank === rank)) {
+        slides.push({
+          state,
+          questionIndex: admin.questionIndex,
+          projection: buildPublicProjection(admin, state, admin.questionIndex, sourceQuestions),
+        });
+      }
+    }
+    slides.push({
+      state: "finished",
+      questionIndex: admin.questionIndex,
+      projection: buildPublicProjection(admin, "finished", admin.questionIndex, sourceQuestions),
+    });
+    return { questionCount: admin.questionCount, questionIndex: admin.questionIndex, slides };
+  });
+}
+
+export async function getPublicPresentation(): Promise<
+  PublicProjection | { state: "standby"; question?: PublicProjectedQuestion }
+> {
   return db.transaction(async (tx) => {
     const [session] = await tx
       .select({ projectionHidden: presentationSessions.projectionHidden })
@@ -373,79 +562,26 @@ export async function getPublicPresentation() {
       .where(eq(presentationSessions.id, 1));
     if (session?.projectionHidden) return { state: "standby" };
     const admin = await readAdminPresentation(tx);
-    if (admin.state === "question" || admin.state === "answer") {
-      const row = admin.questions[admin.questionIndex];
-      if (!row) return { state: admin.state };
-      let sourceQuestionKey: string | undefined;
-      let sourceExplanation: string | null | undefined;
-      if (admin.state === "answer") {
-        // Snapshot IDs are not foreign-keyed. Resolve source data in one batch
-        // for legacy snapshots with an empty explanation and free-text privacy.
-        const sourceQuestions = await tx
-          .select({
-            id: examQuestions.id,
-            key: examQuestions.key,
-            explanation: examQuestions.explanation,
-          })
-          .from(examQuestions)
-          .where(
-            inArray(
-              examQuestions.id,
-              admin.questions.map(({ id }) => id),
-            ),
-          );
-        const sourceQuestion = sourceQuestions.find(({ id }) => id === row.id);
-        sourceQuestionKey = sourceQuestion?.key;
-        sourceExplanation = sourceQuestion?.explanation;
-      }
-      const explanation = row.explanation?.trim() ? row.explanation : sourceExplanation;
-      const question = {
-        id: row.id,
-        ordinal: admin.questionIndex + 1,
-        total: admin.questionCount,
-        question: row.question,
-        choices: row.choices,
-        answerType: row.answerType,
-        ...(admin.state === "answer"
-          ? row.answerType === "freeText"
-            ? {
-                expectedAnswer: explanation,
-                ...(sourceQuestionKey === "it-literacy-005"
-                  ? {}
-                  : {
-                      responses: admin.entries.map((entry) => {
-                        const answer = entry.answers?.find((item) => item.questionId === row.id);
-                        return {
-                          displayName: entry.displayName,
-                          answer: answer?.freeText,
-                          answerKind: answer?.answerKind ?? "unanswered",
-                          similarity: answer?.rawScore,
-                          score: answer?.normalizedScore,
-                        };
-                      }),
-                    }),
-              }
-            : {
-                correctAnswer: row.correctAnswer,
-                correctIndex: row.correctIndex,
-                explanation,
-              }
-          : {}),
-      };
-      return { state: admin.state, question };
+    let sourceQuestions = new Map<number, { key: string; explanation: string | null }>();
+    if (admin.state === "answer") {
+      // Snapshot IDs are not foreign-keyed. Resolve source data in one batch
+      // for legacy snapshots with an empty explanation and free-text privacy.
+      const rows = await tx
+        .select({
+          id: examQuestions.id,
+          key: examQuestions.key,
+          explanation: examQuestions.explanation,
+        })
+        .from(examQuestions)
+        .where(
+          inArray(
+            examQuestions.id,
+            admin.questions.map(({ id }) => id),
+          ),
+        );
+      sourceQuestions = new Map(rows.map(({ id, key, explanation }) => [id, { key, explanation }]));
     }
-    const rank = rankForStage(admin.state);
-    if (rank !== null) {
-      const winners = admin.entries
-        .filter((entry) => entry.rank === rank)
-        .map(({ displayName, score, rank: winnerRank }) => ({
-          displayName,
-          score,
-          rank: winnerRank,
-        }));
-      return { state: admin.state, winners };
-    }
-    return { state: admin.state };
+    return buildPublicProjection(admin, admin.state, admin.questionIndex, sourceQuestions);
   });
 }
 

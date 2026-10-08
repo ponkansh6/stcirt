@@ -5,6 +5,7 @@ import {
   isValidAdminMutation,
 } from "@/lib/presentation/admin-auth";
 import {
+  getAdminPresentationControls,
   getAdminPresentation,
   operatePresentation,
   PresentationConflictError,
@@ -26,7 +27,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: noStore });
   }
   try {
-    return NextResponse.json(await getAdminPresentation(), { headers: noStore });
+    const url = new URL(request.url);
+    const view = url.searchParams.get("view");
+    const presentation =
+      view === "controls" ? await getAdminPresentationControls() : await getAdminPresentation();
+    return NextResponse.json(presentation, { headers: noStore });
   } catch {
     return unavailable();
   }
@@ -68,9 +73,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400, headers: noStore });
   }
   try {
-    return NextResponse.json(await operatePresentation(value.operationId, value.action), {
-      headers: noStore,
-    });
+    const result = await operatePresentation(value.operationId, value.action);
+    return NextResponse.json(
+      {
+        state: result.state,
+        version: result.version,
+        questionIndex: result.questionIndex,
+        questionCount: result.questionCount,
+        projectionHidden: result.projectionHidden,
+      },
+      {
+        headers: noStore,
+      },
+    );
   } catch (error) {
     if (error instanceof PresentationConflictError) {
       return NextResponse.json({ error: error.message }, { status: 409, headers: noStore });
