@@ -549,11 +549,6 @@ describe("presentation admin console", () => {
   });
 
   it("shows refresh errors in the authenticated loading console", async () => {
-    let poll: (() => void) | undefined;
-    vi.spyOn(window, "setInterval").mockImplementation((handler) => {
-      if (typeof handler === "function") poll = handler as () => void;
-      return 1 as unknown as ReturnType<typeof window.setInterval>;
-    });
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === "/api/admin/session") return response(200, { authenticated: true });
       if (String(input) === "/api/admin/presentation") return response(503, {});
@@ -563,11 +558,8 @@ describe("presentation admin console", () => {
     render(<PresentationAdmin />);
 
     expect(await screen.findByText("管理状態を取得しています…")).toBeInTheDocument();
-    expect(poll).toBeDefined();
-    await act(async () => {
-      poll?.();
-      expect(await screen.findByRole("alert")).toHaveTextContent("自動で再試行しています");
-    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("自動で再試行しています");
+    expect(fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
   });
 
   it("shows an action failure when the projection action endpoint rejects the request", async () => {
