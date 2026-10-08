@@ -10,6 +10,16 @@ vi.mock("@/app/presentation/presentation-screen", () => ({
   ),
 }));
 
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: () => ({ value: "valid-session" }) }),
+}));
+
+vi.mock("@/lib/presentation/admin-auth", () => ({
+  ADMIN_PRESENTATION_COOKIE: "stcirt_admin_presentation",
+  isAdminPresentationAuthConfigured: () => true,
+  verifyAdminPresentationSession: () => true,
+}));
+
 describe("presentation page entry", () => {
   it("renders the presentation screen for the default view", async () => {
     const page = await PresentationPage({ searchParams: Promise.resolve({}) });
