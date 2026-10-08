@@ -47,7 +47,6 @@
   isolation: isolate;
 }
 
-
 .canvas::before,
 .canvas::after {
   position: absolute;

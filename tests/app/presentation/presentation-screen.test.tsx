@@ -242,6 +242,47 @@ describe("presentation projection and presenter progression", () => {
     await settled();
   });
 
+  it("reschedules a projection poll while a presenter mutation is in flight", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    let started!: () => void;
+    const actionStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const actionGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const api = setup({
+      actionGate: () => {
+        started();
+        return actionGate;
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await settled();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await actionStarted;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1400);
+    });
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(1);
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    await settled();
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1400);
+    });
+    await settled();
+    expect(
+      api.calls.filter(({ path }) => path === "/api/presentation").length,
+    ).toBeGreaterThanOrEqual(3);
+  });
+
   it("synchronizes projection after a 409 without retrying the operation", async () => {
     const api = setup({ actionStatus: 409 });
     render(<PresentationScreen presenterRequested />);
