@@ -21,7 +21,8 @@ fi
 
 ln -s "$ROOT/node_modules" "$WT/node_modules"
 
-if "$ROOT/node_modules/.bin/tsgo" --noEmit -p "$WT/tsconfig.json"; then
+if (cd "$WT" && "$ROOT/node_modules/.bin/next" typegen) \
+  && "$ROOT/node_modules/.bin/tsgo" --noEmit -p "$WT/tsconfig.json"; then
   echo "[head-typecheck] OK: Commited tree at $REF type-checks successfully."
   exit 0
 else

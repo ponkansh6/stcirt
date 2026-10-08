@@ -29,8 +29,8 @@
   - コンポーネント追加/削除・データモデル変更・API変更・アーキテクチャ変更は仕様書に反映する。
   - Requirements と API セクションを実装と同期させる。
   - 自動チェック: hook は 3 層構成。
-    - `pre-commit`（秒単位 / staged スコープ / 自動修正）: lint-staged（`oxfmt --write` + `vitest related` + `secretlint`）→ `oxlint` / `tsgo --noEmit`（リポジトリ全体、blocking）→ `scripts/check-spec-update.sh`（non-blocking 警告）・src/ 未ステージ変更の警告・package.json / pnpm-lock.yaml 片方のみ staged の警告（いずれも non-blocking）。
-    - `pre-push`（分単位 / push 差分スコープ / 3 フェーズ）: Phase 1（並列）= preflight（`scripts/check-head-typecheck.sh` + `scripts/check-lockfile-sync.sh` + `pnpm format:check` + `oxlint` + `scripts/check-security.sh` + `scripts/check-spec-refs.sh`）/ 単体テスト+カバレッジ Tier（`vitest run --coverage` を1回、src/ tests/ 等の変更時）/ 本番ビルド（src/ next.config.ts 等の変更時）。Phase 2 = E2E（UI / API / DB 層の変更時のみ）。Phase 3 = 本番スキーマドリフト検出（`src/lib/db/schema.ts` または `src/lib/db/migrations/` の変更時に実行し、.env.local・接続/認証・確認処理を含め失敗時は blocking）。
+    - `pre-commit`（秒単位 / staged スコープ / 自動修正）: lint-staged（`oxfmt --write` + `vitest related` + `secretlint`）→ `oxlint` / `pnpm type-check:fast`（`next typegen` 後に `tsgo --noEmit`、リポジトリ全体、blocking）→ `scripts/check-spec-update.sh`（non-blocking 警告）・src/ 未ステージ変更の警告・package.json / pnpm-lock.yaml 片方のみ staged の警告（いずれも non-blocking）。
+    - `pre-push`（分単位 / push 差分スコープ / 3 フェーズ）: Phase 1（並列）= preflight（`scripts/check-head-typecheck.sh`（一時 worktree 内で `next typegen` 後に型チェック）+ `scripts/check-lockfile-sync.sh` + `pnpm format:check` + `oxlint` + `scripts/check-security.sh` + `scripts/check-spec-refs.sh`）/ 単体テスト+カバレッジ Tier（`vitest run --coverage` を1回、src/ tests/ 等の変更時）/ 本番ビルド（src/ next.config.ts 等の変更時）。Phase 2 = E2E（UI / API / DB 層の変更時のみ）。Phase 3 = 本番スキーマドリフト検出（`src/lib/db/schema.ts` または `src/lib/db/migrations/` の変更時に実行し、.env.local・接続/認証・確認処理を含め失敗時は blocking）。
     - `commit-msg`（Conventional Commits 形式検証、blocking。件名長は advisory。Merge / Revert / fixup! / squash! は除外）。
     - CI（`.github/workflows/main.yml`、全網羅 / 環境非依存 / 最終防衛線）: `static`（型・lint・format・spec-refs・security・本番スキーマドリフト）/ `test`（`pnpm test:coverage` + カバレッジ Tier）/ `build-e2e`（本番ビルド + E2E）の 3 job 並列。E2E と本番スキーマドリフトは blocking。
 

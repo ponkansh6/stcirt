@@ -22,9 +22,9 @@ export PATH
 lint-staged
 
 # --- 2. リポジトリ全体の静的ゲート（整形後の内容に対して） ------------------
-# oxlint 0.07s / tsgo 0.58s。並列化しても 30ms 程度しか縮まないので逐次のまま。
+# oxlint 0.07s / type-check:fast は Next.js 型生成を含む。
 oxlint --nextjs-plugin --react-plugin --react-perf-plugin
-tsgo --noEmit
+pnpm type-check:fast
 
 # --- 3. 非ブロッキング advisory ---------------------------------------------
 bash scripts/check-spec-update.sh
