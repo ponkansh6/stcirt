@@ -435,6 +435,74 @@ describe("PresentationScreen", () => {
     expect(api.actions[0]).toMatchObject({ action: "advance" });
   });
 
+  it("keeps admin access after an older unauthenticated session response", async () => {
+    vi.useFakeTimers();
+    let resolveOldSession!: (value: Response) => void;
+    let sessionReads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 1 }),
+      sessionResponse: () => {
+        sessionReads += 1;
+        if (sessionReads === 1)
+          return new Promise<Response>((resolve) => {
+            resolveOldSession = resolve;
+          });
+        return Promise.resolve(response({ authenticated: true }));
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(sessionReads).toBe(2);
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+
+    await act(async () => {
+      resolveOldSession(response({ authenticated: false }));
+      await Promise.resolve();
+    });
+    await flush();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({ action: "advance" });
+  });
+
+  it("keeps newer admin controls after an older state response arrives", async () => {
+    vi.useFakeTimers();
+    let resolveOldState!: (value: Response) => void;
+    let adminReads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      adminResponse: () => {
+        adminReads += 1;
+        if (adminReads === 1)
+          return new Promise<Response>((resolve) => {
+            resolveOldState = resolve;
+          });
+        return Promise.resolve(response(controls({ state: "question", questionIndex: 1 })));
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(adminReads).toBe(2);
+
+    await act(async () => {
+      resolveOldState(response(controls({ state: "not_started" })));
+      await Promise.resolve();
+    });
+    await flush();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({ action: "advance" });
+  });
+
   it("drops presenter controls after an expired admin session", async () => {
     const api = installApi({
       projection: { state: "question", question },
@@ -622,6 +690,25 @@ describe("PresentationScreen", () => {
     fireEvent.click(screen.getByTestId("presentation-canvas"));
     await waitFor(() => expect(api.actions).toHaveLength(1));
     expect(api.actions[0]).toMatchObject({ action: "advance" });
+  });
+
+  it("allows a click event from non-element slide text to advance", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 1 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+    await waitFor(() =>
+      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+    );
+    const textTarget = document.createTextNode("slide text");
+    screen.getByTestId("presentation-canvas").append(textTarget);
+
+    fireEvent.click(textTarget);
+    await waitFor(() => expect(api.actions).toHaveLength(1));
+    expect(api.actions[0]).toMatchObject({ action: "advance" });
+    expect(main.contains(textTarget)).toBe(true);
   });
 
   it("runs a valid previous action and ignores repeated slide actions while busy", async () => {

@@ -295,6 +295,14 @@ describe("presentation admin console", () => {
     expect(screen.getByRole("button", { name: "参加者結果を公開" })).toBeDisabled();
   });
 
+  it("defaults a non-string server state to not started", async () => {
+    apiFetch({ state: { state: null } });
+    render(<PresentationAdmin />);
+
+    expect(await screen.findByText("現在の状態：未開始")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "発表を開始" })).toBeInTheDocument();
+  });
+
   it("does not post an empty PIN and maps an invalid PIN response", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === "/api/admin/session" && init?.method === "POST")
@@ -612,9 +620,10 @@ describe("presentation admin console", () => {
 
       expect(await screen.findByText("現在の状態：進行中：解答")).toBeInTheDocument();
       expect(poll).toBeDefined();
+      const pollRefresh = poll;
       await act(async () => {
-        poll?.();
-        poll?.();
+        pollRefresh?.();
+        pollRefresh?.();
         for (let index = 0; index < 8; index += 1) await Promise.resolve();
       });
       await waitFor(() => expect(sessionReads).toBeGreaterThanOrEqual(4));
