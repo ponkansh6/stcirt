@@ -171,72 +171,81 @@ async function installAdminApiMock(
       }),
     )
     .then(() =>
-      context.route("**/api/admin/presentation", async (route) => {
-        if (route.request().method() === "GET") {
-          if (failAdminRead) {
-            await route.fulfill({ status: 503, json: { error: "Unavailable" } });
+      context.route(
+        (url) => url.pathname === "/api/admin/presentation",
+        async (route) => {
+          if (route.request().method() === "GET") {
+            if (failAdminRead) {
+              await route.fulfill({ status: 503, json: { error: "Unavailable" } });
+              return;
+            }
+            if (new URL(route.request().url()).searchParams.get("view") === "controls") {
+              await route.fulfill({
+                json: { state, questionIndex, questionCount: questions.length, projectionHidden },
+              });
+              return;
+            }
+            await route.fulfill({ json: payload() });
             return;
           }
-          await route.fulfill({ json: payload() });
-          return;
-        }
-        const body = route.request().postDataJSON() as {
-          operationId?: string;
-          action?: string;
-        };
-        if (failNextMutationUnauthorized) {
-          failNextMutationUnauthorized = false;
-          authenticated = false;
-          await route.fulfill({ status: 401, json: { error: "Unauthorized" } });
-          return;
-        }
-        if (failNextMutationConflict) {
-          failNextMutationConflict = false;
-          if (body.action === "advance" && state === "question") {
-            stageCursor = Math.min(stageCursor + 1, stages.length - 1);
-            state = stages[stageCursor];
+          const body = route.request().postDataJSON() as {
+            operationId?: string;
+            action?: string;
+          };
+          if (failNextMutationUnauthorized) {
+            failNextMutationUnauthorized = false;
+            authenticated = false;
+            await route.fulfill({ status: 401, json: { error: "Unauthorized" } });
+            return;
           }
+          if (failNextMutationConflict) {
+            failNextMutationConflict = false;
+            if (body.action === "advance" && state === "question") {
+              stageCursor = Math.min(stageCursor + 1, stages.length - 1);
+              state = stages[stageCursor];
+            }
+            version += 1;
+            presentationRouteEvents.push("mutation:advance:409");
+            await route.fulfill({
+              status: 409,
+              json: { error: "Presentation state changed concurrently" },
+            });
+            return;
+          }
+          if (!authenticated || !body.operationId) {
+            await route.fulfill({ status: 401, json: { error: "Unauthorized" } });
+            return;
+          }
+          actions.push(body.action ?? "");
+          if (pauseNextMutation) {
+            pauseNextMutation = false;
+            pausedMutationStarted?.();
+            await new Promise<void>((resolve) => {
+              releasePausedMutation = resolve;
+            });
+            releasePausedMutation = null;
+          }
+          if (body.action === "start" && state === "not_started") {
+            snapshotExists = true;
+            snapshotRevision += 1;
+            stageCursor = 1;
+            state = stages[stageCursor];
+          } else if (body.action === "advance") {
+            if (stageCursor + 1 < stages.length) {
+              stageCursor += 1;
+              state = stages[stageCursor];
+            }
+          } else if (body.action === "previous") {
+            if (stageCursor > 1) {
+              stageCursor -= 1;
+              state = stages[stageCursor];
+            }
+          } else if (body.action === "hide") projectionHidden = true;
+          else if (body.action === "show") projectionHidden = false;
           version += 1;
-          presentationRouteEvents.push("mutation:advance:409");
-          await route.fulfill({
-            status: 409,
-            json: { error: "Presentation state changed concurrently" },
-          });
-          return;
-        }
-        if (!authenticated || !body.operationId) {
-          await route.fulfill({ status: 401, json: { error: "Unauthorized" } });
-          return;
-        }
-        actions.push(body.action ?? "");
-        if (pauseNextMutation) {
-          pauseNextMutation = false;
-          pausedMutationStarted?.();
-          await new Promise<void>((resolve) => {
-            releasePausedMutation = resolve;
-          });
-          releasePausedMutation = null;
-        }
-        if (body.action === "start" && state === "not_started") {
-          snapshotExists = true;
-          snapshotRevision += 1;
-          stageCursor = 1;
-          state = stages[stageCursor];
-        } else if (body.action === "advance") {
-          if (stageCursor + 1 < stages.length) {
-            stageCursor += 1;
-            state = stages[stageCursor];
-          }
-        } else if (body.action === "previous") {
-          if (stageCursor > 1) {
-            stageCursor -= 1;
-            state = stages[stageCursor];
-          }
-        } else if (body.action === "hide") projectionHidden = true;
-        else if (body.action === "show") projectionHidden = false;
-        version += 1;
-        await route.fulfill({ json: payload() });
-      }),
+          await route.fulfill({ json: payload() });
+        },
+      ),
     )
     .then(() =>
       context.route("**/api/presentation", async (route) => {
