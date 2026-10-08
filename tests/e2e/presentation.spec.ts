@@ -99,6 +99,47 @@ async function installAdminApiMock(
     participantResultsVisible,
     participantResultsReady: snapshotExists,
   });
+  const deck = () => ({
+    slides: (
+      ["question", "answer", "podium_preview", "third", "second", "first", "finished"] as const
+    ).map((slideState) => {
+      let projection: Record<string, unknown>;
+      if (slideState === "question" || slideState === "answer") {
+        projection = {
+          state: slideState,
+          question: {
+            id: 11,
+            ordinal: 1,
+            total: 1,
+            question: questions[0].question,
+            choices: questions[0].choices,
+            ...(slideState === "answer"
+              ? {
+                  correctAnswer: questions[0].correctAnswer,
+                  correctIndex: 1,
+                  explanation: questions[0].explanation,
+                }
+              : {}),
+          },
+        };
+      } else if (slideState === "third" || slideState === "second" || slideState === "first") {
+        const rank = slideState === "third" ? 3 : slideState === "second" ? 2 : 1;
+        projection = {
+          state: slideState,
+          winners: winnerEntries
+            .filter((entry) => entry.rank === rank)
+            .map(({ displayName, score, rank: winnerRank }) => ({
+              displayName,
+              score,
+              rank: winnerRank,
+            })),
+        };
+      } else {
+        projection = { state: slideState };
+      }
+      return { state: slideState, questionIndex: 0, projection };
+    }),
+  });
 
   const context = page.context();
   return context
@@ -124,6 +165,11 @@ async function installAdminApiMock(
       }
       await route.fulfill({ status: 405, json: { error: "Method not allowed" } });
     })
+    .then(() =>
+      context.route("**/api/admin/presentation/deck", async (route) => {
+        await route.fulfill({ json: deck() });
+      }),
+    )
     .then(() =>
       context.route("**/api/admin/presentation", async (route) => {
         if (route.request().method() === "GET") {
@@ -338,12 +384,15 @@ async function startPresentation(page: import("@playwright/test").Page) {
 }
 
 async function openPresenter(page: import("@playwright/test").Page) {
-  const controlsResponse = page.waitForResponse(
+  const controlsResponse = nextAdminRefresh(page);
+  const deckResponse = page.waitForResponse(
     (response) =>
-      response.url().endsWith("/api/admin/presentation") && response.request().method() === "GET",
+      new URL(response.url()).pathname === "/api/admin/presentation/deck" &&
+      response.request().method() === "GET",
   );
   await page.goto("/presentation?presenter=1");
-  await controlsResponse;
+  await Promise.all([controlsResponse, deckResponse]);
+  await expect(page.getByTestId("presentation-canvas")).toBeVisible();
   await waitForRenderFrames(page);
 }
 
@@ -359,7 +408,9 @@ async function waitForRenderFrames(page: import("@playwright/test").Page) {
 function nextAdminRefresh(page: import("@playwright/test").Page) {
   return page.waitForResponse(
     (response) =>
-      response.url().endsWith("/api/admin/presentation") && response.request().method() === "GET",
+      new URL(response.url()).pathname === "/api/admin/presentation" &&
+      new URL(response.url()).searchParams.get("view") === "controls" &&
+      response.request().method() === "GET",
   );
 }
 
