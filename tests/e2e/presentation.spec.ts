@@ -110,7 +110,11 @@ async function installAdminApiMock(
       if (route.request().method() === "POST") {
         const body = route.request().postDataJSON() as { pin?: string };
         authenticated = body.pin === e2eAdminPin;
-        await route.fulfill({ status: authenticated ? 200 : 401, json: { authenticated } });
+        if (!authenticated) {
+          await route.fulfill({ status: 401, json: { authenticated } });
+          return;
+        }
+        await route.fallback();
         return;
       }
       if (route.request().method() === "DELETE") {
@@ -407,10 +411,12 @@ test("public and presenter routes are read-only unless an authenticated presente
   page,
 }) => {
   const mock = await installAdminApiMock(page);
+  await page.goto("/presentation");
+  await expect(page.getByTestId("presentation-canvas")).toBeVisible();
+
   await page.goto("/presentation?presenter=1");
-  await expect(page.locator("main").getByRole("button")).toHaveCount(0);
-  await page.getByTestId("presentation-canvas").click();
-  await page.locator("main").press("ArrowRight");
+  await expect(page).toHaveURL(/\/admin\/presentation$/);
+  await expect(page.getByLabel("管理者 PIN")).toBeVisible();
   expect(mock.actionLog).toEqual([]);
 
   await signIn(page);
