@@ -385,6 +385,141 @@ describe("presentation projection and presenter progression", () => {
     await expectDeckLoadFailureToBeInert(async () => response({ slides: null }));
   });
 
+  it("fails closed when the presenter deck response contains invalid JSON", async () => {
+    await expectDeckLoadFailureToBeInert(async () => new Response("not-json"));
+  });
+
+  it("shows loading UI while the presenter deck request is pending", async () => {
+    let resolveDeck!: (value: Response) => void;
+    const deckPending = new Promise<Response>((resolve) => {
+      resolveDeck = resolve;
+    });
+    const api = setup({ deckGetter: () => deckPending });
+    const view = render(<PresentationScreen presenterRequested />);
+
+    try {
+      expect(await screen.findByText("スライドを読み込んでいます")).toBeInTheDocument();
+      expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(
+        1,
+      );
+    } finally {
+      await act(async () => {
+        resolveDeck(response({ slides: [] }));
+        await deckPending;
+      });
+      await settled();
+      view.unmount();
+    }
+  });
+
+  it("keeps the projection hidden when presenter controls hide it", async () => {
+    setup({
+      admin: {
+        state: "question",
+        questionIndex: 0,
+        questionCount: 5,
+        projectionHidden: true,
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+
+    expect(await screen.findByText("ただいま休憩中です")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "思い出の場所は？" })).not.toBeInTheDocument();
+  });
+
+  it("uses control state when the loaded deck has no matching slide", async () => {
+    const api = setup({ deckGetter: async () => response({ slides: [] }) });
+    render(<PresentationScreen presenterRequested />);
+    await settled();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await waitFor(() =>
+      expect(
+        api.calls.filter(
+          ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+        ),
+      ).toHaveLength(1),
+    );
+    expect(screen.getByRole("main")).toBeInTheDocument();
+  });
+
+  it("announces a rank slide without a winners array", async () => {
+    const api = setup({
+      projection: { state: "podium_preview" },
+      admin: { state: "podium_preview", questionIndex: 5, questionCount: 5 },
+      actionAdmin: { state: "third", questionIndex: 5, questionCount: 5 },
+      deckGetter: async () =>
+        response({
+          slides: [
+            {
+              state: "podium_preview",
+              questionIndex: 5,
+              projection: { state: "podium_preview" },
+            },
+            {
+              state: "third",
+              questionIndex: 5,
+              projection: { state: "third" },
+            },
+          ],
+        }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await settled();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    const region = await screen.findByRole("region", { name: "第3位の勝者一覧" });
+    await settled();
+
+    expect(screen.getByText("該当する受賞者はいません")).toBeInTheDocument();
+    expect(region).toHaveClass(/announce/);
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("shares a pending deck request across overlapping presenter refreshes", async () => {
+    vi.useFakeTimers();
+    let resolveDeck!: (value: Response) => void;
+    const deckPending = new Promise<Response>((resolve) => {
+      resolveDeck = resolve;
+    });
+    const api = setup({ deckGetter: () => deckPending });
+    const view = render(<PresentationScreen presenterRequested />);
+
+    try {
+      await settled();
+      expect(screen.getByText("スライドを読み込んでいます")).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+      await settled();
+      expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(
+        1,
+      );
+      expect(
+        api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls"),
+      ).toHaveLength(2);
+
+      await act(async () => {
+        resolveDeck(response({ slides: [] }));
+        await deckPending;
+      });
+      await settled();
+      expect(screen.queryByText("スライドを読み込んでいます")).not.toBeInTheDocument();
+      expect(screen.getByRole("main")).toBeInTheDocument();
+    } finally {
+      await act(async () => {
+        resolveDeck(response({ slides: [] }));
+        await deckPending;
+      });
+      await settled();
+      view.unmount();
+    }
+  });
+
   it("reschedules spectator polling while a presenter mutation is in flight", async () => {
     vi.useFakeTimers();
     let release!: () => void;

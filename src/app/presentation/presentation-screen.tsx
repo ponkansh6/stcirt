@@ -455,16 +455,15 @@ export default function PresentationScreen({
       mutationGeneration.current += 1;
       mutationInFlight.current = true;
       projectionSequence.current += 1;
-      const currentSlideIndex =
-        presenterDeck?.slides.findIndex(
-          (slide) =>
-            slide.state === adminControls.state &&
-            slide.questionIndex === adminControls.questionIndex,
-        ) ?? -1;
+      const currentSlideIndex = presenterDeck.slides.findIndex(
+        (slide) =>
+          slide.state === adminControls.state &&
+          slide.questionIndex === adminControls.questionIndex,
+      );
       const optimisticSlide =
         currentSlideIndex < 0
           ? undefined
-          : presenterDeck?.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
+          : presenterDeck.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
       if (optimisticSlide) {
         setData(optimisticSlide.projection);
         if (
@@ -483,7 +482,7 @@ export default function PresentationScreen({
         const status = (error as { status?: number })?.status;
         if (status === 401) recoverUnauthorized();
         if (status !== 401) {
-          if (presenterDeck) setData(projectionForControl(presenterDeck, adminControls));
+          setData(projectionForControl(presenterDeck, adminControls));
           try {
             await refreshAdmin();
           } catch {
