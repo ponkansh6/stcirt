@@ -491,8 +491,8 @@ test("keyboard and horizontal swipe progress once and honor stage boundaries", a
   await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, { steps: 5 });
   await page.mouse.up();
   await expect.poll(() => mock.actionLog.filter((action) => action === "previous").length).toBe(1);
-  await expect.poll(() => mock.getPresentationState().state).toBe("second");
-  await expect(slideFor(page, "second")).toBeVisible();
+  await expect.poll(() => mock.getPresentationState().state).toBe("podium_preview");
+  await expect(slideFor(page, "podium_preview")).toBeVisible();
   await secondRefresh;
   await waitForRenderFrames(page);
   expect(mock.actionLog.filter((action) => action === "previous")).toHaveLength(1);
