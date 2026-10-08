@@ -612,6 +612,83 @@ describe("PresentationScreen", () => {
     }
   });
 
+  it("expires the swipe click guard so a later slide click advances", async () => {
+    vi.useFakeTimers();
+    const api = installApi({
+      projection: { state: "question", question },
+      actionProjection: { state: "answer", question },
+      admin: controls({ state: "question", questionIndex: 1 }),
+      actionAdmin: controls({ state: "answer", questionIndex: 1 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main");
+
+    fireEvent.pointerDown(main, {
+      pointerId: 14,
+      isPrimary: true,
+      button: 0,
+      clientX: 220,
+      clientY: 100,
+    });
+    fireEvent.pointerUp(main, { pointerId: 14, isPrimary: true, clientX: 100, clientY: 102 });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+
+    fireEvent.click(main);
+    await flush();
+    expect(api.actions).toHaveLength(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(450));
+    fireEvent.click(main);
+    await flush();
+    expect(api.actions).toHaveLength(2);
+    expect(api.actions[1]).toMatchObject({ action: "advance" });
+  });
+
+  it("allows a right swipe to go previous after the first question", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      actionProjection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 1 }),
+      actionAdmin: controls({ state: "question", questionIndex: 0 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main");
+    fireEvent.pointerDown(main, {
+      pointerId: 15,
+      isPrimary: true,
+      button: 0,
+      clientX: 80,
+      clientY: 100,
+    });
+    fireEvent.pointerUp(main, { pointerId: 15, isPrimary: true, clientX: 160, clientY: 101 });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({ action: "previous" });
+  });
+
+  it("does not swipe previous from the first question", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main");
+    fireEvent.pointerDown(main, {
+      pointerId: 16,
+      isPrimary: true,
+      button: 0,
+      clientX: 80,
+      clientY: 100,
+    });
+    fireEvent.pointerUp(main, { pointerId: 16, isPrimary: true, clientX: 160, clientY: 101 });
+    await flush();
+    expect(api.actions).toHaveLength(0);
+  });
+
   it("does not advance a finished presentation when the slide is clicked", async () => {
     const api = installApi({
       projection: { state: "finished" },

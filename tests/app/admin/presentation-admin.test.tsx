@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import PresentationAdminPage from "@/app/admin/presentation/page";
@@ -51,6 +51,7 @@ describe("presentation admin console", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("renders the PIN entry through the admin page", () => {
@@ -433,5 +434,126 @@ describe("presentation admin console", () => {
     finishPublication?.();
     await waitFor(() => expect(publicationCount).toBe(1));
     expect(await screen.findByRole("button", { name: "参加者結果を公開" })).toBeInTheDocument();
+  });
+
+  it("keeps the newest state when an older refresh finishes later", async () => {
+    let finishFirstState: ((value: Response) => void) | undefined;
+    let presentationReads = 0;
+    let poll: (() => void) | undefined;
+    vi.spyOn(window, "setInterval").mockImplementation((handler) => {
+      if (typeof handler === "function") poll = handler as () => void;
+      return 1 as unknown as ReturnType<typeof window.setInterval>;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/admin/session")
+        return Promise.resolve(response(200, { authenticated: true }));
+      if (path === "/api/admin/presentation") {
+        presentationReads += 1;
+        if (presentationReads === 1) {
+          return new Promise<Response>((resolve) => {
+            finishFirstState = resolve;
+          });
+        }
+        return Promise.resolve(
+          response(200, {
+            state: "answer",
+            questionIndex: 0,
+            questionCount: 5,
+            projectionHidden: false,
+            participantResultsVisible: false,
+            participantResultsReady: true,
+          }),
+        );
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PresentationAdmin />);
+
+    await waitFor(() => expect(presentationReads).toBe(1));
+    expect(poll).toBeDefined();
+    await act(async () => {
+      poll?.();
+      await waitFor(() => expect(presentationReads).toBe(2));
+    });
+    expect(await screen.findByText("現在の状態：進行中：解答")).toBeInTheDocument();
+
+    await act(async () => {
+      finishFirstState?.(
+        response(200, {
+          state: "question",
+          questionIndex: 0,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: true,
+        }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("現在の状態：進行中：解答")).toBeInTheDocument();
+  });
+
+  it("shows a retry message and keeps the last state when a refresh fails", async () => {
+    let presentationReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/presentation" && init?.method === "POST") return response(200, {});
+      if (path === "/api/admin/presentation") {
+        presentationReads += 1;
+        if (presentationReads > 1) return response(503, {});
+        return response(200, {
+          state: "question",
+          questionIndex: 0,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: true,
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+
+    expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "投影を一時非表示" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("自動で再試行しています");
+    expect(screen.getByText("現在の状態：進行中：問題")).toBeInTheDocument();
+  });
+
+  it("shows the loading console while the authenticated admin state is pending", async () => {
+    let finishState: ((value: Response) => void) | undefined;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/admin/session")
+        return Promise.resolve(response(200, { authenticated: true }));
+      if (path === "/api/admin/presentation")
+        return new Promise<Response>((resolve) => {
+          finishState = resolve;
+        });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PresentationAdmin />);
+
+    expect(await screen.findByText("管理状態を取得しています…")).toBeInTheDocument();
+    await act(async () => {
+      finishState?.(
+        response(200, {
+          state: "not_started",
+          questionIndex: 0,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: false,
+        }),
+      );
+    });
+    expect(await screen.findByText("現在の状態：未開始")).toBeInTheDocument();
   });
 });
