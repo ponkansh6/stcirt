@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PresentationScreen from "@/app/presentation/presentation-screen";
+import { installPresentationFitLayout } from "./presentation-fit-test-helpers";
 
 type Projection = Record<string, unknown>;
 type WinnerFixture = { displayName: string; score: number; rank: number };
@@ -185,7 +186,10 @@ async function flush() {
 }
 
 describe("PresentationScreen", () => {
+  let fitLayout: ReturnType<typeof installPresentationFitLayout>;
+
   beforeEach(() => {
+    fitLayout = installPresentationFitLayout();
     vi.useRealTimers();
     vi.stubGlobal("fetch", vi.fn());
     vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "presentation-operation") });
@@ -205,6 +209,118 @@ describe("PresentationScreen", () => {
       cache: "no-store",
       credentials: "omit",
     });
+  });
+
+  it("fits natural content before paint and expands again when its natural height shrinks", async () => {
+    installApi({
+      projection: { state: "question", question },
+      admin: controls(),
+    });
+    fitLayout.setViewport(0, 0);
+    fitLayout.setNaturalSize(800, 900);
+    let animationFrame: FrameRequestCallback | undefined;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      animationFrame = callback;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+
+    render(<PresentationScreen />);
+    const layer = screen.getByTestId("presentation-fit-layer");
+    const naturalLayer = screen.getByTestId("presentation-natural-layer");
+    expect(naturalLayer.dataset.fitReady).toBe("false");
+    expect(naturalLayer.style.visibility).toBe("hidden");
+
+    const resizeTo = (width: number, height: number, naturalHeight: number) => {
+      fitLayout.setViewport(width, height);
+      fitLayout.setNaturalSize(800, naturalHeight);
+      act(() => {
+        fitLayout.notifyResize();
+        animationFrame?.(16);
+      });
+    };
+
+    resizeTo(800, 450, 900);
+    expect(naturalLayer.dataset.fitReady).toBe("true");
+    expect(naturalLayer.style.visibility).toBe("visible");
+    expect(layer.style.getPropertyValue("--presentation-fit-scale")).toBe("0.5");
+    expect(layer.style.left).toBe("200px");
+    expect(layer.style.top).toBe("0px");
+
+    resizeTo(800, 450, 200);
+
+    expect(layer.style.getPropertyValue("--presentation-fit-scale")).toBe("1");
+    expect(layer.style.top).toBe("125px");
+  });
+
+  it("coalesces image and resize invalidations and cancels a pending animation frame", () => {
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionCount: 2 }),
+    });
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      frameCallbacks.push(callback);
+      return 26 + frameCallbacks.length;
+    });
+    const cancelFrame = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", requestFrame);
+    vi.stubGlobal("cancelAnimationFrame", cancelFrame);
+
+    const view = render(<PresentationScreen />);
+    const layer = screen.getByTestId("presentation-natural-layer");
+    const image = document.createElement("img");
+    layer.append(image);
+
+    act(() => fireEvent.load(layer));
+    expect(requestFrame).not.toHaveBeenCalled();
+
+    fitLayout.setViewport(800, 450);
+    act(() => fitLayout.notifyResize({ includeContentBox: false }));
+    expect(requestFrame).toHaveBeenCalledTimes(1);
+    act(() => frameCallbacks[0]?.(16));
+    const fitLayer = screen.getByTestId("presentation-fit-layer");
+    expect(fitLayer.style.getPropertyValue("--presentation-fit-scale")).toBe("0.625");
+    expect(fitLayer.style.left).toBe("0px");
+    expect(fitLayer.style.top).toBe("100px");
+
+    act(() => fireEvent.load(image));
+    expect(requestFrame).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      fitLayout.notifyResize();
+    });
+
+    expect(requestFrame).toHaveBeenCalledTimes(2);
+    view.unmount();
+    expect(cancelFrame).toHaveBeenCalledWith(28);
+  });
+
+  it("uses the timeout fit fallback when ResizeObserver and animation frames are unavailable", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("ResizeObserver", undefined as unknown as typeof ResizeObserver);
+    vi.stubGlobal("requestAnimationFrame", undefined as unknown as typeof requestAnimationFrame);
+    vi.stubGlobal("cancelAnimationFrame", undefined as unknown as typeof cancelAnimationFrame);
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionCount: 2 }),
+    });
+
+    const view = render(<PresentationScreen />);
+    const layer = screen.getByTestId("presentation-fit-layer");
+    fitLayout.setViewport(600, 300);
+    const clearTimeout = vi.spyOn(window, "clearTimeout");
+
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(0);
+    });
+    expect(layer.style.getPropertyValue("--presentation-fit-scale")).toBe("0.46875");
+
+    act(() => window.dispatchEvent(new Event("resize")));
+    view.unmount();
+    expect(clearTimeout).toHaveBeenCalled();
   });
 
   it("keeps the initial screen when projection JSON is malformed or the error has no message", async () => {

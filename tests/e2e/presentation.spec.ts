@@ -535,10 +535,14 @@ test("keyboard and horizontal swipe progress once and honor stage boundaries", a
   const main = page.locator("main");
   await main.press("ArrowLeft");
   expect(mock.getPresentationState().state).toBe("question");
+  const answerRefresh = nextAdminRefresh(page);
   await main.press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  await answerRefresh;
+  const podiumRefresh = nextAdminRefresh(page);
   await main.press("Space");
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
+  await podiumRefresh;
 
   const box = await main.boundingBox();
   if (!box) throw new Error("Projection wrapper is missing");
@@ -606,7 +610,7 @@ test("finished presenter can return to the last existing rank", async ({ page })
   await previousRefresh;
 });
 
-test("vertical rank scrolling is preserved and does not progress the stage", async ({ page }) => {
+test("all rank entries fit on the slide without vertical scrolling", async ({ page }) => {
   const mock = await installAdminApiMock(page);
   mock.setWinnerEntries(
     Array.from({ length: 24 }, (_, index) => ({
@@ -621,12 +625,51 @@ test("vertical rank scrolling is preserved and does not progress the stage", asy
   await advanceTo(page, "third");
   const winners = page.getByRole("region", { name: "第3位の勝者一覧" });
   await expect(winners).toBeVisible();
-  await winners.evaluate((node) => {
-    node.scrollTop = 0;
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("presentation-fit-layer")
+        .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale"))),
+    )
+    .toBeLessThan(1);
+  const bounds = await page.getByTestId("presentation-canvas").evaluate((canvas) => {
+    const canvasRect = canvas.getBoundingClientRect();
+    const winnerRects = Array.from(canvas.querySelectorAll("article"), (node) =>
+      node.getBoundingClientRect(),
+    ).map((rect) => ({
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+    }));
+    return {
+      canvas: {
+        left: canvasRect.left,
+        right: canvasRect.right,
+        top: canvasRect.top,
+        bottom: canvasRect.bottom,
+      },
+      winners: winnerRects,
+      pageCanScroll: document.documentElement.scrollHeight > innerHeight,
+      regionCanScroll: winnersCanScroll(canvas),
+    };
+    function winnersCanScroll(root: Element) {
+      const region = root.querySelector("[aria-label='第3位の勝者一覧']");
+      return region instanceof HTMLElement && region.scrollHeight > region.clientHeight;
+    }
   });
-  await winners.hover();
-  await page.mouse.wheel(0, 600);
-  await expect.poll(() => winners.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+  expect(bounds.pageCanScroll).toBe(false);
+  expect(bounds.regionCanScroll).toBe(false);
+  expect(bounds.winners).toHaveLength(24);
+  expect(
+    bounds.winners.every(
+      (rect) =>
+        rect.left >= bounds.canvas.left - 1 &&
+        rect.right <= bounds.canvas.right + 1 &&
+        rect.top >= bounds.canvas.top - 1 &&
+        rect.bottom <= bounds.canvas.bottom + 1,
+    ),
+  ).toBe(true);
   expect(mock.getPresentationState().state).toBe("third");
 });
 
@@ -684,6 +727,76 @@ test("rank content is static on every entry and the slide fits the viewport", as
   await expect(slideFor(page, "second")).toBeVisible();
   await secondRefresh;
   await expect(page.getByRole("region", { name: "第2位の勝者一覧" })).not.toHaveClass(/announce/);
+});
+
+test("every stage keeps its fixture text inside the canvas content bounds", async ({ page }) => {
+  await installAdminApiMock(page);
+  const inspectSlide = async () => {
+    await waitForRenderFrames(page);
+    return page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
+      const bounds = viewport.getBoundingClientRect();
+      const outOfBounds = Array.from(viewport.querySelectorAll("*"))
+        .map((node) => node.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0)
+        .filter(
+          (rect) =>
+            rect.left < bounds.left - 1 ||
+            rect.right > bounds.right + 1 ||
+            rect.top < bounds.top - 1 ||
+            rect.bottom > bounds.bottom + 1,
+        ).length;
+      return {
+        text: viewport.textContent ?? "",
+        outOfBounds,
+        pageCanScroll: document.documentElement.scrollHeight > innerHeight,
+      };
+    });
+  };
+  await page.goto("/presentation");
+  await expect(page.getByRole("heading", { name: /ふたりの思い出を/ })).toBeVisible();
+  const notStartedInspection = await inspectSlide();
+  expect(notStartedInspection.text).toContain("振り返る時間");
+  expect(notStartedInspection.outOfBounds).toBe(0);
+  expect(notStartedInspection.pageCanScroll).toBe(false);
+
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+
+  const stages: {
+    state: PresentationState;
+    text: string[];
+  }[] = [
+    {
+      state: "question",
+      text: [questions[0].question, ...questions[0].choices],
+    },
+    {
+      state: "answer",
+      text: [questions[0].question, ...questions[0].choices, "正解", questions[0].explanation],
+    },
+    { state: "podium_preview", text: ["いよいよ、結果発表です", "どうぞお楽しみに"] },
+    { state: "third", text: ["該当する受賞者はいません", "第3位"] },
+    { state: "second", text: ["太郎", "0.00 ポイント", "第2位"] },
+    { state: "first", text: ["花子", "1.00 ポイント", "第1位"] },
+    { state: "finished", text: ["ご参加", "ありがとうございました"] },
+  ];
+
+  for (let index = 0; index < stages.length; index += 1) {
+    const stage = stages[index]!;
+    await expect(slideFor(page, stage.state)).toBeVisible();
+    const inspection = await inspectSlide();
+    for (const text of stage.text) expect(inspection.text).toContain(text);
+    expect(inspection.outOfBounds).toBe(0);
+    expect(inspection.pageCanScroll).toBe(false);
+
+    const nextStage = stages[index + 1];
+    if (!nextStage) continue;
+    const adminRefresh = nextAdminRefresh(page);
+    await page.locator("main").press("ArrowRight");
+    await expect(slideFor(page, nextStage.state)).toBeVisible();
+    await adminRefresh;
+  }
 });
 
 test("tied rank cards keep rank, points, and long participant names paired in the viewport", async ({
@@ -747,14 +860,20 @@ test("tied rank cards keep rank, points, and long participant names paired in th
   expect(geometry.height).toBeLessThanOrEqual(geometry.innerHeight);
 });
 
-test("long answer content remains complete in its internal scroll region", async ({ page }) => {
-  const explanation = Array.from(
-    { length: 36 },
-    (_, index) => `解説段落${index + 1}：思い出の内容を省略せずに表示します。`,
+test("long answer content remains complete and fits without an internal scroll region", async ({
+  page,
+}) => {
+  const explanation = Array.from({ length: 36 }, (_, index) =>
+    `解説段落${index + 1}：思い出の内容を省略せずに表示します。`.repeat(4),
   ).join("\n");
   const lastLine = "解説段落36：思い出の内容を省略せずに表示します。";
-  await page.route("**/api/presentation", async (route) =>
-    route.fulfill({
+  let allowStandby = false;
+  await page.route("**/api/presentation", async (route) => {
+    if (allowStandby) {
+      await route.fulfill({ json: { state: "standby" } });
+      return;
+    }
+    await route.fulfill({
       json: {
         state: "answer",
         question: {
@@ -767,30 +886,84 @@ test("long answer content remains complete in its internal scroll region", async
           explanation,
         },
       },
-    }),
-  );
+    });
+  });
   await page.goto("/presentation");
 
   const answerContent = page.locator('[class*="answerContent"]');
   const finalExplanation = answerContent.locator("p").last();
   await expect(finalExplanation).toContainText(lastLine);
   await expect(answerContent).toContainText("解説段落1：思い出の内容を省略せずに表示します。");
-  const beforeScroll = await answerContent.evaluate((node) => ({
-    scrollHeight: node.scrollHeight,
-    clientHeight: node.clientHeight,
-    text: node.textContent ?? "",
-  }));
-  expect(beforeScroll.scrollHeight).toBeGreaterThan(beforeScroll.clientHeight);
-  expect(beforeScroll.text).toContain(lastLine);
-
-  await answerContent.evaluate((node) => {
-    node.scrollTop = node.scrollHeight;
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("presentation-fit-layer")
+        .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale"))),
+    )
+    .toBeLessThan(0.95);
+  const denseAnswerScale = await page
+    .getByTestId("presentation-fit-layer")
+    .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale")));
+  const geometry = await page.getByTestId("presentation-canvas").evaluate((canvas) => {
+    const canvasRect = canvas.getBoundingClientRect();
+    const explanation = canvas.querySelector("[class*='explanation']");
+    const explanationRect = explanation?.getBoundingClientRect();
+    const answer = canvas.querySelector("[class*='answerContent']");
+    return {
+      canvasRect: {
+        top: canvasRect.top,
+        bottom: canvasRect.bottom,
+      },
+      explanationRect: explanationRect
+        ? { top: explanationRect.top, bottom: explanationRect.bottom }
+        : null,
+      pageCanScroll: document.documentElement.scrollHeight > innerHeight,
+      answerCanScroll: answer instanceof HTMLElement && answer.scrollHeight > answer.clientHeight,
+      text: answer?.textContent ?? "",
+    };
   });
-  await expect.poll(() => answerContent.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
-  await expect(finalExplanation).toBeInViewport();
+  expect(geometry.text).toContain(lastLine);
+  expect(geometry.pageCanScroll).toBe(false);
+  expect(geometry.answerCanScroll).toBe(false);
+  expect(geometry.explanationRect).toBeDefined();
+  expect(geometry.explanationRect!.top).toBeGreaterThanOrEqual(geometry.canvasRect.top - 1);
+  expect(geometry.explanationRect!.bottom).toBeLessThanOrEqual(geometry.canvasRect.bottom + 1);
+  const answerBounds = await page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect();
+    const outOfBounds = Array.from(viewport.querySelectorAll("*"))
+      .map((node) => node.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0)
+      .filter(
+        (rect) =>
+          rect.left < bounds.left - 1 ||
+          rect.right > bounds.right + 1 ||
+          rect.top < bounds.top - 1 ||
+          rect.bottom > bounds.bottom + 1,
+      ).length;
+    return { outOfBounds };
+  });
+  expect(answerBounds.outOfBounds).toBe(0);
+  await expect(finalExplanation).toBeVisible();
+  const nextProjectionPoll = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === "/api/presentation",
+  );
+  allowStandby = true;
+  await nextProjectionPoll;
+  await expect(page.getByText("ただいま休憩中です")).toBeVisible();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("presentation-fit-layer")
+        .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale"))),
+    )
+    .toBeGreaterThan(denseAnswerScale);
+  const standbyScale = await page
+    .getByTestId("presentation-fit-layer")
+    .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale")));
+  expect(standbyScale).toBeGreaterThan(0.99);
 });
 
-test("a long tied-winner list keeps every rank card available through internal scrolling", async ({
+test("a long tied-winner list fits every rank card without internal scrolling", async ({
   page,
 }) => {
   const mock = await installAdminApiMock(page);
@@ -810,19 +983,48 @@ test("a long tied-winner list keeps every rank card available through internal s
   await expect(cards).toHaveCount(winners.length);
   await expect(cards.last()).toContainText("同順位の受賞者14");
   await expect(cards.last()).toContainText("0.75 ポイント");
-  const beforeScroll = await winnerRegion.evaluate((node) => ({
-    scrollHeight: node.scrollHeight,
-    clientHeight: node.clientHeight,
-    text: node.textContent ?? "",
-  }));
-  expect(beforeScroll.scrollHeight).toBeGreaterThan(beforeScroll.clientHeight);
-  for (const winner of winners) expect(beforeScroll.text).toContain(winner.displayName);
-
-  await winnerRegion.evaluate((node) => {
-    node.scrollTop = node.scrollHeight;
+  await expect
+    .poll(() =>
+      page
+        .getByTestId("presentation-fit-layer")
+        .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale"))),
+    )
+    .toBeLessThan(1);
+  const geometry = await page.getByTestId("presentation-canvas").evaluate((canvas) => {
+    const canvasRect = canvas.getBoundingClientRect();
+    const region = canvas.querySelector("[aria-label='第3位の勝者一覧']");
+    const cardRects = Array.from(canvas.querySelectorAll("article"), (node) =>
+      node.getBoundingClientRect(),
+    ).map((rect) => ({
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+    }));
+    return {
+      canvasRect: {
+        left: canvasRect.left,
+        right: canvasRect.right,
+        top: canvasRect.top,
+        bottom: canvasRect.bottom,
+      },
+      cardRects,
+      regionCanScroll: region instanceof HTMLElement && region.scrollHeight > region.clientHeight,
+      text: region?.textContent ?? "",
+    };
   });
-  await expect.poll(() => winnerRegion.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
-  await expect(cards.last()).toBeInViewport();
+  for (const winner of winners) expect(geometry.text).toContain(winner.displayName);
+  expect(geometry.regionCanScroll).toBe(false);
+  expect(
+    geometry.cardRects.every(
+      (rect) =>
+        rect.left >= geometry.canvasRect.left - 1 &&
+        rect.right <= geometry.canvasRect.right + 1 &&
+        rect.top >= geometry.canvasRect.top - 1 &&
+        rect.bottom <= geometry.canvasRect.bottom + 1,
+    ),
+  ).toBe(true);
+  await expect(cards.last()).toBeVisible();
 });
 
 test("fifth free-text answer projection keeps the model answer and hides response rows", async ({
@@ -924,15 +1126,19 @@ test("first presenter progression requests fullscreen before mutation and ignore
   await startPresentation(page);
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(0);
   await openPresenter(page);
+  let adminRefresh = nextAdminRefresh(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  await adminRefresh;
   expect(await page.evaluate(() => window.__eventOrder.slice(-2))).toEqual([
     "fullscreen",
     "mutation",
   ]);
   await page.keyboard.press("Escape");
+  adminRefresh = nextAdminRefresh(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
+  await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
   expect(mock.actionLog).toEqual(["start", "advance", "advance"]);
 });
@@ -955,11 +1161,15 @@ test("unsupported fullscreen keeps presenter progression working and is not retr
   await startPresentation(page);
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(0);
   await openPresenter(page);
+  let adminRefresh = nextAdminRefresh(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
+  adminRefresh = nextAdminRefresh(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
+  await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
   expect(mock.actionLog).toEqual(["start", "advance", "advance"]);
 });
@@ -994,11 +1204,15 @@ test("a successful fullscreen request can exit through Escape without automatic 
   await signIn(page);
   await startPresentation(page);
   await openPresenter(page);
+  let adminRefresh = nextAdminRefresh(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
   await page.keyboard.press("Escape");
+  adminRefresh = nextAdminRefresh(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
+  await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
 });

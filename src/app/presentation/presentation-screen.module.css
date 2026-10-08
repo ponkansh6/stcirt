@@ -30,22 +30,48 @@
 }
 
 .canvas {
-  display: grid;
+  --presentation-padding: clamp(20px, 4.5cqw, 84px);
+  position: relative;
   width: min(100cqw, 177.7778cqh);
   height: min(100cqh, 56.25cqw);
   min-width: 0;
   min-height: 0;
   box-sizing: border-box;
   overflow: hidden;
-  place-items: center;
-  padding: clamp(20px, 4.5cqw, 84px);
+  padding: var(--presentation-padding);
   aspect-ratio: 16 / 9;
   background: #fff;
 }
 
-.canvas img {
+.fitViewport {
+  position: absolute;
+  z-index: 0;
+  inset: var(--presentation-padding);
+  overflow: hidden;
+}
+
+.fitTransform {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  transform: scale(var(--presentation-fit-scale, 1));
+  transform-origin: top left;
+}
+
+.contentLayer {
+  display: block;
+  width: 100%;
+}
+
+.contentLayer[data-fit-ready="false"] {
+  visibility: hidden;
+}
+
+.contentLayer img {
   max-width: 100%;
-  max-height: 100%;
+  height: auto;
   object-fit: contain;
 }
 
@@ -55,7 +81,6 @@
 .winners,
 .question {
   width: 100%;
-  max-height: 100%;
   min-height: 0;
   margin: auto;
 }
@@ -110,7 +135,7 @@
 }
 
 .answerReview {
-  height: 100%;
+  height: auto;
   justify-content: flex-start;
 }
 
@@ -121,13 +146,7 @@
 
 .answerContent {
   width: 100%;
-  min-height: 0;
-  flex: 1 1 auto;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding-right: 8px;
-  scrollbar-width: thin;
   overflow-wrap: anywhere;
 }
 
@@ -152,19 +171,6 @@
   padding-left: 1.4em;
   margin: 1rem 0 0;
   overflow-wrap: anywhere;
-}
-
-.answerContent::-webkit-scrollbar,
-.winners::-webkit-scrollbar {
-  width: 9px;
-}
-
-.answerContent::-webkit-scrollbar-thumb,
-.winners::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 9px;
-  background: #707a84;
-  background-clip: padding-box;
 }
 
 .question .kicker {
@@ -277,16 +283,11 @@
 
 .winners {
   display: flex;
-  height: 100%;
-  min-height: 0;
-  max-height: 100%;
+  height: auto;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
   margin: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  scrollbar-width: thin;
   text-align: center;
 }
 
@@ -391,7 +392,7 @@
 
 @media (max-width: 640px) {
   .canvas {
-    padding: 5cqw;
+    --presentation-padding: 5cqw;
   }
 
   .question h1 {

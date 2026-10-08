@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PresentationScreen from "@/app/presentation/presentation-screen";
+import { installPresentationFitLayout } from "./presentation-fit-test-helpers";
 
 type WinnerFixture = { displayName: string; score: number; rank: number };
 type DeckProjectionFixture =
@@ -146,6 +147,7 @@ async function settled() {
 
 describe("presentation projection and presenter progression", () => {
   beforeEach(() => {
+    installPresentationFitLayout();
     vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "op-1") });
     vi.stubGlobal(
       "matchMedia",

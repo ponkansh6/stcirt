@@ -3,8 +3,10 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent,
   type PointerEvent,
 } from "react";
@@ -276,6 +278,9 @@ export default function PresentationScreen({
   const presenterDeckRef = useRef<PresenterDeck | null>(null);
   const presenterDeckRequest = useRef<Promise<PresenterDeck> | null>(null);
   const wrapperRef = useRef<HTMLElement | null>(null);
+  const fitViewportRef = useRef<HTMLDivElement | null>(null);
+  const contentLayerRef = useRef<HTMLDivElement | null>(null);
+  const [fit, setFit] = useState({ scale: 1, left: 0, top: 0, ready: false });
   const fullscreenAttempted = useRef(false);
   const pointerStart = useRef<{
     id: number;
@@ -615,6 +620,84 @@ export default function PresentationScreen({
     adminControls !== null &&
     adminControls.state !== "not_started" &&
     presenterDeck === null;
+
+  useLayoutEffect(() => {
+    const viewport = fitViewportRef.current!;
+    const layer = contentLayerRef.current!;
+
+    let active = true;
+    let frame = 0;
+    let nextViewportSize: { width: number; height: number } | null = null;
+    const measure = (observedSize?: { width: number; height: number }) => {
+      frame = 0;
+      const viewportRect = viewport.getBoundingClientRect();
+      // The viewport has no padding or border; its rect is the canvas content box.
+      const availableWidth = observedSize?.width ?? viewportRect.width;
+      const availableHeight = observedSize?.height ?? viewportRect.height;
+      const naturalWidth = layer.offsetWidth;
+      const naturalHeight = Math.max(layer.offsetHeight, layer.scrollHeight);
+      if (availableWidth <= 0 || availableHeight <= 0 || naturalWidth <= 0 || naturalHeight <= 0)
+        return;
+      const nextScale = Math.min(1, availableWidth / naturalWidth, availableHeight / naturalHeight);
+      const nextFit = {
+        scale: nextScale,
+        left: Math.max(0, (availableWidth - naturalWidth * nextScale) / 2),
+        top: Math.max(0, (availableHeight - naturalHeight * nextScale) / 2),
+        ready: true,
+      };
+      setFit((current) =>
+        current.ready &&
+        Math.abs(current.scale - nextFit.scale) < 0.001 &&
+        Math.abs(current.left - nextFit.left) < 0.5 &&
+        Math.abs(current.top - nextFit.top) < 0.5
+          ? current
+          : nextFit,
+      );
+    };
+    const scheduleMeasure = () => {
+      if (!active || frame) return;
+      frame = window.requestAnimationFrame
+        ? window.requestAnimationFrame(() => measure(nextViewportSize ?? undefined))
+        : window.setTimeout(() => measure(nextViewportSize ?? undefined), 0);
+    };
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver((entries) => {
+            const entry = entries.find((candidate) => candidate.target === viewport);
+            const firstContentBox = entry?.contentBoxSize?.[0];
+            if (firstContentBox) {
+              nextViewportSize = {
+                width: firstContentBox.inlineSize,
+                height: firstContentBox.blockSize,
+              };
+            }
+            scheduleMeasure();
+          });
+    observer?.observe(viewport);
+    observer?.observe(layer);
+    window.addEventListener("resize", scheduleMeasure);
+    const handleImageLoad = (event: Event) => {
+      if (event.target instanceof HTMLImageElement) scheduleMeasure();
+    };
+    layer.addEventListener("load", handleImageLoad, true);
+    document.fonts?.ready?.then(scheduleMeasure);
+    document.fonts?.addEventListener?.("loadingdone", scheduleMeasure);
+    measure();
+
+    return () => {
+      active = false;
+      observer?.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+      layer.removeEventListener("load", handleImageLoad, true);
+      document.fonts?.removeEventListener?.("loadingdone", scheduleMeasure);
+      if (frame) {
+        if (window.cancelAnimationFrame) window.cancelAnimationFrame(frame);
+        else window.clearTimeout(frame);
+      }
+    };
+  }, [data, loadingPresenterDeck]);
+
   return (
     <main
       ref={wrapperRef}
@@ -637,96 +720,128 @@ export default function PresentationScreen({
           role="region"
           aria-label="現在のスライド"
         >
-          {loadingPresenterDeck && (
-            <section className={styles.waiting} aria-live="polite">
-              <p className={styles.kicker}>PREPARING PRESENTATION</p>
-              <h1>
-                {deckLoadError ? "スライドを読み込めませんでした" : "スライドを読み込んでいます"}
-              </h1>
-              <p className={styles.subtitle}>
-                {deckLoadError ? "接続を確認しています。自動で再試行します" : "少々お待ちください"}
-              </p>
-            </section>
-          )}
-
-          {state === "standby" && (
-            <section className={styles.waiting} aria-labelledby="standby-title">
-              <p className={styles.kicker}>TAKE A MOMENT</p>
-              <h1 id="standby-title">ただいま休憩中です</h1>
-              <p className={styles.subtitle}>まもなく再開します</p>
-            </section>
-          )}
-
-          {!loadingPresenterDeck && (!data || state === "not_started") && (
-            <section className={styles.waiting} aria-labelledby="presentation-title">
-              <p className={styles.kicker}>A MOMENT TO CELEBRATE</p>
-              <h1 id="presentation-title">
-                ふたりの思い出を
-                <br />
-                振り返る時間
-              </h1>
-              <p className={styles.subtitle}>発表が始まるまで、少々お待ちください</p>
-            </section>
-          )}
-
-          {state === "question" && data?.question && <QuestionPrompt question={data.question} />}
-          {state === "answer" && data?.question && <AnswerReview question={data.question} />}
-
-          {state === "podium_preview" && (
-            <section className={styles.podiumPreview} aria-labelledby="podium-title">
-              <p className={styles.kicker}>THE MOMENT IS HERE</p>
-              <h1 id="podium-title">いよいよ、結果発表です</h1>
-              <p className={styles.subtitle}>これから入賞者を発表します。どうぞお楽しみに</p>
-            </section>
-          )}
-
-          {(state === "third" || state === "second" || state === "first") && (
-            <section
-              className={styles.winners}
-              role="region"
-              aria-label={`${rankTitle[state]}の勝者一覧`}
-              tabIndex={0}
+          <div
+            ref={fitViewportRef}
+            className={styles.fitViewport}
+            data-testid="presentation-fit-viewport"
+          >
+            <div
+              className={styles.fitTransform}
+              data-testid="presentation-fit-layer"
+              style={
+                {
+                  left: `${fit.left}px`,
+                  top: `${fit.top}px`,
+                  "--presentation-fit-scale": fit.scale,
+                } as CSSProperties
+              }
             >
-              <p className={styles.kicker}>WITH OUR WARMEST CONGRATULATIONS</p>
-              <div className={styles.winnerNames}>
-                {data?.winners?.length ? (
-                  data.winners.map((winner, index) => (
-                    <article
-                      className={styles.winner}
-                      key={`${winner.rank}-${winner.displayName}-${index}`}
-                    >
-                      <p className={styles.winnerRank}>{winner.rank}位</p>
-                      <p className={styles.winnerScore}>{winner.score.toFixed(2)} ポイント</p>
-                      <h1>
-                        <span className={styles.winnerName}>
-                          {winner.displayName}
-                          <span className={styles.winnerHonorific}>&nbsp;さん</span>
-                        </span>
-                      </h1>
-                    </article>
-                  ))
-                ) : (
-                  <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
+              <div
+                ref={contentLayerRef}
+                className={styles.contentLayer}
+                data-testid="presentation-natural-layer"
+                data-fit-ready={fit.ready}
+                style={{ visibility: fit.ready ? "visible" : "hidden" }}
+              >
+                {loadingPresenterDeck && (
+                  <section className={styles.waiting} aria-live="polite">
+                    <p className={styles.kicker}>PREPARING PRESENTATION</p>
+                    <h1>
+                      {deckLoadError
+                        ? "スライドを読み込めませんでした"
+                        : "スライドを読み込んでいます"}
+                    </h1>
+                    <p className={styles.subtitle}>
+                      {deckLoadError
+                        ? "接続を確認しています。自動で再試行します"
+                        : "少々お待ちください"}
+                    </p>
+                  </section>
+                )}
+
+                {state === "standby" && (
+                  <section className={styles.waiting} aria-labelledby="standby-title">
+                    <p className={styles.kicker}>TAKE A MOMENT</p>
+                    <h1 id="standby-title">ただいま休憩中です</h1>
+                    <p className={styles.subtitle}>まもなく再開します</p>
+                  </section>
+                )}
+
+                {!loadingPresenterDeck && (!data || state === "not_started") && (
+                  <section className={styles.waiting} aria-labelledby="presentation-title">
+                    <p className={styles.kicker}>A MOMENT TO CELEBRATE</p>
+                    <h1 id="presentation-title">
+                      ふたりの思い出を
+                      <br />
+                      振り返る時間
+                    </h1>
+                    <p className={styles.subtitle}>発表が始まるまで、少々お待ちください</p>
+                  </section>
+                )}
+
+                {state === "question" && data?.question && (
+                  <QuestionPrompt question={data.question} />
+                )}
+                {state === "answer" && data?.question && <AnswerReview question={data.question} />}
+
+                {state === "podium_preview" && (
+                  <section className={styles.podiumPreview} aria-labelledby="podium-title">
+                    <p className={styles.kicker}>THE MOMENT IS HERE</p>
+                    <h1 id="podium-title">いよいよ、結果発表です</h1>
+                    <p className={styles.subtitle}>これから入賞者を発表します。どうぞお楽しみに</p>
+                  </section>
+                )}
+
+                {(state === "third" || state === "second" || state === "first") && (
+                  <section
+                    className={styles.winners}
+                    role="region"
+                    aria-label={`${rankTitle[state]}の勝者一覧`}
+                    tabIndex={0}
+                  >
+                    <p className={styles.kicker}>WITH OUR WARMEST CONGRATULATIONS</p>
+                    <div className={styles.winnerNames}>
+                      {data?.winners?.length ? (
+                        data.winners.map((winner, index) => (
+                          <article
+                            className={styles.winner}
+                            key={`${winner.rank}-${winner.displayName}-${index}`}
+                          >
+                            <p className={styles.winnerRank}>{winner.rank}位</p>
+                            <p className={styles.winnerScore}>{winner.score.toFixed(2)} ポイント</p>
+                            <h1>
+                              <span className={styles.winnerName}>
+                                {winner.displayName}
+                                <span className={styles.winnerHonorific}>&nbsp;さん</span>
+                              </span>
+                            </h1>
+                          </article>
+                        ))
+                      ) : (
+                        <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
+                      )}
+                    </div>
+                    <p className={styles.rank}>{rankTitle[state]}</p>
+                    <p className={styles.congratulations}>おめでとうございます</p>
+                  </section>
+                )}
+
+                {state === "finished" && (
+                  <section className={styles.finished} aria-labelledby="finished-title">
+                    <p className={styles.kicker}>WITH LOVE AND GRATITUDE</p>
+                    <h1 id="finished-title">
+                      ご参加
+                      <br />
+                      ありがとうございました
+                    </h1>
+                    <p className={styles.subtitle}>
+                      ふたりの思い出を一緒に祝ってくださり、心から感謝します
+                    </p>
+                  </section>
                 )}
               </div>
-              <p className={styles.rank}>{rankTitle[state]}</p>
-              <p className={styles.congratulations}>おめでとうございます</p>
-            </section>
-          )}
-
-          {state === "finished" && (
-            <section className={styles.finished} aria-labelledby="finished-title">
-              <p className={styles.kicker}>WITH LOVE AND GRATITUDE</p>
-              <h1 id="finished-title">
-                ご参加
-                <br />
-                ありがとうございました
-              </h1>
-              <p className={styles.subtitle}>
-                ふたりの思い出を一緒に祝ってくださり、心から感謝します
-              </p>
-            </section>
-          )}
+            </div>
+          </div>
         </div>
       </div>
     </main>
