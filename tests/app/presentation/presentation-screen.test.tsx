@@ -37,6 +37,7 @@ function setup(
     actionStatus?: number;
     actionGate?: () => Promise<void>;
     projectionGetter?: () => Promise<Response>;
+    deckGetter?: () => Promise<Response>;
     deckSlides?: DeckSlideFixture[];
   } = {},
 ) {
@@ -109,11 +110,13 @@ function setup(
     }
     if (path === "/api/admin/presentation?view=controls") return response(admin);
     if (path === "/api/admin/presentation/deck")
-      return response({
-        questionCount: admin.questionCount,
-        questionIndex: admin.questionIndex,
-        slides: deckSlides,
-      });
+      return options.deckGetter
+        ? options.deckGetter()
+        : response({
+            questionCount: admin.questionCount,
+            questionIndex: admin.questionIndex,
+            slides: deckSlides,
+          });
     throw new Error(`Unexpected request: ${path}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -356,6 +359,69 @@ describe("presentation projection and presenter progression", () => {
       api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls").length,
     ).toBeGreaterThanOrEqual(2);
     expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(0);
+  });
+
+  async function expectDeckLoadFailureToBeInert(deckGetter: () => Promise<Response>) {
+    const api = setup({ deckGetter });
+    render(<PresentationScreen presenterRequested />);
+
+    expect(await screen.findByText("スライドを読み込めませんでした")).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    fireEvent.click(screen.getByTestId("presentation-canvas"));
+    await settled();
+
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(0);
+  }
+
+  it("fails closed when the presenter deck request is unavailable", async () => {
+    await expectDeckLoadFailureToBeInert(async () => response({ error: "offline" }, 503));
+  });
+
+  it("fails closed when the presenter deck response is malformed", async () => {
+    await expectDeckLoadFailureToBeInert(async () => response({ slides: null }));
+  });
+
+  it("reschedules spectator polling while a presenter mutation is in flight", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    let started!: () => void;
+    const actionStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const actionGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const api = setup({
+      actionGate: () => {
+        started();
+        return actionGate;
+      },
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    await settled();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await actionStarted;
+
+    view.rerender(<PresentationScreen />);
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1400);
+    });
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(0);
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    await settled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1400);
+    });
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(1);
   });
 
   it("refreshes controls after a 409 without refetching slides or retrying the operation", async () => {

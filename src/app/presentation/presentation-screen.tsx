@@ -444,7 +444,8 @@ export default function PresentationScreen({
 
   const operate = useCallback(
     async (action: AdminAction) => {
-      if (!adminControls || mutationInFlight.current) return;
+      if (!adminControls || !presenterDeckRef.current || !presenterDeck || mutationInFlight.current)
+        return;
       if (announcementTimer.current !== null) {
         window.clearTimeout(announcementTimer.current);
         announcementTimer.current = null;
