@@ -119,10 +119,6 @@ async function flush() {
   });
 }
 
-async function flushOperation() {
-  await flush();
-}
-
 describe("PresentationScreen", () => {
   beforeEach(() => {
     vi.useRealTimers();

@@ -26,7 +26,11 @@ async function requestSession(method: "GET" | "POST", body?: { pin: string }) {
     authenticated?: unknown;
     error?: string;
   } | null;
-  if (!response.ok) throw new Error(payload?.error ?? "ログインできませんでした。");
+  if (!response.ok) {
+    const error = new Error(payload?.error ?? "ログインできませんでした。") as ApiError;
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
