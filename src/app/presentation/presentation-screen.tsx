@@ -302,7 +302,6 @@ export default function PresentationScreen({
   } | null>(null);
   const suppressClick = useRef(false);
   const suppressClickTimer = useRef<number | undefined>(undefined);
-  const projectionSequence = useRef(0);
   const adminSequence = useRef(0);
   const mutationInFlight = useRef(false);
   const mutationGeneration = useRef(0);
@@ -329,12 +328,9 @@ export default function PresentationScreen({
         timer = window.setTimeout(refresh, 1400);
         return;
       }
-      const sequence = ++projectionSequence.current;
       try {
         const next = await getProjection();
-        if (active && sequence === projectionSequence.current) {
-          applyProjection(next);
-        }
+        if (active) applyProjection(next);
       } catch {
         // Keep the last usable projection visible while the polling loop retries.
       } finally {
@@ -454,7 +450,6 @@ export default function PresentationScreen({
       requestFullscreenForIntent();
       mutationGeneration.current += 1;
       mutationInFlight.current = true;
-      projectionSequence.current += 1;
       const currentSlideIndex = presenterDeck.slides.findIndex(
         (slide) =>
           slide.state === adminControls.state &&

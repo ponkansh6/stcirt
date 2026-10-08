@@ -607,6 +607,36 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.getByRole("main")).toHaveAttribute("aria-label", "プレゼンテーションスライド");
   });
 
+  it("does not apply a public projection response after unmount", async () => {
+    let resolveProjection!: (value: Response) => void;
+    const projectionPending = new Promise<Response>((resolve) => {
+      resolveProjection = resolve;
+    });
+    const api = setup({ projectionGetter: () => projectionPending });
+    const view = render(<PresentationScreen />);
+
+    try {
+      await settled();
+      expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(1);
+      view.unmount();
+
+      await act(async () => {
+        resolveProjection(response({ state: "finished" }));
+        await projectionPending;
+      });
+      await settled();
+
+      expect(view.container).toBeEmptyDOMElement();
+    } finally {
+      resolveProjection(response({ state: "finished" }));
+      await act(async () => {
+        await projectionPending;
+      });
+      await settled();
+      view.unmount();
+    }
+  });
+
   it.each([
     ["question", 0, 2, "ArrowLeft"],
     ["podium_preview", 0, 0, "ArrowLeft"],
