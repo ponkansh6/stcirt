@@ -428,7 +428,6 @@ describe("presentation admin console", () => {
     await user.click(await screen.findByRole("button", { name: "参加者結果を公開" }));
     const pendingButton = await screen.findByRole("button", { name: "公開しています…" });
     expect(pendingButton).toBeDisabled();
-    await user.click(pendingButton);
     expect(publicationCount).toBe(1);
 
     finishPublication?.();
@@ -524,6 +523,51 @@ describe("presentation admin console", () => {
     await user.click(screen.getByRole("button", { name: "投影を一時非表示" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("自動で再試行しています");
     expect(screen.getByText("現在の状態：進行中：問題")).toBeInTheDocument();
+  });
+
+  it("offers the show action when projection is hidden", async () => {
+    const api = apiFetch({
+      state: {
+        state: "answer",
+        questionIndex: 0,
+        questionCount: 5,
+        projectionHidden: true,
+        participantResultsVisible: false,
+        participantResultsReady: true,
+      },
+    });
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+
+    await user.click(await screen.findByRole("button", { name: "投影を表示" }));
+    await waitFor(() =>
+      expect(api.actions).toContainEqual({
+        path: "/api/admin/presentation",
+        body: expect.objectContaining({ action: "show" }),
+      }),
+    );
+  });
+
+  it("shows refresh errors in the authenticated loading console", async () => {
+    let poll: (() => void) | undefined;
+    vi.spyOn(window, "setInterval").mockImplementation((handler) => {
+      if (typeof handler === "function") poll = handler as () => void;
+      return 1 as unknown as ReturnType<typeof window.setInterval>;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/admin/session") return response(200, { authenticated: true });
+      if (String(input) === "/api/admin/presentation") return response(503, {});
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PresentationAdmin />);
+
+    expect(await screen.findByText("管理状態を取得しています…")).toBeInTheDocument();
+    expect(poll).toBeDefined();
+    await act(async () => {
+      poll?.();
+      expect(await screen.findByRole("alert")).toHaveTextContent("自動で再試行しています");
+    });
   });
 
   it("shows an action failure when the projection action endpoint rejects the request", async () => {

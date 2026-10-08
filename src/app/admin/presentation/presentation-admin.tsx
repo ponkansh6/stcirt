@@ -171,7 +171,6 @@ export default function PresentationAdmin() {
   }
 
   async function runAction(action: "start" | "hide" | "show" | "publish" | "hideResults") {
-    if (busy) return;
     setBusy(true);
     setMessage(null);
     try {

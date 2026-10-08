@@ -304,6 +304,36 @@ describe("PresentationScreen", () => {
     expect(screen.queryByRole("button", { name: "プレゼンを開始" })).not.toBeInTheDocument();
   });
 
+  it("keeps presenter controls unavailable when the admin state request fails", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      adminResponse: async () => response({}, false, 503),
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
+    await flush();
+
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(0);
+  });
+
+  it("keeps presenter controls unavailable when admin state JSON is not an object", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      adminResponse: async () => response(null),
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
+    await flush();
+
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(0);
+  });
+
   it("ignores keyboard events from nodes outside the slide", async () => {
     const api = installApi({
       projection: { state: "question", question },
