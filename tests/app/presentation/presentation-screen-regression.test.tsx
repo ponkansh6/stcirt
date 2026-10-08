@@ -334,6 +334,34 @@ describe("PresentationScreen", () => {
     expect(api.actions).toHaveLength(0);
   });
 
+  it("keeps presenter controls unavailable when the admin session JSON is malformed", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      sessionResponse: async () => malformedJsonResponse(),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/session", expect.anything());
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(0);
+  });
+
+  it("keeps presenter controls unavailable when the admin controls JSON is malformed", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      adminResponse: async () => malformedJsonResponse(),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(0);
+  });
+
   it("ignores keyboard events from nodes outside the slide", async () => {
     const api = installApi({
       projection: { state: "question", question },
@@ -521,6 +549,47 @@ describe("PresentationScreen", () => {
     expect(api.actions).toHaveLength(1);
   });
 
+  it("keeps presenter actions unavailable when admin controls JSON is malformed", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      adminResponse: async () => malformedJsonResponse(),
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+
+    await waitFor(() =>
+      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+    );
+    await flush();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(api.actions).toHaveLength(0);
+  });
+
+  it("does not enable presenter actions when session JSON is malformed", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      sessionResponse: async () => malformedJsonResponse(),
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+
+    await waitFor(() =>
+      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/session", expect.anything()),
+    );
+    await flush();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(
+      api.fetchMock.mock.calls.some(([path]) => String(path) === "/api/admin/presentation"),
+    ).toBe(false);
+    expect(api.actions).toHaveLength(0);
+  });
+
   it("uses keyboard navigation only for slide targets and ignores repeated or modified keys", async () => {
     const api = installApi({
       projection: { state: "question", question },
@@ -706,6 +775,26 @@ describe("PresentationScreen", () => {
     screen.getByTestId("presentation-canvas").append(textTarget);
 
     fireEvent.click(textTarget);
+    await waitFor(() => expect(api.actions).toHaveLength(1));
+    expect(api.actions[0]).toMatchObject({ action: "advance" });
+    expect(main.contains(textTarget)).toBe(true);
+  });
+
+  it("allows ArrowRight from non-element slide text", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 1 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+    await waitFor(() =>
+      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
+    );
+    await flush();
+    const textTarget = document.createTextNode("keyboard slide text");
+    screen.getByTestId("presentation-canvas").append(textTarget);
+
+    fireEvent.keyDown(textTarget, { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(1));
     expect(api.actions[0]).toMatchObject({ action: "advance" });
     expect(main.contains(textTarget)).toBe(true);

@@ -426,6 +426,24 @@ describe("presentation admin console", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("ログインできませんでした");
   });
 
+  it("shows PIN entry when the session JSON cannot be parsed", async () => {
+    const malformedSession = new Response(null, { status: 200 });
+    Object.defineProperty(malformedSession, "json", {
+      value: vi.fn().mockRejectedValue(new Error("invalid JSON")),
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/admin/session") return malformedSession;
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PresentationAdmin />);
+
+    expect(await screen.findByLabelText("管理者 PIN")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(([input]) => String(input) === "/api/admin/presentation"),
+    ).toBe(false);
+  });
+
   it("uses the generic login message when the request rejects without an Error object", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === "/api/admin/session" && init?.method === "POST")
