@@ -489,6 +489,29 @@ describe("presentation repository", () => {
     });
   });
 
+  it("uses the question master explanation when a legacy snapshot explanation is blank", async () => {
+    await addQuestions();
+    await operatePresentation("start-blank-explanation", "start");
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ explanation: "   " })
+      .where(eq(schema.presentationQuestions.sourceQuestionId, 11));
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ explanation: "Current master explanation" })
+      .where(eq(schema.examQuestions.id, 11));
+
+    const question = await getPublicPresentation();
+    expect(question).toMatchObject({ state: "question" });
+    expect(JSON.stringify(question)).not.toContain("Current master explanation");
+
+    await operatePresentation("answer-blank-explanation", "advance");
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "answer",
+      question: { explanation: "Current master explanation" },
+    });
+  });
+
   it("suppresses only the identified fifth-question responses in the public projection", async () => {
     await addFreeTextProjectionFixture("it-literacy-005");
 

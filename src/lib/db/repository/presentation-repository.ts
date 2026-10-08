@@ -377,11 +377,16 @@ export async function getPublicPresentation() {
       const row = admin.questions[admin.questionIndex];
       if (!row) return { state: admin.state };
       let sourceQuestionKey: string | undefined;
-      if (admin.state === "answer" && row.answerType === "freeText") {
-        // Snapshot IDs are not foreign-keyed; resolve the key in one batch and
-        // suppress responses when the source identity cannot be confirmed.
-        const sourceQuestionKeys = await tx
-          .select({ id: examQuestions.id, key: examQuestions.key })
+      let sourceExplanation: string | null | undefined;
+      if (admin.state === "answer") {
+        // Snapshot IDs are not foreign-keyed. Resolve source data in one batch
+        // for legacy snapshots with an empty explanation and free-text privacy.
+        const sourceQuestions = await tx
+          .select({
+            id: examQuestions.id,
+            key: examQuestions.key,
+            explanation: examQuestions.explanation,
+          })
           .from(examQuestions)
           .where(
             inArray(
@@ -389,8 +394,11 @@ export async function getPublicPresentation() {
               admin.questions.map(({ id }) => id),
             ),
           );
-        sourceQuestionKey = sourceQuestionKeys.find(({ id }) => id === row.id)?.key;
+        const sourceQuestion = sourceQuestions.find(({ id }) => id === row.id);
+        sourceQuestionKey = sourceQuestion?.key;
+        sourceExplanation = sourceQuestion?.explanation;
       }
+      const explanation = row.explanation?.trim() ? row.explanation : sourceExplanation;
       const question = {
         id: row.id,
         ordinal: admin.questionIndex + 1,
@@ -401,7 +409,7 @@ export async function getPublicPresentation() {
         ...(admin.state === "answer"
           ? row.answerType === "freeText"
             ? {
-                expectedAnswer: row.explanation,
+                expectedAnswer: explanation,
                 ...(sourceQuestionKey === undefined || sourceQuestionKey === "it-literacy-005"
                   ? {}
                   : {
@@ -420,7 +428,7 @@ export async function getPublicPresentation() {
             : {
                 correctAnswer: row.correctAnswer,
                 correctIndex: row.correctIndex,
-                explanation: row.explanation,
+                explanation,
               }
           : {}),
       };
