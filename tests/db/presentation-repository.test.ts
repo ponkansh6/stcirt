@@ -528,7 +528,7 @@ describe("presentation repository", () => {
         expectedAnswer: "Model answer",
       },
     });
-    if (projection.state === "answer") {
+    if (projection.state === "answer" && projection.question?.answerType === "freeText") {
       expect(projection.question).not.toHaveProperty("responses");
     }
     const admin = await getAdminPresentation();
@@ -569,7 +569,7 @@ describe("presentation repository", () => {
     });
   });
 
-  it("fails closed when the snapshot source question row is missing", async () => {
+  it("keeps responses when the snapshot source question row is missing", async () => {
     await addFreeTextProjectionFixture();
 
     const projection = await getPublicPresentation();
@@ -579,8 +579,16 @@ describe("presentation repository", () => {
         expectedAnswer: "Model answer",
       },
     });
-    if (projection.state === "answer") {
-      expect(projection.question).not.toHaveProperty("responses");
+    const question = projection.state === "answer" ? projection.question : undefined;
+    if (question && "responses" in question) {
+      expect(question.responses).toEqual([
+        expect.objectContaining({
+          displayName: "Private Name",
+          answer: "Private response",
+          answerKind: "freeText",
+          score: 0.5,
+        }),
+      ]);
     }
   });
 

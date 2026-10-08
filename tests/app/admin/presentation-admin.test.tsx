@@ -1,300 +1,260 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import PresentationAdminPage from "@/app/admin/presentation/page";
 import PresentationAdmin from "@/app/admin/presentation/presentation-admin";
 
-const navigation = vi.hoisted(() => ({
-  assign: vi.fn(),
-  replace: vi.fn(),
-}));
-
 function response(status: number, payload: unknown): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: vi.fn().mockResolvedValue(payload),
-  } as unknown as Response;
+  return new Response(JSON.stringify(payload), { status });
 }
 
-function setLocationMocks() {
-  const original = Object.getOwnPropertyDescriptor(window, "location");
-  Object.defineProperty(window, "location", {
-    configurable: true,
-    value: navigation,
+function apiFetch(options: {
+  session?: unknown;
+  state?: Record<string, unknown>;
+  mutationStatus?: number;
+  publishStatus?: number;
+}) {
+  const actions: { path: string; body: unknown }[] = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path === "/api/admin/session")
+      return response(200, options.session ?? { authenticated: true });
+    if (path === "/api/admin/presentation" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      actions.push({ path, body });
+      return response(options.mutationStatus ?? 200, {});
+    }
+    if (path === "/api/admin/participant-results") {
+      const body = JSON.parse(String(init?.body));
+      actions.push({ path, body });
+      return response(options.publishStatus ?? 200, {});
+    }
+    if (path === "/api/admin/presentation")
+      return response(
+        200,
+        options.state ?? {
+          state: "not_started",
+          questionIndex: 0,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: true,
+        },
+      );
+    throw new Error(`Unexpected request: ${path}`);
   });
-  return () => {
-    if (original) Object.defineProperty(window, "location", original);
-  };
+  vi.stubGlobal("fetch", fetchMock);
+  return { actions, fetchMock };
 }
 
-describe("presentation admin entry", () => {
+describe("presentation admin console", () => {
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
   });
 
-  it("renders the admin PIN form from the page entry", () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(200, { authenticated: false })));
-
+  it("renders the PIN entry through the admin page", () => {
+    apiFetch({ session: { authenticated: false } });
     render(<PresentationAdminPage />);
-
     expect(screen.getByRole("heading", { name: "披露宴 発表操作" })).toBeInTheDocument();
     expect(screen.getByLabelText("管理者 PIN")).toHaveAttribute("type", "password");
   });
-});
 
-describe("presentation admin login", () => {
-  let restoreLocation: (() => void) | undefined;
-
-  beforeEach(() => {
-    navigation.assign.mockReset();
-    navigation.replace.mockReset();
-    restoreLocation = setLocationMocks();
-  });
-
-  afterEach(() => {
-    restoreLocation?.();
-    restoreLocation = undefined;
-    vi.unstubAllGlobals();
-  });
-
-  it("replaces the page when the existing session is authenticated", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(response(200, { authenticated: true }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<PresentationAdmin />);
-
-    await waitFor(() =>
-      expect(navigation.replace).toHaveBeenCalledWith("/presentation?presenter=1"),
-    );
-    expect(fetchMock).toHaveBeenCalledWith("/api/admin/session", {
-      method: "GET",
-      cache: "no-store",
-      credentials: "same-origin",
-    });
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  });
-
-  it("shows a visible prompt when the session check fails", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-
-    render(<PresentationAdmin />);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "管理者セッションを確認できませんでした。PIN を入力してください。",
-    );
-    expect(navigation.replace).not.toHaveBeenCalled();
-  });
-
-  it("does not send a login request while the PIN is empty", () => {
-    const fetchMock = vi.fn().mockResolvedValue(response(200, { authenticated: false }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<PresentationAdmin />);
-    const pinInput = screen.getByLabelText("管理者 PIN");
-    const form = pinInput.closest("form");
-    if (!form) throw new Error("PIN form was not rendered");
-
-    expect(screen.getByRole("button", { name: "発表画面を始める" })).toBeDisabled();
-    fireEvent.submit(form);
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not redirect after a successful session check settles on an unmounted page", async () => {
-    let resolveJson!: (value: unknown) => void;
-    const jsonResult = new Promise<unknown>((resolve) => {
-      resolveJson = resolve;
-    });
-    const fetchMock = vi.fn().mockReturnValue(
-      new Promise<Response>((resolve) => {
-        resolve({
-          ok: true,
-          status: 200,
-          json: vi.fn().mockReturnValue(jsonResult),
-        } as unknown as Response);
+  it("keeps the authenticated user on the admin page, shows status, and starts there", async () => {
+    const user = userEvent.setup();
+    let authenticated = false;
+    let state = "not_started";
+    const actions: { path: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/admin/session" && init?.method === "POST") {
+          authenticated = true;
+          return response(200, { authenticated });
+        }
+        if (path === "/api/admin/session") return response(200, { authenticated });
+        if (path === "/api/admin/presentation" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body));
+          actions.push({ path, body });
+          state = "question";
+          return response(200, {});
+        }
+        if (path === "/api/admin/presentation")
+          return response(200, {
+            state,
+            questionIndex: 0,
+            questionCount: 5,
+            projectionHidden: false,
+            participantResultsVisible: false,
+            participantResultsReady: true,
+          });
+        throw new Error(`Unexpected request: ${path}`);
       }),
     );
-    vi.stubGlobal("fetch", fetchMock);
-    const view = render(<PresentationAdmin />);
-    view.unmount();
-
-    await act(async () => {
-      resolveJson({ authenticated: true });
-      await jsonResult;
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(navigation.replace).not.toHaveBeenCalled();
-  });
-
-  it("does not show an error or navigate after a failed session check settles on an unmounted page", async () => {
-    let rejectFetch!: (reason: Error) => void;
-    const fetchMock = vi.fn().mockReturnValue(
-      new Promise<Response>((_resolve, reject) => {
-        rejectFetch = reject;
+    render(<PresentationAdmin />);
+    await user.type(screen.getByLabelText("管理者 PIN"), "2468");
+    await user.click(screen.getByRole("button", { name: "管理ページにログイン" }));
+    expect(await screen.findByText("現在の状態：未開始")).toBeInTheDocument();
+    expect(screen.queryByLabelText("管理者 PIN")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "発表を開始" }));
+    await waitFor(() =>
+      expect(actions).toContainEqual({
+        path: "/api/admin/presentation",
+        body: expect.objectContaining({ action: "start" }),
       }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  it("shows running and finished state with named projection tab and publish controls", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    apiFetch({
+      state: {
+        state: "question",
+        questionIndex: 1,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: false,
+        participantResultsReady: true,
+      },
+    });
     const view = render(<PresentationAdmin />);
+    expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    expect(screen.getByText("問題 2 / 5")).toBeInTheDocument();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "投影画面を開く / 投影タブへ戻る" }));
+    expect(open).toHaveBeenCalledWith("/presentation?presenter=1", "stcirt-presentation");
+
     view.unmount();
-
-    await act(async () => {
-      rejectFetch(new Error("offline"));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+    apiFetch({
+      state: {
+        state: "finished",
+        questionIndex: 5,
+        questionCount: 5,
+        projectionHidden: true,
+        participantResultsVisible: false,
+        participantResultsReady: true,
+      },
     });
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(navigation.replace).not.toHaveBeenCalled();
-    expect(navigation.assign).not.toHaveBeenCalled();
+    render(<PresentationAdmin />);
+    expect(await screen.findByText("現在の状態：終了")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "参加者結果を公開" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "投影を表示" })).toBeInTheDocument();
   });
 
-  it("logs in with a PIN, clears the input, and navigates on success", async () => {
-    const user = userEvent.setup();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(response(200, { authenticated: false }))
-      .mockResolvedValueOnce(response(200, { authenticated: true }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<PresentationAdmin />);
-    const pinInput = screen.getByLabelText("管理者 PIN");
-    await user.type(pinInput, "2468");
-    await user.click(screen.getByRole("button", { name: "発表画面を始める" }));
-
-    await waitFor(() =>
-      expect(navigation.assign).toHaveBeenCalledWith("/presentation?presenter=1"),
-    );
-    expect(pinInput).toHaveValue("");
-    expect(fetchMock).toHaveBeenLastCalledWith("/api/admin/session", {
-      method: "POST",
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ pin: "2468" }),
+  it("publishes only visible true and avoids another publish when already visible", async () => {
+    const api = apiFetch({
+      state: {
+        state: "finished",
+        questionIndex: 5,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: false,
+        participantResultsReady: true,
+      },
     });
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  });
-
-  it("keeps the form and shows the unavailable message for an unauthenticated success payload", async () => {
     const user = userEvent.setup();
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(response(200, { authenticated: false }))
-        .mockResolvedValueOnce(response(200, { authenticated: false })),
-    );
-
-    render(<PresentationAdmin />);
-    await user.type(screen.getByLabelText("管理者 PIN"), "1357");
-    await user.click(screen.getByRole("button", { name: "発表画面を始める" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "管理者セッションを確認できませんでした。",
-    );
-    expect(navigation.assign).not.toHaveBeenCalled();
-  });
-
-  it("maps an invalid PIN response to the PIN guidance", async () => {
-    const user = userEvent.setup();
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(response(200, { authenticated: false }))
-        .mockResolvedValueOnce(response(401, { error: "Invalid PIN" })),
-    );
-
-    render(<PresentationAdmin />);
-    await user.type(screen.getByLabelText("管理者 PIN"), "0000");
-    await user.click(screen.getByRole("button", { name: "発表画面を始める" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "PIN が一致しません。入力内容をご確認ください。",
-    );
-  });
-
-  it("shows server errors and uses a fallback for a non-Error rejection", async () => {
-    const user = userEvent.setup();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(response(200, { authenticated: false }))
-      .mockResolvedValueOnce(response(503, { error: "管理機能は利用できません。" }))
-      .mockRejectedValueOnce("network failure");
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<PresentationAdmin />);
-    const pinInput = screen.getByLabelText("管理者 PIN");
-    await user.type(pinInput, "1111");
-    await user.click(screen.getByRole("button", { name: "発表画面を始める" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("管理機能は利用できません。");
-
-    await user.clear(pinInput);
-    await user.type(pinInput, "2222");
-    await user.click(screen.getByRole("button", { name: "発表画面を始める" }));
+    const view = render(<PresentationAdmin />);
+    await user.click(await screen.findByRole("button", { name: "参加者結果を公開" }));
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent("ログインできませんでした。"),
+      expect(api.actions).toContainEqual({
+        path: "/api/admin/participant-results",
+        body: { visible: true },
+      }),
     );
-  });
 
-  it("handles invalid response JSON and ignores repeated submission while busy", async () => {
-    const user = userEvent.setup();
-    let resolvePost!: (value: Response) => void;
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(response(200, { authenticated: false }))
-      .mockReturnValueOnce(
-        new Promise<Response>((resolve) => {
-          resolvePost = resolve;
-        }),
-      );
-    vi.stubGlobal("fetch", fetchMock);
-
+    view.unmount();
+    const published = apiFetch({
+      state: {
+        state: "finished",
+        questionIndex: 5,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: true,
+        participantResultsReady: true,
+      },
+    });
     render(<PresentationAdmin />);
-    const pinInput = screen.getByLabelText("管理者 PIN");
-    await user.type(pinInput, "9876");
-    const form = pinInput.closest("form");
-    if (!form) throw new Error("PIN form was not rendered");
-    fireEvent.submit(form);
-
-    expect(await screen.findByRole("button", { name: "確認中…" })).toBeDisabled();
-    fireEvent.submit(form);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-
-    resolvePost({
-      ok: true,
-      status: 200,
-      json: vi.fn().mockRejectedValue(new SyntaxError("invalid JSON")),
-    } as unknown as Response);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "管理者セッションを確認できませんでした。",
+    expect(await screen.findByText("参加者結果は公開済みです")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "参加者結果を公開" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "参加者結果を非公開" }));
+    await waitFor(() =>
+      expect(published.actions).toContainEqual({
+        path: "/api/admin/participant-results",
+        body: { visible: false },
+      }),
     );
-    expect(screen.getByRole("button", { name: "発表画面を始める" })).toBeDisabled();
   });
 
-  it("falls back when a failed response has no readable error payload", async () => {
+  it("keeps failed publication retryable and clears controls after a 401", async () => {
+    const api = apiFetch({
+      state: {
+        state: "finished",
+        questionIndex: 5,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: false,
+        participantResultsReady: true,
+      },
+      publishStatus: 503,
+    });
     const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    const publish = await screen.findByRole("button", { name: "参加者結果を公開" });
+    await user.click(publish);
+    expect(await screen.findByRole("alert")).toHaveTextContent("再試行してください");
+    expect(screen.getByRole("button", { name: "参加者結果を公開" })).toBeInTheDocument();
+    expect(api.actions).toHaveLength(1);
+
+    api.fetchMock.mockImplementation(async (input) => {
+      if (String(input) === "/api/admin/participant-results") return response(401, {});
+      if (String(input) === "/api/admin/session") return response(200, { authenticated: false });
+      return response(200, {
+        state: "finished",
+        questionIndex: 5,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: false,
+        participantResultsReady: true,
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "参加者結果を公開" }));
+    expect(await screen.findByLabelText("管理者 PIN")).toBeInTheDocument();
+  });
+
+  it("keeps the expired-session message when a failed action refresh finds no session", async () => {
+    let publishAttempted = false;
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(response(200, { authenticated: false }))
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 500,
-          json: vi.fn().mockRejectedValue(new SyntaxError("invalid JSON")),
-        } as unknown as Response),
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/admin/session")
+          return response(200, { authenticated: !publishAttempted });
+        if (path === "/api/admin/participant-results") {
+          publishAttempted = true;
+          return response(503, {});
+        }
+        if (path === "/api/admin/presentation")
+          return response(200, {
+            state: "finished",
+            questionIndex: 5,
+            questionCount: 5,
+            projectionHidden: false,
+            participantResultsVisible: false,
+            participantResultsReady: true,
+          });
+        throw new Error(`Unexpected request: ${path}`);
+      }),
     );
-
+    const user = userEvent.setup();
     render(<PresentationAdmin />);
-    await user.type(screen.getByLabelText("管理者 PIN"), "4321");
-    await user.click(screen.getByRole("button", { name: "発表画面を始める" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("ログインできませんでした。");
+    await user.click(await screen.findByRole("button", { name: "参加者結果を公開" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("セッションの有効期限が切れました");
+    expect(alert).not.toHaveTextContent("再試行してください");
+    expect(screen.getByLabelText("管理者 PIN")).toBeInTheDocument();
   });
 });

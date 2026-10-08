@@ -13,6 +13,7 @@
   background: #ede9df;
   color: #23343c;
   font-family: var(--font-geist), "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  touch-action: pan-y;
 }
 .screen:focus-visible {
   outline: 3px solid #315b66;
@@ -46,55 +47,6 @@
   isolation: isolate;
 }
 
-.startControl {
-  position: fixed;
-  z-index: 4;
-  bottom: max(22px, env(safe-area-inset-bottom));
-  left: 50%;
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-  transform: translateX(-50%);
-}
-.startControl button {
-  min-height: 52px;
-  padding: 0 26px;
-  border: 1px solid #315746;
-  border-radius: 999px;
-  background: #315746;
-  box-shadow: 0 8px 28px rgb(27 50 41 / 20%);
-  color: white;
-  font: inherit;
-  font-size: clamp(1rem, 1.5vw, 1.25rem);
-  font-weight: 800;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.startControl button:hover:not(:disabled) {
-  background: #254637;
-}
-.startControl button:focus-visible {
-  outline: 3px solid #bb9147;
-  outline-offset: 3px;
-}
-.startControl button:disabled {
-  cursor: wait;
-  opacity: 0.72;
-}
-.startControl p,
-.publishedStatus {
-  max-width: min(90vw, 560px);
-  margin: 0;
-  padding: 6px 12px;
-  border-radius: 6px;
-  background: rgb(250 248 242 / 92%);
-  color: #815d32;
-  font-size: 0.85rem;
-  text-align: center;
-}
-.publishedStatus {
-  color: #365b4a;
-}
 
 .canvas::before,
 .canvas::after {

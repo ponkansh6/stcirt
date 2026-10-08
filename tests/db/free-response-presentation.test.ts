@@ -109,6 +109,59 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     );
   });
 
+  it("suppresses responses only when the source key still identifies question five", async () => {
+    const participantId = await addParticipant("question-five-identity");
+    await addFreeTextSubmission(participantId, 1, "identity");
+    await operatePresentation("question-five-identity-start", "start");
+    for (let index = 0; index < 9; index += 1)
+      await operatePresentation(`question-five-identity-forward-${index}`, "advance");
+    const fifthAnswer = await getPublicPresentation();
+    expect(fifthAnswer).toMatchObject({ state: "answer", question: { ordinal: 5 } });
+    if (fifthAnswer.state === "answer" && fifthAnswer.question?.answerType === "freeText")
+      expect(fifthAnswer.question).not.toHaveProperty("responses");
+
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ key: "renamed-question" })
+      .where(eq(schema.examQuestions.id, 5));
+    const renamedAnswer = await getPublicPresentation();
+    const renamedQuestion = renamedAnswer.state === "answer" ? renamedAnswer.question : undefined;
+    expect(renamedQuestion).toHaveProperty("responses");
+    if (renamedQuestion && "responses" in renamedQuestion)
+      expect(renamedQuestion.responses).toHaveLength(1);
+  });
+
+  it("retains fifth-question responses when the source row is missing", async () => {
+    const participantId = await addParticipant("missing-source");
+    await addFreeTextSubmission(participantId, 1, "missing-source");
+    await operatePresentation("missing-source-start", "start");
+    for (let index = 0; index < 9; index += 1)
+      await operatePresentation(`missing-source-forward-${index}`, "advance");
+    await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 5));
+
+    const projection = await getPublicPresentation();
+    const question = projection.state === "answer" ? projection.question : undefined;
+    expect(question).toHaveProperty("responses");
+    if (question && "responses" in question) expect(question.responses).toHaveLength(1);
+  });
+
+  it("keeps response data for an unrelated free-text answer stage", async () => {
+    const participantId = await addParticipant("other-free-text-source");
+    await addFreeTextSubmission(participantId, 1, "other-free-text-source");
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ choices: [] })
+      .where(eq(schema.examQuestions.id, 3));
+    await operatePresentation("other-free-text-start", "start");
+    for (let index = 0; index < 5; index += 1)
+      await operatePresentation(`other-free-text-forward-${index}`, "advance");
+
+    const projection = await getPublicPresentation();
+    expect(projection).toMatchObject({ state: "answer", question: { ordinal: 3 } });
+    const question = projection.state === "answer" ? projection.question : undefined;
+    if (question && "responses" in question) expect(question.responses).toHaveLength(1);
+  });
+
   it.each(["pending", "failed", "stale"] as const)(
     "blocks start for a %s or revision-mismatched assessment",
     async (caseName) => {

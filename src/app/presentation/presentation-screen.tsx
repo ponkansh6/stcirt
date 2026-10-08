@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 import styles from "./presentation-screen.module.css";
 
 type State =
@@ -56,11 +63,8 @@ type AdminControls = {
   state: AdminState;
   questionIndex: number;
   questionCount: number;
-  projectionHidden: boolean;
-  participantResultsVisible: boolean;
-  participantResultsReady: boolean;
 };
-type AdminAction = "start" | "advance" | "previous" | "hide" | "show";
+type AdminAction = "advance" | "previous";
 type ScreenLock = {
   released: boolean;
   release: () => Promise<void>;
@@ -113,9 +117,6 @@ async function getAdminControls(): Promise<AdminControls> {
     state: admin.state as AdminState,
     questionIndex: typeof admin.questionIndex === "number" ? admin.questionIndex : 0,
     questionCount: typeof admin.questionCount === "number" ? admin.questionCount : 0,
-    projectionHidden: admin.projectionHidden === true,
-    participantResultsVisible: admin.participantResultsVisible === true,
-    participantResultsReady: admin.participantResultsReady === true,
   };
 }
 
@@ -132,24 +133,6 @@ async function requestAdminAction(action: AdminAction) {
   });
   if (!response.ok) {
     const error = new Error("操作を反映できませんでした。") as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-}
-
-async function requestParticipantResultsVisibility(visible: boolean) {
-  const response = await fetch("/api/admin/participant-results", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ visible }),
-  });
-  if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-    const error = new Error(payload?.error ?? "操作を反映できませんでした。") as Error & {
-      status?: number;
-    };
     error.status = response.status;
     throw error;
   }
@@ -272,15 +255,21 @@ export default function PresentationScreen({
   const [announcementKey, setAnnouncementKey] = useState<string | null>(null);
   const announcementTimer = useRef<number | null>(null);
   const [adminControls, setAdminControls] = useState<AdminControls | null>(null);
-  const [adminBusy, setAdminBusy] = useState(false);
-  const [adminMessage, setAdminMessage] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLElement | null>(null);
-  const hasEnteredFullscreen = useRef(false);
-  const wasFullscreenActive = useRef(false);
-  const fullscreenReentryPending = useRef(false);
+  const fullscreenAttempted = useRef(false);
+  const pointerStart = useRef<{
+    id: number;
+    x: number;
+    y: number;
+    generation: number;
+    ignored: boolean;
+  } | null>(null);
+  const suppressClick = useRef(false);
+  const suppressClickTimer = useRef<number | null>(null);
   const projectionSequence = useRef(0);
   const adminSequence = useRef(0);
   const mutationInFlight = useRef(false);
+  const mutationGeneration = useRef(0);
   const announceRank = useCallback((state: "third" | "second" | "first", winners?: Winner[]) => {
     const eventKey = announcementKeyFor(state, winners);
     setAnnouncementKey(eventKey);
@@ -363,45 +352,19 @@ export default function PresentationScreen({
 
   const recoverUnauthorized = useCallback(() => {
     setAdminControls(null);
-    setAdminMessage("管理者セッションの有効期限が切れました。観客表示に戻りました。");
   }, []);
 
-  const requestFullscreenForStart = useCallback(() => {
+  const requestFullscreenForIntent = useCallback(() => {
+    if (fullscreenAttempted.current) return;
+    fullscreenAttempted.current = true;
     const element = wrapperRef.current;
     if (!element?.requestFullscreen || document.fullscreenElement) return;
     try {
-      void element
-        .requestFullscreen()
-        .then(() => {
-          hasEnteredFullscreen.current = true;
-          if (document.fullscreenElement !== element) fullscreenReentryPending.current = true;
-        })
-        .catch(() => {
-          if (hasEnteredFullscreen.current) fullscreenReentryPending.current = true;
-        });
+      void element.requestFullscreen().catch(() => {});
     } catch {
       // Browser support and user permission are optional for projection.
     }
   }, []);
-
-  const requestFullscreenForIntent = useCallback(
-    (action: AdminAction) => {
-      if (action === "start" && !hasEnteredFullscreen.current) {
-        requestFullscreenForStart();
-        return;
-      }
-      if (
-        (action === "start" || action === "advance" || action === "previous") &&
-        hasEnteredFullscreen.current &&
-        fullscreenReentryPending.current
-      ) {
-        if (!wrapperRef.current?.requestFullscreen || document.fullscreenElement) return;
-        fullscreenReentryPending.current = false;
-        requestFullscreenForStart();
-      }
-    },
-    [requestFullscreenForStart],
-  );
 
   const operate = useCallback(
     async (action: AdminAction) => {
@@ -422,14 +385,12 @@ export default function PresentationScreen({
         announcementTimer.current = null;
         setAnnouncementKey(null);
       }
-      requestFullscreenForIntent(action);
+      requestFullscreenForIntent();
+      mutationGeneration.current += 1;
       mutationInFlight.current = true;
       projectionSequence.current += 1;
-      setAdminBusy(true);
-      setAdminMessage(null);
       try {
         await requestAdminAction(action);
-        if (action === "start") wrapperRef.current?.focus({ preventScroll: true });
         const projectionRequest = (async () => {
           ++projectionSequence.current;
           const projection = await getProjection();
@@ -459,20 +420,16 @@ export default function PresentationScreen({
           } catch {
             // Keep the last usable projection visible while the next poll retries.
           }
-          setAdminMessage(
-            status === 409
-              ? "進行状態が更新されました。最新の投影状態に同期しました。"
-              : "操作を反映できませんでした。状態を再確認しています。",
-          );
         }
-        try {
-          await refreshAdmin();
-        } catch {
-          /* The next session poll will retry. */
+        if (status !== 401) {
+          try {
+            await refreshAdmin();
+          } catch {
+            /* The next session poll will retry. */
+          }
         }
       } finally {
         mutationInFlight.current = false;
-        setAdminBusy(false);
       }
     },
     [
@@ -485,43 +442,17 @@ export default function PresentationScreen({
     ],
   );
 
-  const toggleParticipantResults = useCallback(async () => {
-    if (!adminControls || adminControls.participantResultsVisible || mutationInFlight.current)
-      return;
-    mutationInFlight.current = true;
-    setAdminBusy(true);
-    setAdminMessage(null);
-    try {
-      await requestParticipantResultsVisibility(true);
-      await refreshAdmin();
-    } catch (error) {
-      const status = (error as { status?: number })?.status;
-      if (status === 401) recoverUnauthorized();
-      else {
-        setAdminMessage("結果の準備または公開に失敗しました。結果は非公開のままです。");
-        try {
-          await refreshAdmin();
-        } catch {
-          /* The next session poll will retry. */
-        }
-      }
-    } finally {
-      mutationInFlight.current = false;
-      setAdminBusy(false);
-    }
-  }, [adminControls, recoverUnauthorized, refreshAdmin]);
-
   useEffect(() => {
     if (!adminControls || !presenterRequested) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       const target = event.target;
       if (!(target instanceof Node) || !wrapperRef.current?.contains(target)) return;
       if (isInteractiveTarget(target)) return;
       if (event.key === "ArrowRight") {
         event.preventDefault();
-        if (adminControls.state !== "finished")
-          void operate(adminControls.state === "not_started" ? "start" : "advance");
+        if (adminControls.state !== "finished" && adminControls.state !== "not_started")
+          void operate("advance");
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         const canGoPrevious =
@@ -531,8 +462,8 @@ export default function PresentationScreen({
         if (canGoPrevious) void operate("previous");
       } else if ((event.key === " " || event.key === "Enter") && !event.isComposing) {
         event.preventDefault();
-        if (adminControls.state !== "finished")
-          void operate(adminControls.state === "not_started" ? "start" : "advance");
+        if (adminControls.state !== "finished" && adminControls.state !== "not_started")
+          void operate("advance");
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -591,32 +522,79 @@ export default function PresentationScreen({
   useEffect(
     () => () => {
       if (announcementTimer.current !== null) window.clearTimeout(announcementTimer.current);
+      if (suppressClickTimer.current !== null) window.clearTimeout(suppressClickTimer.current);
     },
     [],
   );
 
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      const active = document.fullscreenElement === wrapperRef.current;
-      if (active) {
-        hasEnteredFullscreen.current = true;
-        fullscreenReentryPending.current = false;
-      } else if (wasFullscreenActive.current && hasEnteredFullscreen.current) {
-        fullscreenReentryPending.current = true;
-      }
-      wasFullscreenActive.current = active;
-    };
-    handleFullscreenChange();
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-  }, []);
-
   const handleSlideClick = useCallback(
     (event: MouseEvent<HTMLElement>) => {
+      if (suppressClick.current) {
+        suppressClick.current = false;
+        if (suppressClickTimer.current !== null) window.clearTimeout(suppressClickTimer.current);
+        suppressClickTimer.current = null;
+        event.preventDefault();
+        return;
+      }
       if (!adminControls || isInteractiveTarget(event.target)) return;
-      if (adminControls.state === "finished") return;
+      if (adminControls.state === "finished" || adminControls.state === "not_started") return;
       wrapperRef.current?.focus({ preventScroll: true });
-      void operate(adminControls.state === "not_started" ? "start" : "advance");
+      void operate("advance");
+    },
+    [adminControls, operate],
+  );
+
+  const handlePointerDown = useCallback((event: PointerEvent<HTMLElement>) => {
+    if (event.isPrimary === false || event.button !== 0 || isInteractiveTarget(event.target)) {
+      pointerStart.current = null;
+      return;
+    }
+    pointerStart.current = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      generation: mutationGeneration.current,
+      ignored: mutationInFlight.current,
+    };
+  }, []);
+
+  const handlePointerUp = useCallback(
+    (event: PointerEvent<HTMLElement>) => {
+      const start = pointerStart.current;
+      pointerStart.current = null;
+      if (
+        !start ||
+        start.id !== event.pointerId ||
+        event.isPrimary === false ||
+        !adminControls ||
+        isInteractiveTarget(event.target)
+      )
+        return;
+      const dx = event.clientX - start.x;
+      const dy = event.clientY - start.y;
+      if (Math.abs(dx) < 56 || Math.abs(dx) <= Math.abs(dy) * 1.35) return;
+      suppressClick.current = true;
+      if (suppressClickTimer.current !== null) window.clearTimeout(suppressClickTimer.current);
+      suppressClickTimer.current = window.setTimeout(() => {
+        suppressClick.current = false;
+        suppressClickTimer.current = null;
+      }, 450);
+      if (
+        start.ignored ||
+        mutationInFlight.current ||
+        start.generation !== mutationGeneration.current
+      )
+        return;
+      if (dx < 0) {
+        if (adminControls.state !== "finished" && adminControls.state !== "not_started")
+          void operate("advance");
+        return;
+      }
+      const canGoPrevious =
+        adminControls.state !== "not_started" &&
+        !(adminControls.state === "question" && adminControls.questionIndex === 0) &&
+        !(adminControls.state === "podium_preview" && adminControls.questionCount === 0);
+      if (canGoPrevious) void operate("previous");
     },
     [adminControls, operate],
   );
@@ -629,6 +607,11 @@ export default function PresentationScreen({
       tabIndex={0}
       aria-label="プレゼンテーションスライド"
       onClick={handleSlideClick}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={() => {
+        pointerStart.current = null;
+      }}
       aria-live="polite"
       aria-atomic="true"
     >
@@ -738,32 +721,6 @@ export default function PresentationScreen({
           </div>
         </div>
       </div>
-      {presenterRequested && adminControls?.state === "not_started" && (
-        <div className={styles.startControl} onClick={(event) => event.stopPropagation()}>
-          <button type="button" onClick={() => void operate("start")} disabled={adminBusy}>
-            {adminBusy ? "開始しています…" : "プレゼンを開始"}
-          </button>
-          {adminMessage && <p role="status">{adminMessage}</p>}
-        </div>
-      )}
-      {presenterRequested && adminControls?.state === "finished" && (
-        <div className={styles.startControl} onClick={(event) => event.stopPropagation()}>
-          {adminControls.participantResultsVisible ? (
-            <span className={styles.publishedStatus} role="status">
-              参加者結果は公開済みです
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void toggleParticipantResults()}
-              disabled={adminBusy}
-            >
-              {adminBusy ? "公開しています…" : "参加者結果を公開"}
-            </button>
-          )}
-          {adminMessage && <p role="status">{adminMessage}</p>}
-        </div>
-      )}
     </main>
   );
 }

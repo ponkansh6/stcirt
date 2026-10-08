@@ -38,6 +38,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@next/env':
+        specifier: 16.3.8
+        version: 16.3.8
       '@next/bundle-analyzer':
         specifier: ^16.3.1
         version: 16.3.1

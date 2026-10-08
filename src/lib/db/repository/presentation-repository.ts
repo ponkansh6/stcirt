@@ -410,7 +410,7 @@ export async function getPublicPresentation() {
           ? row.answerType === "freeText"
             ? {
                 expectedAnswer: explanation,
-                ...(sourceQuestionKey === undefined || sourceQuestionKey === "it-literacy-005"
+                ...(sourceQuestionKey === "it-literacy-005"
                   ? {}
                   : {
                       responses: admin.entries.map((entry) => {

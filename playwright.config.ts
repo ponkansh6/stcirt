@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { e2eAdminPin, e2eAdminSessionSecret } from "./tests/e2e/fixtures/admin-auth";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -8,7 +9,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: "http://localhost:3001",
     trace: "on-first-retry",
   },
 
@@ -24,8 +25,12 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: "pnpm dev",
-    url: "http://localhost:3000",
-    reuseExistingServer: true,
+    command: "pnpm exec next dev --turbopack --port 3001",
+    url: "http://localhost:3001",
+    reuseExistingServer: false,
+    env: {
+      ADMIN_PRESENTATION_PIN: e2eAdminPin,
+      ADMIN_PRESENTATION_SESSION_SECRET: e2eAdminSessionSecret,
+    },
   },
 });

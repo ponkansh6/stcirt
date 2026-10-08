@@ -20,6 +20,15 @@
   box-shadow: 0 14px 42px rgb(50 48 38 / 8%);
 }
 
+.console {
+  width: min(100%, 620px);
+  padding: clamp(24px, 5vw, 44px);
+  border: 1px solid #d9d4c9;
+  border-radius: 16px;
+  background: #fffefa;
+  box-shadow: 0 14px 42px rgb(50 48 38 / 8%);
+}
+
 .eyebrow {
   margin: 0;
   color: #79653e;
@@ -28,7 +37,8 @@
   letter-spacing: 0.19em;
 }
 
-.loginCard h1 {
+.loginCard h1,
+.console h1 {
   margin: 8px 0 0;
   font-size: clamp(1.55rem, 5vw, 2rem);
   line-height: 1.25;
@@ -95,6 +105,60 @@
 .primaryButton:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.state {
+  margin: 20px 0 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f1efe8;
+  color: #263741;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.detail {
+  margin: 8px 0 0;
+  color: #59676b;
+  font-size: 0.9rem;
+}
+
+.actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.secondaryButton {
+  min-height: 46px;
+  padding: 0 16px;
+  border: 1px solid #8d9a90;
+  border-radius: 8px;
+  background: #fffefa;
+  color: #365b4a;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: #f0f3ef;
+}
+
+.secondaryButton:focus-visible {
+  outline: 3px solid #bb9147;
+  outline-offset: 2px;
+}
+
+.secondaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.success {
+  margin: 0;
+  color: #365b4a;
+  font-weight: 800;
 }
 
 .error {
