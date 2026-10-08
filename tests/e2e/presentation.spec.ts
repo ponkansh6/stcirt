@@ -672,13 +672,17 @@ test("rank content is static on every entry and the slide fits the viewport", as
   }
   const previousRefresh = nextAdminRefresh(page);
   await page.locator("main").press("ArrowLeft");
-  await expect(slideFor(page, "third")).toBeVisible();
+  await expect(slideFor(page, "podium_preview")).toBeVisible();
   await previousRefresh;
-  await expect(page.getByRole("region", { name: "第3位の勝者一覧" })).not.toHaveClass(/announce/);
   const replayRefresh = nextAdminRefresh(page);
   await page.locator("main").press("ArrowRight");
-  await expect(slideFor(page, "second")).toBeVisible();
+  await expect(slideFor(page, "third")).toBeVisible();
   await replayRefresh;
+  await expect(page.getByRole("region", { name: "第3位の勝者一覧" })).not.toHaveClass(/announce/);
+  const secondRefresh = nextAdminRefresh(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "second")).toBeVisible();
+  await secondRefresh;
   await expect(page.getByRole("region", { name: "第2位の勝者一覧" })).not.toHaveClass(/announce/);
 });
 
