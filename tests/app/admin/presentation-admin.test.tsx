@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import PresentationAdminPage from "@/app/admin/presentation/page";
@@ -306,7 +306,7 @@ describe("presentation admin console", () => {
     render(<PresentationAdmin />);
     const form = screen.getByLabelText("管理者 PIN").closest("form");
     if (!form) throw new Error("PIN form was not rendered");
-    await userEvent.setup().click(screen.getByRole("button", { name: "管理ページにログイン" }));
+    fireEvent.submit(form);
     expect(
       fetchMock.mock.calls.some(
         ([input, init]) => String(input) === "/api/admin/session" && init?.method === "POST",
@@ -317,6 +317,62 @@ describe("presentation admin console", () => {
     await user.type(screen.getByLabelText("管理者 PIN"), "0000");
     await user.click(screen.getByRole("button", { name: "管理ページにログイン" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("PIN が一致しません");
+  });
+
+  it("ignores a repeated form submit while the login request is pending", async () => {
+    let finishLogin: ((value: Response) => void) | undefined;
+    let loginPosts = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/admin/session" && init?.method === "POST") {
+        loginPosts += 1;
+        if (loginPosts === 1) {
+          return new Promise<Response>((resolve) => {
+            finishLogin = resolve;
+          });
+        }
+        return Promise.resolve(response(200, { authenticated: true }));
+      }
+      if (String(input) === "/api/admin/session")
+        return Promise.resolve(response(200, { authenticated: loginPosts > 1 }));
+      if (String(input) === "/api/admin/presentation")
+        return Promise.resolve(
+          response(200, {
+            state: "not_started",
+            questionIndex: 0,
+            questionCount: 5,
+            projectionHidden: false,
+            participantResultsVisible: false,
+            participantResultsReady: true,
+          }),
+        );
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    const pinInput = screen.getByLabelText("管理者 PIN");
+    await user.type(pinInput, "2468");
+    const form = pinInput.closest("form");
+    if (!form) throw new Error("PIN form was not rendered");
+
+    fireEvent.submit(form);
+    const pendingButton = await screen.findByRole("button", { name: "確認中…" });
+    expect(pendingButton).toBeDisabled();
+    fireEvent.submit(form);
+    expect(loginPosts).toBe(1);
+
+    await act(async () => {
+      finishLogin?.(response(200, { authenticated: false }));
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("セッションを確認できませんでした");
+    expect(loginPosts).toBe(1);
+
+    await user.type(screen.getByLabelText("管理者 PIN"), "2468");
+    const retryButton = screen.getByRole("button", { name: "管理ページにログイン" });
+    expect(retryButton).toBeEnabled();
+    fireEvent.submit(form);
+    expect(loginPosts).toBe(2);
+    expect(await screen.findByText("現在の状態：未開始")).toBeInTheDocument();
   });
 
   it("shows the login error when the server accepts a request without authenticating", async () => {
@@ -359,6 +415,23 @@ describe("presentation admin console", () => {
     render(<PresentationAdmin />);
     await user.type(screen.getByLabelText("管理者 PIN"), "2468");
     await user.click(screen.getByRole("button", { name: "管理ページにログイン" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("ログインできませんでした");
+  });
+
+  it("uses the generic login message when the request rejects without an Error object", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/admin/session" && init?.method === "POST")
+        return Promise.reject("network unavailable");
+      if (String(input) === "/api/admin/session")
+        return Promise.resolve(response(200, { authenticated: false }));
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    await user.type(screen.getByLabelText("管理者 PIN"), "2468");
+    await user.click(screen.getByRole("button", { name: "管理ページにログイン" }));
+
     expect(await screen.findByRole("alert")).toHaveTextContent("ログインできませんでした");
   });
 
@@ -494,6 +567,72 @@ describe("presentation admin console", () => {
     });
     expect(screen.getByText("現在の状態：進行中：解答")).toBeInTheDocument();
   });
+
+  it.each(["late success", "late 401"])(
+    "ignores a %s from an outdated session refresh",
+    async (outcome) => {
+      let resolveFirstSession: ((value: Response) => void) | undefined;
+      let rejectFirstSession: ((reason: unknown) => void) | undefined;
+      let sessionReads = 0;
+      let stateReads = 0;
+      let poll: (() => void) | undefined;
+      vi.spyOn(window, "setInterval").mockImplementation((handler) => {
+        if (typeof handler === "function") poll = handler as () => void;
+        return 1 as unknown as ReturnType<typeof window.setInterval>;
+      });
+      const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/admin/session") {
+          sessionReads += 1;
+          if (sessionReads === 3) {
+            return new Promise<Response>((resolve, reject) => {
+              resolveFirstSession = resolve;
+              rejectFirstSession = reject;
+            });
+          }
+          return Promise.resolve(response(200, { authenticated: true }));
+        }
+        if (path === "/api/admin/presentation") {
+          stateReads += 1;
+          return Promise.resolve(
+            response(200, {
+              state: "answer",
+              questionIndex: 0,
+              questionCount: 5,
+              projectionHidden: false,
+              participantResultsVisible: false,
+              participantResultsReady: true,
+            }),
+          );
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<PresentationAdmin />);
+
+      expect(await screen.findByText("現在の状態：進行中：解答")).toBeInTheDocument();
+      expect(poll).toBeDefined();
+      await act(async () => {
+        poll?.();
+        poll?.();
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      await waitFor(() => expect(sessionReads).toBeGreaterThanOrEqual(4));
+      expect(await screen.findByText("現在の状態：進行中：解答")).toBeInTheDocument();
+      const currentStateReads = stateReads;
+      expect(currentStateReads).toBeGreaterThanOrEqual(1);
+
+      await act(async () => {
+        if (outcome === "late success")
+          resolveFirstSession?.(response(200, { authenticated: true }));
+        else rejectFirstSession?.(Object.assign(new Error("Expired"), { status: 401 }));
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      });
+      expect(screen.getByText("現在の状態：進行中：解答")).toBeInTheDocument();
+      expect(screen.queryByLabelText("管理者 PIN")).not.toBeInTheDocument();
+      if (outcome === "late success") expect(stateReads).toBe(currentStateReads);
+    },
+  );
 
   it("shows a retry message and keeps the last state when a refresh fails", async () => {
     let presentationReads = 0;

@@ -104,6 +104,7 @@ export default function PresentationAdmin() {
   const [authenticated, setAuthenticated] = useState(false);
   const [adminState, setAdminState] = useState<AdminState | null>(null);
   const refreshSequence = useRef(0);
+  const loginInFlightRef = useRef(false);
 
   const refresh = useCallback(async (): Promise<boolean | null> => {
     const sequence = ++refreshSequence.current;
@@ -147,7 +148,8 @@ export default function PresentationAdmin() {
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || pin.length === 0) return;
+    if (loginInFlightRef.current || pin.length === 0) return;
+    loginInFlightRef.current = true;
     setBusy(true);
     setMessage(null);
     try {
@@ -166,6 +168,7 @@ export default function PresentationAdmin() {
           : errorMessage,
       );
     } finally {
+      loginInFlightRef.current = false;
       setBusy(false);
     }
   }

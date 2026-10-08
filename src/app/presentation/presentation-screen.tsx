@@ -265,7 +265,7 @@ export default function PresentationScreen({
     ignored: boolean;
   } | null>(null);
   const suppressClick = useRef(false);
-  const suppressClickTimer = useRef<number | null>(null);
+  const suppressClickTimer = useRef<number | undefined>(undefined);
   const projectionSequence = useRef(0);
   const adminSequence = useRef(0);
   const mutationInFlight = useRef(false);
@@ -522,7 +522,7 @@ export default function PresentationScreen({
   useEffect(
     () => () => {
       if (announcementTimer.current !== null) window.clearTimeout(announcementTimer.current);
-      if (suppressClickTimer.current !== null) window.clearTimeout(suppressClickTimer.current);
+      window.clearTimeout(suppressClickTimer.current);
     },
     [],
   );
@@ -531,8 +531,8 @@ export default function PresentationScreen({
     (event: MouseEvent<HTMLElement>) => {
       if (suppressClick.current) {
         suppressClick.current = false;
-        if (suppressClickTimer.current !== null) window.clearTimeout(suppressClickTimer.current);
-        suppressClickTimer.current = null;
+        window.clearTimeout(suppressClickTimer.current);
+        suppressClickTimer.current = undefined;
         event.preventDefault();
         return;
       }
@@ -574,10 +574,10 @@ export default function PresentationScreen({
       const dy = event.clientY - start.y;
       if (Math.abs(dx) < 56 || Math.abs(dx) <= Math.abs(dy) * 1.35) return;
       suppressClick.current = true;
-      if (suppressClickTimer.current !== null) window.clearTimeout(suppressClickTimer.current);
+      window.clearTimeout(suppressClickTimer.current);
       suppressClickTimer.current = window.setTimeout(() => {
         suppressClick.current = false;
-        suppressClickTimer.current = null;
+        suppressClickTimer.current = undefined;
       }, 450);
       if (
         start.ignored ||

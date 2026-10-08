@@ -399,6 +399,42 @@ describe("PresentationScreen", () => {
     }
   });
 
+  it("keeps current presenter controls when an older session refresh later fails", async () => {
+    vi.useFakeTimers();
+    let rejectFirstSession!: (error: Error) => void;
+    let sessionCalls = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 1 }),
+      sessionResponse: () => {
+        sessionCalls += 1;
+        if (sessionCalls === 1)
+          return new Promise<Response>((_resolve, reject) => {
+            rejectFirstSession = reject;
+          });
+        return Promise.resolve(response({ authenticated: true }));
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    expect(sessionCalls).toBe(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(sessionCalls).toBe(2);
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything());
+    await act(async () => {
+      rejectFirstSession(new Error("stale session failure"));
+      await Promise.resolve();
+    });
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({ action: "advance" });
+  });
+
   it("drops presenter controls after an expired admin session", async () => {
     const api = installApi({
       projection: { state: "question", question },
@@ -764,6 +800,46 @@ describe("PresentationScreen", () => {
       expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/presentation", expect.anything()),
     );
     fireEvent.click(screen.getByTestId("presentation-canvas"));
+    await flush();
+    expect(api.actions).toHaveLength(0);
+  });
+
+  it("does not swipe forward after the presentation is finished", async () => {
+    const api = installApi({
+      projection: { state: "finished" },
+      admin: controls({ state: "finished" }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main");
+    fireEvent.pointerDown(main, {
+      pointerId: 19,
+      isPrimary: true,
+      button: 0,
+      clientX: 220,
+      clientY: 100,
+    });
+    fireEvent.pointerUp(main, { pointerId: 19, isPrimary: true, clientX: 100, clientY: 101 });
+    await flush();
+    expect(api.actions).toHaveLength(0);
+  });
+
+  it("does not swipe previous from an empty podium preview", async () => {
+    const api = installApi({
+      projection: { state: "podium_preview" },
+      admin: controls({ state: "podium_preview", questionCount: 0 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main");
+    fireEvent.pointerDown(main, {
+      pointerId: 20,
+      isPrimary: true,
+      button: 0,
+      clientX: 80,
+      clientY: 100,
+    });
+    fireEvent.pointerUp(main, { pointerId: 20, isPrimary: true, clientX: 160, clientY: 101 });
     await flush();
     expect(api.actions).toHaveLength(0);
   });
