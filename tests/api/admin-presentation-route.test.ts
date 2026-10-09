@@ -32,6 +32,7 @@ const operationId = "550e8400-e29b-41d4-a716-446655440001";
 const adminPayload = {
   state: "question",
   version: 1,
+  snapshotRevision: 1,
   questionIndex: 0,
   questionCount: 1,
   projectionHidden: false,
@@ -43,6 +44,7 @@ const adminPayload = {
 const controlsPayload = {
   state: "question",
   version: 1,
+  snapshotRevision: 1,
   questionIndex: 0,
   questionCount: 1,
   projectionHidden: false,
@@ -72,6 +74,7 @@ beforeEach(() => {
   vi.mocked(getAdminPresentationControls).mockResolvedValue({
     state: "question",
     version: 1,
+    snapshotRevision: 1,
     questionIndex: 0,
     questionCount: 1,
     projectionHidden: false,
@@ -118,6 +121,7 @@ describe("/api/admin/presentation route", () => {
     await expect(response.json()).resolves.toEqual({
       state: "question",
       version: 1,
+      snapshotRevision: 1,
       questionIndex: 0,
       questionCount: 1,
       projectionHidden: false,
@@ -179,7 +183,10 @@ describe("/api/admin/presentation route", () => {
       { action: "start" },
       { operationId: 42, action: "start" },
       { operationId: "not-a-uuid", action: "start" },
-      { operationId, action: "reset" },
+      { operationId, action: "aggregate", mode: "full" },
+      { operationId, action: "start", expectedSnapshotRevision: -1 },
+      { operationId, action: "start", expectedSnapshotRevision: 1.5 },
+      { operationId, action: "start", expectedSnapshotRevision: "1" },
       { operationId, action: "setMode" },
       { operationId, action: "setMode", mode: "fast" },
       { operationId, action: "setMode", mode: "full" },
@@ -194,7 +201,7 @@ describe("/api/admin/presentation route", () => {
     expect(operatePresentationControls).not.toHaveBeenCalled();
   });
 
-  it.each(["start", "advance", "previous", "hide", "show"] as const)(
+  it.each(["aggregate", "start", "advance", "previous", "hide", "show", "reset"] as const)(
     "operates %s without a mode and returns compact controls",
     async (action) => {
       const response = await POST(request("POST", { body: { operationId, action } }));
@@ -204,6 +211,7 @@ describe("/api/admin/presentation route", () => {
       await expect(response.json()).resolves.toEqual({
         state: controlsPayload.state,
         version: controlsPayload.version,
+        snapshotRevision: controlsPayload.snapshotRevision,
         questionIndex: controlsPayload.questionIndex,
         questionCount: controlsPayload.questionCount,
         projectionHidden: controlsPayload.projectionHidden,
@@ -211,6 +219,17 @@ describe("/api/admin/presentation route", () => {
       expect(operatePresentationControls).toHaveBeenCalledWith(operationId, action);
     },
   );
+
+  it("forwards the expected snapshot revision for presenter actions", async () => {
+    const response = await POST(
+      request("POST", {
+        body: { operationId, action: "advance", expectedSnapshotRevision: 3 },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(operatePresentationControls).toHaveBeenCalledWith(operationId, "advance", 3);
+  });
 
   it("returns state conflicts as 409", async () => {
     vi.mocked(operatePresentationControls).mockRejectedValueOnce(

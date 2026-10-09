@@ -189,6 +189,7 @@ export const presentationSessions = sqliteTable("presentation_sessions", {
   version: integer("version").notNull(),
   questionIndex: integer("question_index").notNull(),
   questionCount: integer("question_count").notNull(),
+  snapshotRevision: integer("snapshot_revision").notNull().default(0),
   projectionHidden: integer("projection_hidden", { mode: "boolean" }).notNull().default(false),
   presentationMode: text("presentation_mode").notNull().default("full"),
   createdAt: integer("created_at", { mode: "timestamp" })

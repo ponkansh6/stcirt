@@ -5,6 +5,7 @@ import styles from "./presentation-admin.module.css";
 
 type AdminState = {
   state: string;
+  snapshotRevision: number;
   questionIndex: number;
   questionCount: number;
   projectionHidden: boolean;
@@ -47,6 +48,7 @@ async function getAdminState(): Promise<AdminState> {
   const data = (await response.json()) as Record<string, unknown>;
   return {
     state: typeof data.state === "string" ? data.state : "not_started",
+    snapshotRevision: typeof data.snapshotRevision === "number" ? data.snapshotRevision : 0,
     questionIndex: typeof data.questionIndex === "number" ? data.questionIndex : 0,
     questionCount: typeof data.questionCount === "number" ? data.questionCount : 0,
     projectionHidden: data.projectionHidden === true,
@@ -55,7 +57,7 @@ async function getAdminState(): Promise<AdminState> {
   };
 }
 
-async function postAction(action: "start" | "hide" | "show") {
+async function postAction(action: "start" | "hide" | "show" | "aggregate" | "reset") {
   const response = await fetch("/api/admin/presentation", {
     method: "POST",
     cache: "no-store",
@@ -100,6 +102,7 @@ const stateLabels: Record<string, string> = {
 export default function PresentationAdmin() {
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [authenticated, setAuthenticated] = useState(false);
   const [adminState, setAdminState] = useState<AdminState | null>(null);
@@ -151,6 +154,7 @@ export default function PresentationAdmin() {
     if (loginInFlightRef.current || pin.length === 0) return;
     loginInFlightRef.current = true;
     setBusy(true);
+    setBusyAction("login");
     setMessage(null);
     try {
       const session = await requestSession("POST", { pin });
@@ -170,11 +174,15 @@ export default function PresentationAdmin() {
     } finally {
       loginInFlightRef.current = false;
       setBusy(false);
+      setBusyAction(null);
     }
   }
 
-  async function runAction(action: "start" | "hide" | "show" | "publish" | "hideResults") {
+  async function runAction(
+    action: "start" | "hide" | "show" | "publish" | "hideResults" | "aggregate" | "reset",
+  ) {
     setBusy(true);
+    setBusyAction(action);
     setMessage(null);
     try {
       if (action === "publish") await setResultsVisibility(true);
@@ -196,6 +204,7 @@ export default function PresentationAdmin() {
       }
     } finally {
       setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -233,26 +242,51 @@ export default function PresentationAdmin() {
           <p className={styles.state} role="status">
             現在の状態：{label}
           </p>
+          <p className={styles.detail}>
+            {adminState.snapshotRevision === 0
+              ? "まだ集計されていません。開始・結果公開の前に集計してください。"
+              : adminState.participantResultsReady
+                ? `集計済み（第 ${adminState.snapshotRevision} 世代）`
+                : "質問がないため、参加者結果を公開できません。"}
+          </p>
           {adminState.state === "question" || adminState.state === "answer" ? (
             <p className={styles.detail}>
               問題 {adminState.questionIndex + 1} / {adminState.questionCount}
             </p>
           ) : null}
           <div className={styles.actions}>
+            <button
+              className={styles.secondaryButton}
+              type="button"
+              disabled={busy}
+              onClick={() => void runAction("aggregate")}
+            >
+              {busyAction === "aggregate" ? "集計しています…" : "集計"}
+            </button>
             {adminState.state === "not_started" && (
               <button
                 className={styles.primaryButton}
                 type="button"
-                disabled={busy}
+                disabled={busy || adminState.snapshotRevision === 0}
                 onClick={() => void runAction("start")}
               >
-                {busy ? "開始しています…" : "発表を開始"}
+                {busyAction === "start" ? "開始しています…" : "発表を開始"}
               </button>
             )}
             {adminState.state !== "not_started" && (
-              <button className={styles.primaryButton} type="button" onClick={openProjection}>
-                投影画面を開く / 投影タブへ戻る
-              </button>
+              <>
+                <button className={styles.primaryButton} type="button" onClick={openProjection}>
+                  投影画面を開く / 投影タブへ戻る
+                </button>
+                <button
+                  className={styles.secondaryButton}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void runAction("reset")}
+                >
+                  {busyAction === "reset" ? "戻しています…" : "最初に戻る"}
+                </button>
+              </>
             )}
             {adminState.state === "finished" &&
               (adminState.participantResultsVisible ? (
@@ -276,7 +310,7 @@ export default function PresentationAdmin() {
                   disabled={busy || !adminState.participantResultsReady}
                   onClick={() => void runAction("publish")}
                 >
-                  {busy ? "公開しています…" : "参加者結果を公開"}
+                  {busyAction === "publish" ? "公開しています…" : "参加者結果を公開"}
                 </button>
               ))}
             {adminState.state !== "not_started" && (

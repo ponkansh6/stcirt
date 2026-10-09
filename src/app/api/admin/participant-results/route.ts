@@ -84,6 +84,7 @@ function getConflictReason(message: string) {
       return "session_unavailable";
     case "Results are not ready":
       return "results_not_ready";
+    case "Free-response assessments must finish before results are aggregated":
     case "Free-response assessments must finish before presentation starts":
       return "free_response_pending";
     default:

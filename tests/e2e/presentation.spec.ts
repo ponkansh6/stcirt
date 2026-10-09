@@ -91,6 +91,7 @@ async function installAdminApiMock(
   const payload = () => ({
     state,
     version,
+    snapshotRevision,
     questionIndex,
     questionCount: questions.length,
     questions,
@@ -102,11 +103,13 @@ async function installAdminApiMock(
   const controlsPayload = () => ({
     state,
     version,
+    snapshotRevision,
     questionIndex,
     questionCount: questions.length,
     projectionHidden,
   });
   const deck = () => ({
+    snapshotRevision,
     slides: (
       ["question", "answer", "podium_preview", "third", "second", "first", "finished"] as const
     ).map((slideState) => {
@@ -197,6 +200,7 @@ async function installAdminApiMock(
           const body = route.request().postDataJSON() as {
             operationId?: string;
             action?: string;
+            expectedSnapshotRevision?: number;
           };
           if (failNextMutationUnauthorized) {
             failNextMutationUnauthorized = false;
@@ -222,6 +226,16 @@ async function installAdminApiMock(
             await route.fulfill({ status: 401, json: { error: "Unauthorized" } });
             return;
           }
+          if (
+            body.expectedSnapshotRevision !== undefined &&
+            body.expectedSnapshotRevision !== snapshotRevision
+          ) {
+            await route.fulfill({
+              status: 409,
+              json: { error: "Presentation snapshot changed concurrently" },
+            });
+            return;
+          }
           actions.push(body.action ?? "");
           if (pauseNextMutation) {
             pauseNextMutation = false;
@@ -231,9 +245,13 @@ async function installAdminApiMock(
             });
             releasePausedMutation = null;
           }
-          if (body.action === "start" && state === "not_started") {
+          if (body.action === "aggregate") {
             snapshotExists = true;
             snapshotRevision += 1;
+          } else if (body.action === "reset" && state !== "not_started") {
+            stageCursor = 1;
+            state = stages[stageCursor];
+          } else if (body.action === "start" && state === "not_started" && snapshotExists) {
             stageCursor = 1;
             state = stages[stageCursor];
           } else if (body.action === "advance") {
@@ -330,9 +348,9 @@ async function installAdminApiMock(
           });
           releasePausedParticipantResultsMutation = null;
         }
-        if (body.visible && !participantResultsVisible) {
-          snapshotExists = true;
-          snapshotRevision += 1;
+        if (body.visible && !snapshotExists) {
+          await route.fulfill({ status: 409, json: { error: "Results are not ready" } });
+          return;
         }
         participantResultsVisible = body.visible;
         participantResultsMutations.push(body.visible);
@@ -394,6 +412,8 @@ async function signIn(page: import("@playwright/test").Page) {
 }
 
 async function startPresentation(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "集計" }).click();
+  await expect(page.getByText(/集計済み/)).toBeVisible();
   await page.getByRole("button", { name: "発表を開始" }).click();
   await expect(page.getByText("現在の状態：進行中：問題")).toBeVisible();
 }
@@ -499,7 +519,34 @@ test("public and presenter routes are read-only unless an authenticated presente
   await startPresentation(page);
   await openPresenter(page);
   await expect(page.getByRole("heading", { name: questions[0].question })).toBeVisible();
-  expect(mock.actionLog).toEqual(["start"]);
+  expect(mock.actionLog).toEqual(["aggregate", "start"]);
+});
+
+test("aggregation refreshes the shared snapshot and reset returns to its first slide", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  await page.getByRole("button", { name: "集計" }).click();
+  await expect(page.getByText("集計済み（第 1 世代）")).toBeVisible();
+  await page.getByRole("button", { name: "発表を開始" }).click();
+  await expect(page.getByText("現在の状態：進行中：問題")).toBeVisible();
+  await openPresenter(page);
+  const mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  await mutation;
+  await page.goto("/admin/presentation");
+
+  await page.getByRole("button", { name: "集計" }).click();
+  await expect(page.getByText("集計済み（第 2 世代）")).toBeVisible();
+  expect(mock.getSnapshotRevision()).toBe(2);
+  expect(mock.getPresentationState().state).toBe("answer");
+
+  await page.getByRole("button", { name: "最初に戻る" }).click();
+  await expect(page.getByText("現在の状態：進行中：問題")).toBeVisible();
+  expect(mock.getPresentationState().state).toBe("question");
+  expect(mock.getSnapshotRevision()).toBe(2);
 });
 
 test("admin opens or reuses a named presenter tab after start without fullscreen", async ({
@@ -598,7 +645,8 @@ test("successful presenter mutations return controls and do not trigger a contro
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
   await expect(response.json()).resolves.toEqual({
     state: "answer",
-    version: 2,
+    version: 3,
+    snapshotRevision: 1,
     questionIndex: 0,
     questionCount: 1,
     projectionHidden: false,
@@ -645,10 +693,10 @@ test("Enter advances while repeat, modifiers, and interactive targets are ignore
     dispatch(root, { key: "ArrowRight", metaKey: true });
     dispatch(button, { key: "ArrowRight" });
   });
-  expect(mock.actionLog).toEqual(["start"]);
+  expect(mock.actionLog).toEqual(["aggregate", "start"]);
   await main.press("Enter");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
-  expect(mock.actionLog).toEqual(["start", "advance"]);
+  expect(mock.actionLog).toEqual(["aggregate", "start", "advance"]);
 });
 
 test("finished presenter can return to the last existing rank", async ({ page }) => {
@@ -1412,7 +1460,7 @@ test("first presenter progression requests fullscreen before mutation and ignore
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
   await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
-  expect(mock.actionLog).toEqual(["start", "advance", "advance"]);
+  expect(mock.actionLog).toEqual(["aggregate", "start", "advance", "advance"]);
 });
 
 test("unsupported fullscreen keeps presenter progression working and is not retried", async ({
@@ -1443,7 +1491,7 @@ test("unsupported fullscreen keeps presenter progression working and is not retr
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
   await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
-  expect(mock.actionLog).toEqual(["start", "advance", "advance"]);
+  expect(mock.actionLog).toEqual(["aggregate", "start", "advance", "advance"]);
 });
 
 test("a successful fullscreen request can exit through Escape without automatic re-entry", async ({

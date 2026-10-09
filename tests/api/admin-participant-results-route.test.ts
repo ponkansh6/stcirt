@@ -151,6 +151,10 @@ describe("POST /api/admin/participant-results", () => {
   it.each([
     ["Presentation session is unavailable", "session_unavailable"],
     ["Results are not ready", "results_not_ready"],
+    [
+      "Free-response assessments must finish before results are aggregated",
+      "free_response_pending",
+    ],
     ["Free-response assessments must finish before presentation starts", "free_response_pending"],
   ])("logs a safe fixed reason for %s", async (message, reason) => {
     const cookie = authenticate();

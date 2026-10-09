@@ -14,11 +14,12 @@ test("an existing admin session opens the dashboard when revisiting the admin ro
     await route.fulfill({
       json: {
         state: "not_started",
+        snapshotRevision: 0,
         questionIndex: 0,
         questionCount: 5,
         projectionHidden: false,
         participantResultsVisible: false,
-        participantResultsReady: true,
+        participantResultsReady: false,
       },
     });
   });

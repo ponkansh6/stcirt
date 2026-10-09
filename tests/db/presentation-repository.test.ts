@@ -27,7 +27,10 @@ import {
   PresentationConflictError,
   setParticipantResultsVisible,
 } from "@/lib/db/repository/presentation-repository";
-import { getPresentationOperationDiagnostics } from "@/lib/presentation/operation-diagnostics";
+import {
+  getPresentationOperationDiagnostics,
+  PresentationOperationError,
+} from "@/lib/presentation/operation-diagnostics";
 
 function commitWinnerThenRaiseAdapterUniqueConflict(
   operationId: string,
@@ -357,16 +360,18 @@ describe("presentation repository", () => {
       questionIndex: 0,
       questionCount: 0,
       projectionHidden: false,
+      snapshotRevision: 0,
     });
 
     await addQuestions();
-    await op("start", "controls-start");
+    await startWithAggregate("controls-start");
     await expect(getAdminPresentationControls()).resolves.toMatchObject({
       state: "question",
-      version: 1,
+      version: 2,
       questionIndex: 0,
       questionCount: 2,
       projectionHidden: false,
+      snapshotRevision: 1,
     });
   });
 
@@ -421,14 +426,130 @@ describe("presentation repository", () => {
     });
   }
 
-  async function op(action: "start" | "advance" | "previous" | "hide" | "show", id: string) {
+  async function op(
+    action: "aggregate" | "start" | "advance" | "previous" | "hide" | "show" | "reset",
+    id: string,
+  ) {
     return operatePresentation(`operation-${id}`, action);
   }
+
+  async function startWithAggregate(id: string) {
+    await op("aggregate", `${id}-aggregate`);
+    return operatePresentation(`operation-${id}`, "start");
+  }
+
+  it("increments snapshot revisions on aggregate and resets the cursor without reaggregating", async () => {
+    await addRankFixture();
+    await expect(
+      operatePresentation("revision-start-before-aggregate", "start"),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(setParticipantResultsVisible(true)).rejects.toMatchObject({ status: 409 });
+
+    const firstAggregate = await op("aggregate", "revision-first-aggregate");
+    expect(firstAggregate).toMatchObject({
+      state: "not_started",
+      version: 1,
+      snapshotRevision: 1,
+    });
+    await expect(
+      operatePresentationControls("revision-stale-start", "start", 0),
+    ).rejects.toMatchObject({ status: 409 });
+    const started = await operatePresentation("revision-start", "start");
+    await operatePresentation("revision-advance-one", "advance");
+    const reset = await op("reset", "revision-reset");
+    expect(reset).toMatchObject({
+      state: "question",
+      questionIndex: 0,
+      questionCount: 2,
+      version: 4,
+      snapshotRevision: 1,
+    });
+    expect(reset.questions).toEqual(started.questions);
+    expect(reset.entries).toEqual(started.entries);
+    await expect(
+      operatePresentationControls("revision-stale-next", "advance", 0),
+    ).rejects.toMatchObject({ status: 409 });
+
+    const reaggregate = await op("aggregate", "revision-second-aggregate");
+    expect(reaggregate).toMatchObject({
+      state: "question",
+      questionIndex: 0,
+      version: 5,
+      snapshotRevision: 2,
+    });
+  });
+
+  it("resets an out-of-range answer cursor to the initial question slide after aggregate", async () => {
+    await addQuestions();
+    await op("aggregate", "invalid-answer-cursor-initial-aggregate");
+    await operatePresentation("invalid-answer-cursor-start", "start");
+    await operatePresentation("invalid-answer-cursor-advance", "advance");
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ questionIndex: 2 })
+      .where(eq(schema.presentationSessions.id, 1));
+
+    const aggregated = await op("aggregate", "invalid-answer-cursor-reaggregate");
+
+    expect(aggregated).toMatchObject({
+      state: "question",
+      questionIndex: 0,
+      questionCount: 2,
+      version: 4,
+      snapshotRevision: 2,
+    });
+  });
+
+  it("resets a hidden finished presentation to its first slide without changing snapshot flags", async () => {
+    await addQuestions();
+    await op("aggregate", "finished-reset-aggregate");
+    await setParticipantResultsVisible(true);
+    await operatePresentation("finished-reset-start", "start");
+    for (let index = 0; index < 5; index += 1) {
+      await operatePresentation(`finished-reset-advance-${index}`, "advance");
+    }
+    await operatePresentation("finished-reset-hide", "hide");
+    const beforeReset = await getAdminPresentation();
+    expect(beforeReset).toMatchObject({
+      state: "finished",
+      questionIndex: 1,
+      version: 8,
+      snapshotRevision: 1,
+      projectionHidden: true,
+      participantResultsVisible: true,
+    });
+
+    const reset = await op("reset", "finished-hidden-reset");
+
+    expect(reset).toMatchObject({
+      state: "question",
+      questionIndex: 0,
+      questionCount: 2,
+      version: beforeReset.version + 1,
+      snapshotRevision: beforeReset.snapshotRevision,
+      projectionHidden: beforeReset.projectionHidden,
+      participantResultsVisible: beforeReset.participantResultsVisible,
+    });
+    expect(reset.questions).toEqual(beforeReset.questions);
+    expect(reset.entries).toEqual(beforeReset.entries);
+  });
+
+  it("rejects reset before the presentation has started", async () => {
+    await op("aggregate", "reset-before-start-aggregate");
+
+    await expect(op("reset", "reset-before-start")).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      state: "not_started",
+      version: 1,
+    });
+  });
 
   it("snapshots questions in ID order and freezes every participant score and standard tie rank", async () => {
     const participants = await addRankFixture();
 
-    const started = await op("start", "start");
+    const started = await startWithAggregate("start");
     expect(started.questions.map(({ id }) => id)).toEqual([11, 22]);
     expect(started.entries).toMatchObject([
       { displayName: "First", score: 2, rank: 1 },
@@ -463,7 +584,7 @@ describe("presentation repository", () => {
 
   it("keeps correct answers private on question stages and exposes only announced winners", async () => {
     await addRankFixture();
-    await op("start", "start");
+    await startWithAggregate("start");
 
     const question = await getPublicPresentation();
     expect(question).toEqual({
@@ -499,7 +620,7 @@ describe("presentation repository", () => {
 
   it("preloads every question, answer, podium and completion slide into the presenter deck", async () => {
     await addRankFixture();
-    await op("start", "deck-start");
+    await startWithAggregate("deck-start");
 
     const deck = await getAdminPresentationDeck();
 
@@ -531,7 +652,7 @@ describe("presentation repository", () => {
 
   it("always includes answer explanations even when the legacy stored mode is short", async () => {
     await addQuestions();
-    await operatePresentation("start-short", "start");
+    await startWithAggregate("start-short");
     await testDb.db
       .update(schema.presentationSessions)
       .set({ presentationMode: "short" })
@@ -556,7 +677,7 @@ describe("presentation repository", () => {
 
   it("uses the question master explanation when a legacy snapshot explanation is blank", async () => {
     await addQuestions();
-    await operatePresentation("start-blank-explanation", "start");
+    await startWithAggregate("start-blank-explanation");
     await testDb.db
       .update(schema.presentationQuestions)
       .set({ explanation: "   " })
@@ -705,7 +826,7 @@ describe("presentation repository", () => {
       },
     ]);
 
-    await operatePresentation("partial-submissions-start", "start");
+    await startWithAggregate("partial-submissions-start");
 
     const entries = await testDb.db.select().from(schema.presentationEntries);
     expect(entries).toHaveLength(2);
@@ -737,7 +858,7 @@ describe("presentation repository", () => {
     expect(hidden).toMatchObject({ state: "not_started", projectionHidden: true });
     await expect(getPublicPresentation()).resolves.toEqual({ state: "standby" });
 
-    await operatePresentation("start-hidden", "start");
+    await startWithAggregate("start-hidden");
     await expect(getPublicPresentation()).resolves.toEqual({ state: "standby" });
     await operatePresentation("show-after-start", "show");
     await expect(getPublicPresentation()).resolves.toMatchObject({ state: "question" });
@@ -749,7 +870,7 @@ describe("presentation repository", () => {
     const second = await addParticipant("Runner up");
     await addSubmission(first, [0, 0]);
     await addSubmission(second, [0, 1]);
-    await op("start", "start");
+    await startWithAggregate("start");
     for (let index = 0; index < 4; index += 1) await op("advance", `advance-${index}`);
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "podium_preview" });
     await op("advance", "advance-to-second");
@@ -769,6 +890,7 @@ describe("presentation repository", () => {
   it("rejects previous at the first state and makes action retries idempotent", async () => {
     await addQuestions();
     await expect(op("previous", "before-start")).rejects.toBeInstanceOf(PresentationConflictError);
+    await op("aggregate", "stable-start-aggregate");
     const started = await operatePresentation("stable-start", "start");
     const replayedStart = await operatePresentation("stable-start", "start");
     expect(replayedStart.version).toBe(started.version);
@@ -782,26 +904,28 @@ describe("presentation repository", () => {
     await expect(operatePresentation("stable-advance", "previous")).rejects.toMatchObject({
       status: 409,
     });
-    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
+    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(3);
   });
 
   it("returns lightweight controls for new and replayed operations while preserving full callers", async () => {
     await addQuestions();
 
+    await operatePresentationControls("controls-aggregate", "aggregate");
     const controls = await operatePresentationControls("controls-start", "start");
     expect(controls).toEqual({
       state: "question",
-      version: 1,
+      version: 2,
       questionIndex: 0,
       questionCount: 2,
       projectionHidden: false,
+      snapshotRevision: 1,
     });
     await expect(operatePresentationControls("controls-start", "start")).resolves.toEqual(controls);
 
     const fullSnapshot = await operatePresentation("controls-start", "start");
     expect(fullSnapshot).toMatchObject({
       state: "question",
-      version: 1,
+      version: 2,
       questionCount: 2,
       participantResultsVisible: false,
       participantResultsReady: true,
@@ -810,17 +934,19 @@ describe("presentation repository", () => {
     expect(fullSnapshot.entries).toEqual([]);
   });
 
-  it("rebuilds the shared snapshot on republish while start and repeated publication reuse it", async () => {
+  it("rebuilds the shared snapshot only on aggregate while publication and start reuse it", async () => {
     await addQuestions();
     const participant = await addParticipant("Participant");
     await addSubmission(participant, [0, 0]);
+    await op("aggregate", "results-initial-aggregate");
     await setParticipantResultsVisible(true);
     const published = await getAdminPresentation();
     expect(published).toMatchObject({
       state: "not_started",
-      version: 0,
+      version: 1,
       questionIndex: 0,
       questionCount: 2,
+      snapshotRevision: 1,
       projectionHidden: false,
       participantResultsVisible: true,
       participantResultsReady: true,
@@ -840,10 +966,11 @@ describe("presentation repository", () => {
     const repeatedPublish = await getAdminPresentation();
     expect(repeatedPublish.questions).toEqual(published.questions);
     expect(repeatedPublish.entries).toEqual(published.entries);
+    expect(repeatedPublish.snapshotRevision).toBe(published.snapshotRevision);
     const started = await operatePresentation("visibility-start", "start");
     expect(started).toMatchObject({
       state: "question",
-      version: 1,
+      version: 2,
       participantResultsVisible: true,
       participantResultsReady: true,
     });
@@ -855,6 +982,7 @@ describe("presentation repository", () => {
       .update(schema.examSubmissionAnswers)
       .set({ selectedIndex: 1 })
       .where(eq(schema.examSubmissionAnswers.questionId, 22));
+    await op("aggregate", "results-edited-aggregate");
     const hiddenState = await getAdminPresentation();
     await expect(testDb.db.select().from(schema.participantResultSettings)).resolves.toMatchObject([
       { id: 1, visible: false, everPublished: true },
@@ -867,6 +995,7 @@ describe("presentation repository", () => {
     expect(republished).toMatchObject({
       state: hiddenState.state,
       version: hiddenState.version,
+      snapshotRevision: hiddenState.snapshotRevision,
       questionIndex: hiddenState.questionIndex,
       projectionHidden: hiddenState.projectionHidden,
       participantResultsVisible: true,
@@ -904,6 +1033,7 @@ describe("presentation repository", () => {
     await addQuestions();
     const participant = await addParticipant("Participant");
     await addSubmission(participant, [0, 0]);
+    await op("aggregate", "failed-publish-initial-aggregate");
     await setParticipantResultsVisible(true);
     const original = await getAdminPresentation();
     await setParticipantResultsVisible(false);
@@ -924,7 +1054,7 @@ describe("presentation repository", () => {
       rubricVersion: "test-rubric",
     });
 
-    await expect(setParticipantResultsVisible(true)).rejects.toBeInstanceOf(
+    await expect(op("aggregate", "failed-reaggregate")).rejects.toBeInstanceOf(
       PresentationConflictError,
     );
     await expect(getAdminPresentation()).resolves.toMatchObject({
@@ -944,17 +1074,19 @@ describe("presentation repository", () => {
     const participant = await addParticipant("Retry participant");
     await addSubmission(participant, [0, 1]);
 
-    await failFirstTransactionAfterCallback(() => setParticipantResultsVisible(true));
+    await failFirstTransactionAfterCallback(() => op("aggregate", "retry-aggregate"));
+    await setParticipantResultsVisible(true);
     await expect(getAdminPresentation()).resolves.toMatchObject({
       participantResultsVisible: true,
       participantResultsReady: true,
     });
 
+    await op("aggregate", "retry-start-aggregate");
     const started = await failFirstTransactionAfterCallback(() =>
       operatePresentation("retry-after-lock-start", "start"),
     );
-    expect(started).toMatchObject({ state: "question", version: 1 });
-    await expect(testDb.db.select().from(schema.presentationOperations)).resolves.toHaveLength(1);
+    expect(started).toMatchObject({ state: "question", version: 3 });
+    await expect(testDb.db.select().from(schema.presentationOperations)).resolves.toHaveLength(3);
   });
 
   it("retries nested lock errors to the attempt limit and preserves the adapter error", async () => {
@@ -973,10 +1105,54 @@ describe("presentation repository", () => {
     }
   });
 
-  it("attributes publication failures to the source read and snapshot write phases", async () => {
+  it("rethrows an exhausted lock error from a non-aggregate hide operation", async () => {
+    const lockError = Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    const transactionSpy = vi.spyOn(dbRef.db!, "transaction").mockRejectedValue(lockError);
+
+    try {
+      await expect(operatePresentation("hide-lock-exhaustion", "hide")).rejects.toBe(lockError);
+      expect(transactionSpy).toHaveBeenCalledTimes(4);
+    } finally {
+      transactionSpy.mockRestore();
+    }
+  });
+
+  it("attributes an exhausted aggregate lock error to transaction begin", async () => {
+    const lockError = Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    const transactionSpy = vi.spyOn(dbRef.db!, "transaction").mockRejectedValue(lockError);
+
+    try {
+      const error = await operatePresentation("aggregate-lock-exhaustion", "aggregate").catch(
+        (reason: unknown) => reason,
+      );
+      expect(error).toBeInstanceOf(PresentationOperationError);
+      expect(error).toMatchObject({ phase: "transaction_begin", databaseCode: "SQLITE_BUSY" });
+      expect(transactionSpy).toHaveBeenCalledTimes(4);
+    } finally {
+      transactionSpy.mockRestore();
+    }
+  });
+
+  it("rethrows non-race transaction errors from a non-aggregate hide operation", async () => {
+    const transactionError = Object.assign(new Error("database unavailable"), {
+      code: "SQLITE_ERROR",
+    });
+    const transactionSpy = vi.spyOn(dbRef.db!, "transaction").mockRejectedValue(transactionError);
+
+    try {
+      await expect(operatePresentation("hide-transaction-error", "hide")).rejects.toBe(
+        transactionError,
+      );
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      transactionSpy.mockRestore();
+    }
+  });
+
+  it("attributes aggregate failures to the source read and snapshot write phases", async () => {
     await addQuestions();
     const sourceReadFailure = await failTransactionAtTable(schema.examQuestions, "select", () =>
-      setParticipantResultsVisible(true),
+      op("aggregate", "diagnostic-source-read"),
     ).catch((error: unknown) => error);
     expect(getPresentationOperationDiagnostics(sourceReadFailure)).toEqual({
       phase: "source_questions_read",
@@ -986,12 +1162,13 @@ describe("presentation repository", () => {
       clientCode: null,
     });
 
+    await op("aggregate", "diagnostic-write-initial-aggregate");
     await setParticipantResultsVisible(true);
     await setParticipantResultsVisible(false);
     const snapshotWriteFailure = await failTransactionAtTable(
       schema.presentationEntries,
       "delete",
-      () => setParticipantResultsVisible(true),
+      () => op("aggregate", "diagnostic-snapshot-write"),
     ).catch((error: unknown) => error);
     expect(getPresentationOperationDiagnostics(snapshotWriteFailure)).toEqual({
       phase: "delete_entries",
@@ -1022,7 +1199,7 @@ describe("presentation repository", () => {
       );
     });
     try {
-      const retryFailure = await setParticipantResultsVisible(false).catch(
+      const retryFailure = await op("aggregate", "retry-diagnostic-phase").catch(
         (error: unknown) => error,
       );
       expect(getPresentationOperationDiagnostics(retryFailure)).toEqual({
@@ -1038,7 +1215,7 @@ describe("presentation repository", () => {
     }
   });
 
-  it("rolls back session and visibility when snapshot creation is not ready", async () => {
+  it("keeps publication private when no aggregate is ready", async () => {
     await expect(setParticipantResultsVisible(true)).rejects.toMatchObject({
       message: "Results are not ready",
       status: 409,
@@ -1053,21 +1230,31 @@ describe("presentation repository", () => {
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
   });
 
-  it("allows an empty presentation start and publishes its empty snapshot without rebuilding it", async () => {
+  it("requires an explicit aggregate before starting or publishing, including an empty snapshot", async () => {
     await expect(setParticipantResultsVisible(true)).rejects.toMatchObject({
       message: "Results are not ready",
       status: 409,
     });
 
+    await expect(operatePresentation("empty-start", "start")).rejects.toMatchObject({
+      status: 409,
+    });
+    const aggregated = await operatePresentation("empty-aggregate", "aggregate");
+    expect(aggregated).toMatchObject({ snapshotRevision: 1, version: 1, state: "not_started" });
     const started = await operatePresentation("empty-start", "start");
     expect(started).toMatchObject({
       state: "podium_preview",
-      version: 1,
+      version: 2,
       questionCount: 0,
       participantResultsReady: true,
     });
     expect(started.questions).toEqual([]);
     expect(started.entries).toEqual([]);
+    await expect(op("reset", "empty-reset")).resolves.toMatchObject({
+      state: "podium_preview",
+      version: 3,
+      questionCount: 0,
+    });
     await expect(getAdminPresentationDeck()).resolves.toMatchObject({
       questionCount: 0,
       slides: [
@@ -1082,10 +1269,10 @@ describe("presentation repository", () => {
       visible: false,
       everPublished: false,
     });
-    await setParticipantResultsVisible(true);
+    await expect(setParticipantResultsVisible(true)).resolves.toEqual({ visible: true });
     await expect(getAdminPresentation()).resolves.toMatchObject({
       state: "podium_preview",
-      version: 1,
+      version: 3,
       questionCount: 0,
       participantResultsVisible: true,
       participantResultsReady: true,
@@ -1098,7 +1285,7 @@ describe("presentation repository", () => {
     await addQuestions();
     const participant = await addParticipant("Malformed result");
     await addSubmission(participant, [0, 0]);
-    await operatePresentation("malformed-first-publish-start", "start");
+    await startWithAggregate("malformed-first-publish-start");
     await testDb.db
       .update(schema.presentationEntries)
       .set({ answers: [] })
@@ -1112,10 +1299,11 @@ describe("presentation repository", () => {
     ]);
   });
 
-  it("keeps the presenter on a valid stage and cursor when republish removes questions", async () => {
+  it("resets an out-of-range cursor while reaggregating after questions are removed", async () => {
     await addQuestions();
     const participant = await addParticipant("Cursor participant");
     await addSubmission(participant, [0, 0]);
+    await op("aggregate", "cursor-initial-aggregate");
     await setParticipantResultsVisible(true);
     await operatePresentation("cursor-start", "start");
     await operatePresentation("cursor-answer-1", "advance");
@@ -1124,28 +1312,32 @@ describe("presentation repository", () => {
 
     await setParticipantResultsVisible(false);
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 22));
+    await op("aggregate", "cursor-one-question-aggregate");
     await setParticipantResultsVisible(true);
     const oneQuestion = await getAdminPresentation();
     expect(oneQuestion).toMatchObject({
-      state: "answer",
+      state: "question",
       questionIndex: 0,
       questionCount: 1,
-      version: 4,
+      version: 6,
+      snapshotRevision: 2,
     });
 
     await setParticipantResultsVisible(false);
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 11));
+    await op("aggregate", "cursor-no-questions-aggregate");
     await setParticipantResultsVisible(true);
     const noQuestions = await getAdminPresentation();
     expect(noQuestions).toMatchObject({
       state: "podium_preview",
       questionIndex: 0,
       questionCount: 0,
-      version: 4,
+      version: 7,
+      snapshotRevision: 3,
     });
   });
 
-  it("rolls back a partial snapshot when a free response is still ungraded", async () => {
+  it("rolls back aggregation when a free response is still ungraded", async () => {
     await addQuestions();
     const participant = await addParticipant("Waiting assessment");
     await addSubmission(participant, [0, 0]);
@@ -1166,7 +1358,7 @@ describe("presentation repository", () => {
       rubricVersion: "test-rubric",
     });
 
-    await expect(setParticipantResultsVisible(true)).rejects.toBeInstanceOf(
+    await expect(op("aggregate", "pending-response-aggregate")).rejects.toBeInstanceOf(
       PresentationConflictError,
     );
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
@@ -1184,7 +1376,7 @@ describe("presentation repository", () => {
     const second = await addParticipant("Second");
     await addSubmission(first, [0, 0]);
     await addSubmission(second, [0, 1]);
-    await operatePresentation("results-start", "start");
+    await startWithAggregate("results-start");
     const lateParticipant = await addParticipant("Late participant");
     await setParticipantResultsVisible(true);
     await expect(getParticipantResult(lateParticipant)).resolves.toEqual({ state: "unavailable" });
@@ -1421,16 +1613,17 @@ describe("presentation repository", () => {
 
   it("recovers an operation retry after an adapter conflict without advancing twice", async () => {
     await addQuestions();
-    await op("start", "start");
+    await startWithAggregate("start");
 
     const recovered = await commitWinnerThenRaiseAdapterUniqueConflict("adapter-retry");
 
-    expect(recovered).toMatchObject({ state: "answer", questionIndex: 0, version: 2 });
-    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
+    expect(recovered).toMatchObject({ state: "answer", questionIndex: 0, version: 3 });
+    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(3);
   });
 
   it("returns controls when recovering an operation committed by a concurrent retry", async () => {
     await addQuestions();
+    await op("aggregate", "controls-race-aggregate");
     await operatePresentation("controls-race-start", "start");
 
     const recovered = await commitWinnerThenRaiseAdapterUniqueConflict(
@@ -1440,16 +1633,17 @@ describe("presentation repository", () => {
 
     expect(recovered).toEqual({
       state: "answer",
-      version: 2,
+      version: 3,
       questionIndex: 0,
       questionCount: 2,
       projectionHidden: false,
+      snapshotRevision: 1,
     });
-    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
+    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(3);
     await expect(operatePresentationControls("controls-race-advance", "advance")).resolves.toEqual(
       recovered,
     );
-    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
+    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(3);
   });
 
   it("returns waiting before publication and unavailable for malformed result question data", async () => {
@@ -1504,7 +1698,7 @@ describe("presentation repository", () => {
     await addSubmission(participant, [0, 0], 1, "older");
     await addSubmission(participant, [0, 1], 2, "newer");
 
-    await operatePresentation("multiple-submissions-start", "start");
+    await startWithAggregate("multiple-submissions-start");
 
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
       { participantId: participant, score: 1, rank: 1 },
@@ -1534,7 +1728,7 @@ describe("presentation repository", () => {
     await expect(
       returnNoSelectedRows(
         schema.presentationSessions,
-        () => setParticipantResultsVisible(true),
+        () => op("aggregate", "missing-session-read"),
         2,
       ),
     ).rejects.toBeInstanceOf(PresentationConflictError);
@@ -1548,7 +1742,7 @@ describe("presentation repository", () => {
 
   it("rejects a second start with a different operation ID", async () => {
     await addQuestions();
-    await operatePresentation("started-once", "start");
+    await startWithAggregate("started-once");
 
     await expect(operatePresentation("started-twice", "start")).rejects.toBeInstanceOf(
       PresentationConflictError,
@@ -1557,7 +1751,7 @@ describe("presentation repository", () => {
 
   it("moves backward through answer and podium preview cursor states", async () => {
     await addQuestions();
-    await operatePresentation("previous-states-start", "start");
+    await startWithAggregate("previous-states-start");
     await operatePresentation("previous-states-to-answer", "advance");
     await operatePresentation("previous-states-question-two", "advance");
     await operatePresentation("previous-states-answer-two", "advance");
@@ -1575,7 +1769,7 @@ describe("presentation repository", () => {
 
   it("returns to the podium preview when the third-place stage is reversed", async () => {
     await addRankFixture();
-    await operatePresentation("third-place-start", "start");
+    await startWithAggregate("third-place-start");
     await operatePresentation("third-place-answer-1", "advance");
     await operatePresentation("third-place-question-2", "advance");
     await operatePresentation("third-place-answer-2", "advance");
@@ -1590,7 +1784,7 @@ describe("presentation repository", () => {
   });
 
   it("returns from an empty finished presentation to its preview", async () => {
-    await operatePresentation("empty-finished-start", "start");
+    await startWithAggregate("empty-finished-start");
     await expect(operatePresentation("empty-finished-end", "advance")).resolves.toMatchObject({
       state: "finished",
     });
@@ -1605,14 +1799,17 @@ describe("presentation repository", () => {
 
   it("rejects a start when its compare-and-swap update returns no rows", async () => {
     await addQuestions();
+    await op("aggregate", "start-cas-aggregate");
 
     await expect(
       returnNoUpdatedRows(schema.presentationSessions, () =>
         operatePresentation("start-cas-miss", "start"),
       ),
     ).rejects.toBeInstanceOf(PresentationConflictError);
-    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
-    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+      { state: "not_started", version: 1, snapshotRevision: 1, questionCount: 2 },
+    ]);
+    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(2);
   });
 
   it("rejects a projection toggle when its compare-and-swap update returns no rows", async () => {
@@ -1630,7 +1827,7 @@ describe("presentation repository", () => {
 
   it("rejects a cursor action when its compare-and-swap update returns no rows", async () => {
     await addQuestions();
-    await operatePresentation("advance-cas-start", "start");
+    await startWithAggregate("advance-cas-start");
 
     await expect(
       returnNoUpdatedRows(schema.presentationSessions, () =>
@@ -1638,13 +1835,63 @@ describe("presentation repository", () => {
       ),
     ).rejects.toBeInstanceOf(PresentationConflictError);
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
-      { state: "question", version: 1, questionIndex: 0 },
+      { state: "question", version: 2, questionIndex: 0 },
     ]);
+  });
+
+  it("rejects a reset when its compare-and-swap update returns no rows", async () => {
+    await addQuestions();
+    await startWithAggregate("reset-cas-start");
+
+    await expect(
+      returnNoUpdatedRows(schema.presentationSessions, () => op("reset", "reset-cas-miss")),
+    ).rejects.toBeInstanceOf(PresentationConflictError);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+      { state: "question", version: 2, questionIndex: 0 },
+    ]);
+  });
+
+  it("rejects an aggregate when its snapshot compare-and-swap update returns no rows", async () => {
+    await addQuestions();
+    await op("aggregate", "aggregate-cas-initial");
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ question: "Changed before failed aggregate" })
+      .where(eq(schema.examQuestions.id, 11));
+
+    await expect(
+      returnNoUpdatedRows(schema.presentationSessions, () => op("aggregate", "aggregate-cas-miss")),
+    ).rejects.toBeInstanceOf(PresentationConflictError);
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      version: 1,
+      snapshotRevision: 1,
+      questions: [
+        expect.objectContaining({ id: 11, question: "Question 11" }),
+        expect.objectContaining({ id: 22, question: "Question 22" }),
+      ],
+    });
+  });
+
+  it("wraps non-conflict errors while publishing participant results", async () => {
+    await addQuestions();
+    await op("aggregate", "visibility-transaction-error-aggregate");
+
+    const error = await failTransactionAtTable(schema.participantResultSettings, "insert", () =>
+      setParticipantResultsVisible(true),
+    ).catch((caught: unknown) => caught);
+
+    expect(getPresentationOperationDiagnostics(error)).toEqual({
+      phase: "write_visibility",
+      errorKind: "database",
+      databaseCode: "SQLITE_ERROR",
+      clientErrorClass: null,
+      clientCode: null,
+    });
   });
 
   it("reports a state conflict when a known adapter conflict has no committed operation", async () => {
     await addQuestions();
-    await operatePresentation("unique-conflict-start", "start");
+    await startWithAggregate("unique-conflict-start");
 
     await expect(
       failFirstTransactionWithUniqueConflict(() =>
@@ -1655,6 +1902,7 @@ describe("presentation repository", () => {
 
   it("reports an operation ID conflict when race recovery finds a different action", async () => {
     await addQuestions();
+    await op("aggregate", "reused-operation-aggregate");
     await operatePresentation("reused-operation-id", "start");
 
     const error = await returnNoSelectedRows(schema.presentationOperations, () =>

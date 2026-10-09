@@ -255,4 +255,54 @@ describe("database migrations", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("classifies existing presentation snapshots when migration 0013 adds their revision", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stcirt-snapshot-revision-migration-"));
+    const client = createClient({ url: `file:${dir}/migration.db` });
+    try {
+      await client.execute(
+        "CREATE TABLE presentation_sessions (id integer PRIMARY KEY, state text NOT NULL)",
+      );
+      await client.execute(
+        "CREATE TABLE presentation_questions (session_id integer NOT NULL, position integer NOT NULL, PRIMARY KEY (session_id, position))",
+      );
+      await client.execute(
+        "CREATE TABLE presentation_entries (session_id integer NOT NULL, participant_id integer NOT NULL, PRIMARY KEY (session_id, participant_id))",
+      );
+      await client.execute(
+        "INSERT INTO presentation_sessions (id, state) VALUES (1, 'not_started'), (2, 'not_started'), (3, 'podium_preview'), (4, 'not_started')",
+      );
+      await client.execute("INSERT INTO presentation_questions VALUES (1, 0)");
+      await client.execute("INSERT INTO presentation_entries VALUES (4, 7)");
+
+      const migration = readFileSync(
+        join(process.cwd(), "src/lib/db/migrations/0013_presentation_snapshot_revision.sql"),
+        "utf8",
+      );
+      for (const statement of migration.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.execute(statement);
+      }
+
+      const sessions = await client.execute(
+        "SELECT id, state, snapshot_revision FROM presentation_sessions ORDER BY id",
+      );
+      expect(sessions.rows).toEqual([
+        { id: 1, state: "not_started", snapshot_revision: 1 },
+        { id: 2, state: "not_started", snapshot_revision: 0 },
+        { id: 3, state: "podium_preview", snapshot_revision: 1 },
+        { id: 4, state: "not_started", snapshot_revision: 1 },
+      ]);
+      const questions = await client.execute(
+        "SELECT session_id, position FROM presentation_questions ORDER BY session_id, position",
+      );
+      expect(questions.rows).toEqual([{ session_id: 1, position: 0 }]);
+      const entries = await client.execute(
+        "SELECT session_id, participant_id FROM presentation_entries ORDER BY session_id, participant_id",
+      );
+      expect(entries.rows).toEqual([{ session_id: 4, participant_id: 7 }]);
+    } finally {
+      client.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

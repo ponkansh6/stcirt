@@ -5,7 +5,11 @@ import PresentationAdminPage from "@/app/admin/presentation/page";
 import PresentationAdmin from "@/app/admin/presentation/presentation-admin";
 
 function response(status: number, payload: unknown): Response {
-  return new Response(JSON.stringify(payload), { status });
+  const withRevision =
+    payload && typeof payload === "object" && "state" in payload && !("snapshotRevision" in payload)
+      ? { ...payload, snapshotRevision: 1 }
+      : payload;
+  return new Response(JSON.stringify(withRevision), { status });
 }
 
 function apiFetch(options: {
@@ -30,17 +34,16 @@ function apiFetch(options: {
       return response(options.publishStatus ?? 200, {});
     }
     if (path === "/api/admin/presentation")
-      return response(
-        200,
-        options.state ?? {
-          state: "not_started",
-          questionIndex: 0,
-          questionCount: 5,
-          projectionHidden: false,
-          participantResultsVisible: false,
-          participantResultsReady: true,
-        },
-      );
+      return response(200, {
+        state: "not_started",
+        questionIndex: 0,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: false,
+        participantResultsReady: true,
+        snapshotRevision: 1,
+        ...options.state,
+      });
     throw new Error(`Unexpected request: ${path}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -84,6 +87,7 @@ describe("presentation admin console", () => {
         if (path === "/api/admin/presentation")
           return response(200, {
             state,
+            snapshotRevision: 1,
             questionIndex: 0,
             questionCount: 5,
             projectionHidden: false,
@@ -107,11 +111,77 @@ describe("presentation admin console", () => {
     );
   });
 
+  it("requires aggregation before starting or publishing and resets without rebuilding", async () => {
+    const api = apiFetch({
+      state: {
+        state: "not_started",
+        snapshotRevision: 0,
+        questionIndex: 0,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: false,
+        participantResultsReady: false,
+      },
+    });
+    const user = userEvent.setup();
+    const view = render(<PresentationAdmin />);
+    expect(
+      await screen.findByText("まだ集計されていません。開始・結果公開の前に集計してください。"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "発表を開始" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "参加者結果を公開" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "集計" }));
+    await waitFor(() =>
+      expect(api.actions).toContainEqual({
+        path: "/api/admin/presentation",
+        body: expect.objectContaining({ action: "aggregate" }),
+      }),
+    );
+
+    view.unmount();
+    apiFetch({
+      state: {
+        state: "question",
+        snapshotRevision: 0,
+        questionIndex: 0,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: false,
+        participantResultsReady: false,
+      },
+    });
+    render(<PresentationAdmin />);
+    expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "参加者結果を公開" })).not.toBeInTheDocument();
+
+    cleanup();
+    const startedApi = apiFetch({
+      state: {
+        state: "question",
+        snapshotRevision: 2,
+        questionIndex: 2,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: false,
+        participantResultsReady: true,
+      },
+    });
+    render(<PresentationAdmin />);
+    await user.click(await screen.findByRole("button", { name: "最初に戻る" }));
+    await waitFor(() =>
+      expect(startedApi.actions).toContainEqual({
+        path: "/api/admin/presentation",
+        body: expect.objectContaining({ action: "reset" }),
+      }),
+    );
+  });
+
   it("shows running and finished state with named projection tab and publish controls", async () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     apiFetch({
       state: {
         state: "question",
+        snapshotRevision: 1,
         questionIndex: 1,
         questionCount: 5,
         projectionHidden: false,
@@ -131,6 +201,7 @@ describe("presentation admin console", () => {
     apiFetch({
       state: {
         state: "finished",
+        snapshotRevision: 1,
         questionIndex: 5,
         questionCount: 5,
         projectionHidden: true,
@@ -144,10 +215,32 @@ describe("presentation admin console", () => {
     expect(screen.getByRole("button", { name: "投影を表示" })).toBeInTheDocument();
   });
 
+  it("uses safe defaults for malformed admin controls values", async () => {
+    apiFetch({
+      state: {
+        state: "question",
+        snapshotRevision: "3",
+        questionIndex: "5",
+        questionCount: "5",
+        projectionHidden: "true",
+        participantResultsVisible: 1,
+        participantResultsReady: "true",
+      },
+    });
+
+    render(<PresentationAdmin />);
+
+    expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    expect(screen.getByText("問題 1 / 0")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "投影を一時非表示" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "参加者結果を公開" })).not.toBeInTheDocument();
+  });
+
   it("publishes only visible true and avoids another publish when already visible", async () => {
     const api = apiFetch({
       state: {
         state: "finished",
+        snapshotRevision: 1,
         questionIndex: 5,
         questionCount: 5,
         projectionHidden: false,
@@ -169,6 +262,7 @@ describe("presentation admin console", () => {
     const published = apiFetch({
       state: {
         state: "finished",
+        snapshotRevision: 1,
         questionIndex: 5,
         questionCount: 5,
         projectionHidden: false,
@@ -232,6 +326,7 @@ describe("presentation admin console", () => {
       if (path === "/api/admin/presentation")
         return response(200, {
           state: "finished",
+          snapshotRevision: 1,
           questionIndex: 5,
           questionCount: 5,
           projectionHidden: false,
@@ -272,6 +367,7 @@ describe("presentation admin console", () => {
         if (path === "/api/admin/presentation")
           return response(200, {
             state: "finished",
+            snapshotRevision: 1,
             questionIndex: 5,
             questionCount: 5,
             projectionHidden: false,

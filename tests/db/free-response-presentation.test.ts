@@ -85,13 +85,18 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       .where(eq(schema.examAnswerAssessments.submissionId, submissionId));
   }
 
+  async function startWithAggregate(operationId: string) {
+    await operatePresentation(`${operationId}-aggregate`, "aggregate");
+    return operatePresentation(operationId, "start");
+  }
+
   it("adds score divided by two at full precision and ranks before display rounding", async () => {
     const first = await addParticipant("fractional-one");
     const second = await addParticipant("fractional-two");
     await addFreeTextSubmission(first, 1.5, "one");
     await addFreeTextSubmission(second, 1.499, "two");
 
-    const presentation = await operatePresentation("fraction-start", "start");
+    const presentation = await startWithAggregate("fraction-start");
     expect(presentation.entries).toEqual([
       expect.objectContaining({ displayName: "fractional-one", score: 4.75, rank: 1 }),
       expect.objectContaining({ displayName: "fractional-two", score: 4.7495, rank: 2 }),
@@ -112,7 +117,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
   it("suppresses responses only when the source key still identifies question five", async () => {
     const participantId = await addParticipant("question-five-identity");
     await addFreeTextSubmission(participantId, 1, "identity");
-    await operatePresentation("question-five-identity-start", "start");
+    await startWithAggregate("question-five-identity-start");
     for (let index = 0; index < 9; index += 1)
       await operatePresentation(`question-five-identity-forward-${index}`, "advance");
     const fifthAnswer = await getPublicPresentation();
@@ -134,7 +139,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
   it("retains fifth-question responses when the source row is missing", async () => {
     const participantId = await addParticipant("missing-source");
     await addFreeTextSubmission(participantId, 1, "missing-source");
-    await operatePresentation("missing-source-start", "start");
+    await startWithAggregate("missing-source-start");
     for (let index = 0; index < 9; index += 1)
       await operatePresentation(`missing-source-forward-${index}`, "advance");
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 5));
@@ -152,7 +157,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       .update(schema.examQuestions)
       .set({ choices: [] })
       .where(eq(schema.examQuestions.id, 3));
-    await operatePresentation("other-free-text-start", "start");
+    await startWithAggregate("other-free-text-start");
     for (let index = 0; index < 5; index += 1)
       await operatePresentation(`other-free-text-forward-${index}`, "advance");
 
@@ -209,7 +214,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       })),
       { submissionId, questionId: 5, answerKind: "legacy", selectedIndex: 1 },
     ]);
-    const started = await operatePresentation("legacy-snapshot-start", "start");
+    const started = await startWithAggregate("legacy-snapshot-start");
     expect(started.entries.find(({ displayName }) => displayName === "Legacy")).toMatchObject({
       score: 4,
     });

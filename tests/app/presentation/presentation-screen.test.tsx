@@ -26,7 +26,14 @@ function deckSlide(
 }
 
 function response(payload: unknown, status = 200) {
-  return new Response(JSON.stringify(payload), { status });
+  const withRevision =
+    payload &&
+    typeof payload === "object" &&
+    "slides" in payload &&
+    !("snapshotRevision" in payload)
+      ? { ...payload, snapshotRevision: 1 }
+      : payload;
+  return new Response(JSON.stringify(withRevision), { status });
 }
 
 function setup(
@@ -60,6 +67,7 @@ function setup(
   let admin = {
     state: "question",
     version: 0,
+    snapshotRevision: 1,
     questionIndex: 0,
     questionCount: 5,
     projectionHidden: false,
@@ -183,6 +191,7 @@ function setup(
       return options.deckGetter
         ? options.deckGetter()
         : response({
+            snapshotRevision: admin.snapshotRevision,
             questionCount: admin.questionCount,
             questionIndex: admin.questionIndex,
             slides: deckSlides,
@@ -416,6 +425,13 @@ describe("presentation projection and presenter progression", () => {
       .filter(({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST")
       .map(({ init }) => JSON.parse(String(init?.body)).action);
     expect(actions).toEqual(["advance", "previous", "advance", "advance", "advance"]);
+    const firstAction = api.calls.find(
+      ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+    );
+    expect(JSON.parse(String(firstAction?.init?.body))).toMatchObject({
+      action: "advance",
+      expectedSnapshotRevision: 1,
+    });
   });
 
   it("ignores modified/repeated keys and interactive targets", async () => {
@@ -785,6 +801,7 @@ describe("presentation projection and presenter progression", () => {
             ? {
                 state: "question",
                 version: 0,
+                snapshotRevision: 1,
                 questionIndex: 0,
                 questionCount: 5,
                 projectionHidden: false,
@@ -792,6 +809,7 @@ describe("presentation projection and presenter progression", () => {
             : {
                 state: "answer",
                 version: 1,
+                snapshotRevision: 1,
                 questionIndex: 0,
                 questionCount: 5,
                 projectionHidden: false,

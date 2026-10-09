@@ -35,7 +35,11 @@ const question = {
 };
 
 function response(body: unknown, ok = true, status = 200): Response {
-  const result = new Response(JSON.stringify(body), { status });
+  const withRevision =
+    body && typeof body === "object" && "slides" in body && !("snapshotRevision" in body)
+      ? { ...body, snapshotRevision: 1 }
+      : body;
+  const result = new Response(JSON.stringify(withRevision), { status });
   if (result.ok !== ok) Object.defineProperty(result, "ok", { value: ok });
   return result;
 }
@@ -52,6 +56,7 @@ function controls(overrides: Record<string, unknown> = {}) {
   return {
     state: "not_started",
     version: 0,
+    snapshotRevision: 1,
     questionIndex: 0,
     questionCount: 2,
     projectionHidden: false,
@@ -74,6 +79,7 @@ function installApi(
     visibilityError?: number;
     visibilityErrorBody?: unknown;
     visibilityErrorResponse?: () => Promise<Response>;
+    deckResponse?: () => Promise<Response>;
     deckSlides?: DeckSlideFixture[];
   } = {},
 ) {
@@ -177,11 +183,14 @@ function installApi(
     if (path === "/api/admin/presentation?view=controls")
       return options.adminResponse ? options.adminResponse() : response(admin);
     if (path === "/api/admin/presentation/deck")
-      return response({
-        questionCount: admin.questionCount,
-        questionIndex: admin.questionIndex,
-        slides: deckSlides,
-      });
+      return options.deckResponse
+        ? options.deckResponse()
+        : response({
+            snapshotRevision: admin.snapshotRevision,
+            questionCount: admin.questionCount,
+            questionIndex: admin.questionIndex,
+            slides: deckSlides,
+          });
     if (path === "/api/admin/participant-results") {
       if (options.visibilityErrorResponse) return options.visibilityErrorResponse();
       if (visibilityError) {
@@ -209,6 +218,9 @@ function installApi(
       );
       if (existing >= 0) deckSlides[existing] = slide;
       else deckSlides.push(slide);
+    },
+    setAdmin(value: Record<string, unknown>) {
+      admin = controls({ ...admin, ...value });
     },
     setActionProjection(value: Projection) {
       actionProjection = value;
@@ -786,6 +798,7 @@ describe("PresentationScreen", () => {
     await flush();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(1));
+    expect(api.actions[0]).toMatchObject({ action: "advance", expectedSnapshotRevision: 1 });
     await flush();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
@@ -954,6 +967,141 @@ describe("PresentationScreen", () => {
       "/api/admin/presentation",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("reloads the presenter deck when aggregation advances the snapshot revision", async () => {
+    vi.useFakeTimers();
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const deckReads = () =>
+      api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/admin/presentation/deck")
+        .length;
+    expect(deckReads()).toBe(1);
+    api.setDeckSlide("question", 0, {
+      state: "question",
+      question: { ...question, question: "Updated aggregate question" },
+    });
+    api.setAdmin({ snapshotRevision: 2 });
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+
+    expect(deckReads()).toBe(2);
+    expect(screen.getByRole("heading", { name: "Updated aggregate question" })).toBeInTheDocument();
+  });
+
+  it("retries when the presenter deck revision is behind current controls", async () => {
+    vi.useFakeTimers();
+    let deckReads = 0;
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 2 }),
+      deckResponse: async () => {
+        deckReads += 1;
+        return response({
+          snapshotRevision: deckReads === 1 ? 1 : 2,
+          questionCount: 2,
+          questionIndex: 0,
+          slides: [
+            {
+              state: "question",
+              questionIndex: 0,
+              projection: {
+                state: "question",
+                question: { ...question, question: "Recovered current question" },
+              },
+            },
+          ],
+        });
+      },
+    });
+
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    expect(deckReads).toBe(1);
+    expect(
+      screen.getByRole("heading", { name: "スライドを読み込めませんでした" }),
+    ).toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+
+    expect(deckReads).toBe(2);
+    expect(screen.getByRole("heading", { name: "Recovered current question" })).toBeInTheDocument();
+  });
+
+  it("keeps the presenter fail-closed when the deck revision stays behind after retry", async () => {
+    vi.useFakeTimers();
+    let deckReads = 0;
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 2 }),
+      deckResponse: async () => {
+        deckReads += 1;
+        return response({
+          snapshotRevision: deckReads === 1 ? 2 : 1,
+          questionCount: 2,
+          questionIndex: deckReads === 1 ? 1 : 0,
+          slides: [
+            {
+              state: "question",
+              questionIndex: deckReads === 1 ? 1 : 0,
+              projection: { state: "question", question },
+            },
+          ],
+        });
+      },
+    });
+
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    expect(deckReads).toBe(2);
+    expect(
+      screen.getByRole("heading", { name: "スライドを読み込めませんでした" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: question.question })).not.toBeInTheDocument();
+    expect(screen.getByText("接続を確認しています。自動で再試行します")).toBeInTheDocument();
+  });
+
+  it("resynchronizes controls and deck when an action returns another snapshot revision", async () => {
+    let actionResponses = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+      actionResponse: async () => {
+        actionResponses += 1;
+        return response(
+          controls({
+            state: actionResponses === 1 ? "answer" : "question",
+            questionIndex: 0,
+            snapshotRevision: 2,
+          }),
+        );
+      },
+    });
+    const main = render(<PresentationScreen presenterRequested />).getByRole("main");
+    await screen.findByRole("heading", { name: question.question });
+    await flush();
+    const deckReadsBeforeAction = api.fetchMock.mock.calls.filter(
+      ([path]) => String(path) === "/api/admin/presentation/deck",
+    ).length;
+    api.setAdmin({ state: "answer", snapshotRevision: 2 });
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+
+    await waitFor(() => expect(api.actions).toHaveLength(1));
+    expect(api.actions[0]).toMatchObject({ action: "advance", expectedSnapshotRevision: 1 });
+    expect(
+      api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/admin/presentation/deck"),
+    ).toHaveLength(deckReadsBeforeAction + 1);
+    expect(await screen.findByText("THE STORY BEHIND IT")).toBeInTheDocument();
+
+    fireEvent.keyDown(main, { key: "ArrowLeft" });
+    await waitFor(() => expect(api.actions).toHaveLength(2));
   });
 
   it("fails closed on an invalid successful action payload and resynchronizes controls", async () => {

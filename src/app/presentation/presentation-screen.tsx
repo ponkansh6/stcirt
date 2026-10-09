@@ -64,6 +64,7 @@ type AdminState = Extract<
 type AdminControls = {
   state: AdminState;
   version: number;
+  snapshotRevision: number;
   questionIndex: number;
   questionCount: number;
   projectionHidden: boolean;
@@ -87,6 +88,9 @@ function parseAdminControls(payload: unknown): AdminControls | null {
     !Number.isFinite(controls.version) ||
     !Number.isInteger(controls.version) ||
     (controls.version as number) < 0 ||
+    !Number.isFinite(controls.snapshotRevision) ||
+    !Number.isInteger(controls.snapshotRevision) ||
+    (controls.snapshotRevision as number) < 0 ||
     !Number.isFinite(controls.questionIndex) ||
     !Number.isInteger(controls.questionIndex) ||
     (controls.questionIndex as number) < 0 ||
@@ -100,6 +104,7 @@ function parseAdminControls(payload: unknown): AdminControls | null {
   return controls as AdminControls;
 }
 type PresenterDeck = {
+  snapshotRevision: number;
   slides: { state: AdminState; questionIndex: number; projection: ProjectionData }[];
 };
 type AdminAction = "advance" | "previous";
@@ -165,7 +170,10 @@ async function getPresenterDeck(): Promise<PresenterDeck> {
     typeof payload !== "object" ||
     payload === null ||
     !("slides" in payload) ||
-    !Array.isArray(payload.slides)
+    !Array.isArray(payload.slides) ||
+    !("snapshotRevision" in payload) ||
+    !Number.isInteger(payload.snapshotRevision) ||
+    (payload.snapshotRevision as number) < 0
   )
     throw new Error("スライドを読み込めませんでした。");
   return payload as unknown as PresenterDeck;
@@ -173,15 +181,24 @@ async function getPresenterDeck(): Promise<PresenterDeck> {
 
 function projectionForControl(deck: PresenterDeck, controls: AdminControls): ProjectionData | null {
   if (controls.state === "not_started") return { state: "not_started" };
-  const slide = deck.slides.find(
-    (candidate) =>
-      candidate.state === controls.state && candidate.questionIndex === controls.questionIndex,
-  );
+  const slide = slideForControl(deck, controls);
   if (!slide) return null;
   return controls.projectionHidden ? { state: "standby" } : slide.projection;
 }
 
-async function requestAdminAction(action: AdminAction) {
+function slideForControl(
+  deck: PresenterDeck,
+  controls: AdminControls,
+): PresenterDeck["slides"][number] | undefined {
+  const questionStage = controls.state === "question" || controls.state === "answer";
+  return deck.slides.find(
+    (candidate) =>
+      candidate.state === controls.state &&
+      (!questionStage || candidate.questionIndex === controls.questionIndex),
+  );
+}
+
+async function requestAdminAction(action: AdminAction, expectedSnapshotRevision: number) {
   const response = await fetch("/api/admin/presentation", {
     method: "POST",
     cache: "no-store",
@@ -190,6 +207,7 @@ async function requestAdminAction(action: AdminAction) {
     body: JSON.stringify({
       operationId: crypto.randomUUID(),
       action,
+      expectedSnapshotRevision,
     }),
   });
   const payload: unknown = await response.json().catch(() => null);
@@ -395,7 +413,9 @@ export default function PresentationScreen({
         return;
       }
       let deck = presenterDeckRef.current;
-      if (!deck) {
+      if (!deck || deck.snapshotRevision !== controls.snapshotRevision) {
+        presenterDeckRef.current = null;
+        setPresenterDeck(null);
         loadingDeck = true;
         setDeckSyncPending(true);
         setDeckLoadError(false);
@@ -407,18 +427,23 @@ export default function PresentationScreen({
           if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
         }
         if (sequence !== adminSequence.current) return;
+        if (deck.snapshotRevision !== controls.snapshotRevision) {
+          setDeckSyncPending(false);
+          setDeckLoadError(true);
+          applyAdminControls(null);
+          return;
+        }
         setDeckSyncPending(false);
         presenterDeckRef.current = deck;
         setPresenterDeck(deck);
         setDeckLoadError(false);
       }
-      let projection = projectionForControl(deck, controls);
+      const projection = projectionForControl(deck, controls);
       if (!projection) {
-        // Cached slides may belong to a different cursor/session. Disable actions
-        // before discarding them, then require a fresh deck that matches controls.
+        // A same-revision deck should contain every reachable slide. Refresh it
+        // once as recovery, while keeping controls disabled and dropping its view.
         applyAdminControls(null);
         presenterDeckRef.current = null;
-        presenterDeckRequest.current = null;
         setPresenterDeck(null);
         setDeckSyncPending(true);
         setDeckLoadError(false);
@@ -431,16 +456,22 @@ export default function PresentationScreen({
           if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
         }
         if (sequence !== adminSequence.current) return;
-        projection = projectionForControl(deck, controls);
-        if (!projection) {
-          // Keep actions disabled and let the next poll attempt a new deck again.
+        const recoveredProjection =
+          deck.snapshotRevision === controls.snapshotRevision
+            ? projectionForControl(deck, controls)
+            : null;
+        if (!recoveredProjection) {
           setDeckSyncPending(false);
           setDeckLoadError(true);
           return;
         }
-        setDeckSyncPending(false);
         presenterDeckRef.current = deck;
         setPresenterDeck(deck);
+        setDeckSyncPending(false);
+        setDeckLoadError(false);
+        setData(recoveredProjection);
+        applyAdminControls(controls);
+        return;
       }
       applyAdminControls(controls);
       setDeckLoadError(false);
@@ -510,9 +541,7 @@ export default function PresentationScreen({
       adminSequence.current += 1;
       mutationInFlight.current = true;
       const currentSlideIndex = currentDeck.slides.findIndex(
-        (slide) =>
-          slide.state === currentControls.state &&
-          slide.questionIndex === currentControls.questionIndex,
+        (slide) => slide === slideForControl(currentDeck, currentControls),
       );
       const optimisticSlide =
         currentSlideIndex < 0
@@ -522,15 +551,16 @@ export default function PresentationScreen({
         setData(optimisticSlide.projection);
       }
       try {
-        const confirmedControls = await requestAdminAction(action);
+        const confirmedControls = await requestAdminAction(
+          action,
+          currentControls.snapshotRevision,
+        );
         const confirmedProjection =
-          confirmedControls.state === "not_started" || confirmedControls.projectionHidden
-            ? projectionForControl(currentDeck, confirmedControls)
-            : currentDeck.slides.find(
-                (slide) =>
-                  slide.state === confirmedControls.state &&
-                  slide.questionIndex === confirmedControls.questionIndex,
-              )?.projection;
+          confirmedControls.snapshotRevision !== currentDeck.snapshotRevision
+            ? null
+            : confirmedControls.state === "not_started" || confirmedControls.projectionHidden
+              ? projectionForControl(currentDeck, confirmedControls)
+              : slideForControl(currentDeck, confirmedControls)?.projection;
         if (!confirmedProjection) {
           // The server cursor does not belong to this cached deck. Re-fetch both
           // controls and deck before allowing another operation.

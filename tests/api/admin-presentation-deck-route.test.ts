@@ -17,6 +17,7 @@ import {
 } from "@/lib/presentation/admin-auth";
 
 const deck = {
+  snapshotRevision: 3,
   questionCount: 1,
   questionIndex: 0,
   slides: [{ state: "question", questionIndex: 0, projection: { state: "question" } }],

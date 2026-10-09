@@ -56,6 +56,7 @@ export async function POST(request: Request) {
     operationId?: unknown;
     action?: unknown;
     mode?: unknown;
+    expectedSnapshotRevision?: unknown;
   } | null;
   if (
     !value ||
@@ -67,17 +68,31 @@ export async function POST(request: Request) {
       value.action !== "advance" &&
       value.action !== "previous" &&
       value.action !== "hide" &&
-      value.action !== "show") ||
+      value.action !== "show" &&
+      value.action !== "aggregate" &&
+      value.action !== "reset") ||
+    (value.expectedSnapshotRevision !== undefined &&
+      (typeof value.expectedSnapshotRevision !== "number" ||
+        !Number.isInteger(value.expectedSnapshotRevision) ||
+        value.expectedSnapshotRevision < 0)) ||
     value.mode !== undefined
   ) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400, headers: noStore });
   }
   try {
-    const result = await operatePresentationControls(value.operationId, value.action);
+    const result =
+      value.expectedSnapshotRevision === undefined
+        ? await operatePresentationControls(value.operationId, value.action)
+        : await operatePresentationControls(
+            value.operationId,
+            value.action,
+            value.expectedSnapshotRevision,
+          );
     return NextResponse.json(
       {
         state: result.state,
         version: result.version,
+        snapshotRevision: result.snapshotRevision,
         questionIndex: result.questionIndex,
         questionCount: result.questionCount,
         projectionHidden: result.projectionHidden,

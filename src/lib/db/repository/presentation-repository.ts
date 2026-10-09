@@ -26,8 +26,23 @@ export type PresentationState =
   | "second"
   | "first"
   | "finished";
-export type PresentationAction = "start" | "advance" | "previous" | "hide" | "show";
-const presentationActions = new Set<string>(["start", "advance", "previous", "hide", "show"]);
+export type PresentationAction =
+  | "start"
+  | "advance"
+  | "previous"
+  | "hide"
+  | "show"
+  | "aggregate"
+  | "reset";
+const presentationActions = new Set<string>([
+  "start",
+  "advance",
+  "previous",
+  "hide",
+  "show",
+  "aggregate",
+  "reset",
+]);
 
 export class PresentationConflictError extends Error {
   readonly status = 409;
@@ -36,6 +51,7 @@ export class PresentationConflictError extends Error {
 type AdminPresentation = {
   state: PresentationState;
   version: number;
+  snapshotRevision: number;
   questionIndex: number;
   questionCount: number;
   projectionHidden: boolean;
@@ -67,7 +83,7 @@ type AdminPresentation = {
 
 export type AdminPresentationControls = Pick<
   AdminPresentation,
-  "state" | "version" | "questionIndex" | "questionCount" | "projectionHidden"
+  "state" | "version" | "snapshotRevision" | "questionIndex" | "questionCount" | "projectionHidden"
 >;
 
 type PresentationAnswerSnapshot = {
@@ -115,6 +131,7 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
     return {
       state: "not_started",
       version: 0,
+      snapshotRevision: 0,
       questionIndex: 0,
       questionCount: 0,
       projectionHidden: false,
@@ -143,12 +160,14 @@ async function readAdminPresentation(tx: Parameters<Parameters<typeof db.transac
   return {
     state: session.state as PresentationState,
     version: session.version,
+    snapshotRevision: session.snapshotRevision,
     questionIndex: session.questionIndex,
     questionCount: session.questionCount,
     projectionHidden: session.projectionHidden,
     participantResultsVisible: resultSettings?.visible ?? false,
     participantResultsReady:
-      session.state !== "not_started" || questions.length > 0 || entries.length > 0,
+      session.snapshotRevision > 0 &&
+      (session.questionCount > 0 || session.state !== "not_started"),
     questions: questions.map((question) => ({
       id: question.sourceQuestionId,
       question: question.question,
@@ -178,24 +197,11 @@ export async function setParticipantResultsVisible(visible: boolean) {
         if (visible) {
           phase = "acquire_session";
           const session = await acquirePresentationSession(tx);
-          phase = "read_visibility";
-          const [settings] = await tx
-            .select({
-              visible: participantResultSettings.visible,
-              everPublished: participantResultSettings.everPublished,
-            })
-            .from(participantResultSettings)
-            .where(eq(participantResultSettings.id, 1));
-          if (!settings?.visible) {
-            await ensurePresentationSnapshot(
-              tx,
-              session,
-              false,
-              settings?.everPublished ?? false,
-              (nextPhase) => {
-                phase = nextPhase;
-              },
-            );
+          if (
+            session.snapshotRevision === 0 ||
+            (session.state === "not_started" && session.questionCount === 0)
+          ) {
+            throw new PresentationConflictError("Results are not ready");
           }
           phase = "write_visibility";
           await tx
@@ -381,6 +387,7 @@ async function readAdminPresentationControls(
     .select({
       state: presentationSessions.state,
       version: presentationSessions.version,
+      snapshotRevision: presentationSessions.snapshotRevision,
       questionIndex: presentationSessions.questionIndex,
       questionCount: presentationSessions.questionCount,
       projectionHidden: presentationSessions.projectionHidden,
@@ -390,6 +397,7 @@ async function readAdminPresentationControls(
   const fallback: AdminPresentationControls = {
     state: "not_started",
     version: 0,
+    snapshotRevision: 0,
     questionIndex: 0,
     questionCount: 0,
     projectionHidden: false,
@@ -556,7 +564,12 @@ export async function getAdminPresentationDeck() {
       questionIndex: admin.questionIndex,
       projection: buildPublicProjection(admin, "finished", admin.questionIndex, sourceQuestions),
     });
-    return { questionCount: admin.questionCount, questionIndex: admin.questionIndex, slides };
+    return {
+      snapshotRevision: admin.snapshotRevision,
+      questionCount: admin.questionCount,
+      questionIndex: admin.questionIndex,
+      slides,
+    };
   });
 }
 
@@ -625,16 +638,18 @@ async function startPresentation(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   acquiredSession: typeof presentationSessions.$inferSelect,
 ) {
-  const previousSession = await ensurePresentationSnapshot(tx, acquiredSession, true);
-  const state: PresentationState = previousSession.questionCount ? "question" : "podium_preview";
-  const version = previousSession.version + 1;
+  if (acquiredSession.snapshotRevision === 0) {
+    throw new PresentationConflictError("Aggregate results before starting the presentation");
+  }
+  const state: PresentationState = acquiredSession.questionCount ? "question" : "podium_preview";
+  const version = acquiredSession.version + 1;
   const updated = await tx
     .update(presentationSessions)
     .set({ state, version, questionIndex: 0 })
     .where(
       and(
         eq(presentationSessions.id, 1),
-        eq(presentationSessions.version, previousSession.version),
+        eq(presentationSessions.version, acquiredSession.version),
       ),
     )
     .returning({ id: presentationSessions.id });
@@ -646,35 +661,10 @@ async function startPresentation(
 async function ensurePresentationSnapshot(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   session: typeof presentationSessions.$inferSelect,
-  allowEmptyQuestions = false,
-  rebuild = false,
   setOperationPhase?: (phase: PresentationOperationPhase) => void,
 ): Promise<typeof presentationSessions.$inferSelect> {
-  if (!rebuild) {
-    setOperationPhase?.("snapshot_probe_question");
-    const [snapshotQuestion] = await tx
-      .select({ position: presentationQuestions.position })
-      .from(presentationQuestions)
-      .where(eq(presentationQuestions.sessionId, 1))
-      .limit(1);
-    setOperationPhase?.("snapshot_probe_entry");
-    const [snapshotEntry] = await tx
-      .select({ participantId: presentationEntries.participantId })
-      .from(presentationEntries)
-      .where(eq(presentationEntries.sessionId, 1))
-      .limit(1);
-    if (snapshotQuestion || snapshotEntry) return session;
-  }
-  // A started session proves start already created a snapshot, even when it
-  // legitimately contains no question or participant rows.
-  if (!rebuild && session.state !== "not_started") return session;
-
   setOperationPhase?.("source_questions_read");
   const currentQuestions = await tx.select().from(examQuestions).orderBy(asc(examQuestions.id));
-  if (!currentQuestions.length && !allowEmptyQuestions && session.state === "not_started") {
-    throw new PresentationConflictError("Results are not ready");
-  }
-
   setOperationPhase?.("participants_read");
   const participants = await tx.select().from(examParticipants).orderBy(asc(examParticipants.id));
   setOperationPhase?.("submissions_read");
@@ -729,7 +719,7 @@ async function ensurePresentationSnapshot(
         assessment.state !== "graded"
       ) {
         throw new PresentationConflictError(
-          "Free-response assessments must finish before presentation starts",
+          "Free-response assessments must finish before results are aggregated",
         );
       }
     }
@@ -806,12 +796,10 @@ async function ensurePresentationSnapshot(
     return { ...entry, rank: priorRank };
   });
 
-  if (rebuild) {
-    setOperationPhase?.("delete_entries");
-    await tx.delete(presentationEntries).where(eq(presentationEntries.sessionId, 1));
-    setOperationPhase?.("delete_questions");
-    await tx.delete(presentationQuestions).where(eq(presentationQuestions.sessionId, 1));
-  }
+  setOperationPhase?.("delete_entries");
+  await tx.delete(presentationEntries).where(eq(presentationEntries.sessionId, 1));
+  setOperationPhase?.("delete_questions");
+  await tx.delete(presentationQuestions).where(eq(presentationQuestions.sessionId, 1));
   if (currentQuestions.length) {
     setOperationPhase?.("insert_questions");
     await tx.insert(presentationQuestions).values(
@@ -839,20 +827,31 @@ async function ensurePresentationSnapshot(
       })),
     );
   }
-  const noQuestionsDuringQuestionStage =
-    currentQuestions.length === 0 && (session.state === "question" || session.state === "answer");
-  const questionIndex = currentQuestions.length
-    ? Math.max(0, Math.min(session.questionIndex, currentQuestions.length - 1))
-    : 0;
+  const invalidQuestionCursor =
+    session.questionIndex < 0 || session.questionIndex >= currentQuestions.length;
+  const preserveTerminalOrUnstartedState =
+    session.state === "not_started" || session.state === "finished";
+  const nextState =
+    invalidQuestionCursor && !preserveTerminalOrUnstartedState
+      ? currentQuestions.length === 0
+        ? "podium_preview"
+        : "question"
+      : session.state;
+  const questionIndex = invalidQuestionCursor ? 0 : session.questionIndex;
   setOperationPhase?.("update_session");
-  await tx
+  const updated = await tx
     .update(presentationSessions)
     .set({
       questionCount: currentQuestions.length,
       questionIndex,
-      ...(noQuestionsDuringQuestionStage ? { state: "podium_preview" } : {}),
+      snapshotRevision: session.snapshotRevision + 1,
+      version: session.version + 1,
+      ...(nextState !== session.state ? { state: nextState } : {}),
     })
-    .where(eq(presentationSessions.id, 1));
+    .where(and(eq(presentationSessions.id, 1), eq(presentationSessions.version, session.version)))
+    .returning({ id: presentationSessions.id });
+  if (!updated.length)
+    throw new PresentationConflictError("Presentation state changed concurrently");
   setOperationPhase?.("read_session");
   const [snapshottedSession] = await tx
     .select()
@@ -956,20 +955,30 @@ export async function operatePresentation(operationId: string, action: Presentat
 export async function operatePresentationControls(
   operationId: string,
   action: PresentationAction,
+  expectedSnapshotRevision?: number,
 ): Promise<AdminPresentationControls> {
-  return operatePresentationWithResponse(operationId, action, readAdminPresentationControls);
+  return operatePresentationWithResponse(
+    operationId,
+    action,
+    readAdminPresentationControls,
+    expectedSnapshotRevision,
+  );
 }
 
 async function operatePresentationWithResponse<T>(
   operationId: string,
   action: PresentationAction,
   readResponse: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>,
+  expectedSnapshotRevision?: number,
 ): Promise<T> {
   if (!presentationActions.has(action))
     throw new PresentationConflictError("Unsupported presentation action");
+  let phase: PresentationOperationPhase = "transaction_begin";
   try {
-    return await withTransactionRetry(() =>
-      db.transaction(async (tx) => {
+    return await withTransactionRetry(() => {
+      phase = "transaction_begin";
+      return db.transaction(async (tx) => {
+        phase = "acquire_session";
         const session = await acquirePresentationSession(tx);
         const [operation] = await tx
           .select()
@@ -980,11 +989,47 @@ async function operatePresentationWithResponse<T>(
             throw new PresentationConflictError("Operation ID conflict");
           return readResponse(tx);
         }
+        if (
+          expectedSnapshotRevision !== undefined &&
+          session.snapshotRevision !== expectedSnapshotRevision
+        ) {
+          throw new PresentationConflictError("Presentation snapshot changed concurrently");
+        }
 
         if (action === "start") {
           if (session.state !== "not_started")
             throw new PresentationConflictError("Presentation has already started");
           const version = await startPresentation(tx, session);
+          await tx.insert(presentationOperations).values({ operationId, action, version });
+          return readResponse(tx);
+        }
+        if (action === "aggregate") {
+          const aggregated = await ensurePresentationSnapshot(tx, session, (nextPhase) => {
+            phase = nextPhase;
+          });
+          phase = "transaction_commit";
+          await tx
+            .insert(presentationOperations)
+            .values({ operationId, action, version: aggregated.version });
+          return readResponse(tx);
+        }
+        if (action === "reset") {
+          if (session.state === "not_started")
+            throw new PresentationConflictError("Start the presentation before resetting it");
+          const state: PresentationState = session.questionCount ? "question" : "podium_preview";
+          const version = session.version + 1;
+          const changed = await tx
+            .update(presentationSessions)
+            .set({ state, questionIndex: 0, version })
+            .where(
+              and(
+                eq(presentationSessions.id, 1),
+                eq(presentationSessions.version, session.version),
+              ),
+            )
+            .returning({ id: presentationSessions.id });
+          if (!changed.length)
+            throw new PresentationConflictError("Presentation state changed concurrently");
           await tx.insert(presentationOperations).values({ operationId, action, version });
           return readResponse(tx);
         }
@@ -1030,13 +1075,20 @@ async function operatePresentationWithResponse<T>(
           .insert(presentationOperations)
           .values({ operationId, action, version: session.version + 1 });
         return readResponse(tx);
-      }),
-    );
+      });
+    });
   } catch (error) {
+    if (error instanceof PresentationConflictError) throw error;
     // Lock contention is retried by starting a fresh transaction above. If all
     // attempts are exhausted, preserve the database error for the caller.
-    if (isSqliteLockRace(error)) throw error;
-    if (!isKnownTransactionRace(error)) throw error;
+    if (isSqliteLockRace(error)) {
+      if (action === "aggregate") throw makePresentationOperationError(phase, error);
+      throw error;
+    }
+    if (!isKnownTransactionRace(error)) {
+      if (action === "aggregate") throw makePresentationOperationError(phase, error);
+      throw error;
+    }
     return db.transaction(async (tx) => {
       const [operation] = await tx
         .select()
