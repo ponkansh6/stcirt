@@ -51,11 +51,10 @@ function malformedJsonResponse(status = 200): Response {
 function controls(overrides: Record<string, unknown> = {}) {
   return {
     state: "not_started",
+    version: 0,
     questionIndex: 0,
     questionCount: 2,
     projectionHidden: false,
-    participantResultsVisible: false,
-    participantResultsReady: true,
     ...overrides,
   };
 }
@@ -66,6 +65,7 @@ function installApi(
     actionProjection?: Projection;
     actionAdmin?: Record<string, unknown>;
     projectionResponse?: () => Promise<Response>;
+    actionResponse?: () => Promise<Response>;
     admin?: Record<string, unknown>;
     adminResponse?: () => Promise<Response>;
     sessionResponse?: () => Promise<Response>;
@@ -124,15 +124,55 @@ function installApi(
     if (path === "/api/admin/presentation" && init?.method === "POST") {
       const action = JSON.parse(String(init.body)) as Record<string, unknown>;
       actions.push(action);
+      if (options.actionResponse) return options.actionResponse();
       if (actionError) {
         const status = actionError;
         actionError = undefined;
         if (status === 401) options.authenticated = false;
         return response({}, false, status);
       }
-      if (actionProjection) projection = actionProjection;
-      if (actionAdmin) admin = actionAdmin;
-      return response({ ok: true });
+      const currentSlideIndex = deckSlides.findIndex(
+        (slide) => slide.state === admin.state && slide.questionIndex === admin.questionIndex,
+      );
+      const nextSlide =
+        deckSlides[
+          currentSlideIndex +
+            (action.action === "advance" ? 1 : action.action === "previous" ? -1 : 0)
+        ];
+      const nextControls = actionAdmin
+        ? controls({ ...admin, ...actionAdmin, version: Number(admin.version ?? 0) + 1 })
+        : nextSlide
+          ? controls({
+              ...admin,
+              state: nextSlide.state,
+              questionIndex: nextSlide.questionIndex,
+              version: Number(admin.version ?? 0) + 1,
+            })
+          : null;
+      if (nextControls) {
+        admin = nextControls;
+        const targetSlide = deckSlides.find(
+          (slide) => slide.state === admin.state && slide.questionIndex === admin.questionIndex,
+        );
+        if (actionProjection) {
+          projection = actionProjection;
+          const nextIndex = deckSlides.findIndex(
+            (slide) => slide.state === admin.state && slide.questionIndex === admin.questionIndex,
+          );
+          if (nextIndex >= 0) {
+            const current = deckSlides[nextIndex]!;
+            deckSlides[nextIndex] = deckSlide(
+              current.state,
+              current.questionIndex,
+              actionProjection as unknown as DeckProjectionFixture,
+            );
+          }
+        } else if (targetSlide) {
+          projection = targetSlide.projection;
+        }
+        return response(controls(admin));
+      }
+      return response({});
     }
     if (path === "/api/admin/presentation?view=controls")
       return options.adminResponse ? options.adminResponse() : response(admin);
@@ -854,11 +894,12 @@ describe("PresentationScreen", () => {
     }
   });
 
-  it("defaults malformed admin control values before applying navigation boundaries", async () => {
+  it("fails closed when admin controls contain malformed values", async () => {
     const api = installApi({
       projection: { state: "question", question },
       admin: {
         state: "question",
+        version: 3,
         questionIndex: "0",
         questionCount: "2",
         projectionHidden: "true",
@@ -877,13 +918,132 @@ describe("PresentationScreen", () => {
         ),
       );
       await flush();
-      expect(windowAddSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
-      fireEvent.keyDown(main, { key: "ArrowLeft" });
+      expect(windowAddSpy).not.toHaveBeenCalledWith("keydown", expect.any(Function));
+      fireEvent.keyDown(main, { key: "ArrowRight" });
       await flush();
       expect(api.actions).toHaveLength(0);
+      expect(screen.getByRole("heading", { name: /ふたりの思い出を/ })).toBeInTheDocument();
     } finally {
       windowAddSpy.mockRestore();
     }
+  });
+
+  it("uses the controls returned by a successful action without an extra controls GET", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+    await screen.findByRole("heading", { name: question.question });
+    await flush();
+    const controlReadsBeforeAction = api.fetchMock.mock.calls.filter(
+      ([path]) => String(path) === "/api/admin/presentation?view=controls",
+    ).length;
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+
+    await waitFor(() => expect(api.actions).toHaveLength(1));
+    expect(await screen.findByText("THE STORY BEHIND IT")).toBeInTheDocument();
+    expect(
+      api.fetchMock.mock.calls.filter(
+        ([path]) => String(path) === "/api/admin/presentation?view=controls",
+      ),
+    ).toHaveLength(controlReadsBeforeAction);
+    expect(api.fetchMock).toHaveBeenCalledWith(
+      "/api/admin/presentation",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("fails closed on an invalid successful action payload and resynchronizes controls", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      actionResponse: async () => response({ ok: true }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+    await screen.findByRole("heading", { name: question.question });
+    await flush();
+    const readsBeforeAction = api.fetchMock.mock.calls.filter(
+      ([path]) => String(path) === "/api/admin/presentation?view=controls",
+    ).length;
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+
+    await waitFor(() =>
+      expect(
+        api.fetchMock.mock.calls.filter(
+          ([path]) => String(path) === "/api/admin/presentation?view=controls",
+        ),
+      ).toHaveLength(readsBeforeAction + 1),
+    );
+    expect(api.actions).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+  });
+
+  it("ignores a controls poll that began before a successful action", async () => {
+    vi.useFakeTimers();
+    let resolveStaleControls!: (value: Response) => void;
+    let controlReads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      adminResponse: () => {
+        controlReads += 1;
+        if (controlReads === 2)
+          return new Promise<Response>((resolve) => {
+            resolveStaleControls = resolve;
+          });
+        return Promise.resolve(response(controls({ state: "question", questionIndex: 0 })));
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(controlReads).toBe(2);
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    await act(async () => {
+      resolveStaleControls(response(controls({ state: "question", questionIndex: 0 })));
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(screen.getByText("THE STORY BEHIND IT")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+  });
+
+  it("resynchronizes after an action error and accepts a later action", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      actionError: 503,
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+    await screen.findByRole("heading", { name: question.question });
+    await flush();
+    const readsBeforeAction = api.fetchMock.mock.calls.filter(
+      ([path]) => String(path) === "/api/admin/presentation?view=controls",
+    ).length;
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await waitFor(() =>
+      expect(
+        api.fetchMock.mock.calls.filter(
+          ([path]) => String(path) === "/api/admin/presentation?view=controls",
+        ),
+      ).toHaveLength(readsBeforeAction + 1),
+    );
+    expect(api.actions).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await waitFor(() => expect(api.actions).toHaveLength(2));
   });
 
   it("renders tied winners immediately when the podium advances", async () => {

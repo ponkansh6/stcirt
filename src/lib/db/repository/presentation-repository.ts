@@ -65,6 +65,11 @@ type AdminPresentation = {
   }[];
 };
 
+export type AdminPresentationControls = Pick<
+  AdminPresentation,
+  "state" | "version" | "questionIndex" | "questionCount" | "projectionHidden"
+>;
+
 type PresentationAnswerSnapshot = {
   questionId: number;
   answerKind: "selected" | "freeText" | "legacy" | "unanswered";
@@ -366,27 +371,30 @@ export async function getAdminPresentation() {
 }
 
 export async function getAdminPresentationControls() {
-  return db.transaction(async (tx) => {
-    const [session] = await tx
-      .select({
-        state: presentationSessions.state,
-        version: presentationSessions.version,
-        questionIndex: presentationSessions.questionIndex,
-        questionCount: presentationSessions.questionCount,
-        projectionHidden: presentationSessions.projectionHidden,
-      })
-      .from(presentationSessions)
-      .where(eq(presentationSessions.id, 1));
-    return (
-      session ?? {
-        state: "not_started" as const,
-        version: 0,
-        questionIndex: 0,
-        questionCount: 0,
-        projectionHidden: false,
-      }
-    );
-  });
+  return db.transaction(readAdminPresentationControls);
+}
+
+async function readAdminPresentationControls(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+): Promise<AdminPresentationControls> {
+  const [session] = await tx
+    .select({
+      state: presentationSessions.state,
+      version: presentationSessions.version,
+      questionIndex: presentationSessions.questionIndex,
+      questionCount: presentationSessions.questionCount,
+      projectionHidden: presentationSessions.projectionHidden,
+    })
+    .from(presentationSessions)
+    .where(eq(presentationSessions.id, 1));
+  const fallback: AdminPresentationControls = {
+    state: "not_started",
+    version: 0,
+    questionIndex: 0,
+    questionCount: 0,
+    projectionHidden: false,
+  };
+  return session ? { ...session, state: session.state as PresentationState } : fallback;
 }
 
 type PublicProjection =
@@ -942,6 +950,21 @@ async function previousState(
 }
 
 export async function operatePresentation(operationId: string, action: PresentationAction) {
+  return operatePresentationWithResponse(operationId, action, readAdminPresentation);
+}
+
+export async function operatePresentationControls(
+  operationId: string,
+  action: PresentationAction,
+): Promise<AdminPresentationControls> {
+  return operatePresentationWithResponse(operationId, action, readAdminPresentationControls);
+}
+
+async function operatePresentationWithResponse<T>(
+  operationId: string,
+  action: PresentationAction,
+  readResponse: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>,
+): Promise<T> {
   if (!presentationActions.has(action))
     throw new PresentationConflictError("Unsupported presentation action");
   try {
@@ -955,7 +978,7 @@ export async function operatePresentation(operationId: string, action: Presentat
         if (operation) {
           if (operation.action !== action)
             throw new PresentationConflictError("Operation ID conflict");
-          return readAdminPresentation(tx);
+          return readResponse(tx);
         }
 
         if (action === "start") {
@@ -963,7 +986,7 @@ export async function operatePresentation(operationId: string, action: Presentat
             throw new PresentationConflictError("Presentation has already started");
           const version = await startPresentation(tx, session);
           await tx.insert(presentationOperations).values({ operationId, action, version });
-          return readAdminPresentation(tx);
+          return readResponse(tx);
         }
         if (action === "hide" || action === "show") {
           const projectionHidden = action === "hide";
@@ -981,7 +1004,7 @@ export async function operatePresentation(operationId: string, action: Presentat
           if (!changed.length)
             throw new PresentationConflictError("Presentation state changed concurrently");
           await tx.insert(presentationOperations).values({ operationId, action, version });
-          return readAdminPresentation(tx);
+          return readResponse(tx);
         }
         if (session.state === "not_started")
           throw new PresentationConflictError("Presentation has not started");
@@ -1006,7 +1029,7 @@ export async function operatePresentation(operationId: string, action: Presentat
         await tx
           .insert(presentationOperations)
           .values({ operationId, action, version: session.version + 1 });
-        return readAdminPresentation(tx);
+        return readResponse(tx);
       }),
     );
   } catch (error) {
@@ -1022,7 +1045,7 @@ export async function operatePresentation(operationId: string, action: Presentat
       if (operation) {
         if (operation.action !== action)
           throw new PresentationConflictError("Operation ID conflict");
-        return readAdminPresentation(tx);
+        return readResponse(tx);
       }
       throw new PresentationConflictError("Presentation state changed concurrently");
     });

@@ -63,10 +63,42 @@ type AdminState = Extract<
 >;
 type AdminControls = {
   state: AdminState;
+  version: number;
   questionIndex: number;
   questionCount: number;
   projectionHidden: boolean;
 };
+const adminStates: AdminState[] = [
+  "not_started",
+  "question",
+  "answer",
+  "podium_preview",
+  "third",
+  "second",
+  "first",
+  "finished",
+];
+
+function parseAdminControls(payload: unknown): AdminControls | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const controls = payload as Record<string, unknown>;
+  if (
+    !adminStates.includes(controls.state as AdminState) ||
+    !Number.isFinite(controls.version) ||
+    !Number.isInteger(controls.version) ||
+    (controls.version as number) < 0 ||
+    !Number.isFinite(controls.questionIndex) ||
+    !Number.isInteger(controls.questionIndex) ||
+    (controls.questionIndex as number) < 0 ||
+    !Number.isFinite(controls.questionCount) ||
+    !Number.isInteger(controls.questionCount) ||
+    (controls.questionCount as number) < 0 ||
+    typeof controls.projectionHidden !== "boolean"
+  ) {
+    return null;
+  }
+  return controls as AdminControls;
+}
 type PresenterDeck = {
   slides: { state: AdminState; questionIndex: number; projection: ProjectionData }[];
 };
@@ -116,15 +148,9 @@ async function getAdminControls(): Promise<AdminControls> {
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok)
     throw Object.assign(new Error("管理状態を取得できませんでした。"), { status: response.status });
-  if (typeof payload !== "object" || payload === null)
-    throw new Error("管理状態を取得できませんでした。");
-  const admin = payload as Record<string, unknown>;
-  return {
-    state: admin.state as AdminState,
-    questionIndex: typeof admin.questionIndex === "number" ? admin.questionIndex : 0,
-    questionCount: typeof admin.questionCount === "number" ? admin.questionCount : 0,
-    projectionHidden: admin.projectionHidden === true,
-  };
+  const controls = parseAdminControls(payload);
+  if (!controls) throw new Error("管理状態を取得できませんでした。");
+  return controls;
 }
 
 async function getPresenterDeck(): Promise<PresenterDeck> {
@@ -145,13 +171,14 @@ async function getPresenterDeck(): Promise<PresenterDeck> {
   return payload as unknown as PresenterDeck;
 }
 
-function projectionForControl(deck: PresenterDeck, controls: AdminControls): ProjectionData {
-  if (controls.projectionHidden) return { state: "standby" };
-  return (
-    deck.slides.find(
-      (slide) => slide.state === controls.state && slide.questionIndex === controls.questionIndex,
-    )?.projection ?? { state: controls.state }
+function projectionForControl(deck: PresenterDeck, controls: AdminControls): ProjectionData | null {
+  if (controls.state === "not_started") return { state: "not_started" };
+  const slide = deck.slides.find(
+    (candidate) =>
+      candidate.state === controls.state && candidate.questionIndex === controls.questionIndex,
   );
+  if (!slide) return null;
+  return controls.projectionHidden ? { state: "standby" } : slide.projection;
 }
 
 async function requestAdminAction(action: AdminAction) {
@@ -165,11 +192,15 @@ async function requestAdminAction(action: AdminAction) {
       action,
     }),
   });
+  const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const error = new Error("操作を反映できませんでした。") as Error & { status?: number };
     error.status = response.status;
     throw error;
   }
+  const controls = parseAdminControls(payload);
+  if (!controls) throw new Error("操作結果を確認できませんでした。");
+  return controls;
 }
 
 const rankTitle: Record<string, string> = { third: "第3位", second: "第2位", first: "第1位" };
@@ -273,7 +304,9 @@ export default function PresentationScreen({
 }) {
   const [data, setData] = useState<ProjectionData | null>(null);
   const [adminControls, setAdminControls] = useState<AdminControls | null>(null);
+  const adminControlsRef = useRef<AdminControls | null>(null);
   const [presenterDeck, setPresenterDeck] = useState<PresenterDeck | null>(null);
+  const [deckSyncPending, setDeckSyncPending] = useState(false);
   const [deckLoadError, setDeckLoadError] = useState(false);
   const presenterDeckRef = useRef<PresenterDeck | null>(null);
   const presenterDeckRequest = useRef<Promise<PresenterDeck> | null>(null);
@@ -294,6 +327,10 @@ export default function PresentationScreen({
   const adminSequence = useRef(0);
   const mutationInFlight = useRef(false);
   const mutationGeneration = useRef(0);
+  const applyAdminControls = useCallback((controls: AdminControls | null) => {
+    adminControlsRef.current = controls;
+    setAdminControls(controls);
+  }, []);
   const applyProjection = useCallback((projection: ProjectionData) => {
     setData(projection);
   }, []);
@@ -341,7 +378,8 @@ export default function PresentationScreen({
           presenterDeckRef.current = null;
           presenterDeckRequest.current = null;
           setPresenterDeck(null);
-          setAdminControls(null);
+          applyAdminControls(null);
+          setDeckSyncPending(false);
           setDeckLoadError(false);
           setData({ state: "standby" });
         }
@@ -349,8 +387,9 @@ export default function PresentationScreen({
       }
       controls = await getAdminControls();
       if (sequence !== adminSequence.current) return;
-      setAdminControls(controls);
       if (controls.state === "not_started") {
+        applyAdminControls(controls);
+        setDeckSyncPending(false);
         setDeckLoadError(false);
         setData({ state: "not_started" });
         return;
@@ -358,6 +397,8 @@ export default function PresentationScreen({
       let deck = presenterDeckRef.current;
       if (!deck) {
         loadingDeck = true;
+        setDeckSyncPending(true);
+        setDeckLoadError(false);
         const request = presenterDeckRequest.current ?? getPresenterDeck();
         presenterDeckRequest.current = request;
         try {
@@ -366,22 +407,60 @@ export default function PresentationScreen({
           if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
         }
         if (sequence !== adminSequence.current) return;
+        setDeckSyncPending(false);
         presenterDeckRef.current = deck;
         setPresenterDeck(deck);
         setDeckLoadError(false);
       }
-      setData(projectionForControl(deck, controls));
+      let projection = projectionForControl(deck, controls);
+      if (!projection) {
+        // Cached slides may belong to a different cursor/session. Disable actions
+        // before discarding them, then require a fresh deck that matches controls.
+        applyAdminControls(null);
+        presenterDeckRef.current = null;
+        presenterDeckRequest.current = null;
+        setPresenterDeck(null);
+        setDeckSyncPending(true);
+        setDeckLoadError(false);
+        loadingDeck = true;
+        const request = getPresenterDeck();
+        presenterDeckRequest.current = request;
+        try {
+          deck = await request;
+        } finally {
+          if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
+        }
+        if (sequence !== adminSequence.current) return;
+        projection = projectionForControl(deck, controls);
+        if (!projection) {
+          // Keep actions disabled and let the next poll attempt a new deck again.
+          setDeckSyncPending(false);
+          setDeckLoadError(true);
+          return;
+        }
+        setDeckSyncPending(false);
+        presenterDeckRef.current = deck;
+        setPresenterDeck(deck);
+      }
+      applyAdminControls(controls);
+      setDeckLoadError(false);
+      setData(projection);
     } catch {
       if (sequence === adminSequence.current) {
-        if (loadingDeck && controls) setDeckLoadError(true);
-        else setAdminControls(null);
+        setDeckSyncPending(false);
+        if (loadingDeck) {
+          setDeckLoadError(true);
+        }
+        applyAdminControls(null);
       }
     }
-  }, []);
+  }, [applyAdminControls]);
 
   useEffect(() => {
     if (!presenterRequested) {
-      setAdminControls(null);
+      applyAdminControls(null);
+      setDeckSyncPending(false);
+      setDeckLoadError(false);
       return;
     }
     let active = true;
@@ -395,16 +474,18 @@ export default function PresentationScreen({
       active = false;
       window.clearInterval(timer);
     };
-  }, [presenterRequested, refreshAdmin]);
+  }, [applyAdminControls, presenterRequested, refreshAdmin]);
 
   const recoverUnauthorized = useCallback(() => {
-    setAdminControls(null);
+    adminSequence.current += 1;
+    applyAdminControls(null);
     presenterDeckRef.current = null;
     presenterDeckRequest.current = null;
     setPresenterDeck(null);
+    setDeckSyncPending(false);
     setDeckLoadError(false);
     setData({ state: "standby" });
-  }, []);
+  }, [applyAdminControls]);
 
   const requestFullscreenForIntent = useCallback(() => {
     if (fullscreenAttempted.current) return;
@@ -420,31 +501,56 @@ export default function PresentationScreen({
 
   const operate = useCallback(
     async (action: AdminAction) => {
-      if (!adminControls || !presenterDeckRef.current || !presenterDeck || mutationInFlight.current)
-        return;
+      const currentControls = adminControlsRef.current;
+      const currentDeck = presenterDeckRef.current;
+      if (!currentControls || !currentDeck || mutationInFlight.current) return;
       requestFullscreenForIntent();
-      mutationGeneration.current += 1;
+      const generation = ++mutationGeneration.current;
+      // Any poll already in flight predates this mutation and must not win later.
+      adminSequence.current += 1;
       mutationInFlight.current = true;
-      const currentSlideIndex = presenterDeck.slides.findIndex(
+      const currentSlideIndex = currentDeck.slides.findIndex(
         (slide) =>
-          slide.state === adminControls.state &&
-          slide.questionIndex === adminControls.questionIndex,
+          slide.state === currentControls.state &&
+          slide.questionIndex === currentControls.questionIndex,
       );
       const optimisticSlide =
         currentSlideIndex < 0
-          ? undefined
-          : presenterDeck.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
+          ? /* v8 ignore next */ undefined // Unreachable: operate requires an aligned controls/deck cursor.
+          : currentDeck.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
       if (optimisticSlide) {
         setData(optimisticSlide.projection);
       }
       try {
-        await requestAdminAction(action);
-        await refreshAdmin();
+        const confirmedControls = await requestAdminAction(action);
+        const confirmedProjection =
+          confirmedControls.state === "not_started" || confirmedControls.projectionHidden
+            ? projectionForControl(currentDeck, confirmedControls)
+            : currentDeck.slides.find(
+                (slide) =>
+                  slide.state === confirmedControls.state &&
+                  slide.questionIndex === confirmedControls.questionIndex,
+              )?.projection;
+        if (!confirmedProjection) {
+          // The server cursor does not belong to this cached deck. Re-fetch both
+          // controls and deck before allowing another operation.
+          applyAdminControls(null);
+          presenterDeckRef.current = null;
+          setPresenterDeck(null);
+          setDeckLoadError(false);
+          setData({ state: confirmedControls.state });
+          await refreshAdmin();
+        } else {
+          applyAdminControls(confirmedControls);
+          setData(confirmedProjection);
+        }
       } catch (error) {
         const status = (error as { status?: number })?.status;
         if (status === 401) recoverUnauthorized();
         if (status !== 401) {
-          setData(projectionForControl(presenterDeck, adminControls));
+          // A failed or malformed response may follow a committed POST. Keep the
+          // current view until authoritative controls/deck state can be fetched.
+          applyAdminControls(null);
           try {
             await refreshAdmin();
           } catch {
@@ -452,10 +558,14 @@ export default function PresentationScreen({
           }
         }
       } finally {
-        mutationInFlight.current = false;
+        // Single-flight prevents another mutation from changing this generation.
+        /* v8 ignore else */
+        if (generation === mutationGeneration.current) {
+          mutationInFlight.current = false;
+        }
       }
     },
-    [adminControls, presenterDeck, recoverUnauthorized, refreshAdmin, requestFullscreenForIntent],
+    [applyAdminControls, recoverUnauthorized, refreshAdmin, requestFullscreenForIntent],
   );
 
   useEffect(() => {
@@ -617,9 +727,9 @@ export default function PresentationScreen({
   const state = data?.state;
   const loadingPresenterDeck =
     presenterRequested &&
-    adminControls !== null &&
-    adminControls.state !== "not_started" &&
-    presenterDeck === null;
+    (deckSyncPending ||
+      deckLoadError ||
+      (adminControls !== null && adminControls.state !== "not_started" && presenterDeck === null));
 
   useLayoutEffect(() => {
     const viewport = fitViewportRef.current!;

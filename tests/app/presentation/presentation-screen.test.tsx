@@ -34,10 +34,15 @@ function setup(
     projection?: Record<string, unknown>;
     admin?: Record<string, unknown>;
     actionAdmin?: Record<string, unknown>;
+    actionPayload?: unknown;
+    actionInvalidJson?: boolean;
+    commitBeforeActionError?: boolean;
     authenticated?: boolean;
     actionStatus?: number;
     actionGate?: () => Promise<void>;
+    sessionGetter?: () => Promise<Response>;
     projectionGetter?: () => Promise<Response>;
+    controlsGetter?: () => Promise<Response>;
     deckGetter?: () => Promise<Response>;
     deckSlides?: DeckSlideFixture[];
   } = {},
@@ -52,15 +57,61 @@ function setup(
       choices: ["海", "山"],
     },
   };
-  let admin = options.admin ?? {
+  let admin = {
     state: "question",
+    version: 0,
     questionIndex: 0,
     questionCount: 5,
     projectionHidden: false,
+    ...options.admin,
+  };
+  const transition = (action: "advance" | "previous") => {
+    const { state, questionIndex, questionCount } = admin as {
+      state: string;
+      questionIndex: number;
+      questionCount: number;
+      version: number;
+      projectionHidden: boolean;
+    };
+    const order = Array.from({ length: questionCount }, (_, index) => [
+      { state: "question", questionIndex: index },
+      { state: "answer", questionIndex: index },
+    ]).flat();
+    order.push(
+      { state: "podium_preview", questionIndex: questionCount },
+      { state: "third", questionIndex: questionCount },
+      { state: "second", questionIndex: questionCount },
+      { state: "first", questionIndex: questionCount },
+      { state: "finished", questionIndex: questionCount },
+    );
+    const current = order.findIndex(
+      (slide) => slide.state === state && slide.questionIndex === questionIndex,
+    );
+    const next = order[current + (action === "advance" ? 1 : -1)];
+    if (current < 0 || !next) return admin;
+    return {
+      ...admin,
+      ...next,
+      version: Number((admin as { version?: number }).version ?? 0) + 1,
+    };
   };
   const slideProjection = (state: DeckProjectionFixture["state"]): DeckProjectionFixture =>
     state === "question" || state === "answer"
-      ? ({ ...(projection as Record<string, unknown>), state } as DeckProjectionFixture)
+      ? ({
+          ...(projection as Record<string, unknown>),
+          state,
+          ...(state === "answer" &&
+          typeof (projection as Record<string, unknown>).question === "object" &&
+          (projection as Record<string, unknown>).question !== null
+            ? {
+                question: {
+                  ...((projection as Record<string, unknown>).question as Record<string, unknown>),
+                  correctIndex: 0,
+                  explanation: "ふたりの思い出です。",
+                },
+              }
+            : {}),
+        } as DeckProjectionFixture)
       : state === "third" || state === "second" || state === "first"
         ? { state, winners: [] }
         : { state };
@@ -103,13 +154,31 @@ function setup(
     if (path === "/api/presentation")
       return options.projectionGetter ? options.projectionGetter() : response(projection);
     if (path === "/api/admin/session")
-      return response({ authenticated: options.authenticated ?? true });
+      return options.sessionGetter
+        ? options.sessionGetter()
+        : response({ authenticated: options.authenticated ?? true });
     if (path === "/api/admin/presentation" && init?.method === "POST") {
       await options.actionGate?.();
-      if (options.actionAdmin) admin = options.actionAdmin;
-      return response({}, options.actionStatus ?? 200);
+      const status = options.actionStatus ?? 200;
+      if ((status >= 200 && status < 300) || options.commitBeforeActionError) {
+        const action = JSON.parse(String(init.body)).action as "advance" | "previous";
+        admin = options.actionAdmin
+          ? {
+              ...admin,
+              ...options.actionAdmin,
+              version: Number((admin as { version?: number }).version ?? 0) + 1,
+            }
+          : transition(action);
+      }
+      if (options.actionInvalidJson && status >= 200 && status < 300)
+        return new Response("not-json", { status });
+      return response(
+        status >= 200 && status < 300 ? (options.actionPayload ?? admin) : admin,
+        status,
+      );
     }
-    if (path === "/api/admin/presentation?view=controls") return response(admin);
+    if (path === "/api/admin/presentation?view=controls")
+      return options.controlsGetter ? options.controlsGetter() : response(admin);
     if (path === "/api/admin/presentation/deck")
       return options.deckGetter
         ? options.deckGetter()
@@ -470,8 +539,8 @@ describe("presentation projection and presenter progression", () => {
     await settled();
     expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(1);
     expect(
-      api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls").length,
-    ).toBeGreaterThanOrEqual(2);
+      api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls"),
+    ).toHaveLength(1);
     expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(0);
   });
 
@@ -541,20 +610,239 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.queryByRole("heading", { name: "思い出の場所は？" })).not.toBeInTheDocument();
   });
 
-  it("uses control state when the loaded deck has no matching slide", async () => {
-    const api = setup({ deckGetter: async () => response({ slides: [] }) });
+  it("fails closed when the loaded deck does not contain the authoritative control cursor", async () => {
+    const api = setup({
+      deckGetter: async () =>
+        response({
+          slides: [
+            {
+              state: "question",
+              questionIndex: 1,
+              projection: { state: "question", question: { question: "別の質問" } },
+            },
+          ],
+        }),
+    });
     render(<PresentationScreen presenterRequested />);
-    await settled();
+    expect(await screen.findByText("スライドを読み込めませんでした")).toBeInTheDocument();
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    await waitFor(() =>
+    await settled();
+    expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(2);
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("re-fetches an initially mismatched deck and displays the matching cursor", async () => {
+    let deckReads = 0;
+    const api = setup({
+      deckGetter: async () => {
+        deckReads += 1;
+        return response({
+          slides:
+            deckReads === 1
+              ? [
+                  {
+                    state: "question",
+                    questionIndex: 1,
+                    projection: {
+                      state: "question",
+                      question: { question: "古いカーソル" },
+                    },
+                  },
+                ]
+              : [
+                  {
+                    state: "question",
+                    questionIndex: 0,
+                    projection: {
+                      state: "question",
+                      question: {
+                        ordinal: 1,
+                        total: 5,
+                        question: "再取得した質問",
+                        choices: ["回答A"],
+                      },
+                    },
+                  },
+                ],
+        });
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+
+    expect(await screen.findByRole("heading", { name: "再取得した質問" })).toBeInTheDocument();
+    expect(deckReads).toBe(2);
+    expect(screen.queryByText("古いカーソル")).not.toBeInTheDocument();
+    expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(2);
+  });
+
+  it("discards a pending replacement deck after the presenter session expires", async () => {
+    vi.useFakeTimers();
+    let resolveReplacementDeck!: (value: Response) => void;
+    const replacementDeck = new Promise<Response>((resolve) => {
+      resolveReplacementDeck = resolve;
+    });
+    let sessionReads = 0;
+    let deckReads = 0;
+    const api = setup({
+      sessionGetter: async () => {
+        sessionReads += 1;
+        return response({ authenticated: sessionReads === 1 });
+      },
+      deckGetter: async () => {
+        deckReads += 1;
+        if (deckReads === 1)
+          return response({
+            slides: [
+              {
+                state: "question",
+                questionIndex: 1,
+                projection: { state: "question", question: { question: "違うカーソル" } },
+              },
+            ],
+          });
+        return replacementDeck;
+      },
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+
+    try {
+      await settled();
+      expect(deckReads).toBe(2);
+      expect(screen.getByText("スライドを読み込んでいます")).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+      await settled();
+      expect(sessionReads).toBe(2);
+      expect(screen.getByText("ただいま休憩中です")).toBeInTheDocument();
+
+      await act(async () => {
+        resolveReplacementDeck(
+          response({
+            slides: [
+              {
+                state: "question",
+                questionIndex: 0,
+                projection: {
+                  state: "question",
+                  question: { ordinal: 1, total: 5, question: "古い再取得結果", choices: ["A"] },
+                },
+              },
+            ],
+          }),
+        );
+        await replacementDeck;
+      });
+      await settled();
+
+      expect(screen.getByText("ただいま休憩中です")).toBeInTheDocument();
+      expect(screen.queryByText("古い再取得結果")).not.toBeInTheDocument();
       expect(
         api.calls.filter(
           ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
         ),
-      ).toHaveLength(1),
-    );
-    expect(screen.getByRole("main")).toBeInTheDocument();
+      ).toHaveLength(0);
+    } finally {
+      resolveReplacementDeck(response({ slides: [] }));
+      await act(async () => {
+        await replacementDeck;
+      });
+      await settled();
+      view.unmount();
+    }
+  });
+
+  it("uses the newest controls when an older deck refresh finishes late", async () => {
+    vi.useFakeTimers();
+    let resolveDeck!: (value: Response) => void;
+    const deckPending = new Promise<Response>((resolve) => {
+      resolveDeck = resolve;
+    });
+    let controlsReads = 0;
+    const api = setup({
+      controlsGetter: async () => {
+        controlsReads += 1;
+        return response(
+          controlsReads === 1
+            ? {
+                state: "question",
+                version: 0,
+                questionIndex: 0,
+                questionCount: 5,
+                projectionHidden: false,
+              }
+            : {
+                state: "answer",
+                version: 1,
+                questionIndex: 0,
+                questionCount: 5,
+                projectionHidden: false,
+              },
+        );
+      },
+      deckGetter: () => deckPending,
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+
+    try {
+      await settled();
+      expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(
+        1,
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+      await settled();
+      expect(controlsReads).toBe(2);
+
+      await act(async () => {
+        resolveDeck(
+          response({
+            slides: [
+              {
+                state: "question",
+                questionIndex: 0,
+                projection: {
+                  state: "question",
+                  question: { ordinal: 1, total: 5, question: "質問", choices: ["A"] },
+                },
+              },
+              {
+                state: "answer",
+                questionIndex: 0,
+                projection: {
+                  state: "answer",
+                  question: {
+                    ordinal: 1,
+                    total: 5,
+                    question: "最新controlsの回答",
+                    choices: ["A"],
+                    correctIndex: 0,
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        await deckPending;
+      });
+      await settled();
+      expect(screen.getByText("正解")).toBeInTheDocument();
+      expect(screen.getByText("最新controlsの回答")).toBeInTheDocument();
+    } finally {
+      resolveDeck(response({ slides: [] }));
+      await act(async () => {
+        await deckPending;
+      });
+      await settled();
+      view.unmount();
+    }
   });
 
   it("renders a rank slide without winners statically", async () => {
@@ -696,6 +984,136 @@ describe("presentation projection and presenter progression", () => {
         ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
       ),
     ).toHaveLength(1);
+  });
+
+  it("reconciles a malformed successful mutation response from authoritative controls", async () => {
+    const api = setup({ actionPayload: { state: "answer" } });
+    render(<PresentationScreen presenterRequested />);
+    await settled();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    expect(await screen.findByText("正解")).toBeInTheDocument();
+    await settled();
+
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+    expect(
+      api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls").length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("reconciles a successful mutation response with invalid JSON", async () => {
+    const api = setup({ actionInvalidJson: true });
+    render(<PresentationScreen presenterRequested />);
+    await settled();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    expect(await screen.findByText("正解")).toBeInTheDocument();
+    await settled();
+
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+    expect(
+      api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls"),
+    ).toHaveLength(2);
+  });
+
+  it("reconciles a confirmed cursor that is absent from the cached deck", async () => {
+    let deckReads = 0;
+    let releaseAction!: () => void;
+    const actionGate = new Promise<void>((resolve) => {
+      releaseAction = resolve;
+    });
+    const api = setup({
+      actionAdmin: { state: "answer", questionIndex: 1 },
+      actionGate: () => actionGate,
+      deckGetter: async () => {
+        deckReads += 1;
+        return response({
+          slides:
+            deckReads === 1
+              ? [
+                  {
+                    state: "question",
+                    questionIndex: 0,
+                    projection: {
+                      state: "question",
+                      question: { ordinal: 1, total: 5, question: "現在の質問", choices: ["A"] },
+                    },
+                  },
+                ]
+              : [
+                  {
+                    state: "answer",
+                    questionIndex: 1,
+                    projection: {
+                      state: "answer",
+                      question: {
+                        ordinal: 2,
+                        total: 5,
+                        question: "同期後カーソル",
+                        choices: ["A"],
+                        correctIndex: 0,
+                      },
+                    },
+                  },
+                ],
+        });
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await settled();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await settled();
+    expect(screen.getByText("現在の質問")).toBeInTheDocument();
+    expect(screen.queryByText("同期後カーソル")).not.toBeInTheDocument();
+    await act(async () => {
+      releaseAction();
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("同期後カーソル")).toBeInTheDocument();
+    expect(deckReads).toBe(2);
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("uses the not-started projection returned by a protected mutation", async () => {
+    setup({ actionAdmin: { state: "not_started", questionIndex: 0 } });
+    render(<PresentationScreen presenterRequested />);
+    await settled();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    expect(await screen.findByText("発表が始まるまで、少々お待ちください")).toBeInTheDocument();
+  });
+
+  it("reconciles a failed response after a possibly committed mutation without retrying", async () => {
+    const api = setup({ actionStatus: 503, commitBeforeActionError: true });
+    render(<PresentationScreen presenterRequested />);
+    await settled();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    expect(await screen.findByText("正解")).toBeInTheDocument();
+    await settled();
+
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+    expect(
+      api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls").length,
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it("retries a failed public projection poll and keeps the viewport shell", async () => {

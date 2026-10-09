@@ -5,9 +5,9 @@ import {
   isValidAdminMutation,
 } from "@/lib/presentation/admin-auth";
 import {
-  getAdminPresentationControls,
   getAdminPresentation,
-  operatePresentation,
+  getAdminPresentationControls,
+  operatePresentationControls,
   PresentationConflictError,
 } from "@/lib/db/repository/presentation-repository";
 
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400, headers: noStore });
   }
   try {
-    const result = await operatePresentation(value.operationId, value.action);
+    const result = await operatePresentationControls(value.operationId, value.action);
     return NextResponse.json(
       {
         state: result.state,

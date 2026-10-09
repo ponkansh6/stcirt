@@ -1,6 +1,7 @@
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
+import type { Logger } from "drizzle-orm/logger";
 import * as schema from "@/lib/db/schema";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,10 +15,10 @@ import { join } from "node:path";
  * connection is a separate empty database, so writes inside a transaction
  * would not be visible to subsequent reads on the original connection.
  */
-export async function createTestDb() {
+export async function createTestDb(options: { logger?: Logger } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "study-test-"));
   const client = createClient({ url: `file:${dir}/test.db` });
-  const db = drizzle({ client, schema });
+  const db = drizzle({ client, schema, logger: options.logger });
   await migrate(db, { migrationsFolder: "./src/lib/db/migrations" });
   return {
     db,

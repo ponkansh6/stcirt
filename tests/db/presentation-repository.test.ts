@@ -23,12 +23,23 @@ import {
   getParticipantResult,
   getPublicPresentation,
   operatePresentation,
+  operatePresentationControls,
   PresentationConflictError,
   setParticipantResultsVisible,
 } from "@/lib/db/repository/presentation-repository";
 import { getPresentationOperationDiagnostics } from "@/lib/presentation/operation-diagnostics";
 
-async function commitWinnerThenRaiseAdapterUniqueConflict(operationId: string) {
+function commitWinnerThenRaiseAdapterUniqueConflict(
+  operationId: string,
+): Promise<Awaited<ReturnType<typeof operatePresentation>>>;
+function commitWinnerThenRaiseAdapterUniqueConflict<T>(
+  operationId: string,
+  run: () => Promise<T>,
+): Promise<T>;
+async function commitWinnerThenRaiseAdapterUniqueConflict(
+  operationId: string,
+  run?: () => Promise<unknown>,
+): Promise<unknown> {
   const database = dbRef.db!;
   const originalTransaction = database.transaction.bind(database);
   let intercept = true;
@@ -50,7 +61,7 @@ async function commitWinnerThenRaiseAdapterUniqueConflict(operationId: string) {
     })();
   });
   try {
-    return await operatePresentation(operationId, "advance");
+    return await (run ?? (() => operatePresentation(operationId, "advance")))();
   } finally {
     transactionSpy.mockRestore();
   }
@@ -774,6 +785,31 @@ describe("presentation repository", () => {
     expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
   });
 
+  it("returns lightweight controls for new and replayed operations while preserving full callers", async () => {
+    await addQuestions();
+
+    const controls = await operatePresentationControls("controls-start", "start");
+    expect(controls).toEqual({
+      state: "question",
+      version: 1,
+      questionIndex: 0,
+      questionCount: 2,
+      projectionHidden: false,
+    });
+    await expect(operatePresentationControls("controls-start", "start")).resolves.toEqual(controls);
+
+    const fullSnapshot = await operatePresentation("controls-start", "start");
+    expect(fullSnapshot).toMatchObject({
+      state: "question",
+      version: 1,
+      questionCount: 2,
+      participantResultsVisible: false,
+      participantResultsReady: true,
+    });
+    expect(fullSnapshot.questions).toHaveLength(2);
+    expect(fullSnapshot.entries).toEqual([]);
+  });
+
   it("rebuilds the shared snapshot on republish while start and repeated publication reuse it", async () => {
     await addQuestions();
     const participant = await addParticipant("Participant");
@@ -1390,6 +1426,29 @@ describe("presentation repository", () => {
     const recovered = await commitWinnerThenRaiseAdapterUniqueConflict("adapter-retry");
 
     expect(recovered).toMatchObject({ state: "answer", questionIndex: 0, version: 2 });
+    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
+  });
+
+  it("returns controls when recovering an operation committed by a concurrent retry", async () => {
+    await addQuestions();
+    await operatePresentation("controls-race-start", "start");
+
+    const recovered = await commitWinnerThenRaiseAdapterUniqueConflict(
+      "controls-race-advance",
+      () => operatePresentationControls("controls-race-advance", "advance"),
+    );
+
+    expect(recovered).toEqual({
+      state: "answer",
+      version: 2,
+      questionIndex: 0,
+      questionCount: 2,
+      projectionHidden: false,
+    });
+    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
+    await expect(operatePresentationControls("controls-race-advance", "advance")).resolves.toEqual(
+      recovered,
+    );
     expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(2);
   });
 

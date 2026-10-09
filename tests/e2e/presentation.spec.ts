@@ -99,6 +99,13 @@ async function installAdminApiMock(
     participantResultsVisible,
     participantResultsReady: snapshotExists,
   });
+  const controlsPayload = () => ({
+    state,
+    version,
+    questionIndex,
+    questionCount: questions.length,
+    projectionHidden,
+  });
   const deck = () => ({
     slides: (
       ["question", "answer", "podium_preview", "third", "second", "first", "finished"] as const
@@ -180,9 +187,8 @@ async function installAdminApiMock(
               return;
             }
             if (new URL(route.request().url()).searchParams.get("view") === "controls") {
-              await route.fulfill({
-                json: { state, questionIndex, questionCount: questions.length, projectionHidden },
-              });
+              presentationRouteEvents.push("controls:get");
+              await route.fulfill({ json: controlsPayload() });
               return;
             }
             await route.fulfill({ json: payload() });
@@ -243,7 +249,7 @@ async function installAdminApiMock(
           } else if (body.action === "hide") projectionHidden = true;
           else if (body.action === "show") projectionHidden = false;
           version += 1;
-          await route.fulfill({ json: payload() });
+          await route.fulfill({ json: controlsPayload() });
         },
       ),
     )
@@ -423,6 +429,14 @@ function nextAdminRefresh(page: import("@playwright/test").Page) {
   );
 }
 
+function nextAdminMutation(page: import("@playwright/test").Page) {
+  return page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/admin/presentation" &&
+      response.request().method() === "POST",
+  );
+}
+
 function slideFor(page: import("@playwright/test").Page, state: PresentationState) {
   switch (state) {
     case "question":
@@ -458,7 +472,7 @@ async function advanceTo(page: import("@playwright/test").Page, target: Presenta
   if (targetIndex < 0) throw new Error(`Invalid projection target: ${target}`);
   await expect(slideFor(page, "question")).toBeVisible();
   for (let index = 0; index < targetIndex; index += 1) {
-    const adminRefresh = nextAdminRefresh(page);
+    const adminRefresh = nextAdminMutation(page);
     await page.locator("main").press("ArrowRight");
     await expect(slideFor(page, stages[index + 1])).toBeVisible();
     await adminRefresh;
@@ -535,18 +549,18 @@ test("keyboard and horizontal swipe progress once and honor stage boundaries", a
   const main = page.locator("main");
   await main.press("ArrowLeft");
   expect(mock.getPresentationState().state).toBe("question");
-  const answerRefresh = nextAdminRefresh(page);
+  const answerRefresh = nextAdminMutation(page);
   await main.press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
   await answerRefresh;
-  const podiumRefresh = nextAdminRefresh(page);
+  const podiumRefresh = nextAdminMutation(page);
   await main.press("Space");
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
   await podiumRefresh;
 
   const box = await main.boundingBox();
   if (!box) throw new Error("Projection wrapper is missing");
-  const thirdRefresh = nextAdminRefresh(page);
+  const thirdRefresh = nextAdminMutation(page);
   await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2, { steps: 5 });
@@ -555,7 +569,7 @@ test("keyboard and horizontal swipe progress once and honor stage boundaries", a
   await thirdRefresh;
   await waitForRenderFrames(page);
   expect(mock.actionLog.filter((action) => action === "advance")).toHaveLength(3);
-  const secondRefresh = nextAdminRefresh(page);
+  const secondRefresh = nextAdminMutation(page);
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, { steps: 5 });
@@ -566,6 +580,45 @@ test("keyboard and horizontal swipe progress once and honor stage boundaries", a
   await secondRefresh;
   await waitForRenderFrames(page);
   expect(mock.actionLog.filter((action) => action === "previous")).toHaveLength(1);
+});
+
+test("successful presenter mutations return controls and do not trigger a controls refresh", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+  const controlsReadsBefore = mock
+    .getPresentationRouteEvents()
+    .filter((event) => event === "controls:get").length;
+  const mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  const response = await mutation;
+  await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  await expect(response.json()).resolves.toEqual({
+    state: "answer",
+    version: 2,
+    questionIndex: 0,
+    questionCount: 1,
+    projectionHidden: false,
+  });
+  const unexpectedControlsRead = await page
+    .waitForResponse(
+      (candidate) =>
+        new URL(candidate.url()).pathname === "/api/admin/presentation" &&
+        new URL(candidate.url()).searchParams.get("view") === "controls" &&
+        candidate.request().method() === "GET",
+      { timeout: 200 },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+  expect(unexpectedControlsRead).toBe(false);
+  expect(
+    mock.getPresentationRouteEvents().filter((event) => event === "controls:get"),
+  ).toHaveLength(controlsReadsBefore);
 });
 
 test("Enter advances while repeat, modifiers, and interactive targets are ignored", async ({
@@ -604,7 +657,7 @@ test("finished presenter can return to the last existing rank", async ({ page })
   await startPresentation(page);
   await openPresenter(page);
   await advanceTo(page, "finished");
-  const previousRefresh = nextAdminRefresh(page);
+  const previousRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowLeft");
   await expect(slideFor(page, "first")).toBeVisible();
   await previousRefresh;
@@ -713,16 +766,16 @@ test("rank content is static on every entry and the slide fits the viewport", as
     expect(geometry.hasBottomline).toBe(false);
     expect(geometry.background).toBe("rgb(255, 255, 255)");
   }
-  const previousRefresh = nextAdminRefresh(page);
+  const previousRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowLeft");
   await expect(slideFor(page, "podium_preview")).toBeVisible();
   await previousRefresh;
-  const replayRefresh = nextAdminRefresh(page);
+  const replayRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "third")).toBeVisible();
   await replayRefresh;
   await expect(page.getByRole("region", { name: "第3位の勝者一覧" })).not.toHaveClass(/announce/);
-  const secondRefresh = nextAdminRefresh(page);
+  const secondRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "second")).toBeVisible();
   await secondRefresh;
@@ -792,7 +845,7 @@ test("every stage keeps its fixture text inside the canvas content bounds", asyn
 
     const nextStage = stages[index + 1];
     if (!nextStage) continue;
-    const adminRefresh = nextAdminRefresh(page);
+    const adminRefresh = nextAdminMutation(page);
     await page.locator("main").press("ArrowRight");
     await expect(slideFor(page, nextStage.state)).toBeVisible();
     await adminRefresh;
@@ -1126,7 +1179,7 @@ test("first presenter progression requests fullscreen before mutation and ignore
   await startPresentation(page);
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(0);
   await openPresenter(page);
-  let adminRefresh = nextAdminRefresh(page);
+  let adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
   await adminRefresh;
@@ -1135,7 +1188,7 @@ test("first presenter progression requests fullscreen before mutation and ignore
     "mutation",
   ]);
   await page.keyboard.press("Escape");
-  adminRefresh = nextAdminRefresh(page);
+  adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
   await adminRefresh;
@@ -1161,12 +1214,12 @@ test("unsupported fullscreen keeps presenter progression working and is not retr
   await startPresentation(page);
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(0);
   await openPresenter(page);
-  let adminRefresh = nextAdminRefresh(page);
+  let adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
   await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
-  adminRefresh = nextAdminRefresh(page);
+  adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
   await adminRefresh;
@@ -1204,13 +1257,13 @@ test("a successful fullscreen request can exit through Escape without automatic 
   await signIn(page);
   await startPresentation(page);
   await openPresenter(page);
-  let adminRefresh = nextAdminRefresh(page);
+  let adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
   await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
   await page.keyboard.press("Escape");
-  adminRefresh = nextAdminRefresh(page);
+  adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
   await adminRefresh;

@@ -10,7 +10,7 @@ vi.mock("@/lib/presentation/admin-auth", () => ({
 vi.mock("@/lib/db/repository/presentation-repository", () => ({
   getAdminPresentation: vi.fn(),
   getAdminPresentationControls: vi.fn(),
-  operatePresentation: vi.fn(),
+  operatePresentationControls: vi.fn(),
   PresentationConflictError: class PresentationConflictError extends Error {
     readonly status = 409;
   },
@@ -19,7 +19,7 @@ vi.mock("@/lib/db/repository/presentation-repository", () => ({
 import {
   getAdminPresentation,
   getAdminPresentationControls,
-  operatePresentation,
+  operatePresentationControls,
   PresentationConflictError,
 } from "@/lib/db/repository/presentation-repository";
 import {
@@ -40,6 +40,13 @@ const adminPayload = {
   questions: [],
   entries: [],
 } satisfies Awaited<ReturnType<typeof getAdminPresentation>>;
+const controlsPayload = {
+  state: "question",
+  version: 1,
+  questionIndex: 0,
+  questionCount: 1,
+  projectionHidden: false,
+} satisfies Awaited<ReturnType<typeof getAdminPresentationControls>>;
 
 function request(
   method: "GET" | "POST",
@@ -69,7 +76,7 @@ beforeEach(() => {
     questionCount: 1,
     projectionHidden: false,
   });
-  vi.mocked(operatePresentation).mockResolvedValue(adminPayload);
+  vi.mocked(operatePresentationControls).mockResolvedValue(controlsPayload);
 });
 
 afterEach(() => {
@@ -160,7 +167,7 @@ describe("/api/admin/presentation route", () => {
     const invalidOrigin = await POST(request("POST", { body: {} }));
     expect(invalidOrigin.status).toBe(403);
     expect(invalidOrigin.headers.get("cache-control")).toBe("no-store, private");
-    expect(operatePresentation).not.toHaveBeenCalled();
+    expect(operatePresentationControls).not.toHaveBeenCalled();
   });
 
   it("rejects malformed JSON and invalid operation fields", async () => {
@@ -184,29 +191,29 @@ describe("/api/admin/presentation route", () => {
       expect(response.status).toBe(400);
       expect(response.headers.get("cache-control")).toBe("no-store, private");
     }
-    expect(operatePresentation).not.toHaveBeenCalled();
+    expect(operatePresentationControls).not.toHaveBeenCalled();
   });
 
   it.each(["start", "advance", "previous", "hide", "show"] as const)(
-    "operates %s without a mode and returns the admin payload",
+    "operates %s without a mode and returns compact controls",
     async (action) => {
       const response = await POST(request("POST", { body: { operationId, action } }));
 
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store, private");
       await expect(response.json()).resolves.toEqual({
-        state: adminPayload.state,
-        version: adminPayload.version,
-        questionIndex: adminPayload.questionIndex,
-        questionCount: adminPayload.questionCount,
-        projectionHidden: adminPayload.projectionHidden,
+        state: controlsPayload.state,
+        version: controlsPayload.version,
+        questionIndex: controlsPayload.questionIndex,
+        questionCount: controlsPayload.questionCount,
+        projectionHidden: controlsPayload.projectionHidden,
       });
-      expect(operatePresentation).toHaveBeenCalledWith(operationId, action);
+      expect(operatePresentationControls).toHaveBeenCalledWith(operationId, action);
     },
   );
 
   it("returns state conflicts as 409", async () => {
-    vi.mocked(operatePresentation).mockRejectedValueOnce(
+    vi.mocked(operatePresentationControls).mockRejectedValueOnce(
       new PresentationConflictError("Presentation is already at its first state"),
     );
     const response = await POST(request("POST", { body: { operationId, action: "previous" } }));
@@ -219,7 +226,7 @@ describe("/api/admin/presentation route", () => {
   });
 
   it("returns unavailable for unexpected operation errors", async () => {
-    vi.mocked(operatePresentation).mockRejectedValueOnce(new Error("database unavailable"));
+    vi.mocked(operatePresentationControls).mockRejectedValueOnce(new Error("database unavailable"));
     const response = await POST(request("POST", { body: { operationId, action: "advance" } }));
 
     expect(response.status).toBe(503);
