@@ -308,17 +308,17 @@ describe("presentation projection and presenter progression", () => {
     [
       "third",
       { state: "third", winners: [{ displayName: "葵", score: 8.25, rank: 3 }] },
-      ["3位", "8.25 ポイント", "葵", "第3位", "おめでとうございます"],
+      ["第3位", "8.25 ポイント", "葵"],
     ],
     [
       "second",
       { state: "second", winners: [{ displayName: "凛", score: 9.5, rank: 2 }] },
-      ["2位", "9.50 ポイント", "凛", "第2位", "おめでとうございます"],
+      ["第2位", "9.50 ポイント", "凛"],
     ],
     [
       "first",
       { state: "first", winners: [{ displayName: "悠", score: 10, rank: 1 }] },
-      ["1位", "10.00 ポイント", "悠", "第1位", "おめでとうございます"],
+      ["第1位", "10.00 ポイント", "悠"],
     ],
     [
       "finished",
@@ -346,13 +346,25 @@ describe("presentation projection and presenter progression", () => {
         projection.state === "second" ||
         projection.state === "first"
       ) {
+        const rank = slide.querySelector("[class*='rank']");
         const winner = slide.querySelector("article");
-        expect(winner?.textContent?.indexOf("位")).toBeLessThan(
-          winner?.textContent?.indexOf("ポイント") ?? -1,
+        const name = winner?.querySelector("h1");
+        const score = winner?.querySelector("[class*='winnerScore']");
+        expect(rank).not.toBeNull();
+        expect(name).not.toBeNull();
+        expect(score).not.toBeNull();
+        expect(slide.querySelectorAll("[class*='rank']")).toHaveLength(1);
+        expect(rank?.textContent).toBe(
+          projection.state === "third"
+            ? "第3位"
+            : projection.state === "second"
+              ? "第2位"
+              : "第1位",
         );
-        expect(winner?.textContent?.indexOf("ポイント")).toBeLessThan(
-          winner?.textContent?.indexOf(projection.winners[0]!.displayName) ?? -1,
-        );
+        expect(rank!.compareDocumentPosition(name!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+        expect(name?.textContent).toContain(projection.winners[0]!.displayName);
+        expect(name?.textContent).toContain("さん");
+        expect(name!.compareDocumentPosition(score!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       }
     },
   );
@@ -1253,7 +1265,7 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.queryByText(/回答|類似度|得点/)).not.toBeInTheDocument();
   });
 
-  it("renders rank, points, then name immediately after a forward operation", async () => {
+  it("renders one rank label followed by the winner name and score after a forward operation", async () => {
     const api = setup({
       projection: { state: "podium_preview" },
       admin: { state: "podium_preview", questionIndex: 5, questionCount: 5 },
@@ -1267,7 +1279,7 @@ describe("presentation projection and presenter progression", () => {
     await settled();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await settled();
-    expect(await screen.findByText("3位")).toBeInTheDocument();
+    expect(await screen.findByText("第3位")).toBeInTheDocument();
     expect(screen.getByText("12.50 ポイント")).toBeInTheDocument();
     expect(screen.getByText("葵", { exact: false })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "第3位の勝者一覧" })).not.toHaveClass(/announce/);

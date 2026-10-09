@@ -678,6 +678,8 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   await advanceTo(page, "third");
   const winners = page.getByRole("region", { name: "第3位の勝者一覧" });
   await expect(winners).toBeVisible();
+  await expect(winners.locator("[class*='rank']")).toHaveCount(1);
+  await expect(winners.locator("[class*='rank']")).toHaveText("第3位");
   await expect
     .poll(() =>
       page
@@ -714,6 +716,13 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   expect(bounds.pageCanScroll).toBe(false);
   expect(bounds.regionCanScroll).toBe(false);
   expect(bounds.winners).toHaveLength(24);
+  const winnerCards = winners.locator("article");
+  for (let index = 0; index < 24; index += 1) {
+    await expect(winnerCards.nth(index).locator("h1")).toContainText(`受賞者${index + 1}`);
+    await expect(winnerCards.nth(index).locator("[class*='winnerScore']")).toHaveText(
+      "1.00 ポイント",
+    );
+  }
   expect(
     bounds.winners.every(
       (rect) =>
@@ -852,11 +861,9 @@ test("every stage keeps its fixture text inside the canvas content bounds", asyn
   }
 });
 
-test("tied rank cards keep rank, points, and long participant names paired in the viewport", async ({
-  page,
-}) => {
+test("tied rank cards share one rank label and keep each name with its score", async ({ page }) => {
   const mock = await installAdminApiMock(page);
-  const longName = "長い名前でも順位とポイントの組み合わせが崩れない受賞者さん";
+  const longName = "長い名前でも順位とポイントの組み合わせが崩れない受賞者";
   mock.setWinnerEntries([
     { displayName: longName, score: 0.75, rank: 3 },
     { displayName: "もう一人", score: 0.75, rank: 3 },
@@ -865,25 +872,35 @@ test("tied rank cards keep rank, points, and long participant names paired in th
   await startPresentation(page);
   await openPresenter(page);
   await advanceTo(page, "third");
-  const cards = page.getByRole("region", { name: "第3位の勝者一覧" }).locator("article");
+  const region = page.getByRole("region", { name: "第3位の勝者一覧" });
+  const cards = region.locator("article");
+  const rank = region.locator("[class*='rank']");
+  await expect(rank).toHaveCount(1);
+  await expect(rank).toHaveText("第3位");
   await expect(cards).toHaveCount(2);
   await expect
     .poll(() =>
       cards.evaluateAll((items) =>
         items.map((card) => {
-          const [rank, score, name] = Array.from(card.children);
-          return [
-            rank?.textContent?.trim(),
-            score?.textContent?.trim(),
-            name?.textContent?.replace(/\s+/g, " ").trim(),
-          ];
+          const [name, score] = Array.from(card.children);
+          return [name?.textContent?.replace(/\s+/g, " ").trim(), score?.textContent?.trim()];
         }),
       ),
     )
     .toEqual([
-      ["3位", "0.75 ポイント", `${longName} さん`],
-      ["3位", "0.75 ポイント", "もう一人 さん"],
+      [`${longName} さん`, "0.75 ポイント"],
+      ["もう一人 さん", "0.75 ポイント"],
     ]);
+  const rankPrecedesNames = await region.evaluate((node) => {
+    const label = node.querySelector("[class*='rank']");
+    const firstName = node.querySelector("article h1");
+    return Boolean(
+      label &&
+      firstName &&
+      label.compareDocumentPosition(firstName) === Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+  expect(rankPrecedesNames).toBe(true);
   const geometry = await page.evaluate(() => {
     const bounds = Array.from(
       document.querySelectorAll("[aria-label='第3位の勝者一覧'] article"),
@@ -911,6 +928,192 @@ test("tied rank cards keep rank, points, and long participant names paired in th
   ).toBe(true);
   expect(geometry.width).toBeLessThanOrEqual(geometry.innerWidth);
   expect(geometry.height).toBeLessThanOrEqual(geometry.innerHeight);
+});
+
+test("a single long winner name wraps fully inside the slide", async ({ page }) => {
+  const mock = await installAdminApiMock(page);
+  const longName = "とても長い氏名を折り返して最後まで表示する受賞者の名前".repeat(3);
+  mock.setWinnerEntries([
+    { displayName: longName, score: 0.75, rank: 3 },
+    { displayName: longName, score: 0.8, rank: 2 },
+    { displayName: longName, score: 0.9, rank: 1 },
+  ]);
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+  await advanceTo(page, "third");
+
+  const region = page.getByRole("region", { name: "第3位の勝者一覧" });
+  const name = region.locator("article h1");
+  await expect(region.locator("article")).toHaveCount(1);
+  await expect(region.locator("[class*='rank']")).toHaveCount(1);
+  await expect(name).toContainText(longName);
+  await expect(name).toContainText("さん");
+  await expect(region.locator("[class*='winnerScore']")).toHaveText("0.75 ポイント");
+
+  const ranks = [
+    { state: "third" as const, label: "第3位", score: "0.75 ポイント" },
+    { state: "second" as const, label: "第2位", score: "0.80 ポイント" },
+    { state: "first" as const, label: "第1位", score: "0.90 ポイント" },
+  ];
+  for (const [viewportIndex, viewport] of [
+    { width: 1280, height: 720 },
+    { width: 1366, height: 768 },
+    { width: 1920, height: 1080 },
+  ].entries()) {
+    await page.setViewportSize(viewport);
+    await waitForRenderFrames(page);
+    if (viewportIndex > 0) {
+      for (const state of ["second", "third"] as const) {
+        const previousRefresh = nextAdminMutation(page);
+        await page.locator("main").press("ArrowLeft");
+        await expect(slideFor(page, state)).toBeVisible();
+        await previousRefresh;
+      }
+    }
+
+    for (const [rankIndex, rankStage] of ranks.entries()) {
+      const region = page.getByRole("region", { name: `${rankStage.label}の勝者一覧` });
+      const name = region.locator("article h1");
+      await expect(region.locator("article")).toHaveCount(1);
+      await expect(region.locator("[class*='rank']")).toHaveCount(1);
+      await expect(region.locator("[class*='rank']")).toHaveText(rankStage.label);
+      await expect(name).toContainText(longName);
+      await expect(name).toContainText("さん");
+      await expect(region.locator("[class*='winnerScore']")).toHaveText(rankStage.score);
+
+      const geometry = await page
+        .getByTestId("presentation-fit-viewport")
+        .evaluate((fitViewport, rankLabel) => {
+          const bounds = fitViewport.getBoundingClientRect();
+          const canvas = document.querySelector('[data-testid="presentation-canvas"]');
+          const region = fitViewport.querySelector(`section[aria-label="${rankLabel}の勝者一覧"]`);
+          const rank = region?.querySelector("[class*='rank']");
+          const heading = region?.querySelector("article h1");
+          const score = region?.querySelector("[class*='winnerScore']");
+          const winnerName = heading?.querySelector("[class*='winnerName']");
+          const elements = [rank, heading, score];
+          const rects = elements.map((element) => {
+            const rect = element?.getBoundingClientRect();
+            return rect
+              ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+              : null;
+          });
+          const textRange = document.createRange();
+          if (heading) textRange.selectNodeContents(heading);
+          const textRects = Array.from(textRange.getClientRects()).map((rect) => ({
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            bottom: rect.bottom,
+          }));
+          const lineTops = new Set(textRects.map((rect) => Math.round(rect.top)));
+          const fontSizes = elements.map((element) =>
+            element ? Number.parseFloat(getComputedStyle(element).fontSize) : 0,
+          );
+          const visualOrder = Boolean(
+            rects[0] &&
+            rects[1] &&
+            rects[2] &&
+            rects[0].bottom <= rects[1].top &&
+            rects[1].bottom <= rects[2].top,
+          );
+          const contrastRatio = (
+            element: Element | null | undefined,
+            background: Element | null,
+          ) => {
+            const channels = (color: string) => color.match(/[\d.]+/g)?.map(Number) ?? [];
+            const luminance = (color: string) => {
+              const rgb = channels(color)
+                .slice(0, 3)
+                .map((channel) => {
+                  const value = channel / 255;
+                  return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+                });
+              return rgb[0]! * 0.2126 + rgb[1]! * 0.7152 + rgb[2]! * 0.0722;
+            };
+            if (!element || !background) return 0;
+            const foreground = luminance(getComputedStyle(element).color);
+            const backdrop = luminance(getComputedStyle(background).backgroundColor);
+            return (
+              (Math.max(foreground, backdrop) + 0.05) / (Math.min(foreground, backdrop) + 0.05)
+            );
+          };
+          return {
+            rankText: rank?.textContent?.trim() ?? "",
+            text: heading?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+            rankPrecedesName: Boolean(
+              rank &&
+              heading &&
+              rank.compareDocumentPosition(heading) === Node.DOCUMENT_POSITION_FOLLOWING,
+            ),
+            namePrecedesScore: Boolean(
+              heading &&
+              score &&
+              heading.compareDocumentPosition(score) === Node.DOCUMENT_POSITION_FOLLOWING,
+            ),
+            lineCount: lineTops.size,
+            visualOrder,
+            bounds: {
+              left: bounds.left,
+              right: bounds.right,
+              top: bounds.top,
+              bottom: bounds.bottom,
+            },
+            rects,
+            textRects,
+            fontSizes,
+            contrasts: elements.map((element) => contrastRatio(element, canvas)),
+            nameFits: Boolean(
+              winnerName instanceof HTMLElement &&
+              winnerName.scrollWidth <= winnerName.clientWidth + 1,
+            ),
+            pageCanScroll:
+              document.documentElement.scrollWidth > innerWidth ||
+              document.documentElement.scrollHeight > innerHeight,
+            regionCanScroll:
+              region instanceof HTMLElement && region.scrollHeight > region.clientHeight,
+          };
+        }, rankStage.label);
+
+      expect(geometry.rankText).toBe(rankStage.label);
+      expect(geometry.text).toContain(longName);
+      expect(geometry.text).toContain("さん");
+      expect(geometry.rankPrecedesName).toBe(true);
+      expect(geometry.namePrecedesScore).toBe(true);
+      expect(geometry.lineCount).toBeGreaterThan(1);
+      expect(geometry.visualOrder).toBe(true);
+      expect(geometry.fontSizes[1]).toBeGreaterThan(geometry.fontSizes[0]!);
+      expect(geometry.fontSizes[1]).toBeGreaterThan(geometry.fontSizes[2]!);
+      expect(geometry.contrasts.every((ratio) => ratio >= 4.5)).toBe(true);
+      expect(geometry.nameFits).toBe(true);
+      expect(geometry.pageCanScroll).toBe(false);
+      expect(geometry.regionCanScroll).toBe(false);
+      expect(geometry.rects.every((rect) => rect !== null)).toBe(true);
+      for (const rect of geometry.rects) {
+        expect(rect!.left).toBeGreaterThanOrEqual(geometry.bounds.left - 1);
+        expect(rect!.right).toBeLessThanOrEqual(geometry.bounds.right + 1);
+        expect(rect!.top).toBeGreaterThanOrEqual(geometry.bounds.top - 1);
+        expect(rect!.bottom).toBeLessThanOrEqual(geometry.bounds.bottom + 1);
+      }
+      expect(
+        geometry.textRects.every(
+          (rect) =>
+            rect.left >= geometry.bounds.left - 1 &&
+            rect.right <= geometry.bounds.right + 1 &&
+            rect.top >= geometry.bounds.top - 1 &&
+            rect.bottom <= geometry.bounds.bottom + 1,
+        ),
+      ).toBe(true);
+      const nextRank = ranks[rankIndex + 1];
+      if (nextRank) {
+        const nextRefresh = nextAdminMutation(page);
+        await page.locator("main").press("ArrowRight");
+        await expect(slideFor(page, nextRank.state)).toBeVisible();
+        await nextRefresh;
+      }
+    }
+  }
 });
 
 test("long answer content remains complete and fits without an internal scroll region", async ({
@@ -1033,9 +1236,25 @@ test("a long tied-winner list fits every rank card without internal scrolling", 
 
   const winnerRegion = page.getByRole("region", { name: "第3位の勝者一覧" });
   const cards = winnerRegion.locator("article");
+  const rankLabels = winnerRegion.locator("[class*='rank']");
+  await expect(rankLabels).toHaveCount(1);
+  await expect(rankLabels).toHaveText("第3位");
   await expect(cards).toHaveCount(winners.length);
-  await expect(cards.last()).toContainText("同順位の受賞者14");
-  await expect(cards.last()).toContainText("0.75 ポイント");
+  await expect
+    .poll(() =>
+      cards.evaluateAll((items) =>
+        items.map((card) => {
+          const [name, score] = Array.from(card.children);
+          return [name?.textContent?.replace(/\s+/g, " ").trim(), score?.textContent?.trim()];
+        }),
+      ),
+    )
+    .toEqual(
+      winners.map((winner) => [
+        `${winner.displayName} さん`,
+        `${winner.score.toFixed(2)} ポイント`,
+      ]),
+    );
   await expect
     .poll(() =>
       page

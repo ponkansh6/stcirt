@@ -909,30 +909,29 @@ export default function PresentationScreen({
                     aria-label={`${rankTitle[state]}の勝者一覧`}
                     tabIndex={0}
                   >
-                    <p className={styles.kicker}>WITH OUR WARMEST CONGRATULATIONS</p>
-                    <div className={styles.winnerNames}>
+                    <p className={styles.rank}>{rankTitle[state]}</p>
+                    <div
+                      className={`${styles.winnerNames} ${data?.winners?.length === 1 ? styles.singleWinner : ""}`}
+                    >
                       {data?.winners?.length ? (
                         data.winners.map((winner, index) => (
                           <article
                             className={styles.winner}
                             key={`${winner.rank}-${winner.displayName}-${index}`}
                           >
-                            <p className={styles.winnerRank}>{winner.rank}位</p>
-                            <p className={styles.winnerScore}>{winner.score.toFixed(2)} ポイント</p>
                             <h1>
                               <span className={styles.winnerName}>
                                 {winner.displayName}
                                 <span className={styles.winnerHonorific}>&nbsp;さん</span>
                               </span>
                             </h1>
+                            <p className={styles.winnerScore}>{winner.score.toFixed(2)} ポイント</p>
                           </article>
                         ))
                       ) : (
                         <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
                       )}
                     </div>
-                    <p className={styles.rank}>{rankTitle[state]}</p>
-                    <p className={styles.congratulations}>おめでとうございます</p>
                   </section>
                 )}
 
