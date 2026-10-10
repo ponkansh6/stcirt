@@ -467,6 +467,31 @@ describe("PresentationScreen", () => {
     );
   });
 
+  it("keeps the displayed stage when a later public projection has an unknown state", async () => {
+    vi.useFakeTimers();
+    let projectionCalls = 0;
+    installApi({
+      projectionResponse: async () => {
+        projectionCalls += 1;
+        return projectionCalls === 1
+          ? response({ state: "question", question })
+          : response({ state: "unknown" });
+      },
+    });
+    render(<PresentationScreen />);
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(1400));
+    await flush();
+
+    expect(projectionCalls).toBe(2);
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "接続を確認しています。自動で再試行します",
+    );
+  });
+
   it("does not start a queued projection poll after unmount", async () => {
     vi.useFakeTimers();
     const api = installApi({ projection: { state: "standby" } });
