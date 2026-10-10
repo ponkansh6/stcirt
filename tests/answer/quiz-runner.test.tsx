@@ -82,7 +82,7 @@ describe("QuizRunner batch answer sheet", () => {
   it("renders five native radio groups, progress navigation, and a disabled final confirmation while unanswered", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "answering" }));
     render(<RunnerPage />);
-    expect(screen.getByRole("heading", { name: "受検票" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
     expect(screen.getAllByRole("group", { name: /Question [1-5]\?/ })).toHaveLength(5);
     expect(screen.getByRole("heading", { name: "Question 1?" })).toBeVisible();
     expect(document.querySelector("#question-1 legend")).toHaveClass("sr-only");

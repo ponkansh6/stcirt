@@ -584,10 +584,9 @@ export default function QuizRunner() {
       </HeaderPortal>
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-7 sm:py-10">
         <header className="mb-7 border-b border-border pb-6">
-          <p className="text-sm font-semibold tracking-widest text-primary">5問検定</p>
           <div className="mt-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
             <div>
-              <h1 className="text-3xl font-bold tracking-tight">受検票</h1>
+              <h1 className="text-3xl font-bold tracking-tight">しゅんたま検定</h1>
               {access.kind === "ready" && (
                 <p className="mt-1 text-sm text-muted">
                   回答者：
