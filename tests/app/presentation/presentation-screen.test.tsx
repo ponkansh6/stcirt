@@ -1412,6 +1412,22 @@ describe("presentation projection and presenter progression", () => {
     ).toHaveLength(0);
   });
 
+  it.each(["opening", "not_started"])(
+    "does not request a previous action from the %s slide",
+    async (state) => {
+      const api = setup({ projection: { state }, admin: { state, questionIndex: 0 } });
+      render(<PresentationScreen presenterRequested />);
+      await settled();
+      fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowLeft" });
+      await settled();
+      expect(
+        api.calls.filter(
+          ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+        ),
+      ).toHaveLength(0);
+    },
+  );
+
   it.each([
     ["question", 0, 2],
     ["podium_preview", 0, 0],
