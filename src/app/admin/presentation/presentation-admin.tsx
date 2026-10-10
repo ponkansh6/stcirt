@@ -418,31 +418,30 @@ export default function PresentationAdmin() {
                 </button>
               </>
             )}
-            {adminState.state === "finished" &&
-              (adminState.participantResultsVisible ? (
-                <>
-                  <p className={styles.success} role="status">
-                    参加者結果は公開済みです
-                  </p>
-                  <button
-                    className={styles.secondaryButton}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void runAction("hideResults")}
-                  >
-                    参加者結果を非公開
-                  </button>
-                </>
-              ) : (
+            {adminState.participantResultsVisible ? (
+              <>
+                <p className={styles.success} role="status">
+                  参加者結果は公開済みです
+                </p>
                 <button
                   className={styles.secondaryButton}
                   type="button"
-                  disabled={busy || !adminState.participantResultsReady}
-                  onClick={() => void runAction("publish")}
+                  disabled={busy}
+                  onClick={() => void runAction("hideResults")}
                 >
-                  {busyAction === "publish" ? "公開しています…" : "参加者結果を公開"}
+                  {busyAction === "hideResults" ? "非公開にしています…" : "参加者結果を非公開"}
                 </button>
-              ))}
+              </>
+            ) : (
+              <button
+                className={styles.secondaryButton}
+                type="button"
+                disabled={busy || !adminState.participantResultsReady}
+                onClick={() => void runAction("publish")}
+              >
+                {busyAction === "publish" ? "公開しています…" : "参加者結果を公開"}
+              </button>
+            )}
             {adminState.state !== "not_started" && (
               <button
                 className={styles.secondaryButton}

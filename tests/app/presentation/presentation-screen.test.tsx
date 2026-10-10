@@ -358,6 +358,7 @@ describe("presentation projection and presenter progression", () => {
       if (projection.state === "answer") {
         const correctChoice = screen.getByText("正解").closest("li");
         expect(correctChoice).toHaveTextContent("B作品B");
+        expect(correctChoice).toHaveClass(/correct/);
       }
       if (
         projection.state === "third" ||
@@ -1548,6 +1549,29 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.getByRole("region", { name: "第3位の勝者一覧" })).not.toHaveClass(/announce/);
   });
 
+  it("limits visible tied winners to two and reports the remaining count", async () => {
+    setup({
+      projection: {
+        state: "third",
+        winners: [
+          { displayName: "葵", score: 12.5, rank: 3 },
+          { displayName: "凛", score: 12.5, rank: 3 },
+          { displayName: "悠", score: 12.5, rank: 3 },
+          { displayName: "澪", score: 12.5, rank: 3 },
+        ],
+      },
+      admin: { state: "third", questionIndex: 5, questionCount: 5 },
+    });
+    render(<PresentationScreen />);
+    const region = await screen.findByRole("region", { name: "第3位の勝者一覧" });
+    expect(region.querySelectorAll("article")).toHaveLength(2);
+    expect(within(region).getByText("葵", { exact: false })).toBeInTheDocument();
+    expect(within(region).getByText("凛", { exact: false })).toBeInTheDocument();
+    expect(within(region).queryByText("悠", { exact: false })).not.toBeInTheDocument();
+    expect(within(region).queryByText("澪", { exact: false })).not.toBeInTheDocument();
+    expect(within(region).getByText("ほか 2 名")).toHaveClass(/additionalWinners/);
+  });
+
   it("renders each winner's question answers and distinguishes unavailable scores", async () => {
     setup({
       projection: {
@@ -1674,6 +1698,19 @@ describe("presentation projection and presenter progression", () => {
       (label) => label.textContent,
     );
     expect(questionLabels).toEqual(["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10"]);
+    const fifthQuestion = within(region).getByText("Q5").closest("li");
+    expect(fifthQuestion).toHaveClass(/fifthWinnerQuestion/);
+    expect(fifthQuestion).toHaveClass(/freeTextResult/);
+    for (const [questionLabel, placementClass] of [
+      ["Q1", "firstWinnerQuestion"],
+      ["Q2", "secondWinnerQuestion"],
+      ["Q3", "thirdWinnerQuestion"],
+      ["Q4", "fourthWinnerQuestion"],
+    ]) {
+      const question = within(region).getByText(questionLabel).closest("li");
+      expect(question).toHaveClass(new RegExp(placementClass));
+      expect(question).not.toHaveClass(/fifthWinnerQuestion/);
+    }
   });
 
   it("keeps initial and previous-stage rank renders static", async () => {

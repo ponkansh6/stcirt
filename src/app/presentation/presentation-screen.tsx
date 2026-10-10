@@ -315,7 +315,18 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
       {results.map((result) => (
         <li
           key={result.position}
-          className={result.answer.kind === "freeText" ? styles.freeTextResult : undefined}
+          className={
+            [
+              result.answer.kind === "freeText" ? styles.freeTextResult : "",
+              result.position === 0 ? styles.firstWinnerQuestion : "",
+              result.position === 1 ? styles.secondWinnerQuestion : "",
+              result.position === 2 ? styles.thirdWinnerQuestion : "",
+              result.position === 3 ? styles.fourthWinnerQuestion : "",
+              result.position === 4 ? styles.fifthWinnerQuestion : "",
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined
+          }
         >
           <span className={styles.winnerQuestionLabel}>Q{result.position + 1}</span>
           <span className={styles.winnerQuestionAnswer}>
@@ -1099,6 +1110,18 @@ export default function PresentationScreen({
     };
   }, [data, loadingPresenterDeck]);
 
+  const winners =
+    data && data.state !== "question" && data.state !== "answer" ? (data.winners ?? []) : [];
+  const winnerGroups = winners.reduce<{ rank: number; winners: Winner[] }[]>((groups, winner) => {
+    let group = groups.find((candidate) => candidate.rank === winner.rank);
+    if (!group) {
+      group = { rank: winner.rank, winners: [] };
+      groups.push(group);
+    }
+    group.winners.push(winner);
+    return groups;
+  }, []);
+
   return (
     <main
       ref={wrapperRef}
@@ -1170,16 +1193,20 @@ export default function PresentationScreen({
 
                 {!loadingPresenterDeck && (!data || state === "not_started") && (
                   <section className={styles.opening} aria-labelledby="presentation-title">
-                    <p className={styles.kicker}>PRESENTATION</p>
-                    <h1 id="presentation-title">しゅんたま検定</h1>
+                    <div className={styles.openingTitle}>
+                      <p className={styles.kicker}>PRESENTATION</p>
+                      <h1 id="presentation-title">しゅんたま検定</h1>
+                    </div>
                     <p className={styles.subtitle}>発表が始まるまで、少々お待ちください</p>
                   </section>
                 )}
 
                 {state === "opening" && (
                   <section className={styles.opening} aria-labelledby="opening-title">
-                    <p className={styles.kicker}>PRESENTATION</p>
-                    <h1 id="opening-title">しゅんたま検定</h1>
+                    <div className={styles.openingTitle}>
+                      <p className={styles.kicker}>PRESENTATION</p>
+                      <h1 id="opening-title">しゅんたま検定</h1>
+                    </div>
                     <p className={styles.subtitle}>これまでの思い出を振り返りましょう</p>
                   </section>
                 )}
@@ -1210,31 +1237,42 @@ export default function PresentationScreen({
                       検定
                     </span>
                     <p className={styles.rank}>{rankTitle[state]}</p>
-                    <div
-                      className={`${styles.winnerNames} ${data?.winners?.length === 1 ? styles.singleWinner : ""}`}
-                    >
-                      {data?.winners?.length ? (
-                        data.winners.map((winner, index) => (
-                          <article
-                            className={styles.winner}
-                            key={`${winner.rank}-${winner.displayName}-${index}`}
+                    {winnerGroups.length ? (
+                      winnerGroups.map(({ rank, winners }) => (
+                        <div className={styles.winnerRankGroup} key={rank}>
+                          <div
+                            className={`${styles.winnerNames} ${winners.length === 1 ? styles.singleWinner : ""}`}
                           >
-                            <h1>
-                              <span className={styles.winnerName}>
-                                {winner.displayName}
-                                <span className={styles.winnerHonorific}>&nbsp;さん</span>
-                              </span>
-                            </h1>
-                            <p className={styles.winnerScore}>{winner.score.toFixed(2)} ポイント</p>
-                            {winner.questionResults && (
-                              <WinnerQuestionBreakdown results={winner.questionResults} />
-                            )}
-                          </article>
-                        ))
-                      ) : (
-                        <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
-                      )}
-                    </div>
+                            {winners.slice(0, 2).map((winner, index) => (
+                              <article
+                                className={styles.winner}
+                                key={`${winner.rank}-${winner.displayName}-${index}`}
+                              >
+                                <div className={styles.winnerIdentity}>
+                                  <h1>
+                                    <span className={styles.winnerName}>
+                                      {winner.displayName}
+                                      <span className={styles.winnerHonorific}>&nbsp;さん</span>
+                                    </span>
+                                  </h1>
+                                  <p className={styles.winnerScore}>
+                                    {winner.score.toFixed(2)} ポイント
+                                  </p>
+                                </div>
+                                {winner.questionResults && (
+                                  <WinnerQuestionBreakdown results={winner.questionResults} />
+                                )}
+                              </article>
+                            ))}
+                          </div>
+                          {winners.length > 2 && (
+                            <p className={styles.additionalWinners}>ほか {winners.length - 2} 名</p>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
+                    )}
                   </section>
                 )}
 

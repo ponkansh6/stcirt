@@ -534,7 +534,7 @@ describe("presentation admin console", () => {
       await screen.findByText("まだ集計されていません。開始・結果公開の前に集計してください。"),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "発表を開始" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "参加者結果を公開" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "参加者結果を公開" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "集計" }));
     await waitFor(() =>
       expect(api.actions).toContainEqual({
@@ -557,7 +557,7 @@ describe("presentation admin console", () => {
     });
     render(<PresentationAdmin />);
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "参加者結果を公開" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "参加者結果を公開" })).toBeDisabled();
 
     cleanup();
     const startedApi = apiFetch({
