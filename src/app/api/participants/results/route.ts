@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
 import { getParticipantResult } from "@/lib/db/repository/presentation-repository";
+import { resolveAnswerScope } from "@/lib/participants/answer-scope";
 import { getParticipantCookie, verifyParticipantSession } from "@/lib/participants/security";
 
 export const runtime = "nodejs";
@@ -15,7 +16,14 @@ export async function GET(request: Request) {
     );
   }
   try {
-    const result = await getParticipantResult(session.id);
+    const scope = await resolveAnswerScope(
+      session.id,
+      new URL(request.url).searchParams.get("scope"),
+    );
+    if ("error" in scope) {
+      return NextResponse.json({ error: scope.error }, { status: scope.status, headers: noStore });
+    }
+    const result = await getParticipantResult(scope.participantId);
     if (result.state === "visible") {
       const questions = result.questions.map(({ position, question, answer }) => ({
         position,

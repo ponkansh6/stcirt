@@ -128,7 +128,32 @@ describe("QuizRunner remaining coverage states", () => {
       }
     }
     expect(screen.queryByRole("button", { name: /公開状況/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "ほかの人の回答を行う" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "代理回答を行う" })).toBeInTheDocument();
+  });
+
+  it("links to the assisted participant's results after a successful status response", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => visibleResultsPayload,
+    } as Response);
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          answerMode: "assisted",
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+        },
+      ),
+    );
+
+    render(<QuizRunner />);
+
+    const resultsLink = await screen.findByRole("link", { name: "代理回答者の結果を見る" });
+    expect(resultsLink).toHaveAttribute("href", "/results?scope=assisted");
   });
 
   it("renders a nonempty saved free response in the answer field", () => {
@@ -294,10 +319,8 @@ describe("QuizRunner remaining coverage states", () => {
     );
     render(<QuizRunner />);
 
-    expect(screen.queryByRole("button", { name: "ほかの人の回答を行う" })).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "ほかの人の回答を修正する" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "代理回答を修正する" })).not.toBeInTheDocument();
   });
 
   it("resumes the one linked participant and changes its completion action after saving", () => {
@@ -320,7 +343,7 @@ describe("QuizRunner remaining coverage states", () => {
     const { rerender } = render(<QuizRunner />);
 
     expect(screen.getByText("代理回答者さんの回答を再開できます。")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "ほかの人の回答を行う" }));
+    fireEvent.click(screen.getByRole("button", { name: "代理回答を行う" }));
     expect(resumeAssisted).toHaveBeenCalledOnce();
 
     mockUseQuizSession.mockReturnValue(
@@ -336,7 +359,7 @@ describe("QuizRunner remaining coverage states", () => {
       ),
     );
     rerender(<QuizRunner />);
-    expect(screen.getByRole("button", { name: "ほかの人の回答を修正する" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "代理回答を修正する" })).toBeInTheDocument();
     expect(screen.queryByText("代理回答者さんの回答を再開できます。")).not.toBeInTheDocument();
   });
 
@@ -383,7 +406,7 @@ describe("QuizRunner remaining coverage states", () => {
     );
     render(<QuizRunner />);
 
-    expect(screen.getByText("回答者：代理回答者（ほかの人の回答）")).toBeInTheDocument();
+    expect(screen.getByText("回答者：代理回答者（代理回答）")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "自分の回答に戻る" }));
     expect(returnToOwner).toHaveBeenCalledOnce();
   });
@@ -397,11 +420,14 @@ describe("QuizRunner remaining coverage states", () => {
     );
     render(<QuizRunner />);
 
-    expect(screen.getByText("ほかの人さんの回答を記録しました。")).toBeInTheDocument();
-    expect(screen.getByText("回答者：ほかの人（ほかの人の回答）")).toBeInTheDocument();
+    expect(screen.getByText("全5問の回答を記録しました。")).toBeInTheDocument();
+    expect(screen.getByText("回答者：ほかの人（代理回答）")).toBeInTheDocument();
     expect(screen.queryByText("回答者：参加者（本人の回答）")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/participants/results?scope=assisted",
+      expect.anything(),
+    );
   });
 
   it.each([
@@ -415,7 +441,7 @@ describe("QuizRunner remaining coverage states", () => {
       );
       render(<QuizRunner />);
 
-      expect(screen.getByText("回答者：ほかの人（ほかの人の回答）")).toBeInTheDocument();
+      expect(screen.getByText("回答者：ほかの人（代理回答）")).toBeInTheDocument();
       expect(screen.queryByText("回答者：参加者（本人の回答）")).not.toBeInTheDocument();
     },
   );
@@ -462,7 +488,7 @@ describe("QuizRunner remaining coverage states", () => {
 
     expect(screen.getByLabelText("4桁PIN")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "再ログインする" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "ほかの人の回答を行う" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
   });
 
   it("prevents leaving the assisted login screen while its registration is pending", () => {

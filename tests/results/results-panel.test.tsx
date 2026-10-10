@@ -62,6 +62,30 @@ function deferred<T>() {
 }
 
 describe("ResultsPanel", () => {
+  it("does not poll when the result scope is invalid", () => {
+    mockPoll(visibleResult);
+    render(<ResultsPanel initial={visibleResult} scope={null} />);
+
+    setVisibility("visible");
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.getByText("2位")).toBeVisible();
+  });
+
+  it("polls the assisted result endpoint and labels the result for the assisted respondent", async () => {
+    mockPoll(visibleResult);
+    render(<ResultsPanel initial={visibleResult} scope="assisted" />);
+
+    setVisibility("visible");
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    expect(fetch).toHaveBeenCalledWith("/api/participants/results?scope=assisted", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    expect(screen.getByRole("heading", { name: "代理回答者の結果" })).toBeVisible();
+  });
+
   it("uses the server state initially, skips hidden-tab changes, and refreshes on return", async () => {
     mockPoll(visibleResult);
     setVisibility("visible");

@@ -47,7 +47,7 @@ export default function QuizRunner() {
   const [participantResultsRefreshError, setParticipantResultsRefreshError] = useState(false);
   const [participantResultsAuthExpired, setParticipantResultsAuthExpired] = useState(false);
   useEffect(() => {
-    if (answerMode !== "owner" || phase.kind !== "complete" || access.kind !== "ready") {
+    if (phase.kind !== "complete" || access.kind !== "ready") {
       setParticipantResultsVisible(false);
       setParticipantResultsWaiting(null);
       setParticipantResultsUnavailable(false);
@@ -68,7 +68,11 @@ export default function QuizRunner() {
       pending = true;
       const currentRevision = ++requestRevision;
       try {
-        const response = await fetch("/api/participants/results", {
+        const resultsUrl =
+          answerMode === "assisted"
+            ? "/api/participants/results?scope=assisted"
+            : "/api/participants/results";
+        const response = await fetch(resultsUrl, {
           cache: "no-store",
           credentials: "same-origin",
         });
@@ -299,15 +303,11 @@ export default function QuizRunner() {
         <ParticipantCard>
           <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
           <h1 className="text-3xl font-bold tracking-tight">回答完了</h1>
-          <p className="mt-4 text-muted">
-            {answeringForAssisted
-              ? `${assistedParticipant?.participant?.name ?? "ほかの人"}さんの回答を記録しました。`
-              : "全5問の回答を記録しました。"}
-          </p>
+          <p className="mt-4 text-muted">全5問の回答を記録しました。</p>
           <p className="mt-2 text-sm font-medium text-muted">
             回答者：
             {answeringForAssisted
-              ? `${assistedParticipant?.participant?.name ?? "ほかの人"}（ほかの人の回答）`
+              ? `${assistedParticipant?.participant?.name ?? "ほかの人"}（代理回答）`
               : `${access.kind === "ready" ? access.participant.name : "本人"}（本人の回答）`}
           </p>
           <p className="mt-2 text-sm leading-relaxed text-muted">
@@ -337,7 +337,7 @@ export default function QuizRunner() {
             </section>
           )}
           <Button onClick={editAnswers} className="mt-8" disabled={Boolean(restoreError)}>
-            {answeringForAssisted ? "ほかの人の回答を修正する" : "回答を修正する"}
+            回答を修正する
           </Button>
           {answeringForAssisted && (
             <Button variant="outline" className="mt-3" onClick={returnToOwner}>
@@ -362,8 +362,8 @@ export default function QuizRunner() {
                 {assistedBusy
                   ? "回答状態を確認しています…"
                   : assistedParticipant?.hasSubmission
-                    ? "ほかの人の回答を修正する"
-                    : "ほかの人の回答を行う"}
+                    ? "代理回答を修正する"
+                    : "代理回答を行う"}
               </Button>
               {assistedParticipant?.participant && !assistedParticipant.hasSubmission && (
                 <p className="mt-2 text-sm text-muted">
@@ -372,36 +372,34 @@ export default function QuizRunner() {
               )}
             </div>
           )}
-          {!answeringForAssisted && (
-            <div className="mt-4">
-              {participantResultsAuthExpired && (
-                <p className="mb-2 text-sm text-error" role="alert">
-                  参加者セッションの有効期限が切れました。もう一度参加状態を確認してください。
-                </p>
-              )}
-              {participantResultsWaiting && (
-                <p className="mb-2 text-sm text-muted" role="status" aria-live="polite">
-                  結果は主催者が公開するまで表示されません。
-                </p>
-              )}
-              {participantResultsUnavailable && (
-                <p className="mb-2 text-sm text-muted" role="status" aria-live="polite">
-                  結果は現在確認できません。主催者にお問い合わせください。
-                </p>
-              )}
-              {participantResultsRefreshError && (
-                <p className="mb-2 text-sm text-error" role="alert">
-                  結果の公開状態は現在確認できません。
-                </p>
-              )}
-            </div>
-          )}
-          {!answeringForAssisted && participantResultsVisible && (
+          <div className="mt-4">
+            {participantResultsAuthExpired && (
+              <p className="mb-2 text-sm text-error" role="alert">
+                参加者セッションの有効期限が切れました。もう一度参加状態を確認してください。
+              </p>
+            )}
+            {participantResultsWaiting && (
+              <p className="mb-2 text-sm text-muted" role="status" aria-live="polite">
+                結果は主催者が公開するまで表示されません。
+              </p>
+            )}
+            {participantResultsUnavailable && (
+              <p className="mb-2 text-sm text-muted" role="status" aria-live="polite">
+                結果は現在確認できません。主催者にお問い合わせください。
+              </p>
+            )}
+            {participantResultsRefreshError && (
+              <p className="mb-2 text-sm text-error" role="alert">
+                結果の公開状態は現在確認できません。
+              </p>
+            )}
+          </div>
+          {participantResultsVisible && (
             <Link
-              href="/results"
+              href={answeringForAssisted ? "/results?scope=assisted" : "/results"}
               className="mt-3 inline-flex min-h-11 items-center justify-center rounded-md border border-primary px-5 font-semibold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
-              自分の結果を見る
+              {answeringForAssisted ? "代理回答者の結果を見る" : "自分の結果を見る"}
             </Link>
           )}
         </ParticipantCard>
@@ -457,7 +455,7 @@ export default function QuizRunner() {
                 <p className="mt-1 text-sm text-muted">
                   回答者：
                   {answerMode === "assisted"
-                    ? `${assistedParticipant?.participant?.name ?? "ほかの人"}（ほかの人の回答）`
+                    ? `${assistedParticipant?.participant?.name ?? "ほかの人"}（代理回答）`
                     : `${access.participant.name}（本人の回答）`}
                 </p>
               )}

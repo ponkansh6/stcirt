@@ -8,7 +8,13 @@ import { parseParticipantResult, type ParticipantResult } from "@/lib/participan
 export type InitialResult = ParticipantResult | { state: "unauthenticated" };
 type PollResult = ParticipantResult;
 
-export default function ResultsPanel({ initial }: { initial: InitialResult }) {
+export default function ResultsPanel({
+  initial,
+  scope = "owner",
+}: {
+  initial: InitialResult;
+  scope?: "owner" | "assisted" | null;
+}) {
   const [result, setResult] = useState<PollResult>(
     initial.state === "unauthenticated"
       ? { state: "waiting" }
@@ -27,6 +33,7 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
   };
 
   useEffect(() => {
+    if (scope === null) return;
     let active = true;
     let pending = false;
     let refreshQueued = false;
@@ -41,10 +48,15 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
       setRefreshing(true);
       const currentRevision = ++requestRevision;
       try {
-        const response = await fetch("/api/participants/results", {
-          cache: "no-store",
-          credentials: "same-origin",
-        });
+        const response = await fetch(
+          scope === "assisted"
+            ? "/api/participants/results?scope=assisted"
+            : "/api/participants/results",
+          {
+            cache: "no-store",
+            credentials: "same-origin",
+          },
+        );
         if (!active || currentRevision !== requestRevision) return;
         if (response.status === 401) {
           setAuthorized(false);
@@ -94,7 +106,7 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
       refreshRef.current = null;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, []);
+  }, [scope]);
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
@@ -110,7 +122,9 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
           </>
         ) : result.state === "visible" ? (
           <>
-            <h1 className="text-3xl font-bold tracking-tight">あなたの結果</h1>
+            <h1 className="text-3xl font-bold tracking-tight">
+              {scope === "assisted" ? "代理回答者の結果" : "あなたの結果"}
+            </h1>
             <dl className="mt-8 grid grid-cols-2 gap-4">
               <div className="rounded-xl bg-surface-2 p-5">
                 <dt className="text-sm text-muted">順位</dt>

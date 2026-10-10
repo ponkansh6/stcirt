@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/participants/results/route";
+import { resolveAnswerScope } from "@/lib/participants/answer-scope";
 
 const findParticipantByIdMock = vi.hoisted(() =>
   vi.fn<(id: number) => Promise<{ id: number; name: string } | null>>(),
@@ -9,6 +10,7 @@ vi.mock("@/lib/db/repository/participant-repository", () => ({
   findParticipantById: findParticipantByIdMock,
 }));
 vi.mock("@/lib/db/repository/presentation-repository", () => ({ getParticipantResult: vi.fn() }));
+vi.mock("@/lib/participants/answer-scope", () => ({ resolveAnswerScope: vi.fn() }));
 vi.mock("@/lib/participants/security", () => ({
   getParticipantCookie: vi.fn((request: Request) =>
     request.headers.get("cookie")?.replace("stcirt_participant_session=", ""),
@@ -23,6 +25,7 @@ import { getParticipantResult } from "@/lib/db/repository/presentation-repositor
 beforeEach(() => {
   vi.clearAllMocks();
   findParticipantByIdMock.mockResolvedValue({ id: 42, name: "参加者" });
+  vi.mocked(resolveAnswerScope).mockResolvedValue({ participantId: 42 });
 });
 
 describe("GET /api/participants/results", () => {
@@ -57,6 +60,43 @@ describe("GET /api/participants/results", () => {
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     await expect(response.json()).resolves.toEqual({ state: "waiting" });
     expect(getParticipantResult).toHaveBeenCalledWith(42);
+  });
+
+  it("rejects an invalid scope without querying a result", async () => {
+    vi.mocked(resolveAnswerScope).mockResolvedValueOnce({
+      error: "Invalid answer scope",
+      status: 400,
+    });
+
+    const response = await GET(
+      new Request("http://localhost/api/participants/results?scope=other", {
+        headers: { Cookie: "stcirt_participant_session=valid-session" },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({ error: "Invalid answer scope" });
+    expect(getParticipantResult).not.toHaveBeenCalled();
+  });
+
+  it("returns not found when no assisted target resolves without querying a result", async () => {
+    vi.mocked(resolveAnswerScope).mockResolvedValueOnce({
+      error: "Assisted participant not found",
+      status: 404,
+    });
+
+    const response = await GET(
+      new Request("http://localhost/api/participants/results?scope=assisted", {
+        headers: { Cookie: "stcirt_participant_session=valid-session" },
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({ error: "Assisted participant not found" });
+    expect(resolveAnswerScope).toHaveBeenCalledWith(42, "assisted");
+    expect(getParticipantResult).not.toHaveBeenCalled();
   });
 
   it("returns the unavailable state while results cannot be assembled", async () => {

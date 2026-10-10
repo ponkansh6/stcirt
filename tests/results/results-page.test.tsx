@@ -3,6 +3,7 @@ import ResultsPage, { dynamic } from "@/app/results/page";
 import type { ReactElement } from "react";
 import { getParticipantResult } from "@/lib/db/repository/presentation-repository";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
+import { resolveAnswerScope } from "@/lib/participants/answer-scope";
 
 const cookieState = vi.hoisted(() => ({ token: "valid-session" as string | undefined }));
 vi.mock("next/headers", () => ({
@@ -12,6 +13,7 @@ vi.mock("next/headers", () => ({
 }));
 vi.mock("@/lib/db/repository/participant-repository", () => ({ findParticipantById: vi.fn() }));
 vi.mock("@/lib/db/repository/presentation-repository", () => ({ getParticipantResult: vi.fn() }));
+vi.mock("@/lib/participants/answer-scope", () => ({ resolveAnswerScope: vi.fn() }));
 vi.mock("@/lib/participants/security", () => ({
   PARTICIPANT_COOKIE: "stcirt_participant_session",
   verifyParticipantSession: vi.fn((token?: string) =>
@@ -23,10 +25,12 @@ beforeEach(() => {
   cookieState.token = "valid-session";
   vi.clearAllMocks();
   vi.mocked(findParticipantById).mockResolvedValue({ id: 12, name: "Participant" });
+  vi.mocked(resolveAnswerScope).mockResolvedValue({ participantId: 12 });
 });
 
 describe("/results server entry", () => {
-  it("is dynamic and passes only the current participant's published result to the client panel", async () => {
+  it("resolves the assisted participant and passes their published result to the client panel", async () => {
+    vi.mocked(resolveAnswerScope).mockResolvedValueOnce({ participantId: 18 });
     vi.mocked(getParticipantResult).mockResolvedValueOnce(
       Object.assign(
         { state: "visible" as const, rank: 4, score: 0.5 },
@@ -46,9 +50,12 @@ describe("/results server entry", () => {
       ),
     );
 
-    const element = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
+    const element = (await ResultsPage({
+      searchParams: Promise.resolve({ scope: "assisted" }),
+    })) as ReactElement<{ initial: unknown; scope: string }>;
 
     expect(dynamic).toBe("force-dynamic");
+    expect(element.props.scope).toBe("assisted");
     expect(element.props.initial).toEqual({
       state: "visible",
       rank: 4,
@@ -62,13 +69,43 @@ describe("/results server entry", () => {
       ],
     });
     expect(findParticipantById).toHaveBeenCalledWith(12);
-    expect(getParticipantResult).toHaveBeenCalledWith(12);
+    expect(resolveAnswerScope).toHaveBeenCalledWith(12, "assisted");
+    expect(getParticipantResult).toHaveBeenCalledWith(18);
+  });
+
+  it("fails closed for an invalid scope without resolving or querying a result", async () => {
+    const element = (await ResultsPage({
+      searchParams: Promise.resolve({ scope: "other" }),
+    })) as ReactElement<{ initial: unknown; scope: string | null }>;
+
+    expect(element.props.scope).toBeNull();
+    expect(element.props.initial).toEqual({ state: "unavailable" });
+    expect(resolveAnswerScope).not.toHaveBeenCalled();
+    expect(getParticipantResult).not.toHaveBeenCalled();
+  });
+
+  it("shows unavailable when the assisted participant cannot be resolved", async () => {
+    vi.mocked(resolveAnswerScope).mockResolvedValueOnce({
+      error: "Assisted participant not found",
+      status: 404,
+    });
+
+    const element = (await ResultsPage({
+      searchParams: Promise.resolve({ scope: "assisted" }),
+    })) as ReactElement<{ initial: unknown; scope: string }>;
+
+    expect(element.props.scope).toBe("assisted");
+    expect(element.props.initial).toEqual({ state: "unavailable" });
+    expect(resolveAnswerScope).toHaveBeenCalledWith(12, "assisted");
+    expect(getParticipantResult).not.toHaveBeenCalled();
   });
 
   it("does not query results for an unauthenticated visitor", async () => {
     cookieState.token = undefined;
 
-    const element = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
+    const element = (await ResultsPage({ searchParams: Promise.resolve({}) })) as ReactElement<{
+      initial: unknown;
+    }>;
 
     expect(element.props.initial).toEqual({ state: "unauthenticated" });
     expect(findParticipantById).not.toHaveBeenCalled();
@@ -78,7 +115,9 @@ describe("/results server entry", () => {
   it("fails closed when the authenticated participant no longer exists", async () => {
     vi.mocked(findParticipantById).mockResolvedValueOnce(null);
 
-    const element = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
+    const element = (await ResultsPage({ searchParams: Promise.resolve({}) })) as ReactElement<{
+      initial: unknown;
+    }>;
 
     expect(element.props.initial).toEqual({ state: "unauthenticated" });
     expect(findParticipantById).toHaveBeenCalledWith(12);
@@ -101,10 +140,17 @@ describe("/results server entry", () => {
           question: "以前の回答",
           answer: { kind: "legacy" },
         },
+        {
+          position: 2,
+          question: "未回答",
+          answer: { kind: "unanswered" },
+        },
       ],
     });
 
-    const element = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
+    const element = (await ResultsPage({ searchParams: Promise.resolve({}) })) as ReactElement<{
+      initial: unknown;
+    }>;
 
     expect(element.props.initial).toEqual({
       state: "visible",
@@ -117,17 +163,22 @@ describe("/results server entry", () => {
           answer: { kind: "freeText", value: "回答", score: null },
         },
         { position: 1, question: "以前の回答", answer: { kind: "legacy" } },
+        { position: 2, question: "未回答", answer: { kind: "unanswered" } },
       ],
     });
   });
 
   it("passes through a private result state and keeps waiting when server verification throws", async () => {
     vi.mocked(getParticipantResult).mockResolvedValueOnce({ state: "unavailable" });
-    const unavailable = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
+    const unavailable = (await ResultsPage({ searchParams: Promise.resolve({}) })) as ReactElement<{
+      initial: unknown;
+    }>;
     expect(unavailable.props.initial).toEqual({ state: "unavailable" });
 
     vi.mocked(findParticipantById).mockRejectedValueOnce(new Error("database unavailable"));
-    const waiting = (await ResultsPage()) as ReactElement<{ initial: unknown }>;
+    const waiting = (await ResultsPage({ searchParams: Promise.resolve({}) })) as ReactElement<{
+      initial: unknown;
+    }>;
     expect(waiting.props.initial).toEqual({ state: "waiting" });
     expect(getParticipantResult).toHaveBeenCalledTimes(1);
   });

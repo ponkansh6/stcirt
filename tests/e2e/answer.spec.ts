@@ -517,8 +517,8 @@ test("answers for one additional person, corrects that answer, and restores it a
 
   await page.goto("/answer");
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "ほかの人の回答を行う" })).toBeVisible();
-  await page.getByRole("button", { name: "ほかの人の回答を行う" }).click();
+  await expect(page.getByRole("button", { name: "代理回答を行う" })).toBeVisible();
+  await page.getByRole("button", { name: "代理回答を行う" }).click();
   await expect(page.getByRole("heading", { name: "ほかの人の回答" })).toBeVisible();
   await page.getByLabel("回答する人のお名前").fill("代理回答者");
   await page.getByRole("button", { name: "回答をはじめる" }).click();
@@ -528,7 +528,7 @@ test("answers for one additional person, corrects that answer, and restores it a
   for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "B");
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
-  await expect(page.getByText(/代理回答者（ほかの人の回答）/)).toBeVisible();
+  await expect(page.getByText(/代理回答者（代理回答）/)).toBeVisible();
   await expect(page.getByRole("button", { name: "ほかの人の回答を修正する" })).toBeVisible();
   expect(assistedSaves).toHaveLength(1);
 
