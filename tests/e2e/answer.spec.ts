@@ -623,7 +623,7 @@ test("returns to owner completion after an assisted save and opens target correc
     revision: 1,
   });
 
-  await page.getByRole("button", { name: "回答を修正する" }).click();
+  await page.getByRole("button", { name: "回答を修正する", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   await expect(page.getByRole("radio", { name: /Option 1A/ })).toBeChecked();
 });
