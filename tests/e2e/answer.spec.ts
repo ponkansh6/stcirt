@@ -288,7 +288,7 @@ test("locks the full answer sheet while its batch request is pending", async ({ 
   await requestStarted;
 
   const submittingButton = page.getByRole("button", { name: "回答を送信しています…" });
-  await expect(submittingButton).toBeFocused();
+  await expect(page.getByRole("heading", { name: "回答内容を確認してください" })).toBeFocused();
   await expect(submittingButton).toHaveAttribute("aria-disabled", "true");
   await expect(submittingButton).toHaveAccessibleName("回答を送信しています…");
   await expect(submittingButton).not.toHaveAttribute("disabled");
