@@ -1373,6 +1373,81 @@ describe("useQuizSession state transitions", () => {
     expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["question-load failure", "自分の回答を復元できませんでした"],
+    ["invalid saved answers", "自分の保存済み回答を復元できませんでした"],
+  ] as const)(
+    "keeps the successful assisted save visible when owner restoration hits a %s",
+    async (failure, errorMessage) => {
+      api.fetchAssistedParticipant.mockResolvedValue({
+        participant: assistedParticipant,
+        hasSubmission: false,
+        eligible: false,
+      });
+      const hook = await enterOwnerComplete();
+      api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+
+      await act(async () => hook.result.current.resumeAssisted());
+      await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+      for (const quiz of hook.result.current.quizzes) {
+        act(() => hook.result.current.select(quiz.question.id, 0));
+      }
+
+      if (failure === "question-load failure") {
+        api.fetchExamQuestions.mockRejectedValueOnce(new Error("questions unavailable"));
+        api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+      } else {
+        api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission({ answers: [] }));
+      }
+
+      await act(async () => hook.result.current.saveAnswers());
+      await waitFor(() => expect(hook.result.current.phase.kind).toBe("owner-return-error"));
+      expect(hook.result.current.answerMode).toBe("owner");
+      expect(hook.result.current.phase).toMatchObject({
+        kind: "owner-return-error",
+        message: expect.stringContaining(`代理回答は保存されましたが、${errorMessage}`),
+      });
+      expect(api.submitAnswerBatch).toHaveBeenCalledWith(expect.any(Object), "assisted");
+    },
+  );
+
+  it("clears owner-return recovery when a different participant reauthenticates", async () => {
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    const hook = await enterOwnerComplete();
+    api.fetchLatestAnswerSubmission
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(apiError(401, "expired"))
+      .mockResolvedValueOnce(null);
+
+    await act(async () => hook.result.current.resumeAssisted());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    for (const quiz of hook.result.current.quizzes) {
+      act(() => hook.result.current.select(quiz.question.id, 0));
+    }
+    await act(async () => hook.result.current.saveAnswers());
+    await waitFor(() =>
+      expect(hook.result.current).toMatchObject({
+        access: { kind: "reauthentication", participant },
+        phase: { kind: "owner-return-error" },
+      }),
+    );
+
+    api.createParticipantSession.mockResolvedValueOnce({ participant: otherParticipant });
+    await act(async () => hook.result.current.login("別の参加者", "1234"));
+    await waitFor(() =>
+      expect(hook.result.current).toMatchObject({
+        access: { kind: "ready", participant: otherParticipant },
+        phase: { kind: "answering" },
+        answerMode: "owner",
+      }),
+    );
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("owner");
+  });
+
   it("reauthenticates after an owner reload 401 and retries owner status without resubmitting assisted answers", async () => {
     api.fetchAssistedParticipant.mockResolvedValue({
       participant: assistedParticipant,
@@ -1563,6 +1638,27 @@ describe("useQuizSession state transitions", () => {
     await act(async () => hook.result.current.saveAnswers());
     expect(api.submitAnswerBatch).toHaveBeenCalledWith(expect.any(Object), "assisted");
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+  });
+
+  it("restores older assisted drafts without legacy answer IDs", async () => {
+    const { legacyAnswerIds: _legacyAnswerIds, ...draft } = makeAssistedDraft();
+    void _legacyAnswerIds;
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    api.fetchLatestAnswerSubmission.mockResolvedValue(null);
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+
+    expect(hook.result.current.legacyAnswerIds).toEqual([]);
+    expect(hook.result.current.selections).toEqual(draft.selections);
+    expect(hook.result.current.submissionId).toBe(draft.submissionId);
   });
 
   it("counts saved free-text responses when restoring an assisted draft", async () => {

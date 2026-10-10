@@ -260,6 +260,34 @@ describe("QuizRunner batch answer sheet", () => {
     await waitFor(() => expect(document.activeElement).toBe(completionHeading));
   });
 
+  it("keeps completion focus after an owner submission check", async () => {
+    let currentPhase: object = { kind: "answering" };
+    mockUseQuizSession.mockImplementation(() =>
+      session(currentPhase, {
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        answeredCount: 5,
+      }),
+    );
+    const { rerender } = render(<RunnerPage />);
+    screen.getByRole("button", { name: "5問の回答を確定する" }).focus();
+
+    currentPhase = { kind: "submitting" };
+    rerender(<RunnerPage />);
+    const finalCheckHeading = screen.getByRole("heading", {
+      name: "回答内容を確認してください",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(finalCheckHeading));
+
+    currentPhase = { kind: "checking-submission" };
+    rerender(<RunnerPage />);
+    expect(screen.getByRole("status")).toHaveTextContent("保存済みの回答状況を確認しています");
+
+    currentPhase = { kind: "complete" };
+    rerender(<RunnerPage />);
+    const completionHeading = screen.getByRole("heading", { name: "回答完了" });
+    await waitFor(() => expect(document.activeElement).toBe(completionHeading));
+  });
+
   it("does not move focus to completion when the initial phase is already complete", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
     render(<RunnerPage />);
