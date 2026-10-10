@@ -20,6 +20,7 @@ const METRICS = ["statements", "branches", "functions", "lines"];
 const INCLUDED_EXTENSIONS = new Set([".ts", ".tsx", ".css"]);
 const EXCLUDED_RELATIVE_PATHS = new Set(["src/lib/db/schema.ts"]);
 const EXCLUDED_RELATIVE_PREFIXES = ["src/lib/db/migrations/"];
+const ZERO_COUNT_REEXPORT_PATHS = new Set(["src/lib/db/repository/presentation-repository.ts"]);
 
 function normalizePath(path) {
   const absolutePath = resolve(ROOT, path);
@@ -284,6 +285,8 @@ function main() {
     if (totals.every((total) => total === 0)) {
       if (extname(sourcePath) === ".css") {
         zeroCountAllowances.push(relativePath);
+      } else if (ZERO_COUNT_REEXPORT_PATHS.has(relativePath)) {
+        zeroCountAllowances.push(relativePath);
       } else if (isPureTypeSource(sourcePath)) {
         zeroCountAllowances.push(relativePath);
       } else {
@@ -302,7 +305,7 @@ function main() {
   console.log(`[coverage-completeness] Checked ${sources.length} included TS/TSX/CSS sources.`);
   if (zeroCountAllowances.length > 0) {
     console.log(
-      `[coverage-completeness] Explicit zero-count allowances (CSS or pure type source): ${zeroCountAllowances.join(", ")}`,
+      `[coverage-completeness] Explicit zero-count allowances (CSS, pure type source, or approved re-export facade): ${zeroCountAllowances.join(", ")}`,
     );
   }
   console.log(
