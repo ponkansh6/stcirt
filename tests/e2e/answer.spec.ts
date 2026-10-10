@@ -854,11 +854,13 @@ test("retains all choices through reauthentication and resubmits the batch only 
   for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "C");
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();
   await expect(page.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "回答内容を確認してください" })).toBeFocused();
   await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeChecked();
 
   await page.getByLabel("4桁PIN").fill("0123");
   await page.getByRole("button", { name: "再ログインする" }).click();
   await expect(page.getByRole("button", { name: "同じ回答を再送する" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "同じ回答を再送する" })).toBeFocused();
   await expect(page.getByRole("radio", { name: /Option 1C/ })).toBeChecked();
   expect(answerCalls).toBe(1);
   await page.getByRole("button", { name: "同じ回答を再送する" }).click();

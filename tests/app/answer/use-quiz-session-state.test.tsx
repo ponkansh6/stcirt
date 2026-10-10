@@ -259,13 +259,15 @@ describe("useQuizSession state transitions", () => {
     api.createParticipantSession.mockReturnValueOnce(pending.promise);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
-    let loggingIn!: Promise<void>;
+    let loggingIn!: Promise<number>;
     act(() => {
       loggingIn = hook.result.current.login("参加者", "1234");
     });
     hook.unmount();
     pending.resolve({ participant });
-    await act(async () => loggingIn);
+    await act(async () => {
+      await expect(loggingIn).resolves.toBe(participant.id);
+    });
     expect(api.createParticipantSession).toHaveBeenCalledOnce();
   });
 
@@ -274,7 +276,7 @@ describe("useQuizSession state transitions", () => {
     api.createParticipantSession.mockReturnValueOnce(pending.promise);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
-    let loggingIn!: Promise<void>;
+    let loggingIn!: Promise<number>;
     act(() => {
       loggingIn = hook.result.current.login("参加者", "1234");
     });

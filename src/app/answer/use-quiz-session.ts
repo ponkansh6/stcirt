@@ -703,7 +703,7 @@ export function useQuizSession() {
     void resolveParticipant(current.participant, "owner");
   }, [resolveParticipant]);
 
-  const login = useCallback(async (name: string, pin: string) => {
+  const login = useCallback(async (name: string, pin: string): Promise<number> => {
     const currentAccess = accessRef.current;
     try {
       const { participant } = await createParticipantSession(name, pin);
@@ -733,6 +733,7 @@ export function useQuizSession() {
         }
         setAccess({ kind: "ready", participant });
       }
+      return participant.id;
     } catch (error) {
       if (mountedRef.current) {
         setAccess(

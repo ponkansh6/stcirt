@@ -46,11 +46,15 @@ export default function QuizRunner() {
   const completionHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const previousPhaseKind = useRef(phase.kind);
   const shouldFocusCompletion = useRef(false);
+  const shouldFocusRetrySubmissionAfterReauthentication = useRef(false);
+  const checkedSubmissionAfterReauthentication = useRef(false);
+  const [reauthenticationSuccessCount, setReauthenticationSuccessCount] = useState(0);
   const [participantResultsVisible, setParticipantResultsVisible] = useState(false);
   const [participantResultsWaiting, setParticipantResultsWaiting] = useState<boolean | null>(null);
   const [participantResultsUnavailable, setParticipantResultsUnavailable] = useState(false);
   const [participantResultsRefreshError, setParticipantResultsRefreshError] = useState(false);
   const [participantResultsAuthExpired, setParticipantResultsAuthExpired] = useState(false);
+  const retryRequired = phase.kind === "answering" && phase.retryRequired;
   useEffect(() => {
     if (phase.kind !== "complete" || access.kind !== "ready") {
       setParticipantResultsVisible(false);
@@ -161,6 +165,38 @@ export default function QuizRunner() {
     document.addEventListener("focusin", handleFocusIn);
     return () => document.removeEventListener("focusin", handleFocusIn);
   }, [phase.kind]);
+  useEffect(() => {
+    if (!shouldFocusRetrySubmissionAfterReauthentication.current) return;
+    if (phase.kind === "checking-submission") {
+      checkedSubmissionAfterReauthentication.current = true;
+      return;
+    }
+    if (
+      access.kind !== "ready" ||
+      phase.kind !== "answering" ||
+      !retryRequired ||
+      !checkedSubmissionAfterReauthentication.current
+    ) {
+      return;
+    }
+
+    shouldFocusRetrySubmissionAfterReauthentication.current = false;
+    checkedSubmissionAfterReauthentication.current = false;
+    submitButtonRef.current!.focus({ preventScroll: true });
+  }, [access.kind, phase.kind, reauthenticationSuccessCount, retryRequired]);
+  useEffect(() => {
+    const handleFocusIn = (event: FocusEvent) => {
+      if (
+        shouldFocusRetrySubmissionAfterReauthentication.current &&
+        event.target !== document.body
+      ) {
+        shouldFocusRetrySubmissionAfterReauthentication.current = false;
+        checkedSubmissionAfterReauthentication.current = false;
+      }
+    };
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, []);
   const isSubmitting = phase.kind === "submitting";
   const isRefreshing = phase.kind === "refreshing";
   const unanswered = quizzes.filter(({ question }) =>
@@ -453,10 +489,10 @@ export default function QuizRunner() {
     );
   }
 
-  const retryRequired = phase.kind === "answering" && phase.retryRequired;
   const refreshRequired = phase.kind === "answering" && phase.refreshRequired;
   const isLocked = isSubmitting || isRefreshing || retryRequired || refreshRequired;
   const authExpired = access.kind === "reauthentication";
+  const reauthenticationParticipantId = authExpired ? access.participant.id : null;
   const hasSavedAnswers =
     Object.keys(savedSelections).length ===
     quizzes.filter(({ question }) => question.answerType === "selected").length;
@@ -549,6 +585,14 @@ export default function QuizRunner() {
             <ParticipantForm
               key="reauthentication-form"
               onLogin={login}
+              onSuccess={(participantId, canHandoffFocus) => {
+                const participantMatches = participantId === reauthenticationParticipantId;
+                shouldFocusRetrySubmissionAfterReauthentication.current =
+                  participantMatches && canHandoffFocus;
+                checkedSubmissionAfterReauthentication.current = false;
+                if (!participantMatches) return;
+                setReauthenticationSuccessCount((count) => count + 1);
+              }}
               initialName={access.participant.name}
               submitLabel="再ログインする"
             />
@@ -745,15 +789,18 @@ function ParticipantCard({ children }: { children: ReactNode }) {
 
 function ParticipantForm({
   onLogin,
+  onSuccess,
   initialName = "",
   message,
   submitLabel = "はじめる",
 }: {
-  onLogin: (name: string, pin: string) => Promise<void>;
+  onLogin: (name: string, pin: string) => Promise<number>;
+  onSuccess?: (participantId: number, canHandoffFocus: boolean) => void;
   initialName?: string;
   message?: string;
   submitLabel?: string;
 }) {
+  const formRef = useRef<HTMLFormElement | null>(null);
   const [name, setName] = useState(initialName);
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
@@ -767,8 +814,24 @@ function ParticipantForm({
     setError(null);
     const submittedPin = pin;
     setPin("");
+    const form = formRef.current;
+    let focusMovedOutsideForm = false;
+    const handleFocusIn = (focusEvent: FocusEvent) => {
+      const target = focusEvent.target;
+      if (target instanceof Node && target !== document.body && !form?.contains(target)) {
+        focusMovedOutsideForm = true;
+      }
+    };
+    document.addEventListener("focusin", handleFocusIn);
     try {
-      await onLogin(name, submittedPin);
+      const participantId = await onLogin(name, submittedPin);
+      const activeElement = document.activeElement;
+      const canHandoffFocus =
+        !focusMovedOutsideForm &&
+        (activeElement === document.body ||
+          !activeElement?.isConnected ||
+          Boolean(form?.contains(activeElement)));
+      onSuccess?.(participantId, canHandoffFocus);
     } catch (cause) {
       const retryAt = cause instanceof ApiError && cause.retryAt ? new Date(cause.retryAt) : null;
       const retryHint =
@@ -781,12 +844,13 @@ function ParticipantForm({
           : "参加できませんでした。入力内容をご確認ください。",
       );
     } finally {
+      document.removeEventListener("focusin", handleFocusIn);
       setBusy(false);
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-7 space-y-5">
+    <form ref={formRef} onSubmit={handleSubmit} className="mt-7 space-y-5">
       <div className="space-y-2">
         <label htmlFor="participant-name" className="block text-sm font-semibold">
           お名前
