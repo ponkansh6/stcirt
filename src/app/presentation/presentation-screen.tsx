@@ -15,6 +15,7 @@ import styles from "./presentation-screen.module.css";
 type State =
   | "standby"
   | "not_started"
+  | "opening"
   | "question"
   | "answer"
   | "podium_preview"
@@ -71,6 +72,7 @@ type ProjectionData =
 type AdminState = Extract<
   State,
   | "not_started"
+  | "opening"
   | "question"
   | "answer"
   | "podium_preview"
@@ -89,6 +91,7 @@ type AdminControls = {
 };
 const adminStates: AdminState[] = [
   "not_started",
+  "opening",
   "question",
   "answer",
   "podium_preview",
@@ -177,6 +180,7 @@ function isProjectionData(payload: unknown): payload is ProjectionData {
     ![
       "standby",
       "not_started",
+      "opening",
       "question",
       "answer",
       "podium_preview",
@@ -728,14 +732,24 @@ export default function PresentationScreen({
     function schedulePoll() {
       if (!active || document.visibilityState === "hidden" || !presenterAuthenticated.current)
         return;
-      timer = window.setTimeout(() => void refresh(), 2500);
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        void refresh();
+      }, 2500);
     }
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
-        if (timer !== undefined) window.clearTimeout(timer);
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+          timer = undefined;
+        }
         return;
       }
-      if (timer !== undefined) window.clearTimeout(timer);
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+        timer = undefined;
+      }
       void refreshAdmin(true).then(schedulePoll);
     };
     void refreshAdmin(true).then(schedulePoll);
@@ -745,7 +759,10 @@ export default function PresentationScreen({
       document.removeEventListener("visibilitychange", onVisibilityChange);
       adminSequence.current += 1;
       adminPollAbort.current?.abort();
-      if (timer !== undefined) window.clearTimeout(timer);
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+        timer = undefined;
+      }
     };
   }, [applyAdminControls, presenterRequested, refreshAdmin]);
 
@@ -860,9 +877,7 @@ export default function PresentationScreen({
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         const canGoPrevious =
-          adminControls.state !== "not_started" &&
-          !(adminControls.state === "question" && adminControls.questionIndex === 0) &&
-          !(adminControls.state === "podium_preview" && adminControls.questionCount === 0);
+          adminControls.state !== "not_started" && adminControls.state !== "opening";
         if (canGoPrevious) void operate("previous");
       } else if ((event.key === " " || event.key === "Enter") && !event.isComposing) {
         event.preventDefault();
@@ -994,9 +1009,7 @@ export default function PresentationScreen({
         return;
       }
       const canGoPrevious =
-        adminControls.state !== "not_started" &&
-        !(adminControls.state === "question" && adminControls.questionIndex === 0) &&
-        !(adminControls.state === "podium_preview" && adminControls.questionCount === 0);
+        adminControls.state !== "not_started" && adminControls.state !== "opening";
       if (canGoPrevious) void operate("previous");
     },
     [adminControls, operate],
@@ -1156,14 +1169,18 @@ export default function PresentationScreen({
                 )}
 
                 {!loadingPresenterDeck && (!data || state === "not_started") && (
-                  <section className={styles.waiting} aria-labelledby="presentation-title">
-                    <p className={styles.kicker}>A MOMENT TO CELEBRATE</p>
-                    <h1 id="presentation-title">
-                      ふたりの思い出を
-                      <br />
-                      振り返る時間
-                    </h1>
+                  <section className={styles.opening} aria-labelledby="presentation-title">
+                    <p className={styles.kicker}>PRESENTATION</p>
+                    <h1 id="presentation-title">しゅんたま検定</h1>
                     <p className={styles.subtitle}>発表が始まるまで、少々お待ちください</p>
+                  </section>
+                )}
+
+                {state === "opening" && (
+                  <section className={styles.opening} aria-labelledby="opening-title">
+                    <p className={styles.kicker}>PRESENTATION</p>
+                    <h1 id="opening-title">しゅんたま検定</h1>
+                    <p className={styles.subtitle}>これまでの思い出を振り返りましょう</p>
                   </section>
                 )}
 
@@ -1187,6 +1204,11 @@ export default function PresentationScreen({
                     aria-label={`${rankTitle[state]}の勝者一覧`}
                     tabIndex={0}
                   >
+                    <span className={styles.certificateStamp} aria-label="しゅんたま検定">
+                      しゅんたま
+                      <br />
+                      検定
+                    </span>
                     <p className={styles.rank}>{rankTitle[state]}</p>
                     <div
                       className={`${styles.winnerNames} ${data?.winners?.length === 1 ? styles.singleWinner : ""}`}

@@ -42,7 +42,7 @@ const adminPayload = {
   entries: [],
 } satisfies Awaited<ReturnType<typeof getAdminPresentation>>;
 const controlsPayload = {
-  state: "question",
+  state: "opening",
   version: 1,
   snapshotRevision: 1,
   questionIndex: 0,

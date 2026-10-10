@@ -8,7 +8,7 @@ type DeckProjectionFixture =
   | { state: "question" | "answer"; question?: unknown }
   | { state: "third" | "second" | "first"; winners: WinnerFixture[] }
   | {
-      state: "standby" | "not_started" | "podium_preview" | "finished";
+      state: "standby" | "not_started" | "opening" | "podium_preview" | "finished";
       winners?: WinnerFixture[];
     };
 type DeckSlideFixture = {
@@ -85,6 +85,7 @@ function setup(
       { state: "question", questionIndex: index },
       { state: "answer", questionIndex: index },
     ]).flat();
+    order.unshift({ state: "opening", questionIndex: 0 });
     order.push(
       { state: "podium_preview", questionIndex: questionCount },
       { state: "third", questionIndex: questionCount },
@@ -124,6 +125,7 @@ function setup(
         ? { state, winners: [] }
         : { state };
   const deckSlides: DeckSlideFixture[] = [
+    deckSlide("opening", 0, { state: "opening" }),
     ...Array.from({ length: Number(admin.questionCount ?? 0) }, (_, questionIndex) => [
       deckSlide("question", questionIndex, slideProjection("question")),
       deckSlide("answer", questionIndex, slideProjection("answer")),
@@ -141,12 +143,18 @@ function setup(
   const slideIndex = deckSlides.findIndex(
     (slide) => slide.state === admin.state && slide.questionIndex === admin.questionIndex,
   );
-  if (slideIndex >= 0)
+  if (slideIndex >= 0) {
+    const activeState = deckSlides[slideIndex]!.state;
+    const activeProjection =
+      activeState === "question" || activeState === "answer"
+        ? slideProjection(activeState)
+        : projection;
     deckSlides[slideIndex] = deckSlide(
-      deckSlides[slideIndex]!.state,
+      activeState,
       deckSlides[slideIndex]!.questionIndex,
-      projection as unknown as DeckProjectionFixture,
+      activeProjection as unknown as DeckProjectionFixture,
     );
+  }
   for (const slide of options.deckSlides ?? []) {
     const existing = deckSlides.findIndex(
       (candidate) =>
@@ -269,8 +277,9 @@ describe("presentation projection and presenter progression", () => {
     [
       "not_started",
       { state: "not_started" },
-      ["ふたりの思い出を", "振り返る時間", "発表が始まるまで、少々お待ちください"],
+      ["しゅんたま検定", "発表が始まるまで、少々お待ちください"],
     ],
+    ["opening", { state: "opening" }, ["しゅんたま検定", "これまでの思い出を振り返りましょう"]],
     [
       "question",
       {
@@ -1388,8 +1397,6 @@ describe("presentation projection and presenter progression", () => {
   });
 
   it.each([
-    ["question", 0, 2, "ArrowLeft"],
-    ["podium_preview", 0, 0, "ArrowLeft"],
     ["finished", 2, 2, "ArrowRight"],
     ["not_started", 0, 5, "Enter"],
   ])("keeps the %s boundary inert", async (state, questionIndex, questionCount, key) => {
@@ -1403,6 +1410,40 @@ describe("presentation projection and presenter progression", () => {
         ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
       ),
     ).toHaveLength(0);
+  });
+
+  it.each([
+    ["question", 0, 2],
+    ["podium_preview", 0, 0],
+  ])("returns from the %s first slide to opening", async (state, questionIndex, questionCount) => {
+    const api = setup({ projection: { state }, admin: { state, questionIndex, questionCount } });
+    render(<PresentationScreen presenterRequested />);
+    await waitFor(() =>
+      expect(api.calls.some(({ path }) => path === "/api/admin/presentation?view=controls")).toBe(
+        true,
+      ),
+    );
+    await waitFor(() =>
+      expect(api.calls.some(({ path }) => path === "/api/admin/presentation/deck")).toBe(true),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("スライドを読み込んでいます")).not.toBeInTheDocument(),
+    );
+    if (state === "question") {
+      await waitFor(() =>
+        expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument(),
+      );
+    }
+    await settled();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowLeft" });
+    await settled();
+    const mutations = api.calls.filter(
+      ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+    );
+    expect(mutations).toHaveLength(1);
+    const mutation = mutations[0];
+    expect(mutation?.init?.body).toContain('"action":"previous"');
+    expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
   });
 
   it("requests fullscreen before a stage mutation and tolerates rejection", async () => {

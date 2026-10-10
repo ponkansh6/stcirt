@@ -259,6 +259,61 @@ describe("presentation admin console", () => {
     else Reflect.deleteProperty(document, "visibilityState");
   });
 
+  it("starts polling after login and reflects state changes made outside the admin console", async () => {
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    let poll: (() => void) | undefined;
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler, delay?: number) => {
+      if (delay === 2500 && typeof handler === "function") poll = handler as () => void;
+      if (delay === 2500) return 1 as unknown as ReturnType<typeof window.setTimeout>;
+      return nativeSetTimeout(handler, delay);
+    }) as typeof window.setTimeout);
+    let authenticated = false;
+    let state = "opening";
+    let stateReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/admin/session" && init?.method === "POST") {
+        authenticated = true;
+        return response(200, { authenticated: true });
+      }
+      if (path === "/api/admin/session") return response(200, { authenticated });
+      if (path === "/api/admin/presentation") {
+        stateReads += 1;
+        return response(200, {
+          state,
+          snapshotRevision: 1,
+          questionIndex: 0,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: true,
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(poll).toBeUndefined();
+    await user.type(screen.getByLabelText("管理者 PIN"), "2468");
+    await user.click(screen.getByRole("button", { name: "管理ページにログイン" }));
+    expect(await screen.findByText("現在の状態：進行中：オープニング")).toBeInTheDocument();
+    expect(stateReads).toBe(1);
+
+    state = "question";
+    await waitFor(() => expect(poll).toBeDefined());
+    await act(async () => poll?.());
+
+    expect(screen.getByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    expect(stateReads).toBe(2);
+    if (originalVisibility) Object.defineProperty(document, "visibilityState", originalVisibility);
+    else Reflect.deleteProperty(document, "visibilityState");
+  });
+
   it("skips a queued poll while hidden or after the visible session check expires", async () => {
     const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
@@ -794,6 +849,7 @@ describe("presentation admin console", () => {
 
   it.each([
     ["not_started", "未開始", false],
+    ["opening", "進行中：オープニング", false],
     ["question", "進行中：問題", true],
     ["answer", "進行中：解答", true],
     ["podium_preview", "進行中：結果発表前", false],
@@ -1122,6 +1178,96 @@ describe("presentation admin console", () => {
     act(() => poll?.());
     expect(await screen.findByText("現在の状態：進行中：解答")).toBeInTheDocument();
     expect(presentationReads).toBe(2);
+  });
+
+  it("keeps one pending poll timer when visibility return and refresh completion coincide", async () => {
+    let finishPollState: ((value: Response) => void) | undefined;
+    let presentationReads = 0;
+    let sessionReads = 0;
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    let nextTimerId = 0;
+    const pendingPollTimers = new Set<number>();
+    const pollHandlers = new Map<number, () => void>();
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const nativeClearTimeout = window.clearTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler, delay?: number) => {
+      if (delay === 2500 && typeof handler === "function") {
+        const id = ++nextTimerId;
+        pendingPollTimers.add(id);
+        pollHandlers.set(id, handler as () => void);
+        return id as unknown as ReturnType<typeof window.setTimeout>;
+      }
+      return nativeSetTimeout(handler, delay);
+    }) as typeof window.setTimeout);
+    vi.spyOn(window, "clearTimeout").mockImplementation((id) => {
+      if (typeof id === "number" && pendingPollTimers.delete(id)) {
+        pollHandlers.delete(id);
+        return;
+      }
+      nativeClearTimeout(id);
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/admin/session") {
+        sessionReads += 1;
+        return Promise.resolve(response(200, { authenticated: true }));
+      }
+      if (path === "/api/admin/presentation") {
+        presentationReads += 1;
+        if (presentationReads === 2)
+          return new Promise<Response>((resolve) => {
+            finishPollState = resolve;
+          });
+        return Promise.resolve(
+          response(200, {
+            state: "question",
+            questionIndex: 0,
+            questionCount: 5,
+            projectionHidden: false,
+            participantResultsVisible: false,
+            participantResultsReady: true,
+          }),
+        );
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PresentationAdmin />);
+
+    expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    expect(pendingPollTimers.size).toBe(1);
+    const [initialTimer] = pendingPollTimers;
+    act(() => {
+      const handler = pollHandlers.get(initialTimer);
+      pendingPollTimers.delete(initialTimer);
+      pollHandlers.delete(initialTimer);
+      handler?.();
+    });
+    await waitFor(() => expect(finishPollState).toBeDefined());
+
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(pendingPollTimers.size).toBe(0);
+    await act(async () => {
+      finishPollState?.(
+        response(200, {
+          state: "answer",
+          questionIndex: 0,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: true,
+        }),
+      );
+      for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    });
+
+    await waitFor(() => expect(sessionReads).toBe(2));
+    await waitFor(() => expect(presentationReads).toBe(3));
+    await waitFor(() => expect(pendingPollTimers.size).toBe(1));
+    expect(pendingPollTimers.size).toBe(1);
+    if (originalVisibility) Object.defineProperty(document, "visibilityState", originalVisibility);
+    else Reflect.deleteProperty(document, "visibilityState");
   });
 
   it("joins a duplicate ordinary poll to the refresh already in flight", async () => {

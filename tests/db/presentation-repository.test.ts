@@ -412,7 +412,7 @@ describe("presentation repository", () => {
     await startWithAggregate("controls-start");
     await expect(getAdminPresentationControls()).resolves.toMatchObject({
       state: "question",
-      version: 2,
+      version: 3,
       questionIndex: 0,
       questionCount: 2,
       projectionHidden: false,
@@ -482,7 +482,9 @@ describe("presentation repository", () => {
 
   async function startWithAggregate(id: string) {
     await op("aggregate", `${id}-aggregate`);
-    return operatePresentation(`operation-${id}`, "start");
+    await operatePresentation(`operation-${id}`, "start");
+    // Most scenarios below exercise question-or-later behavior; consume the new opening first.
+    return operatePresentation(`operation-${id}-opening-next`, "advance");
   }
 
   it("increments snapshot revisions on aggregate and resets the cursor without reaggregating", async () => {
@@ -505,7 +507,7 @@ describe("presentation repository", () => {
     await operatePresentation("revision-advance-one", "advance");
     const reset = await op("reset", "revision-reset");
     expect(reset).toMatchObject({
-      state: "question",
+      state: "opening",
       questionIndex: 0,
       questionCount: 2,
       version: 4,
@@ -519,10 +521,58 @@ describe("presentation repository", () => {
 
     const reaggregate = await op("aggregate", "revision-second-aggregate");
     expect(reaggregate).toMatchObject({
-      state: "question",
+      state: "opening",
       questionIndex: 0,
       version: 5,
       snapshotRevision: 2,
+    });
+  });
+
+  it("starts and resets at opening, with reversible question and empty-deck boundaries", async () => {
+    await addQuestions();
+    await op("aggregate", "opening-contract-aggregate");
+    await setParticipantResultsVisible(true);
+    const started = await operatePresentation("opening-contract-start", "start");
+    expect(started).toMatchObject({ state: "opening", questionIndex: 0, snapshotRevision: 1 });
+    await expect(getPublicPresentation()).resolves.toEqual({ state: "opening" });
+    await operatePresentation("opening-contract-hide", "hide");
+    await expect(getPublicPresentation()).resolves.toEqual({ state: "standby" });
+    const reset = await op("reset", "opening-contract-reset");
+    expect(reset).toMatchObject({
+      state: "opening",
+      questionIndex: 0,
+      version: started.version + 2,
+      snapshotRevision: 1,
+      projectionHidden: true,
+      participantResultsVisible: true,
+    });
+    expect(reset.questions).toEqual(started.questions);
+    expect(reset.entries).toEqual(started.entries);
+    await expect(op("previous", "opening-contract-previous")).rejects.toMatchObject({
+      status: 409,
+    });
+    await expect(op("advance", "opening-contract-next")).resolves.toMatchObject({
+      state: "question",
+      questionIndex: 0,
+    });
+    await expect(op("previous", "opening-contract-question-back")).resolves.toMatchObject({
+      state: "opening",
+      questionIndex: 0,
+    });
+
+    await testDb.db.delete(schema.examQuestions);
+    await op("aggregate", "opening-contract-empty-aggregate");
+    await expect(op("reset", "opening-contract-empty-reset")).resolves.toMatchObject({
+      state: "opening",
+      questionIndex: 0,
+    });
+    await expect(op("advance", "opening-contract-empty-next")).resolves.toMatchObject({
+      state: "podium_preview",
+      questionIndex: 0,
+    });
+    await expect(op("previous", "opening-contract-empty-back")).resolves.toMatchObject({
+      state: "opening",
+      questionIndex: 0,
     });
   });
 
@@ -531,6 +581,7 @@ describe("presentation repository", () => {
     await op("aggregate", "invalid-answer-cursor-initial-aggregate");
     await operatePresentation("invalid-answer-cursor-start", "start");
     await operatePresentation("invalid-answer-cursor-advance", "advance");
+    await operatePresentation("invalid-answer-cursor-answer", "advance");
     await testDb.db
       .update(schema.presentationSessions)
       .set({ questionIndex: 2 })
@@ -542,7 +593,7 @@ describe("presentation repository", () => {
       state: "question",
       questionIndex: 0,
       questionCount: 2,
-      version: 4,
+      version: 5,
       snapshotRevision: 2,
     });
   });
@@ -552,7 +603,7 @@ describe("presentation repository", () => {
     await op("aggregate", "finished-reset-aggregate");
     await setParticipantResultsVisible(true);
     await operatePresentation("finished-reset-start", "start");
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       await operatePresentation(`finished-reset-advance-${index}`, "advance");
     }
     await operatePresentation("finished-reset-hide", "hide");
@@ -560,7 +611,7 @@ describe("presentation repository", () => {
     expect(beforeReset).toMatchObject({
       state: "finished",
       questionIndex: 1,
-      version: 8,
+      version: 9,
       snapshotRevision: 1,
       projectionHidden: true,
       participantResultsVisible: true,
@@ -569,7 +620,7 @@ describe("presentation repository", () => {
     const reset = await op("reset", "finished-hidden-reset");
 
     expect(reset).toMatchObject({
-      state: "question",
+      state: "opening",
       questionIndex: 0,
       questionCount: 2,
       version: beforeReset.version + 1,
@@ -829,6 +880,7 @@ describe("presentation repository", () => {
 
     expect(deck).toMatchObject({ questionCount: 2, questionIndex: 0 });
     expect(deck.slides.map(({ state, questionIndex }) => [state, questionIndex])).toEqual([
+      ["opening", 0],
       ["question", 0],
       ["answer", 0],
       ["question", 1],
@@ -838,12 +890,12 @@ describe("presentation repository", () => {
       ["first", 0],
       ["finished", 0],
     ]);
-    expect(deck.slides[0]?.projection).toMatchObject({
+    expect(deck.slides[1]?.projection).toMatchObject({
       state: "question",
       question: { question: "Question 11" },
     });
-    expect(deck.slides[0]?.projection).not.toHaveProperty("question.correctAnswer");
-    expect(deck.slides[1]?.projection).toMatchObject({
+    expect(deck.slides[1]?.projection).not.toHaveProperty("question.correctAnswer");
+    expect(deck.slides[2]?.projection).toMatchObject({
       state: "answer",
       question: { correctAnswer: "Correct 11", explanation: "Explanation 11" },
     });
@@ -1222,11 +1274,11 @@ describe("presentation repository", () => {
     const advanced = await operatePresentation("stable-advance", "advance");
     const replayedAdvance = await operatePresentation("stable-advance", "advance");
     expect(replayedAdvance.version).toBe(advanced.version);
-    expect(replayedAdvance.state).toBe("answer");
-    await expect(operatePresentation("stable-advance", "previous")).rejects.toMatchObject({
-      status: 409,
+    expect(replayedAdvance.state).toBe("question");
+    await expect(operatePresentation("stable-back-to-opening", "previous")).resolves.toMatchObject({
+      state: "opening",
     });
-    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(3);
+    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(4);
   });
 
   it("returns lightweight controls for new and replayed operations while preserving full callers", async () => {
@@ -1235,7 +1287,7 @@ describe("presentation repository", () => {
     await operatePresentationControls("controls-aggregate", "aggregate");
     const controls = await operatePresentationControls("controls-start", "start");
     expect(controls).toEqual({
-      state: "question",
+      state: "opening",
       version: 2,
       questionIndex: 0,
       questionCount: 2,
@@ -1246,7 +1298,7 @@ describe("presentation repository", () => {
 
     const fullSnapshot = await operatePresentation("controls-start", "start");
     expect(fullSnapshot).toMatchObject({
-      state: "question",
+      state: "opening",
       version: 2,
       questionCount: 2,
       participantResultsVisible: false,
@@ -1291,7 +1343,7 @@ describe("presentation repository", () => {
     expect(repeatedPublish.snapshotRevision).toBe(published.snapshotRevision);
     const started = await operatePresentation("visibility-start", "start");
     expect(started).toMatchObject({
-      state: "question",
+      state: "opening",
       version: 2,
       participantResultsVisible: true,
       participantResultsReady: true,
@@ -1327,10 +1379,7 @@ describe("presentation repository", () => {
       question: "Edited after publication",
     });
     expect(republished.entries).toMatchObject([{ displayName: "Participant", score: 0, rank: 1 }]);
-    await expect(getPublicPresentation()).resolves.toMatchObject({
-      state: hiddenState.state,
-      question: { id: 11, question: "Edited after publication" },
-    });
+    await expect(getPublicPresentation()).resolves.toEqual({ state: "opening" });
     const participantResult = await getParticipantResult(participant);
     expect(participantResult).toEqual({
       state: "visible",
@@ -1407,7 +1456,7 @@ describe("presentation repository", () => {
     const started = await failFirstTransactionAfterCallback(() =>
       operatePresentation("retry-after-lock-start", "start"),
     );
-    expect(started).toMatchObject({ state: "question", version: 3 });
+    expect(started).toMatchObject({ state: "opening", version: 3 });
     await expect(testDb.db.select().from(schema.presentationOperations)).resolves.toHaveLength(3);
   });
 
@@ -1565,7 +1614,7 @@ describe("presentation repository", () => {
     expect(aggregated).toMatchObject({ snapshotRevision: 1, version: 1, state: "not_started" });
     const started = await operatePresentation("empty-start", "start");
     expect(started).toMatchObject({
-      state: "podium_preview",
+      state: "opening",
       version: 2,
       questionCount: 0,
       participantResultsReady: true,
@@ -1573,13 +1622,14 @@ describe("presentation repository", () => {
     expect(started.questions).toEqual([]);
     expect(started.entries).toEqual([]);
     await expect(op("reset", "empty-reset")).resolves.toMatchObject({
-      state: "podium_preview",
+      state: "opening",
       version: 3,
       questionCount: 0,
     });
     await expect(getAdminPresentationDeck()).resolves.toMatchObject({
       questionCount: 0,
       slides: [
+        { state: "opening", projection: { state: "opening" } },
         { state: "podium_preview", projection: { state: "podium_preview" } },
         { state: "finished", projection: { state: "finished" } },
       ],
@@ -1593,7 +1643,7 @@ describe("presentation repository", () => {
     });
     await expect(setParticipantResultsVisible(true)).resolves.toEqual({ visible: true });
     await expect(getAdminPresentation()).resolves.toMatchObject({
-      state: "podium_preview",
+      state: "opening",
       version: 3,
       questionCount: 0,
       participantResultsVisible: true,
@@ -1939,8 +1989,8 @@ describe("presentation repository", () => {
 
     const recovered = await commitWinnerThenRaiseAdapterUniqueConflict("adapter-retry");
 
-    expect(recovered).toMatchObject({ state: "answer", questionIndex: 0, version: 3 });
-    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(3);
+    expect(recovered).toMatchObject({ state: "answer", questionIndex: 0, version: 4 });
+    expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(4);
   });
 
   it("returns controls when recovering an operation committed by a concurrent retry", async () => {
@@ -1954,7 +2004,7 @@ describe("presentation repository", () => {
     );
 
     expect(recovered).toEqual({
-      state: "answer",
+      state: "question",
       version: 3,
       questionIndex: 0,
       questionCount: 2,
@@ -2218,7 +2268,7 @@ describe("presentation repository", () => {
       ),
     ).rejects.toBeInstanceOf(PresentationConflictError);
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
-      { state: "question", version: 2, questionIndex: 0 },
+      { state: "question", version: 3, questionIndex: 0 },
     ]);
   });
 
@@ -2230,7 +2280,7 @@ describe("presentation repository", () => {
       returnNoUpdatedRows(schema.presentationSessions, () => op("reset", "reset-cas-miss")),
     ).rejects.toBeInstanceOf(PresentationConflictError);
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
-      { state: "question", version: 2, questionIndex: 0 },
+      { state: "question", version: 3, questionIndex: 0 },
     ]);
   });
 

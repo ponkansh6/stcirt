@@ -1,8 +1,8 @@
 ## 安全に関するルール
 
+- **Playwright 用 loopback listen**: このリポジトリの作業全般で、Playwright やローカル検証用サーバーが `127.0.0.1:3001` に TCP listen することを許可済み（pre-push に限定しない）。必要な場合は対象コマンドだけを最初から `sandbox_permissions=require_escalated` で実行する。この許可は `0.0.0.0` listen、任意の外部通信、永続的な sandbox / 承認設定の変更を含まない。
 - **pre-push 検証と通常 push の昇格実行**: ユーザーは、このリポジトリの pre-push 検証に必要な次の操作と、依頼に含まれる通常の `git push` に必要な昇格権限を明示許可済み。
   - pre-push のための `.git` metadata 更新（`git worktree add` / `remove` / `prune` など）。
-  - Playwright 用サーバーの `127.0.0.1:3001` への loopback TCP listen。
   - `pnpm audit` と、必要な場合の read-only Turso schema drift 確認に必要な外向き通信。
     pre-push 検証で上記操作を行う場合、最初の実行から対象コマンドだけを `sandbox_permissions=require_escalated` で実行する。push が依頼に含まれる場合は、通常の `git push` 自体も最初から `sandbox_permissions=require_escalated` で実行し、通常権限での失敗を試さない。`--force` / `--force-with-lease` / ref deletion など履歴を破壊する push はこの許可に含まず、個別の明示指示が必要。昇格は上記操作に限り、`0.0.0.0` listen、任意の外部通信、不要な権限拡大を許可しない。また、永続的な sandbox / 承認設定の変更を意味しない。
 - **`git --no-verify` / `git commit -n` の使用禁止**: pre-commit/pre-push hooks を強制実行。

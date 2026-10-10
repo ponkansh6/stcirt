@@ -21,6 +21,7 @@ const deck = {
   questionCount: 1,
   questionIndex: 0,
   slides: [
+    { state: "opening", questionIndex: 0, projection: { state: "opening" } },
     { state: "question", questionIndex: 0, projection: { state: "question" } },
     {
       state: "third",

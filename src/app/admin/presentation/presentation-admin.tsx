@@ -112,6 +112,7 @@ async function setResultsVisibility(visible: boolean) {
 
 const stateLabels: Record<string, string> = {
   not_started: "未開始",
+  opening: "進行中：オープニング",
   question: "進行中：問題",
   answer: "進行中：解答",
   podium_preview: "進行中：結果発表前",
@@ -213,11 +214,25 @@ export default function PresentationAdmin() {
   );
 
   useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "hidden") void refresh(true);
+    };
+    void refresh(true);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      refreshSequence.current += 1;
+      pollAbortController.current?.abort();
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!authenticated) return;
+
     let active = true;
     let timer: number | undefined;
     async function poll() {
-      if (!active) return;
-      if (document.visibilityState === "hidden") return;
+      if (!active || document.visibilityState === "hidden") return;
       if (!authenticatedRef.current) return;
       if (externalOperationInFlight.current) {
         schedulePoll();
@@ -228,26 +243,32 @@ export default function PresentationAdmin() {
     }
     function schedulePoll() {
       if (!active || document.visibilityState === "hidden" || !authenticatedRef.current) return;
-      timer = window.setTimeout(() => void poll(), 2500);
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        void poll();
+      }, 2500);
+    }
+    function scheduleAfterCurrentRefresh() {
+      const currentRefresh = refreshFlight.current;
+      if (currentRefresh) void currentRefresh.then(schedulePoll, schedulePoll);
+      else schedulePoll();
     }
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        if (timer !== undefined) window.clearTimeout(timer);
-        return;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+        timer = undefined;
       }
-      if (timer !== undefined) window.clearTimeout(timer);
-      void refresh(true).then(schedulePoll);
+      if (document.visibilityState !== "hidden") scheduleAfterCurrentRefresh();
     };
-    void refresh(true).then(schedulePoll);
+    scheduleAfterCurrentRefresh();
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
       document.removeEventListener("visibilitychange", onVisibilityChange);
-      refreshSequence.current += 1;
-      pollAbortController.current?.abort();
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [refresh]);
+  }, [authenticated, refresh]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

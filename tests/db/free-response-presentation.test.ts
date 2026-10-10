@@ -112,7 +112,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         normalizedScore: 0.75,
       }),
     );
-    for (let index = 0; index < 11; index += 1)
+    for (let index = 0; index < 12; index += 1)
       await operatePresentation(`fraction-rank-forward-${index}`, "advance");
     let winnerProjection = await getPublicPresentation();
     expect(winnerProjection).toMatchObject({
@@ -140,7 +140,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     await addFreeTextSubmission(participantId, 0, "zero");
     await addFreeTextSubmission(maximumParticipantId, 2, "maximum");
     await startWithAggregate("zero-score-start");
-    for (let index = 0; index < 11; index += 1)
+    for (let index = 0; index < 12; index += 1)
       await operatePresentation(`zero-score-forward-${index}`, "advance");
 
     let projection = await getPublicPresentation();
@@ -184,7 +184,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     const participantId = await addParticipant("question-five-identity");
     await addFreeTextSubmission(participantId, 1, "identity");
     await startWithAggregate("question-five-identity-start");
-    for (let index = 0; index < 9; index += 1)
+    for (let index = 0; index < 10; index += 1)
       await operatePresentation(`question-five-identity-forward-${index}`, "advance");
     const fifthAnswer = await getPublicPresentation();
     expect(fifthAnswer).toMatchObject({ state: "answer", question: { ordinal: 5 } });
@@ -216,7 +216,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     const participantId = await addParticipant("missing-source");
     await addFreeTextSubmission(participantId, 1, "missing-source");
     await startWithAggregate("missing-source-start");
-    for (let index = 0; index < 9; index += 1)
+    for (let index = 0; index < 10; index += 1)
       await operatePresentation(`missing-source-forward-${index}`, "advance");
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 5));
 
@@ -246,7 +246,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       .set({ choices: [] })
       .where(eq(schema.examQuestions.id, 3));
     await startWithAggregate("other-free-text-start");
-    for (let index = 0; index < 5; index += 1)
+    for (let index = 0; index < 6; index += 1)
       await operatePresentation(`other-free-text-forward-${index}`, "advance");
 
     const projection = await getPublicPresentation();
@@ -323,11 +323,11 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     );
 
     const examQuestionStage = await getPublicPresentation();
-    expect(examQuestionStage).toMatchObject({ state: "question" });
+    expect(examQuestionStage).toMatchObject({ state: "opening" });
     expect(JSON.stringify(examQuestionStage)).not.toMatch(
       /score|confidence|rubric|assessment|answer_match|probabilities/i,
     );
-    for (let index = 0; index < 8; index += 1)
+    for (let index = 0; index < 9; index += 1)
       await operatePresentation(`legacy-next-${index}`, "advance");
     const fifthQuestionStage = await getPublicPresentation();
     expect(fifthQuestionStage).toMatchObject({ state: "question", question: { ordinal: 5 } });

@@ -19,6 +19,7 @@ import {
 
 export type PresentationState =
   | "not_started"
+  | "opening"
   | "question"
   | "answer"
   | "podium_preview"
@@ -616,6 +617,11 @@ export async function getAdminPresentationDeck() {
       questionIndex: number;
       projection: PublicProjection;
     }[] = [];
+    slides.push({
+      state: "opening",
+      questionIndex: 0,
+      projection: buildPublicProjection(admin, "opening", 0, sourceQuestions),
+    });
     for (let index = 0; index < admin.questionCount; index += 1) {
       slides.push(
         {
@@ -867,7 +873,7 @@ async function startPresentation(
   if (acquiredSession.snapshotRevision === 0) {
     throw new PresentationConflictError("Aggregate results before starting the presentation");
   }
-  const state: PresentationState = acquiredSession.questionCount ? "question" : "podium_preview";
+  const state: PresentationState = "opening";
   const version = acquiredSession.version + 1;
   const updated = await tx
     .update(presentationSessions)
@@ -1056,7 +1062,7 @@ async function ensurePresentationSnapshot(
   const invalidQuestionCursor =
     session.questionIndex < 0 || session.questionIndex >= currentQuestions.length;
   const preserveTerminalOrUnstartedState =
-    session.state === "not_started" || session.state === "finished";
+    session.state === "not_started" || session.state === "opening" || session.state === "finished";
   const nextState =
     invalidQuestionCursor && !preserveTerminalOrUnstartedState
       ? currentQuestions.length === 0
@@ -1124,6 +1130,11 @@ async function advanceState(
   questionIndex: number,
   questionCount: number,
 ) {
+  if (state === "opening") {
+    return questionCount > 0
+      ? { state: "question" as const, questionIndex: 0 }
+      : { state: "podium_preview" as const, questionIndex: 0 };
+  }
   if (state === "question") return { state: "answer" as const, questionIndex };
   if (state === "answer") {
     if (questionIndex + 1 < questionCount) {
@@ -1145,6 +1156,10 @@ async function previousState(
   questionIndex: number,
   questionCount: number,
 ) {
+  if (state === "opening")
+    throw new PresentationConflictError("Presentation is already at its first state");
+  if (state === "question" && questionIndex === 0)
+    return { state: "opening" as const, questionIndex: 0 };
   if (state === "question" && questionIndex > 0) {
     return { state: "answer" as const, questionIndex: questionIndex - 1 };
   }
@@ -1152,6 +1167,8 @@ async function previousState(
   if (state === "podium_preview" && questionCount > 0) {
     return { state: "answer" as const, questionIndex: questionCount - 1 };
   }
+  if (state === "podium_preview" && questionCount === 0)
+    return { state: "opening" as const, questionIndex: 0 };
   if (state === "third") return { state: "podium_preview" as const, questionIndex };
   const currentRank = rankForStage(state);
   if (currentRank !== null) {
@@ -1242,7 +1259,7 @@ async function operatePresentationWithResponse<T>(
         if (action === "reset") {
           if (session.state === "not_started")
             throw new PresentationConflictError("Start the presentation before resetting it");
-          const state: PresentationState = session.questionCount ? "question" : "podium_preview";
+          const state: PresentationState = "opening";
           const version = session.version + 1;
           const changed = await tx
             .update(presentationSessions)

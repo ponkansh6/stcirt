@@ -9,7 +9,7 @@ type DeckProjectionFixture =
   | { state: "question" | "answer"; question?: unknown }
   | { state: "third" | "second" | "first"; winners: WinnerFixture[] }
   | {
-      state: "standby" | "not_started" | "podium_preview" | "finished";
+      state: "standby" | "not_started" | "opening" | "podium_preview" | "finished";
       winners?: WinnerFixture[];
     };
 type DeckSlideFixture = {
@@ -86,6 +86,7 @@ function installApi(
   let projection = options.projection ?? { state: "not_started" };
   let admin = options.admin ?? controls();
   const deckSlides: DeckSlideFixture[] = [
+    deckSlide("opening", 0, { state: "opening" }),
     ...Array.from({ length: Number(admin.questionCount ?? 0) }, (_, questionIndex) => [
       deckSlide("question", questionIndex, { state: "question", question }),
       deckSlide("answer", questionIndex, { state: "answer", question }),
@@ -270,7 +271,7 @@ describe("PresentationScreen", () => {
   it("shows the initial wait screen and preserves it when projection polling fails", async () => {
     const fetchMock = vi.mocked(fetch).mockResolvedValue(response(null, false, 503));
     render(<PresentationScreen />);
-    expect(await screen.findByRole("heading", { name: /ふたりの思い出を/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/presentation", {
       cache: "no-store",
       credentials: "omit",
@@ -412,13 +413,13 @@ describe("PresentationScreen", () => {
   it("keeps the initial screen when projection JSON is malformed or the error has no message", async () => {
     installApi({ projectionResponse: async () => response(null, false, 503) });
     const view = render(<PresentationScreen />);
-    expect(await screen.findByRole("heading", { name: /ふたりの思い出を/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
     view.unmount();
     installApi({
       projectionResponse: async () => malformedJsonResponse(),
     });
     render(<PresentationScreen />);
-    expect(await screen.findByRole("heading", { name: /ふたりの思い出を/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
   });
 
   it("retries projection polling after a failed response with an error payload", async () => {
@@ -434,7 +435,7 @@ describe("PresentationScreen", () => {
     render(<PresentationScreen />);
     await flush();
     expect(projectionCalls).toBe(1);
-    expect(screen.getByRole("heading", { name: /ふたりの思い出を/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
     await act(async () => vi.advanceTimersByTimeAsync(1400));
     await flush();
     expect(projectionCalls).toBe(2);
@@ -902,6 +903,87 @@ describe("PresentationScreen", () => {
     expect(count("/api/admin/presentation?view=controls")).toBe(4);
     if (originalVisibility) Object.defineProperty(document, "visibilityState", originalVisibility);
     else Reflect.deleteProperty(document, "visibilityState");
+  });
+
+  it("keeps one presenter poll timer when visibility return and poll completion coincide", async () => {
+    vi.useFakeTimers();
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    let finishPoll: ((value: Response) => void) | undefined;
+    let adminReads = 0;
+    let sessionReads = 0;
+    let nextTimerId = 0;
+    const pendingPollTimers = new Set<number>();
+    const pollHandlers = new Map<number, () => void>();
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const nativeClearTimeout = window.clearTimeout.bind(window);
+    vi.spyOn(window, "setTimeout").mockImplementation(((handler: TimerHandler, delay?: number) => {
+      if (delay === 2500 && typeof handler === "function") {
+        const id = 10_000 + ++nextTimerId;
+        pendingPollTimers.add(id);
+        pollHandlers.set(id, handler as () => void);
+        return id as unknown as ReturnType<typeof window.setTimeout>;
+      }
+      return nativeSetTimeout(handler, delay);
+    }) as typeof window.setTimeout);
+    vi.spyOn(window, "clearTimeout").mockImplementation((id) => {
+      if (typeof id === "number" && pendingPollTimers.delete(id)) {
+        pollHandlers.delete(id);
+        return;
+      }
+      nativeClearTimeout(id);
+    });
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      sessionResponse: async () => {
+        sessionReads += 1;
+        return response({ authenticated: true });
+      },
+      adminResponse: async () => {
+        adminReads += 1;
+        if (adminReads === 2)
+          return new Promise<Response>((resolve) => {
+            finishPoll = resolve;
+          });
+        return response(controls({ state: "question", questionIndex: 0 }));
+      },
+    });
+
+    try {
+      const view = render(<PresentationScreen presenterRequested />);
+      await flush();
+      expect(adminReads).toBe(1);
+      expect(sessionReads).toBe(1);
+      expect(pendingPollTimers.size).toBe(1);
+
+      const [firstTimer] = pendingPollTimers;
+      act(() => {
+        const handler = pollHandlers.get(firstTimer);
+        pendingPollTimers.delete(firstTimer);
+        pollHandlers.delete(firstTimer);
+        handler?.();
+      });
+      await flush();
+      expect(adminReads).toBe(2);
+
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      expect(sessionReads).toBe(1);
+      await act(async () => {
+        finishPoll?.(response(controls({ state: "answer", questionIndex: 0 })));
+        for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      });
+
+      expect(sessionReads).toBe(2);
+      expect(adminReads).toBe(3);
+      expect(pendingPollTimers.size).toBe(1);
+      view.unmount();
+      expect(pendingPollTimers.size).toBe(0);
+    } finally {
+      if (originalVisibility)
+        Object.defineProperty(document, "visibilityState", originalVisibility);
+      else Reflect.deleteProperty(document, "visibilityState");
+    }
   });
 
   it("does not schedule the first presenter poll when the page becomes hidden during entry", async () => {
@@ -1468,7 +1550,7 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await flush();
 
-    expect(screen.getByRole("heading", { name: /ふたりの思い出を/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: question.question })).not.toBeInTheDocument();
     expect(api.actions).toHaveLength(0);
     expect(api.fetchMock.mock.calls.some(([path]) => String(path) === "/api/presentation")).toBe(
@@ -1493,7 +1575,7 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await flush();
 
-    expect(screen.getByRole("heading", { name: /ふたりの思い出を/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
     expect(
       api.fetchMock.mock.calls.some(
@@ -1602,7 +1684,7 @@ describe("PresentationScreen", () => {
       fireEvent.keyDown(main, { key: "ArrowRight" });
       await flush();
       expect(api.actions).toHaveLength(0);
-      expect(screen.getByRole("heading", { name: /ふたりの思い出を/ })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
     } finally {
       windowAddSpy.mockRestore();
     }
@@ -2199,7 +2281,7 @@ describe("PresentationScreen", () => {
     expect(api.actions[0]).toMatchObject({ action: "previous" });
   });
 
-  it("does not swipe previous from the first question", async () => {
+  it("swipes previous from the first question to opening", async () => {
     const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
@@ -2218,7 +2300,8 @@ describe("PresentationScreen", () => {
     });
     fireEvent.pointerUp(main, { pointerId: 16, isPrimary: true, clientX: 160, clientY: 101 });
     await flush();
-    expect(api.actions).toHaveLength(0);
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({ action: "previous" });
   });
 
   it("does not advance a finished presentation when the slide is clicked", async () => {
@@ -2260,7 +2343,7 @@ describe("PresentationScreen", () => {
     expect(api.actions).toHaveLength(0);
   });
 
-  it("does not swipe previous from an empty podium preview", async () => {
+  it("swipes previous from an empty podium preview to opening", async () => {
     const api = installApi({
       projection: { state: "podium_preview" },
       admin: controls({ state: "podium_preview", questionCount: 0 }),
@@ -2277,7 +2360,9 @@ describe("PresentationScreen", () => {
     });
     fireEvent.pointerUp(main, { pointerId: 20, isPrimary: true, clientX: 160, clientY: 101 });
     await flush();
-    expect(api.actions).toHaveLength(0);
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({ action: "previous" });
+    expect(await screen.findByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
   });
 
   it("renders podium content immediately without an announcement timer", async () => {

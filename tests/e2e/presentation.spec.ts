@@ -16,6 +16,7 @@ declare global {
 
 type PresentationState =
   | "not_started"
+  | "opening"
   | "question"
   | "answer"
   | "podium_preview"
@@ -57,8 +58,9 @@ const questions = [
 
 async function installAdminApiMock(
   page: import("@playwright/test").Page,
-  options: { fullscreenSupported?: boolean } = {},
+  options: { fullscreenSupported?: boolean; questionCount?: number } = {},
 ) {
+  const questionCount = options.questionCount ?? questions.length;
   if (!options.fullscreenSupported) {
     await page.addInitScript(() => {
       Object.defineProperty(Element.prototype, "requestFullscreen", {
@@ -100,8 +102,8 @@ async function installAdminApiMock(
   const presentationRouteEvents: string[] = [];
   const stages: PresentationState[] = [
     "not_started",
-    "question",
-    "answer",
+    "opening",
+    ...(questionCount === 0 ? [] : (["question", "answer"] as const)),
     "podium_preview",
     "third",
     "second",
@@ -114,8 +116,8 @@ async function installAdminApiMock(
     version,
     snapshotRevision,
     questionIndex,
-    questionCount: questions.length,
-    questions,
+    questionCount,
+    questions: questionCount === 0 ? [] : questions,
     entries: winnerEntries,
     projectionHidden,
     participantResultsVisible,
@@ -126,13 +128,21 @@ async function installAdminApiMock(
     version,
     snapshotRevision,
     questionIndex,
-    questionCount: questions.length,
+    questionCount,
     projectionHidden,
   });
   const deck = () => ({
     snapshotRevision,
     slides: (
-      ["question", "answer", "podium_preview", "third", "second", "first", "finished"] as const
+      [
+        "opening",
+        ...(questionCount === 0 ? [] : (["question", "answer"] as const)),
+        "podium_preview",
+        "third",
+        "second",
+        "first",
+        "finished",
+      ] as const
     ).map((slideState) => {
       let projection: Record<string, unknown>;
       if (slideState === "question" || slideState === "answer") {
@@ -438,6 +448,14 @@ async function startPresentation(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "集計" }).click();
   await expect(page.getByText(/集計済み/)).toBeVisible();
   await page.getByRole("button", { name: "発表を開始" }).click();
+  await expect(page.getByText("現在の状態：進行中：オープニング")).toBeVisible();
+  await page.evaluate(async () => {
+    await fetch("/api/admin/presentation", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operationId: crypto.randomUUID(), action: "advance" }),
+    });
+  });
   await expect(page.getByText("現在の状態：進行中：問題")).toBeVisible();
 }
 
@@ -482,6 +500,8 @@ function nextAdminMutation(page: import("@playwright/test").Page) {
 
 function slideFor(page: import("@playwright/test").Page, state: PresentationState) {
   switch (state) {
+    case "opening":
+      return page.getByRole("heading", { name: "しゅんたま検定" });
     case "question":
       return page.getByRole("heading", { name: questions[0].question });
     case "answer":
@@ -542,7 +562,63 @@ test("public and presenter routes are read-only unless an authenticated presente
   await startPresentation(page);
   await openPresenter(page);
   await expect(page.getByRole("heading", { name: questions[0].question })).toBeVisible();
-  expect(mock.actionLog).toEqual(["aggregate", "start"]);
+  expect(mock.actionLog).toEqual(["aggregate", "start", "advance"]);
+});
+
+test("start and reset use the opening slide with reversible first-question boundaries", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  await page.getByRole("button", { name: "集計" }).click();
+  await expect(page.getByText("集計済み（第 1 世代）")).toBeVisible();
+  await page.getByRole("button", { name: "発表を開始" }).click();
+  await expect(page.getByText("現在の状態：進行中：オープニング")).toBeVisible();
+  await openPresenter(page);
+  await expect(slideFor(page, "opening")).toBeVisible();
+  const openingBefore = mock.actionLog.length;
+  await page.locator("main").press("ArrowLeft");
+  expect(mock.actionLog).toHaveLength(openingBefore);
+
+  let mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "question")).toBeVisible();
+  await mutation;
+  mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "opening")).toBeVisible();
+  await mutation;
+
+  await page.reload();
+  await expect(slideFor(page, "opening")).toBeVisible();
+  await page.goto("/presentation");
+  await expect(slideFor(page, "opening")).toBeVisible();
+
+  await page.goto("/admin/presentation");
+  await page.getByRole("button", { name: "最初に戻る" }).click();
+  await expect(page.getByText("現在の状態：進行中：オープニング")).toBeVisible();
+  expect(mock.getPresentationState().state).toBe("opening");
+});
+
+test("an empty presentation moves between opening and podium preview", async ({ page }) => {
+  await installAdminApiMock(page, { questionCount: 0 });
+  await signIn(page);
+  await page.getByRole("button", { name: "集計" }).click();
+  await expect(page.getByText("集計済み（第 1 世代）")).toBeVisible();
+  await page.getByRole("button", { name: "発表を開始" }).click();
+  await expect(page.getByText("現在の状態：進行中：オープニング")).toBeVisible();
+  await openPresenter(page);
+  await expect(slideFor(page, "opening")).toBeVisible();
+
+  let mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "podium_preview")).toBeVisible();
+  await mutation;
+
+  mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "opening")).toBeVisible();
+  await mutation;
 });
 
 test("aggregation refreshes the shared snapshot and reset returns to its first slide", async ({
@@ -553,9 +629,13 @@ test("aggregation refreshes the shared snapshot and reset returns to its first s
   await page.getByRole("button", { name: "集計" }).click();
   await expect(page.getByText("集計済み（第 1 世代）")).toBeVisible();
   await page.getByRole("button", { name: "発表を開始" }).click();
-  await expect(page.getByText("現在の状態：進行中：問題")).toBeVisible();
+  await expect(page.getByText("現在の状態：進行中：オープニング")).toBeVisible();
   await openPresenter(page);
-  const mutation = nextAdminMutation(page);
+  let mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "question")).toBeVisible();
+  await mutation;
+  mutation = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
   await mutation;
@@ -567,8 +647,8 @@ test("aggregation refreshes the shared snapshot and reset returns to its first s
   expect(mock.getPresentationState().state).toBe("answer");
 
   await page.getByRole("button", { name: "最初に戻る" }).click();
-  await expect(page.getByText("現在の状態：進行中：問題")).toBeVisible();
-  expect(mock.getPresentationState().state).toBe("question");
+  await expect(page.getByText("現在の状態：進行中：オープニング")).toBeVisible();
+  expect(mock.getPresentationState().state).toBe("opening");
   expect(mock.getSnapshotRevision()).toBe(2);
 });
 
@@ -618,7 +698,11 @@ test("keyboard and horizontal swipe progress once and honor stage boundaries", a
   await openPresenter(page);
   const main = page.locator("main");
   await main.press("ArrowLeft");
-  expect(mock.getPresentationState().state).toBe("question");
+  expect(mock.getPresentationState().state).toBe("opening");
+  const openingNextRefresh = nextAdminMutation(page);
+  await main.press("ArrowRight");
+  await expect(slideFor(page, "question")).toBeVisible();
+  await openingNextRefresh;
   const answerRefresh = nextAdminMutation(page);
   await main.press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
@@ -638,18 +722,18 @@ test("keyboard and horizontal swipe progress once and honor stage boundaries", a
   await expect(slideFor(page, "third")).toBeVisible();
   await thirdRefresh;
   await waitForRenderFrames(page);
-  expect(mock.actionLog.filter((action) => action === "advance")).toHaveLength(3);
+  expect(mock.actionLog.filter((action) => action === "advance")).toHaveLength(5);
   const secondRefresh = nextAdminMutation(page);
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, { steps: 5 });
   await page.mouse.up();
-  await expect.poll(() => mock.actionLog.filter((action) => action === "previous").length).toBe(1);
+  await expect.poll(() => mock.actionLog.filter((action) => action === "previous").length).toBe(2);
   await expect.poll(() => mock.getPresentationState().state).toBe("podium_preview");
   await expect(slideFor(page, "podium_preview")).toBeVisible();
   await secondRefresh;
   await waitForRenderFrames(page);
-  expect(mock.actionLog.filter((action) => action === "previous")).toHaveLength(1);
+  expect(mock.actionLog.filter((action) => action === "previous")).toHaveLength(2);
 });
 
 test("successful presenter mutations return controls and do not trigger a controls refresh", async ({
@@ -668,7 +752,7 @@ test("successful presenter mutations return controls and do not trigger a contro
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
   await expect(response.json()).resolves.toEqual({
     state: "answer",
-    version: 3,
+    version: 4,
     snapshotRevision: 1,
     questionIndex: 0,
     questionCount: 1,
@@ -716,10 +800,10 @@ test("Enter advances while repeat, modifiers, and interactive targets are ignore
     dispatch(root, { key: "ArrowRight", metaKey: true });
     dispatch(button, { key: "ArrowRight" });
   });
-  expect(mock.actionLog).toEqual(["aggregate", "start"]);
+  expect(mock.actionLog).toEqual(["aggregate", "start", "advance"]);
   await main.press("Enter");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
-  expect(mock.actionLog).toEqual(["aggregate", "start", "advance"]);
+  expect(mock.actionLog).toEqual(["aggregate", "start", "advance", "advance"]);
 });
 
 test("finished presenter can return to the last existing rank", async ({ page }) => {
@@ -751,6 +835,37 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   await expect(winners).toBeVisible();
   await expect(winners.locator("[class*='rank']")).toHaveCount(1);
   await expect(winners.locator("[class*='rank']")).toHaveText("第3位");
+  const stamp = winners.getByLabel("しゅんたま検定");
+  await expect(stamp).toHaveAttribute("aria-label", "しゅんたま検定");
+  await expect(stamp).toContainText("しゅんたま");
+  await expect(stamp).toContainText("検定");
+  await expect
+    .poll(() =>
+      winners.evaluate((region) => {
+        const innerFrame = getComputedStyle(region, "::after");
+        return [getComputedStyle(region).borderStyle, innerFrame.borderStyle];
+      }),
+    )
+    .toEqual(["double", "solid"]);
+  await expect
+    .poll(() =>
+      winners.evaluate((region) => {
+        const stamp = region.querySelector("[aria-label='しゅんたま検定']");
+        if (!(stamp instanceof HTMLElement)) return false;
+        const stampRect = stamp.getBoundingClientRect();
+        const contentRects = Array.from(region.children)
+          .filter((child) => child !== stamp)
+          .map((child) => child.getBoundingClientRect());
+        return contentRects.every(
+          (rect) =>
+            stampRect.right <= rect.left ||
+            stampRect.left >= rect.right ||
+            stampRect.bottom <= rect.top ||
+            stampRect.top >= rect.bottom,
+        );
+      }),
+    )
+    .toBe(true);
   await expect
     .poll(() =>
       page
@@ -886,9 +1001,9 @@ test("every stage keeps its fixture text inside the canvas content bounds", asyn
     });
   };
   await page.goto("/presentation");
-  await expect(page.getByRole("heading", { name: /ふたりの思い出を/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "しゅんたま検定" })).toBeVisible();
   const notStartedInspection = await inspectSlide();
-  expect(notStartedInspection.text).toContain("振り返る時間");
+  expect(notStartedInspection.text).toContain("しゅんたま検定");
   expect(notStartedInspection.outOfBounds).toBe(0);
   expect(notStartedInspection.pageCanScroll).toBe(false);
 
@@ -1389,10 +1504,16 @@ test("a long tied-winner list fits every rank card without internal scrolling", 
   page,
 }) => {
   const mock = await installAdminApiMock(page);
-  const winners = Array.from({ length: 14 }, (_, index) => ({
+  const winners = Array.from({ length: 3 }, (_, index) => ({
     displayName: `同順位の受賞者${String(index + 1).padStart(2, "0")}`,
     score: 0.75,
     rank: 3,
+    questionResults: Array.from({ length: 12 }, (_, position) => ({
+      position,
+      question: `第${position + 1}問の思い出について`,
+      answer: { kind: "selected" as const, value: `回答${position + 1}` },
+      correctness: position % 2 === 0 ? ("correct" as const) : ("incorrect" as const),
+    })),
   }));
   mock.setWinnerEntries(winners);
   await signIn(page);
@@ -1406,6 +1527,14 @@ test("a long tied-winner list fits every rank card without internal scrolling", 
   await expect(rankLabels).toHaveCount(1);
   await expect(rankLabels).toHaveText("第3位");
   await expect(cards).toHaveCount(winners.length);
+  await expect(winnerRegion.locator("[aria-label='設問別の回答'] li")).toHaveCount(
+    winners.length * 12,
+  );
+  await expect
+    .poll(() =>
+      cards.evaluateAll((items) => items.map((card) => card.querySelectorAll("ol li").length)),
+    )
+    .toEqual(winners.map(() => 12));
   await expect
     .poll(() =>
       cards.evaluateAll((items) =>
@@ -1431,6 +1560,9 @@ test("a long tied-winner list fits every rank card without internal scrolling", 
   const geometry = await page.getByTestId("presentation-canvas").evaluate((canvas) => {
     const canvasRect = canvas.getBoundingClientRect();
     const region = canvas.querySelector("[aria-label='第3位の勝者一覧']");
+    const stamp = region?.querySelector("[aria-label='しゅんたま検定']");
+    const regionRect = region?.getBoundingClientRect();
+    const detailItems = Array.from(canvas.querySelectorAll("[aria-label='設問別の回答'] li"));
     const cardRects = Array.from(canvas.querySelectorAll("article"), (node) =>
       node.getBoundingClientRect(),
     ).map((rect) => ({
@@ -1447,12 +1579,104 @@ test("a long tied-winner list fits every rank card without internal scrolling", 
         bottom: canvasRect.bottom,
       },
       cardRects,
+      details: detailItems.map((item, index) => {
+        const rect = item.getBoundingClientRect();
+        const articleRect = item.closest("article")?.getBoundingClientRect();
+        const contentRects = [
+          item.querySelector("[class*='winnerQuestionLabel']"),
+          item.querySelector("[class*='winnerQuestionAnswer']"),
+        ].map((element) => {
+          const contentRect = element?.getBoundingClientRect();
+          return contentRect
+            ? {
+                left: contentRect.left,
+                right: contentRect.right,
+                top: contentRect.top,
+                bottom: contentRect.bottom,
+              }
+            : null;
+        });
+        const stampRect = stamp?.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom,
+          article: articleRect
+            ? {
+                left: articleRect.left,
+                right: articleRect.right,
+                top: articleRect.top,
+                bottom: articleRect.bottom,
+              }
+            : null,
+          contentRects,
+          textFits:
+            item.scrollWidth <= item.clientWidth + 1 && item.scrollHeight <= item.clientHeight + 1,
+          overlapsAnotherDetail: detailItems.some((other, otherIndex) => {
+            if (otherIndex === index || item.closest("article") !== other.closest("article")) {
+              return false;
+            }
+            const otherRect = other.getBoundingClientRect();
+            return (
+              rect.left < otherRect.right &&
+              rect.right > otherRect.left &&
+              rect.top < otherRect.bottom &&
+              rect.bottom > otherRect.top
+            );
+          }),
+          stampOverlaps: Boolean(
+            stampRect &&
+            rect.left < stampRect.right &&
+            rect.right > stampRect.left &&
+            rect.top < stampRect.bottom &&
+            rect.bottom > stampRect.top,
+          ),
+        };
+      }),
+      frameStyles: region
+        ? [getComputedStyle(region).borderStyle, getComputedStyle(region, "::after").borderStyle]
+        : [],
+      stampInsideFrame: Boolean(
+        stamp instanceof HTMLElement &&
+        regionRect &&
+        stamp.getBoundingClientRect().left > regionRect.left &&
+        stamp.getBoundingClientRect().right < regionRect.right &&
+        stamp.getBoundingClientRect().top > regionRect.top &&
+        stamp.getBoundingClientRect().bottom < regionRect.bottom,
+      ),
       regionCanScroll: region instanceof HTMLElement && region.scrollHeight > region.clientHeight,
       text: region?.textContent ?? "",
     };
   });
   for (const winner of winners) expect(geometry.text).toContain(winner.displayName);
   expect(geometry.regionCanScroll).toBe(false);
+  expect(geometry.details).toHaveLength(winners.length * 12);
+  expect(geometry.frameStyles).toEqual(["double", "solid"]);
+  expect(geometry.stampInsideFrame).toBe(true);
+  expect(
+    geometry.details.every(
+      (detail) => detail.textFits && !detail.overlapsAnotherDetail && !detail.stampOverlaps,
+    ),
+  ).toBe(true);
+  expect(
+    geometry.details.every(
+      (detail) =>
+        detail.article !== null &&
+        detail.left >= detail.article.left - 1 &&
+        detail.right <= detail.article.right + 1 &&
+        detail.top >= detail.article.top - 1 &&
+        detail.bottom <= detail.article.bottom + 1 &&
+        detail.contentRects.every(
+          (rect) =>
+            rect !== null &&
+            rect.left >= detail.article!.left - 1 &&
+            rect.right <= detail.article!.right + 1 &&
+            rect.top >= detail.article!.top - 1 &&
+            rect.bottom <= detail.article!.bottom + 1,
+        ),
+    ),
+  ).toBe(true);
   expect(
     geometry.cardRects.every(
       (rect) =>
@@ -1578,7 +1802,7 @@ test("first presenter progression requests fullscreen before mutation and ignore
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
   await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
-  expect(mock.actionLog).toEqual(["aggregate", "start", "advance", "advance"]);
+  expect(mock.actionLog).toEqual(["aggregate", "start", "advance", "advance", "advance"]);
 });
 
 test("unsupported fullscreen keeps presenter progression working and is not retried", async ({
@@ -1609,7 +1833,7 @@ test("unsupported fullscreen keeps presenter progression working and is not retr
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
   await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
-  expect(mock.actionLog).toEqual(["aggregate", "start", "advance", "advance"]);
+  expect(mock.actionLog).toEqual(["aggregate", "start", "advance", "advance", "advance"]);
 });
 
 test("a successful fullscreen request can exit through Escape without automatic re-entry", async ({
