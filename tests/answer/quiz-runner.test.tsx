@@ -519,6 +519,43 @@ describe("QuizRunner batch answer sheet", () => {
     expect(document.activeElement).toBe(retry);
   });
 
+  it("does not focus the retry action when reauthentication returns directly to answering", async () => {
+    let resolveLogin!: (participantId: number) => void;
+    const pendingLogin = new Promise<number>((resolve) => {
+      resolveLogin = resolve;
+    });
+    let access: object = {
+      kind: "reauthentication",
+      participant: { id: 7, name: "参加者" },
+    };
+    const phase: object = { kind: "answering", retryRequired: true };
+    const login = vi.fn(() => pendingLogin);
+    mockUseQuizSession.mockImplementation(() =>
+      session(phase, {
+        access,
+        login,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        answeredCount: 5,
+      }),
+    );
+    const { rerender } = render(<RunnerPage />);
+
+    fireEvent.change(screen.getByLabelText("4桁PIN"), { target: { value: "0123" } });
+    fireEvent.click(screen.getByRole("button", { name: "再ログインする" }));
+
+    await act(async () => {
+      resolveLogin(7);
+      await pendingLogin;
+      access = { kind: "ready", participant: { id: 7, name: "参加者" } };
+      rerender(<RunnerPage />);
+    });
+
+    const retry = screen.getByRole("button", { name: "同じ回答を再送する" });
+    expect(retry).toBeEnabled();
+    expect(document.activeElement).toBe(document.body);
+    expect(document.activeElement).not.toBe(retry);
+  });
+
   it("cancels the retry focus handoff when focus leaves the reauthentication form", async () => {
     let resolveLogin!: (participantId: number) => void;
     const pendingLogin = new Promise<number>((resolve) => {
