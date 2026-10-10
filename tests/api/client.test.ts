@@ -1,12 +1,16 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   ApiError,
+  createAssistedParticipant,
   createParticipantSession,
   deleteParticipantSession,
+  fetchAnswerSubmission,
   fetchExamQuestions,
+  fetchAssistedParticipant,
   fetchNextQuestion,
   fetchLatestAnswerSubmission,
   fetchParticipantSession,
+  submitAnswerBatch,
   submitAnswer,
 } from "@/lib/api/client";
 
@@ -82,6 +86,105 @@ describe("api client", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ submission: null }), { status: 200 }));
     await expect(fetchLatestAnswerSubmission()).resolves.toBeNull();
     expect(fetchSpy).toHaveBeenCalledWith("/api/answers/latest", { credentials: "same-origin" });
+  });
+
+  it("uses the assisted answer scope for both loading and saving answers", async () => {
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ submission: null }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ submissionId: "00000000-0000-4000-8000-000000000002", revision: 1 }),
+          { status: 200 },
+        ),
+      );
+    await expect(fetchLatestAnswerSubmission("assisted")).resolves.toBeNull();
+    await submitAnswerBatch(
+      {
+        submissionId: "00000000-0000-4000-8000-000000000002",
+        operationId: "00000000-0000-4000-8000-000000000003",
+        expectedRevision: 0,
+        answers: [{ questionId: 1, selectedIndex: 2 }],
+      },
+      "assisted",
+    );
+
+    expect(fetchSpy).toHaveBeenNthCalledWith(1, "/api/answers/latest?scope=assisted", {
+      credentials: "same-origin",
+    });
+    expect(fetchSpy.mock.calls[1]?.[0]).toBe("/api/answers/batch?scope=assisted");
+    expect(fetchSpy.mock.calls[1]?.[1]).toMatchObject({ method: "POST" });
+  });
+
+  it("appends the assisted scope after an existing submission query", async () => {
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          submissionId: "00000000-0000-4000-8000-000000000002",
+          revision: 1,
+          answers: [],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(
+      fetchAnswerSubmission("00000000-0000-4000-8000-000000000002", "assisted"),
+    ).resolves.toMatchObject({ revision: 1, answers: [] });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/answers/batch?submissionId=00000000-0000-4000-8000-000000000002&scope=assisted",
+      { credentials: "same-origin" },
+    );
+  });
+
+  it("checks and creates one assisted participant with same-origin requests", async () => {
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ participant: { id: 18, name: "代理回答者" }, hasSubmission: false }),
+          { status: 200 },
+        ),
+      );
+
+    await expect(fetchAssistedParticipant()).resolves.toEqual({
+      participant: { id: 18, name: "代理回答者" },
+      hasSubmission: true,
+      eligible: false,
+    });
+    await expect(createAssistedParticipant("代理回答者")).resolves.toEqual({
+      participant: { id: 18, name: "代理回答者" },
+      hasSubmission: false,
+    });
+
+    expect(fetchSpy).toHaveBeenNthCalledWith(1, "/api/participants/assisted", {
+      credentials: "same-origin",
+    });
+    expect(fetchSpy).toHaveBeenNthCalledWith(2, "/api/participants/assisted", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "代理回答者" }),
+      credentials: "same-origin",
+    });
+  });
+
+  it("rejects malformed assisted participant responses", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ participant: { id: "18", name: "代理" } }), { status: 200 }),
+    );
+    await expect(fetchAssistedParticipant()).rejects.toThrow(
+      "Invalid response schema for check assisted participant",
+    );
   });
 
   it("fetches the first question when no cursor is provided", async () => {

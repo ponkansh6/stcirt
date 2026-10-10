@@ -13,6 +13,7 @@ The Drizzle schema in `src/lib/db/schema.ts` contains the legacy tables and the 
 - `answer_logs`: submitted choices, correctness, and answer time
 - `exam_questions`: stable integer IDs and unique keys for the five seeded exam questions
 - `exam_participants`: unique trim+NFC normalized name, display name, and creation time; no PIN data
+- `assisted_participants`: one assisted-answer target per owner (`owner_participant_id` primary key) and at most one owner per target (`target_participant_id` unique), both referencing `exam_participants`; target creation and relationship insertion are atomic
 - `exam_answer_logs`: submitted choices, correctness, answer time, and nullable participant reference; historical anonymous rows remain NULL
 - `exam_answer_submissions`: participant-owned fixed five-question submissions and revision
 - `exam_submission_answers`: current selected answers or free text; legacy fifth-question selections keep an explicit `legacy` kind and are never converted or regraded
@@ -26,6 +27,8 @@ The Drizzle schema in `src/lib/db/schema.ts` contains the legacy tables and the 
 - `participant_result_settings`: singleton durable participant-results visibility (`visible`) and publication-history (`ever_published`) flags, independent of presentation stage and projection visibility. `ever_published` defaults to false, becomes true after successful publication, and remains true when results are hidden
 
 Migration 0013 adds `presentation_sessions.snapshot_revision`: rows with a prior snapshot or started state become revision 1, including valid empty snapshots, while sessions without a snapshot remain revision 0. Participant names are trimmed and normalized to Unicode NFC for case-sensitive uniqueness. They are not compatibility-normalized and internal whitespace is preserved. The shared event PIN and session signing secret are held only in server-side environment configuration.
+
+Migration 0015 adds `assisted_participants`. The owner is a participant with a completed submission; the target is a separately created `exam_participants` row whose answers are saved in the existing participant-owned submission tables. The relationship does not replace or alter the owner's participant cookie or submission.
 
 The fifth seeded exam question (`exam_questions.id = 5`, key `it-literacy-005`) is a free-response question: `2023年3月に珠美が物価高に耐えられず起こした行動は？`. Its model answer is `卵の値上がりが許せなかったため、春闘の賃上げが十分でないと卵を買わないと宣言し、実際に要求内容から一時金などが削られてしまったため、しばらく卵を買わなかった`.
 
@@ -70,6 +73,8 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - If the saved submission is incomplete, malformed, or does not match the current questions, completion remains visible and correction is unavailable; no new submission is started and no old answer is overwritten.
 - The UI does not use the response's correctness, correct index, or explanation fields. It shows no per-exam correctness, explanation, score, accuracy, or pass/fail state.
 - Retrying a batch after a transport failure reuses the operation ID and exact payload, so a committed request is returned idempotently without duplicating writes.
+- When the validated participant cookie belongs to an owner who has an assisted target, `scope=assisted` resolves that target server-side for latest, restore, and batch-save operations; the client cannot provide a target participant ID.
+- The assisted target uses the same fixed question set, submission validation, revision checks, and durable assessment behavior as a normal participant. Owner and target submissions remain separate and the owner cookie remains valid throughout.
 
 ### R3: Completion
 
@@ -82,6 +87,11 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - A known legacy choice-shaped answer for the current fifth free-response question is a supported historical format, not a malformed current answer. Preserve it as legacy without converting or regrading its value, and allow completion and correction.
 - When correcting a submission with that legacy fifth answer, treat the fifth question as unanswered and require a new non-empty free-text response of at most 1000 characters. Submit only the new free text; never resend the legacy selected value.
 - A successful answer POST must return the requested submission ID. If the response identifies another submission, keep completion visible and disable correction.
+- When the owner has no assisted target, show `ほかの人の回答を行う` on completion, removing the manual publication-status refresh action. The button opens the dedicated assisted-name form, which accepts a name only and does not request a PIN or replace the owner session.
+- After a target is registered, show `ほかの人の回答を修正する`. This always resumes the same target; its name cannot be changed and no second target can be registered for that owner.
+- An owner can create an assisted target only after completing their own submission and only if they are not themselves another participant's assisted target. The target's normalized name must be unique across participants and differ from the owner's name. Repeating the same owner/name request is idempotent; a different name for an already linked owner returns 409.
+- A registered target can resume an incomplete answer on reload or revisit, and can restore and revise a completed submission. Returning to the owner view preserves the owner cookie and submission. An assisted target cannot create another assisted target.
+- The target's submission is distinct from the owner's and persists across route changes and reloads. If the target signs in later through the regular shared-PIN flow, the same participant record and submission are used.
 
 ### R4: Home and participant entry
 
@@ -156,8 +166,8 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - An administrator can hide results at any time. Publication requires a snapshot created by explicit aggregation and changes only visibility; an unaggregated publication returns 409 and remains private. Hiding, publication, republishing, and later presentation starts never rebuild the shared snapshot. A later explicit aggregate updates the shared question, answer, score, and rank snapshot while retaining the visibility setting and presentation stage/cursor when valid. A repeated publish request is idempotent. Visibility operations do not change projection visibility or presentation operation version. A hide operation does not rebuild the snapshot.
 - While results are private, `/results` displays exactly `回答中`; its API returns only `{ state: 'waiting' }`, with no score, rank, answer text, participant name, or other participant data.
 - Published results expose only the authenticated participant's own `rank`, `score`, and per-question answer details, selected from the current shared `presentation_entries` and `presentation_questions` snapshots using the ID in the signed participant cookie. Client-provided participant IDs are ignored; no overall ranking or other participant data is returned. Selected answers include the chosen label and `correct`/`incorrect`/`unavailable` correctness, never the correct choice. Free-text answers include the saved response and its normalized score (0..1), without a binary correctness label. Legacy and unanswered answers remain distinct.
-- `/answer` keeps the existing completion text and correction CTA. It adds a manual result-status refresh action and a results CTA linking to `/results` only while that participant's result API reports a published result. The client checks once when completion becomes ready, again when the tab becomes visible, and whenever the participant activates the refresh action.
-- In both `/answer` completion and `/results`, transient network, non-success HTTP, or malformed-payload failures are distinct from a confirmed private result state: show an error and retry action while retaining the last confirmed result state and any displayed CTA/details. A valid `{ state: 'waiting' }` response confirms that results are private and hides the results CTA/details; `{ state: 'unavailable' }` is a separate valid state and is presented as unavailable.
+- `/answer` completion does not offer a manual publication-status refresh action. Instead, it offers assisted answering for the owner, changing the label to assisted correction after a target exists. Any results link is governed by the existing published-results state and is separate from assisted answering.
+- In `/results`, transient network, non-success HTTP, or malformed-payload failures are distinct from a confirmed private result state: show an error and retry action while retaining the last confirmed result state and any displayed details. A valid `{ state: 'waiting' }` response confirms that results are private and hides published details; `{ state: 'unavailable' }` is a separate valid state and is presented as unavailable.
 - A 401 from the participant-results API confirms session expiry: clear protected result details and the results CTA, and show the session-expired state. On `/results`, also stop treating the client as authorized and provide a path back to `/answer`.
 - The dynamic Server Component for `/results` checks the participant cookie, participant record, and current publication state before rendering. It passes only an unauthenticated/neutral state or that participant's own rank, score, and answer details to a narrow client panel. The panel initially uses this server-provided state and refreshes the no-store API when the tab becomes visible; when a successful refresh observes that results have become private, it removes all published details and displays `回答中`.
 - The `/results` panel also provides a manual refresh action. Hiding results removes the published view after a successful refresh; republishing exposes the latest explicitly aggregated rank, score, and question-level answer details after refreshing, reloading the page, or returning to its tab. No short-interval refresh is guaranteed.
@@ -212,19 +222,33 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 
 ### `GET /api/answers/latest`
 
-- Requires a valid signed participant cookie whose participant still exists. The participant ID is never accepted from the client.
+- Requires a valid signed participant cookie whose participant still exists. The participant ID is never accepted from the client. Optional `scope=assisted` resolves the authenticated owner's registered target; unknown scope returns 400 and a missing target returns 404.
 - All responses are `Cache-Control: private, no-store` because the payload contains saved participant answers.
 - Returns `{ submission: null }` when the participant has no saved submission.
 - Returns the participant's latest submission using `updatedAt DESC, revision DESC, createdAt DESC, id DESC`; the payload uses the same answer shape as `GET /api/answers/batch`.
 - Returns 401 for a missing or invalid participant session. Database and API failures remain errors and must not be converted to an empty submission.
 
-#### `GET /api/answers/batch?submissionId={UUID}`
+#### `GET /api/answers/batch?submissionId={UUID}[&scope=assisted]`
 
-- Requires a valid signed participant cookie. A submission is visible only to its owning participant; missing and other-participant submissions both return 404.
+- Requires a valid signed participant cookie. By default, a submission is visible only to its owner; with `scope=assisted`, the authenticated owner resolves to their registered target. Missing and non-owned submissions both return 404.
 - Response 200: `{ submissionId, revision, answers: [{ questionId, answerKind, selectedIndex, freeText }] }`. Legacy answers have `answerKind: legacy`; no grading fields are returned.
 - A legacy fifth answer is identified as its known historical choice-shaped form. It remains unconverted and ungraded during restore; correction requires a newly entered free-text answer.
 - Used to restore confirmed answers or reload the saved revision after a conflict while preserving the local draft.
 - Response 400/401/404: invalid submission ID, missing participant session, or unavailable submission.
+
+### `/api/participants/assisted`
+
+- `GET` requires the valid signed participant cookie and an existing participant row. It returns `{ participant: { id, name } | null, hasSubmission: boolean, eligible: boolean }` with `Cache-Control: private, no-store`. `eligible` is true only when the authenticated participant has a completed submission, has no assisted target, and is not another owner's target. An existing target remains available even though `eligible` is false.
+- `POST` requires same-origin `Origin` and the valid owner cookie. Request: `{ name: string }`; extra properties, blank names, and names longer than 120 characters are rejected. The name is trimmed and NFC-normalized, must differ from the owner's normalized name, and must not already belong to another participant. A completed owner who is not an assisted target may register exactly one target. Target participant creation and owner-target link insertion are one transaction; database uniqueness protects concurrent creation.
+- Repeating registration for the same owner and normalized name returns the existing `{ participant, hasSubmission }` with 200. Registering a different name for an owner who already has a target returns 409. Owner incomplete, owner is itself a target, and name conflicts return 409. Invalid request returns 400, missing/invalid session returns 401, invalid Origin returns 403, excessive name-entry attempts return 429, and unavailable participant authentication configuration returns 503.
+- This API never sets or replaces a participant cookie. The owner cookie authorizes `scope=assisted` access to the linked target; the target's regular PIN login resolves to the same participant and submission. Assisted access cannot register another target.
+- Name-entry attempts use the shared participant authentication rate limiter. Responses containing participant state use `Cache-Control: private, no-store`.
+
+### Assisted scope on `/api/answers/latest` and `/api/answers/batch`
+
+- `scope=assisted` is accepted by `GET /api/answers/latest`, `GET /api/answers/batch`, and `POST /api/answers/batch`. The server derives the target from the authenticated cookie participant's `assisted_participants` relationship; callers cannot supply a participant ID.
+- With no scope, these endpoints continue to address the cookie participant. Unknown scope returns 400 and an owner with no target receives 404 for assisted scope. Missing/invalid cookie returns 401 and answer writes still require a valid same-origin `Origin` (403 otherwise).
+- Submission ownership checks, idempotency, revision conflict handling, fixed question validation, and answer response shape remain the same for both scopes. Owner and target submissions are independent.
 
 ### `POST /api/internal/jev/retry`
 
@@ -285,12 +309,15 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 ## Components
 
 - `/`: server-side redirect to `/answer`
-- `/answer`: participant entry/session reuse, latest-submission check, one-request five-question load, four native radio choice groups and one free-response textarea, legacy fifth-answer guidance and replacement during correction, sticky-header question navigation while answering, atomic batch confirmation, same-submission correction, persistent completion, and manual participant-result refresh
+- `/answer`: participant entry/session reuse, latest-submission check, one-request five-question load, four native radio choice groups and one free-response textarea, legacy fifth-answer guidance and replacement during correction, sticky-header question navigation while answering, atomic batch confirmation, same-submission correction, and persistent completion
+- `/answer` assisted-answer flow: completion action, name-only assisted entry without PIN or cookie replacement, persisted target lookup and resume, assisted draft/session restoration, and same-target correction
 - `src/app/GlobalHeader.tsx` and `src/app/answer/header-portal.tsx`: shared sticky header and answer-route navigation slot, with RootLayout remaining a Server Component
 - `src/components/ChoiceButton.tsx`: labeled native radio row with circular choice mark and selected-state styling
 - `src/lib/db/repository/question-repository.ts`: ordered five-question batch lookup, next-question lookup by ID cursor, and answer lookup from `exam_questions`
 - `/api/questions/batch`: public, answer-key-free five-question payload for the participant quiz; `/api/questions/next` remains available for cursor-based callers
-- `src/app/api/answers/batch/route.ts` and `/api/answers/latest`: authenticated atomic five-answer create/correction endpoint and participant-scoped latest-submission lookup
+- `src/app/api/answers/batch/route.ts` and `/api/answers/latest`: authenticated atomic five-answer create/correction endpoint and participant-scoped latest-submission lookup, with optional owner-derived assisted scope
+- `/api/participants/assisted`: authenticated name-only target registration and owner-scoped target status
+- `src/lib/db/repository/assisted-participant-repository.ts`: atomic one-target registration, normalized-name conflict handling, and owner-to-target resolution
 - `src/lib/db/repository/answer-repository.ts`: preserves legacy single-answer logging and provides atomic submission persistence, owner-scoped restore, deterministic latest-submission selection, revision checks, and idempotent operation replay
 - `src/lib/jev/adapter.ts` and `/api/internal/jev/retry`: strict JEV score adapter and secret-protected durable retry worker
 - `src/lib/presentation/admin-auth.ts`: separate admin PIN verification, HMAC session cookie, and origin-checked authorization

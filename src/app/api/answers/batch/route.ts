@@ -14,6 +14,7 @@ import {
   verifyParticipantSession,
 } from "@/lib/participants/security";
 import { z } from "zod";
+import { resolveAnswerScope } from "@/lib/participants/answer-scope";
 
 export const maxDuration = 60;
 
@@ -23,11 +24,17 @@ export const GET = withErrorHandling(async function (request: Request) {
     return fail("Participant session required", 401);
   }
 
+  const scope = await resolveAnswerScope(
+    session.id,
+    new URL(request.url).searchParams.get("scope"),
+  );
+  if ("error" in scope) return fail(scope.error, scope.status);
+
   const submissionId = new URL(request.url).searchParams.get("submissionId");
   const parsedId = z.uuid().safeParse(submissionId);
   if (!parsedId.success) return fail("Invalid submission ID", 400);
 
-  const submission = await getAnswerSubmission(parsedId.data, session.id);
+  const submission = await getAnswerSubmission(parsedId.data, scope.participantId);
   if (!submission) return fail("Submission not found", 404);
   return ok(submission);
 }, "GET /api/answers/batch");
@@ -42,6 +49,12 @@ export const POST = withErrorHandling(async function (request: Request) {
     return fail("Participant session required", 401);
   }
 
+  const scope = await resolveAnswerScope(
+    session.id,
+    new URL(request.url).searchParams.get("scope"),
+  );
+  if ("error" in scope) return fail(scope.error, scope.status);
+
   let body: unknown;
   try {
     body = await request.json();
@@ -52,7 +65,10 @@ export const POST = withErrorHandling(async function (request: Request) {
   if (!parsed.success) return fail("Invalid parameters", 400);
 
   try {
-    const saved = await saveAnswerSubmission({ ...parsed.data, participantId: session.id });
+    const saved = await saveAnswerSubmission({
+      ...parsed.data,
+      participantId: scope.participantId,
+    });
     if (saved.assessmentTarget) {
       const target = saved.assessmentTarget;
       try {

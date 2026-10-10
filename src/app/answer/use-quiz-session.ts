@@ -1,11 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AnswerSubmission, Participant } from "@/lib/api/client";
+import type {
+  AnswerScope,
+  AnswerSubmission,
+  AssistedParticipantState,
+  Participant,
+} from "@/lib/api/client";
 import {
   ApiError,
+  createAssistedParticipant,
   createParticipantSession,
   deleteParticipantSession,
+  fetchAssistedParticipant,
   fetchAnswerSubmission,
   fetchLatestAnswerSubmission,
   fetchExamQuestions,
@@ -37,6 +44,20 @@ export type AccessState =
   | { kind: "switching"; participant: Participant }
   | { kind: "reauthentication"; participant: Participant };
 
+export function requireParticipantReauthentication(
+  current: AccessState,
+  requestOwnerId: number,
+): AccessState {
+  if (current.kind !== "ready" || current.participant.id !== requestOwnerId) return current;
+  return { kind: "reauthentication", participant: current.participant };
+}
+
+export type AnswerMode = AnswerScope;
+export type AssistedScreen = "closed" | "login" | "active";
+
+const ASSISTED_MODE_KEY = "stcirt-answer-scope";
+const ASSISTED_DRAFT_KEY = "stcirt-assisted-answer-draft";
+
 type BatchAnswer =
   | { questionId: number; selectedIndex: number }
   | { questionId: number; freeText: string };
@@ -65,6 +86,14 @@ function newId() {
 
 function copySelections(selections: Record<number, number | undefined>) {
   return { ...selections };
+}
+
+function copyAnsweredSelections(
+  selections: Record<number, number | undefined>,
+): Record<number, number> {
+  return Object.fromEntries(
+    Object.entries(selections).filter((entry): entry is [string, number] => entry[1] !== undefined),
+  );
 }
 
 function restoreDisplaySelections(
@@ -159,7 +188,58 @@ function restoreSavedAnswers(
   }
 }
 
+type AssistedDraft = {
+  quizzes: LoadedQuiz[];
+  selections: Record<number, number>;
+  freeResponses: Record<number, string>;
+  submissionId: string;
+  revision: number;
+};
+
+function readAssistedDraft(): AssistedDraft | null {
+  try {
+    const value: unknown = JSON.parse(window.sessionStorage.getItem(ASSISTED_DRAFT_KEY) ?? "null");
+    if (!value || typeof value !== "object") return null;
+    const draft = value as Partial<AssistedDraft>;
+    if (
+      !Array.isArray(draft.quizzes) ||
+      draft.quizzes.length !== EXAM_SIZE ||
+      !draft.selections ||
+      typeof draft.selections !== "object" ||
+      !draft.freeResponses ||
+      typeof draft.freeResponses !== "object" ||
+      typeof draft.submissionId !== "string" ||
+      !Number.isInteger(draft.revision)
+    )
+      return null;
+    const ids = draft.quizzes.map(({ question }) => question.id);
+    if (
+      new Set(ids).size !== EXAM_SIZE ||
+      ids.some((id, index) => index > 0 && id <= ids[index - 1]!) ||
+      draft.quizzes.some(
+        ({ question, shuffled }) =>
+          !question ||
+          !shuffled ||
+          !Array.isArray(shuffled.choiceIndices) ||
+          shuffled.choiceIndices.length !== question.choices.length ||
+          new Set(shuffled.choiceIndices).size !== shuffled.choiceIndices.length,
+      )
+    )
+      return null;
+    return draft as AssistedDraft;
+  } catch {
+    return null;
+  }
+}
+
 export function useQuizSession() {
+  const [answerMode, setAnswerMode] = useState<AnswerMode>("owner");
+  const [assistedScreen, setAssistedScreen] = useState<AssistedScreen>("closed");
+  const [assistedParticipant, setAssistedParticipant] = useState<AssistedParticipantState | null>(
+    null,
+  );
+  const [assistedError, setAssistedError] = useState<string | null>(null);
+  const [assistedBusy, setAssistedBusy] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "ready" });
   const [access, setAccess] = useState<AccessState>({ kind: "checking" });
   const [quizzes, setQuizzes] = useState<LoadedQuiz[]>([]);
@@ -185,6 +265,9 @@ export function useQuizSession() {
   const failedAttemptRef = useRef<SaveAttempt | null>(null);
   const resolvingParticipantIdRef = useRef<number | null>(null);
   const resumeAfterAuthRef = useRef(false);
+  const assistedRequestRef = useRef(false);
+  const answerModeRef = useRef<AnswerMode>("owner");
+  answerModeRef.current = answerMode;
   phaseRef.current = phase;
   accessRef.current = access;
   quizzesRef.current = quizzes;
@@ -195,19 +278,36 @@ export function useQuizSession() {
 
   useEffect(() => {
     mountedRef.current = true;
-    void fetchParticipantSession()
-      .then((participant) => {
-        if (mountedRef.current)
-          setAccess(participant ? { kind: "ready", participant } : { kind: "login" });
-      })
-      .catch(() => {
+    void (async () => {
+      try {
+        const savedMode = window.sessionStorage.getItem(ASSISTED_MODE_KEY);
+        let initialMode: AnswerMode = savedMode === "assisted" ? "assisted" : "owner";
+        const participant = await fetchParticipantSession();
+        let assisted: AssistedParticipantState | null = null;
+        if (participant && initialMode === "assisted") {
+          try {
+            assisted = await fetchAssistedParticipant();
+            if (!assisted.participant) initialMode = "owner";
+          } catch {
+            initialMode = "owner";
+          }
+        }
+        if (!mountedRef.current) return;
+        answerModeRef.current = initialMode;
+        setAnswerMode(initialMode);
+        setAssistedScreen(initialMode === "assisted" ? "active" : "closed");
+        setAssistedParticipant(assisted);
+        if (initialMode === "owner") window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
+        setAccess(participant ? { kind: "ready", participant } : { kind: "login" });
+      } catch {
         if (mountedRef.current) {
           setAccess({
             kind: "login",
             message: "参加状態を確認できませんでした。お名前とPINを入力してください。",
           });
         }
-      });
+      }
+    })();
     return () => {
       mountedRef.current = false;
     };
@@ -215,6 +315,7 @@ export function useQuizSession() {
 
   const loadQuestions = useCallback(async (restart = false): Promise<LoadedQuiz[] | null> => {
     if (busyRef.current) return null;
+    const sessionEpoch = sessionEpochRef.current;
     busyRef.current = true;
     const initial = restart ? [] : quizzesRef.current;
     if (restart) {
@@ -241,7 +342,7 @@ export function useQuizSession() {
         return initial;
       }
       const questions = await fetchExamQuestions();
-      if (!mountedRef.current) return null;
+      if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return null;
       if (
         questions.length !== EXAM_SIZE ||
         new Set(questions.map(({ id }) => id)).size !== EXAM_SIZE ||
@@ -258,7 +359,7 @@ export function useQuizSession() {
       setPhase({ kind: "answering" });
       return loaded;
     } catch {
-      if (mountedRef.current) {
+      if (mountedRef.current && sessionEpoch === sessionEpochRef.current) {
         setPhase({
           kind: "load-error",
           message: "問題を読み込めませんでした。通信状態を確認して、もう一度お試しください。",
@@ -271,8 +372,9 @@ export function useQuizSession() {
   }, []);
 
   const resolveParticipant = useCallback(
-    async (participant: Participant) => {
+    async (participant: Participant, scope: AnswerScope = answerModeRef.current) => {
       if (busyRef.current || checkingSubmissionRef.current) return;
+      const sessionEpoch = sessionEpochRef.current;
       const resumingDraft = resumeAfterAuthRef.current && phaseRef.current.kind === "answering";
       resumeAfterAuthRef.current = false;
       checkingSubmissionRef.current = true;
@@ -280,10 +382,33 @@ export function useQuizSession() {
       setAccess({ kind: "ready", participant });
       setPhase({ kind: "checking-submission" });
       try {
-        const latest = await fetchLatestAnswerSubmission();
-        if (!mountedRef.current) return;
+        const latest = await fetchLatestAnswerSubmission(scope);
+        if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
         if (!latest) {
           setRestoreError(null);
+          if (scope === "assisted") {
+            const draft = readAssistedDraft();
+            if (draft) {
+              quizzesRef.current = draft.quizzes;
+              setQuizzes(draft.quizzes);
+              submissionIdRef.current = draft.submissionId;
+              setSubmissionId(draft.submissionId);
+              revisionRef.current = draft.revision;
+              setRevision(draft.revision);
+              selectionsRef.current = draft.selections;
+              setSelections(draft.selections);
+              setSavedSelections({});
+              freeResponsesRef.current = draft.freeResponses;
+              setFreeResponses(draft.freeResponses);
+              setLegacyAnswerIds([]);
+              const count =
+                Object.keys(draft.selections).length +
+                Object.values(draft.freeResponses).filter((value) => value.trim()).length;
+              setAnsweredCount(count);
+              setPhase({ kind: "answering" });
+              return;
+            }
+          }
           if (resumingDraft && quizzesRef.current.length === EXAM_SIZE && submissionIdRef.current) {
             setPhase({
               kind: "answering",
@@ -324,13 +449,42 @@ export function useQuizSession() {
           return;
         }
 
+        if (scope === "assisted") {
+          const draft = readAssistedDraft();
+          if (
+            draft &&
+            draft.submissionId === latest.submissionId &&
+            draft.revision === latest.revision
+          ) {
+            quizzesRef.current = draft.quizzes;
+            setQuizzes(draft.quizzes);
+            submissionIdRef.current = draft.submissionId;
+            setSubmissionId(draft.submissionId);
+            revisionRef.current = draft.revision;
+            setRevision(draft.revision);
+            selectionsRef.current = draft.selections;
+            setSelections(draft.selections);
+            freeResponsesRef.current = draft.freeResponses;
+            setFreeResponses(draft.freeResponses);
+            setLegacyAnswerIds([]);
+            setSavedSelections({});
+            setAnsweredCount(
+              Object.keys(draft.selections).length +
+                Object.values(draft.freeResponses).filter((value) => value.trim()).length,
+            );
+            setRestoreError(null);
+            setPhase({ kind: "answering" });
+            return;
+          }
+        }
+
         submissionIdRef.current = latest.submissionId;
         setSubmissionId(latest.submissionId);
         revisionRef.current = latest.revision;
         setRevision(latest.revision);
         failedAttemptRef.current = null;
         const loaded = await loadQuestions();
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
         if (!loaded) {
           setRestoreError(
             "保存済み回答を復元するための設問を読み込めませんでした。時間をおいて再読み込みしてください。",
@@ -360,7 +514,7 @@ export function useQuizSession() {
         setRestoreError(null);
         setPhase({ kind: "complete" });
       } catch (error) {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
         if (error instanceof ApiError && error.status === 401) {
           resolvingParticipantIdRef.current = null;
           setAccess({
@@ -387,11 +541,166 @@ export function useQuizSession() {
     void resolveParticipant(access.participant);
   }, [access, resolveParticipant]);
 
+  useEffect(() => {
+    if (answerMode !== "owner" || phase.kind !== "complete" || access.kind !== "ready") return;
+    const requestOwnerId = access.participant.id;
+    let active = true;
+    setAssistedBusy(true);
+    void fetchAssistedParticipant()
+      .then((result) => {
+        if (!active) return;
+        setAssistedParticipant(result);
+        setAssistedError(null);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setAssistedError(
+          error instanceof ApiError && error.status === 401
+            ? "参加者セッションの有効期限が切れました。再ログインしてください。"
+            : "ほかの人の回答状態を確認できませんでした。時間をおいて再読み込みしてください。",
+        );
+        if (error instanceof ApiError && error.status === 401) {
+          setAccess((current) => requireParticipantReauthentication(current, requestOwnerId));
+        }
+      })
+      .finally(() => {
+        if (active) setAssistedBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [access, answerMode, phase.kind]);
+
   const retrySubmissionCheck = useCallback(() => {
     const current = accessRef.current;
     if (current.kind !== "ready" || checkingSubmissionRef.current || busyRef.current) return;
     resolvingParticipantIdRef.current = null;
     void resolveParticipant(current.participant);
+  }, [resolveParticipant]);
+
+  const persistAssistedDraft = useCallback(
+    (currentSubmissionId: string, currentQuizzes: LoadedQuiz[]) => {
+      window.sessionStorage.setItem(
+        ASSISTED_DRAFT_KEY,
+        JSON.stringify({
+          quizzes: currentQuizzes,
+          selections: copyAnsweredSelections(selectionsRef.current),
+          freeResponses: freeResponsesRef.current,
+          submissionId: currentSubmissionId,
+          revision: revisionRef.current,
+        } satisfies AssistedDraft),
+      );
+    },
+    [],
+  );
+
+  const openAssistedLogin = useCallback(() => {
+    if (answerModeRef.current !== "owner" || phaseRef.current.kind !== "complete") return;
+    setAssistedError(null);
+    setAssistedScreen("login");
+  }, []);
+
+  const activateAssisted = useCallback(
+    async (participant: Participant, hasSubmission: boolean, eligible = true) => {
+      const current = accessRef.current;
+      if (current.kind !== "ready" || busyRef.current || checkingSubmissionRef.current) return;
+      sessionEpochRef.current += 1;
+      answerModeRef.current = "assisted";
+      setAnswerMode("assisted");
+      setAssistedScreen("active");
+      setAssistedParticipant({ participant, hasSubmission, eligible });
+      setAssistedError(null);
+      window.sessionStorage.setItem(ASSISTED_MODE_KEY, "assisted");
+      quizzesRef.current = [];
+      setQuizzes([]);
+      selectionsRef.current = {};
+      setSelections({});
+      freeResponsesRef.current = {};
+      setFreeResponses({});
+      setLegacyAnswerIds([]);
+      setSavedSelections({});
+      setAnsweredCount(0);
+      submissionIdRef.current = null;
+      setSubmissionId(null);
+      revisionRef.current = 0;
+      setRevision(0);
+      failedAttemptRef.current = null;
+      setRestoreError(null);
+      resolvingParticipantIdRef.current = null;
+      await resolveParticipant(current.participant, "assisted");
+    },
+    [resolveParticipant],
+  );
+
+  const startAssisted = useCallback(
+    async (name: string) => {
+      if (assistedRequestRef.current || assistedBusy)
+        throw new Error("処理中です。しばらくお待ちください。");
+      assistedRequestRef.current = true;
+      setAssistedBusy(true);
+      setAssistedError(null);
+      try {
+        const result = await createAssistedParticipant(name);
+        if (!mountedRef.current) return;
+        await activateAssisted(result.participant, result.hasSubmission);
+      } catch (error) {
+        if (mountedRef.current) {
+          if (error instanceof ApiError && error.status === 401) {
+            const current = accessRef.current;
+            if (current.kind === "ready") {
+              setAccess({ kind: "reauthentication", participant: current.participant });
+            }
+          }
+          setAssistedError(
+            error instanceof Error ? error.message : "代理回答を開始できませんでした。",
+          );
+        }
+        throw error;
+      } finally {
+        assistedRequestRef.current = false;
+        if (mountedRef.current) setAssistedBusy(false);
+      }
+    },
+    [activateAssisted, assistedBusy],
+  );
+
+  const resumeAssisted = useCallback(async () => {
+    const state = assistedParticipant;
+    if (!state?.participant) return;
+    await activateAssisted(state.participant, state.hasSubmission, state.eligible);
+  }, [activateAssisted, assistedParticipant]);
+
+  const returnToOwner = useCallback(() => {
+    if (assistedRequestRef.current) return;
+    const current = accessRef.current;
+    if (answerModeRef.current !== "assisted") {
+      setAssistedScreen("closed");
+      setAssistedError(null);
+      return;
+    }
+    if (current.kind !== "ready") return;
+    sessionEpochRef.current += 1;
+    answerModeRef.current = "owner";
+    setAnswerMode("owner");
+    setAssistedScreen("closed");
+    window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
+    quizzesRef.current = [];
+    setQuizzes([]);
+    selectionsRef.current = {};
+    setSelections({});
+    freeResponsesRef.current = {};
+    setFreeResponses({});
+    setLegacyAnswerIds([]);
+    setSavedSelections({});
+    setAnsweredCount(0);
+    submissionIdRef.current = null;
+    setSubmissionId(null);
+    revisionRef.current = 0;
+    setRevision(0);
+    failedAttemptRef.current = null;
+    setRestoreError(null);
+    resolvingParticipantIdRef.current = null;
+    void resolveParticipant(current.participant, "owner");
   }, [resolveParticipant]);
 
   const login = useCallback(async (name: string, pin: string) => {
@@ -446,6 +755,11 @@ export function useQuizSession() {
     try {
       await deleteParticipantSession();
       if (!mountedRef.current) return;
+      window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
+      window.sessionStorage.removeItem(ASSISTED_DRAFT_KEY);
+      answerModeRef.current = "owner";
+      setAnswerMode("owner");
+      setAssistedScreen("closed");
       sessionEpochRef.current += 1;
       quizzesRef.current = [];
       setQuizzes([]);
@@ -487,6 +801,18 @@ export function useQuizSession() {
       Object.keys(next).length +
         Object.values(freeResponsesRef.current).filter((value) => value.trim()).length,
     );
+    if (answerModeRef.current === "assisted" && quizzesRef.current.length === EXAM_SIZE) {
+      window.sessionStorage.setItem(
+        ASSISTED_DRAFT_KEY,
+        JSON.stringify({
+          quizzes: quizzesRef.current,
+          selections: next,
+          freeResponses: freeResponsesRef.current,
+          submissionId: submissionIdRef.current,
+          revision: revisionRef.current,
+        }),
+      );
+    }
     setPhase({ kind: "answering" });
   }, []);
 
@@ -498,6 +824,18 @@ export function useQuizSession() {
       Object.keys(selectionsRef.current).length +
         Object.values(next).filter((entry) => entry.trim()).length,
     );
+    if (answerModeRef.current === "assisted" && quizzesRef.current.length === EXAM_SIZE) {
+      window.sessionStorage.setItem(
+        ASSISTED_DRAFT_KEY,
+        JSON.stringify({
+          quizzes: quizzesRef.current,
+          selections: selectionsRef.current,
+          freeResponses: next,
+          submissionId: submissionIdRef.current,
+          revision: revisionRef.current,
+        }),
+      );
+    }
   }, []);
 
   const saveAnswers = useCallback(async () => {
@@ -542,15 +880,20 @@ export function useQuizSession() {
       failedAttemptRef.current = attempt;
     }
     const sessionEpoch = sessionEpochRef.current;
+    const scope = answerModeRef.current;
+    if (scope === "assisted") persistAssistedDraft(currentSubmissionId, currentQuizzes);
     busyRef.current = true;
     setPhase({ kind: "submitting" });
     try {
-      const result = await submitAnswerBatch({
-        submissionId: currentSubmissionId,
-        operationId: attempt.operationId,
-        expectedRevision: attempt.expectedRevision,
-        answers: attempt.answers,
-      });
+      const result = await submitAnswerBatch(
+        {
+          submissionId: currentSubmissionId,
+          operationId: attempt.operationId,
+          expectedRevision: attempt.expectedRevision,
+          answers: attempt.answers,
+        },
+        scope,
+      );
       if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
       if (result.submissionId !== currentSubmissionId) {
         setRestoreError("保存済み回答と現在の設問が一致しないため、回答を復元できません。");
@@ -569,6 +912,7 @@ export function useQuizSession() {
       failedAttemptRef.current = null;
       setPhase({ kind: "complete" });
       setRestoreError(null);
+      if (scope === "assisted") window.sessionStorage.removeItem(ASSISTED_DRAFT_KEY);
     } catch (error) {
       if (mountedRef.current && sessionEpoch === sessionEpochRef.current) {
         if (error instanceof ApiError && error.status === 401) {
@@ -578,7 +922,7 @@ export function useQuizSession() {
         }
         if (error instanceof ApiError && error.status === 409) {
           try {
-            const persisted = await fetchAnswerSubmission(currentSubmissionId);
+            const persisted = await fetchAnswerSubmission(currentSubmissionId, scope);
             if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
             const restored = restoreSavedAnswers(
               persisted,
@@ -644,7 +988,7 @@ export function useQuizSession() {
     } finally {
       busyRef.current = false;
     }
-  }, []);
+  }, [persistAssistedDraft]);
 
   const refreshSavedAnswers = useCallback(async () => {
     const currentSubmissionId = submissionIdRef.current;
@@ -656,7 +1000,7 @@ export function useQuizSession() {
     busyRef.current = true;
     setPhase({ kind: "refreshing" });
     try {
-      const persisted = await fetchAnswerSubmission(currentSubmissionId);
+      const persisted = await fetchAnswerSubmission(currentSubmissionId, answerModeRef.current);
       if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
       const restored = restoreSavedAnswers(persisted, quizzesRef.current, currentSubmissionId);
       freeResponsesRef.current = restored.freeResponses;
@@ -716,6 +1060,15 @@ export function useQuizSession() {
   }, [loadQuestions]);
 
   return {
+    answerMode,
+    assistedScreen,
+    assistedParticipant,
+    assistedError,
+    assistedBusy,
+    openAssistedLogin,
+    startAssisted,
+    resumeAssisted,
+    returnToOwner,
     access,
     phase,
     quizzes,

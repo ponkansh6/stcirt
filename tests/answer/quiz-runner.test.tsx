@@ -31,6 +31,11 @@ const visibleResultsPayload = {
 function session(phase: object, overrides: Record<string, unknown> = {}) {
   return {
     access: { kind: "ready", participant: { id: 7, name: "参加者" } },
+    answerMode: "owner",
+    assistedScreen: "closed",
+    assistedParticipant: null,
+    assistedError: null,
+    assistedBusy: false,
     phase,
     quizzes,
     selections: {},
@@ -361,13 +366,18 @@ describe("QuizRunner batch answer sheet", () => {
     expect(saveAnswers).toHaveBeenCalledOnce();
   });
 
-  it("shows neutral completion and offers correction of the same five answers", () => {
+  it("shows owner completion actions without a publication status control", () => {
     const editAnswers = vi.fn();
-    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }, { editAnswers }));
+    const openAssistedLogin = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { editAnswers, openAssistedLogin }),
+    );
     render(<RunnerPage />);
     expect(screen.getByRole("heading", { name: "回答完了" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "ホームへ" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ほかの人の回答を行う" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /公開状況/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "設問へ移動" })).not.toBeInTheDocument();
     expect(
       screen.getByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
@@ -375,9 +385,58 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.queryByText(/正解|不正解|合格|得点|正答率/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
     expect(editAnswers).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "ほかの人の回答を行う" }));
+    expect(openAssistedLogin).toHaveBeenCalledOnce();
   });
 
-  it("adds the results link only after publication and keeps the correction CTA beside it", async () => {
+  it("provides a name-only assisted sign-in screen and returns to the owner's answers", () => {
+    const startAssisted = vi.fn();
+    const returnToOwner = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { assistedScreen: "login", startAssisted, returnToOwner }),
+    );
+    render(<RunnerPage />);
+
+    expect(screen.getByRole("heading", { name: "ほかの人の回答" })).toBeInTheDocument();
+    expect(screen.getByLabelText("回答する人のお名前")).toBeInTheDocument();
+    expect(screen.queryByLabelText("4桁PIN")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("回答する人のお名前"), {
+      target: { value: "代理回答者" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "回答をはじめる" }));
+    expect(startAssisted).toHaveBeenCalledWith("代理回答者");
+    fireEvent.click(screen.getByRole("button", { name: "自分の回答に戻る" }));
+    expect(returnToOwner).toHaveBeenCalledOnce();
+  });
+
+  it("offers correction of the saved assisted answer and a path back to the owner", () => {
+    const editAnswers = vi.fn();
+    const returnToOwner = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          answerMode: "assisted",
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+          editAnswers,
+          returnToOwner,
+        },
+      ),
+    );
+    render(<RunnerPage />);
+
+    expect(screen.getByText(/代理回答者さんの回答を記録しました/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "ほかの人の回答を修正する" }));
+    expect(editAnswers).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "自分の回答に戻る" }));
+    expect(returnToOwner).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the assistant action beside published results without a manual status button", async () => {
     const editAnswers = vi.fn();
     vi.stubGlobal(
       "fetch",
@@ -390,16 +449,15 @@ describe("QuizRunner batch answer sheet", () => {
     const resultLink = await screen.findByRole("link", { name: "自分の結果を見る" });
     expect(resultLink).toHaveAttribute("href", "/results");
     expect(fetch).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "公開状況を再確認する" }));
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("button", { name: /公開状況/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ほかの人の回答を行う" })).toBeInTheDocument();
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(1);
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
     document.dispatchEvent(new Event("visibilitychange"));
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
-    fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
-    expect(editAnswers).toHaveBeenCalledOnce();
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: "回答を修正する" })).toBeInTheDocument();
     expect(resultLink).toBeInTheDocument();
   });
 

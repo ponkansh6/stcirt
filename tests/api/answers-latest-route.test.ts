@@ -5,6 +5,13 @@ vi.mock("@/lib/db/repository/participant-repository", () => ({ findParticipantBy
 vi.mock("@/lib/db/repository/answer-repository", () => ({
   getLatestAnswerSubmission: vi.fn(),
 }));
+vi.mock("@/lib/participants/answer-scope", () => ({
+  resolveAnswerScope: vi.fn(async (ownerId: number, scope: string | null) => {
+    if (scope === null) return { participantId: ownerId };
+    if (scope !== "assisted") return { error: "Invalid answer scope", status: 400 };
+    return { participantId: 99 };
+  }),
+}));
 vi.mock("@/lib/participants/security", () => ({
   getParticipantCookie: vi.fn((request: Request) =>
     request.headers.get("cookie")?.replace("stcirt_participant_session=", ""),
@@ -52,5 +59,26 @@ describe("GET /api/answers/latest", () => {
     );
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ submission });
+  });
+
+  it("resolves assisted scope from the owner session and rejects unknown scopes", async () => {
+    const submission = { submissionId: "assisted-submission", revision: 1, answers: [] };
+    vi.mocked(getLatestAnswerSubmission).mockResolvedValueOnce(submission);
+    const assisted = await GET(
+      new Request("http://localhost/api/answers/latest?scope=assisted", {
+        headers: { Cookie: "stcirt_participant_session=valid-session" },
+      }),
+    );
+    expect(assisted.status).toBe(200);
+    await expect(assisted.json()).resolves.toEqual({ submission });
+    expect(getLatestAnswerSubmission).toHaveBeenCalledWith(99);
+
+    const invalid = await GET(
+      new Request("http://localhost/api/answers/latest?scope=other", {
+        headers: { Cookie: "stcirt_participant_session=valid-session" },
+      }),
+    );
+    expect(invalid.status).toBe(400);
+    expect(getLatestAnswerSubmission).toHaveBeenCalledTimes(1);
   });
 });

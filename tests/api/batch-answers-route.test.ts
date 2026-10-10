@@ -44,6 +44,13 @@ vi.mock("@/lib/participants/security", () => ({
     token === "valid-session" ? { id: 42, expiresAt: new Date() } : null,
   ),
 }));
+vi.mock("@/lib/participants/answer-scope", () => ({
+  resolveAnswerScope: vi.fn(async (ownerId: number, scope: string | null) => {
+    if (scope === null) return { participantId: ownerId };
+    if (scope !== "assisted") return { error: "Invalid answer scope", status: 400 };
+    return { participantId: 99 };
+  }),
+}));
 
 import {
   BatchSubmissionError,
@@ -52,6 +59,7 @@ import {
   saveAnswerSubmission,
 } from "@/lib/db/repository/answer-repository";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
+import { resolveAnswerScope } from "@/lib/participants/answer-scope";
 
 const submissionId = "550e8400-e29b-41d4-a716-446655440000";
 const operationId = "550e8400-e29b-41d4-a716-446655440001";
@@ -111,6 +119,53 @@ describe("/api/answers/batch route handlers", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual(submission);
     expect(getAnswerSubmission).toHaveBeenCalledWith(submissionId, 42);
+  });
+
+  it("GET resolves the assisted submission through the owner session", async () => {
+    const submission = {
+      submissionId,
+      revision: 2,
+      answers: answers.map((answer) => ({
+        ...answer,
+        answerKind: "selected" as const,
+        freeText: null,
+      })),
+    };
+    vi.mocked(getAnswerSubmission).mockResolvedValueOnce(submission);
+    const response = await GET(
+      new Request(
+        `http://localhost/api/answers/batch?submissionId=${submissionId}&scope=assisted`,
+        { headers: { Cookie: headers.Cookie } },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(submission);
+    expect(getAnswerSubmission).toHaveBeenCalledWith(submissionId, 99);
+  });
+
+  it("GET rejects unknown and unlinked answer scopes before loading a submission", async () => {
+    const invalid = await GET(
+      new Request(`http://localhost/api/answers/batch?submissionId=${submissionId}&scope=other`, {
+        headers: { Cookie: headers.Cookie },
+      }),
+    );
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toEqual({ error: "Invalid answer scope" });
+
+    vi.mocked(resolveAnswerScope).mockResolvedValueOnce({
+      error: "Assisted participant not found",
+      status: 404,
+    });
+    const unlinked = await GET(
+      new Request(
+        `http://localhost/api/answers/batch?submissionId=${submissionId}&scope=assisted`,
+        { headers: { Cookie: headers.Cookie } },
+      ),
+    );
+    expect(unlinked.status).toBe(404);
+    await expect(unlinked.json()).resolves.toEqual({ error: "Assisted participant not found" });
+    expect(getAnswerSubmission).not.toHaveBeenCalled();
   });
 
   it("GET returns 404 when the submission is absent", async () => {
@@ -188,6 +243,53 @@ describe("/api/answers/batch route handlers", () => {
     );
 
     expect(response.status).toBe(400);
+    expect(saveAnswerSubmission).not.toHaveBeenCalled();
+  });
+
+  it("POST stores an assisted answer under the linked participant, not the owner", async () => {
+    vi.mocked(saveAnswerSubmission).mockResolvedValueOnce({
+      submissionId,
+      revision: 1,
+      assessmentTarget: null,
+    });
+    const response = await POST(
+      new Request("http://localhost/api/answers/batch?scope=assisted", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(saveAnswerSubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ participantId: 99 }),
+    );
+  });
+
+  it("POST rejects unknown and unlinked answer scopes before saving", async () => {
+    const invalid = await POST(
+      new Request("http://localhost/api/answers/batch?scope=other", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
+      }),
+    );
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toEqual({ error: "Invalid answer scope" });
+
+    vi.mocked(resolveAnswerScope).mockResolvedValueOnce({
+      error: "Assisted participant not found",
+      status: 404,
+    });
+    const unlinked = await POST(
+      new Request("http://localhost/api/answers/batch?scope=assisted", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
+      }),
+    );
+    expect(unlinked.status).toBe(404);
+    await expect(unlinked.json()).resolves.toEqual({ error: "Assisted participant not found" });
     expect(saveAnswerSubmission).not.toHaveBeenCalled();
   });
 

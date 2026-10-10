@@ -104,6 +104,21 @@ async function mockParticipantSession(
     await route.fallback();
   });
 
+  // Completion views load this participant-only state; keep the shared mock
+  // usable for ordinary answer tests. Tests with a dedicated assisted mock
+  // register it later and retain Playwright's route precedence.
+  await page.route("**/api/participants/assisted", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ participant: null, hasSubmission: false, eligible: true }),
+    });
+  });
+
   return {
     loginRequests,
     setLatestSubmission(submission: typeof latestSubmission) {
@@ -384,6 +399,152 @@ test("supports native radio keyboard operation and reflows long Japanese text at
     viewport: document.documentElement.clientWidth,
   }));
   expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport);
+});
+
+test("answers for one additional person, corrects that answer, and restores it after reload", async ({
+  page,
+}) => {
+  const questions: SavedBatchAnswer[] = [
+    { questionId: 1, answerKind: "selected", selectedIndex: 0, freeText: null },
+    { questionId: 2, answerKind: "selected", selectedIndex: 0, freeText: null },
+    { questionId: 3, answerKind: "selected", selectedIndex: 0, freeText: null },
+    { questionId: 4, answerKind: "selected", selectedIndex: 0, freeText: null },
+    { questionId: 5, answerKind: "freeText", selectedIndex: null, freeText: "本人の回答" },
+  ];
+  let assistedName: string | null = null;
+  let assistedSubmission: {
+    submissionId: string;
+    revision: number;
+    answers: SavedBatchAnswer[];
+  } | null = null;
+  const assistedLatestRequests: string[] = [];
+  const assistedSaves: BatchPayload[] = [];
+
+  await page.route("**/api/participants/session", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ participant: { id: 17, name: "本人" } }),
+    });
+  });
+  await page.route("**/api/participants/results", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ state: "waiting" }),
+    });
+  });
+  await page.route("**/api/participants/assisted", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          participant: assistedName ? { id: 18, name: assistedName } : null,
+          hasSubmission: Boolean(assistedSubmission),
+          eligible: !assistedName,
+        }),
+      });
+      return;
+    }
+    const body = route.request().postDataJSON();
+    expect(Object.keys(body)).toEqual(["name"]);
+    assistedName = body.name;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ participant: { id: 18, name: assistedName }, hasSubmission: false }),
+    });
+  });
+  await page.route("**/api/questions/batch**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ questions: [1, 2, 3, 4, 5].map(questionFor) }),
+    });
+  });
+  await page.route("**/api/answers/latest**", async (route) => {
+    const url = new URL(route.request().url());
+    assistedLatestRequests.push(url.search);
+    const assisted = url.searchParams.get("scope") === "assisted";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        submission: assisted
+          ? assistedSubmission
+          : {
+              submissionId: "00000000-0000-4000-8000-000000000041",
+              revision: 1,
+              answers: questions,
+            },
+      }),
+    });
+  });
+  await page.route("**/api/answers/batch**", async (route) => {
+    const url = new URL(route.request().url());
+    const body = route.request().postDataJSON() as BatchPayload;
+    expect(url.searchParams.get("scope")).toBe("assisted");
+    assistedSaves.push(body);
+    assistedSubmission = {
+      submissionId: body.submissionId,
+      revision: body.expectedRevision + 1,
+      answers: body.answers.map((answer) =>
+        "freeText" in answer
+          ? {
+              questionId: answer.questionId,
+              answerKind: "freeText",
+              selectedIndex: null,
+              freeText: answer.freeText,
+            }
+          : {
+              questionId: answer.questionId,
+              answerKind: "selected",
+              selectedIndex: answer.selectedIndex,
+              freeText: null,
+            },
+      ),
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        submissionId: body.submissionId,
+        revision: body.expectedRevision + 1,
+      }),
+    });
+  });
+
+  await page.goto("/answer");
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "ほかの人の回答を行う" })).toBeVisible();
+  await page.getByRole("button", { name: "ほかの人の回答を行う" }).click();
+  await expect(page.getByRole("heading", { name: "ほかの人の回答" })).toBeVisible();
+  await page.getByLabel("回答する人のお名前").fill("代理回答者");
+  await page.getByRole("button", { name: "回答をはじめる" }).click();
+  await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
+  await expect.poll(() => assistedLatestRequests).toContain("?scope=assisted");
+
+  for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "B");
+  await page.getByRole("button", { name: "5問の回答を確定する" }).click();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  await expect(page.getByText(/代理回答者（ほかの人の回答）/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "ほかの人の回答を修正する" })).toBeVisible();
+  expect(assistedSaves).toHaveLength(1);
+
+  await page.getByRole("button", { name: "ほかの人の回答を修正する" }).click();
+  await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: /Option 1B/ })).toBeChecked();
+  const latestRequestsBeforeReload = assistedLatestRequests.filter(
+    (search) => search === "?scope=assisted",
+  ).length;
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "ほかの人の回答を修正する" })).toBeVisible();
+  await expect
+    .poll(() => assistedLatestRequests.filter((search) => search === "?scope=assisted").length)
+    .toBeGreaterThan(latestRequestsBeforeReload);
+  expect(assistedSaves).toHaveLength(1);
 });
 
 test("shows neutral completion after one batch and can reopen the same answer set for correction", async ({

@@ -13,6 +13,15 @@ import { HeaderPortal } from "./header-portal";
 
 export default function QuizRunner() {
   const {
+    answerMode,
+    assistedScreen,
+    assistedParticipant,
+    assistedError,
+    assistedBusy,
+    openAssistedLogin,
+    startAssisted,
+    resumeAssisted,
+    returnToOwner,
     access,
     phase,
     restoreError,
@@ -37,17 +46,13 @@ export default function QuizRunner() {
   const [participantResultsUnavailable, setParticipantResultsUnavailable] = useState(false);
   const [participantResultsRefreshError, setParticipantResultsRefreshError] = useState(false);
   const [participantResultsAuthExpired, setParticipantResultsAuthExpired] = useState(false);
-  const [participantResultsRefreshing, setParticipantResultsRefreshing] = useState(false);
-  const refreshParticipantResultsRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-    if (phase.kind !== "complete" || access.kind !== "ready") {
+    if (answerMode !== "owner" || phase.kind !== "complete" || access.kind !== "ready") {
       setParticipantResultsVisible(false);
       setParticipantResultsWaiting(null);
       setParticipantResultsUnavailable(false);
       setParticipantResultsRefreshError(false);
       setParticipantResultsAuthExpired(false);
-      setParticipantResultsRefreshing(false);
-      refreshParticipantResultsRef.current = null;
       return;
     }
     let active = true;
@@ -61,7 +66,6 @@ export default function QuizRunner() {
         return;
       }
       pending = true;
-      setParticipantResultsRefreshing(true);
       const currentRevision = ++requestRevision;
       try {
         const response = await fetch("/api/participants/results", {
@@ -97,14 +101,12 @@ export default function QuizRunner() {
         if (active && currentRevision === requestRevision) setParticipantResultsRefreshError(true);
       } finally {
         pending = false;
-        if (active) setParticipantResultsRefreshing(false);
         if (active && refreshQueued) {
           refreshQueued = false;
           void refresh();
         }
       }
     };
-    refreshParticipantResultsRef.current = () => void refresh();
     void refresh();
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh();
@@ -112,10 +114,9 @@ export default function QuizRunner() {
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
-      refreshParticipantResultsRef.current = null;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [access.kind, phase.kind]);
+  }, [access.kind, answerMode, phase.kind]);
   const isSubmitting = phase.kind === "submitting";
   const isRefreshing = phase.kind === "refreshing";
   const unanswered = quizzes.filter(({ question }) =>
@@ -135,6 +136,51 @@ export default function QuizRunner() {
         <p className="w-full text-center text-muted" role="status" aria-live="polite">
           参加状態を確認しています…
         </p>
+      </main>
+    );
+  }
+
+  if (assistedScreen === "login") {
+    return (
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+        <ParticipantCard>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <h1 className="text-3xl font-bold tracking-tight">ほかの人の回答</h1>
+          <p className="mt-4 max-w-xl leading-relaxed text-muted">
+            回答する人のお名前を入力してください。この画面からは、お一人分の回答を行えます。
+          </p>
+          <AssistedParticipantForm
+            onSubmit={startAssisted}
+            message={assistedError}
+            busy={assistedBusy}
+          />
+          {access.kind === "reauthentication" && (
+            <section
+              className="mt-8 border-t border-border pt-6"
+              aria-labelledby="assisted-reauth-title"
+            >
+              <h2 id="assisted-reauth-title" className="text-lg font-bold">
+                参加状態の確認が必要です
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                先に本人として再ログインしてください。入力したお名前はこの画面に残ります。
+              </p>
+              <ParticipantForm
+                onLogin={login}
+                initialName={access.participant.name}
+                submitLabel="再ログインする"
+              />
+            </section>
+          )}
+          <Button
+            variant="outline"
+            className="mt-5"
+            onClick={returnToOwner}
+            disabled={assistedBusy}
+          >
+            自分の回答に戻る
+          </Button>
+        </ParticipantCard>
       </main>
     );
   }
@@ -241,12 +287,29 @@ export default function QuizRunner() {
   }
 
   if (phase.kind === "complete") {
+    const answeringForAssisted = answerMode === "assisted";
+    const canAnswerForAssisted =
+      answerMode === "owner" &&
+      access.kind === "ready" &&
+      (assistedParticipant === null ||
+        Boolean(assistedParticipant.participant) ||
+        assistedParticipant.eligible);
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
           <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
           <h1 className="text-3xl font-bold tracking-tight">回答完了</h1>
-          <p className="mt-4 text-muted">全5問の回答を記録しました。</p>
+          <p className="mt-4 text-muted">
+            {answeringForAssisted
+              ? `${assistedParticipant?.participant?.name ?? "ほかの人"}さんの回答を記録しました。`
+              : "全5問の回答を記録しました。"}
+          </p>
+          <p className="mt-2 text-sm font-medium text-muted">
+            回答者：
+            {answeringForAssisted
+              ? `${assistedParticipant?.participant?.name ?? "ほかの人"}（ほかの人の回答）`
+              : `${access.kind === "ready" ? access.participant.name : "本人"}（本人の回答）`}
+          </p>
           <p className="mt-2 text-sm leading-relaxed text-muted">
             回答を見直す場合は、同じ5問の回答を復元して修正できます。
           </p>
@@ -255,39 +318,85 @@ export default function QuizRunner() {
               {restoreError}
             </p>
           )}
-          <Button onClick={editAnswers} className="mt-8" disabled={Boolean(restoreError)}>
-            回答を修正する
-          </Button>
-          <div className="mt-4">
-            {participantResultsAuthExpired && (
-              <p className="mb-2 text-sm text-error" role="alert">
-                参加者セッションの有効期限が切れました。もう一度参加状態を確認してください。
-              </p>
-            )}
-            {participantResultsWaiting && (
-              <p className="mb-2 text-sm text-muted" role="status" aria-live="polite">
-                結果はまだ公開されていません。公開状況はいつでも再確認できます。
-              </p>
-            )}
-            {participantResultsUnavailable && (
-              <p className="mb-2 text-sm text-muted" role="status" aria-live="polite">
-                結果は現在確認できません。主催者にお問い合わせください。
-              </p>
-            )}
-            {participantResultsRefreshError && (
-              <p className="mb-2 text-sm text-error" role="alert">
-                公開状況を確認できませんでした。表示中の状態は保持しています。
-              </p>
-            )}
-            <Button
-              variant="outline"
-              onClick={() => refreshParticipantResultsRef.current?.()}
-              disabled={participantResultsRefreshing}
+          {access.kind === "reauthentication" && (
+            <section
+              className="mt-6 rounded-xl border border-border bg-surface-2 p-5"
+              aria-labelledby="complete-reauth-title"
             >
-              {participantResultsRefreshing ? "公開状況を確認しています…" : "公開状況を再確認する"}
+              <h2 id="complete-reauth-title" className="text-lg font-bold">
+                参加状態の確認が必要です
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                もう一度ログインすると、回答の修正やほかの人の回答を続けられます。
+              </p>
+              <ParticipantForm
+                onLogin={login}
+                initialName={access.participant.name}
+                submitLabel="再ログインする"
+              />
+            </section>
+          )}
+          <Button onClick={editAnswers} className="mt-8" disabled={Boolean(restoreError)}>
+            {answeringForAssisted ? "ほかの人の回答を修正する" : "回答を修正する"}
+          </Button>
+          {answeringForAssisted && (
+            <Button variant="outline" className="mt-3" onClick={returnToOwner}>
+              自分の回答に戻る
             </Button>
-          </div>
-          {participantResultsVisible && (
+          )}
+          {!answeringForAssisted && canAnswerForAssisted && (
+            <div className="mt-4">
+              {assistedError && (
+                <p className="mb-2 text-sm text-error" role="alert">
+                  {assistedError}
+                </p>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (assistedParticipant?.participant) void resumeAssisted();
+                  else openAssistedLogin();
+                }}
+                disabled={assistedBusy}
+              >
+                {assistedBusy
+                  ? "回答状態を確認しています…"
+                  : assistedParticipant?.hasSubmission
+                    ? "ほかの人の回答を修正する"
+                    : "ほかの人の回答を行う"}
+              </Button>
+              {assistedParticipant?.participant && !assistedParticipant.hasSubmission && (
+                <p className="mt-2 text-sm text-muted">
+                  {assistedParticipant.participant.name}さんの回答を再開できます。
+                </p>
+              )}
+            </div>
+          )}
+          {!answeringForAssisted && (
+            <div className="mt-4">
+              {participantResultsAuthExpired && (
+                <p className="mb-2 text-sm text-error" role="alert">
+                  参加者セッションの有効期限が切れました。もう一度参加状態を確認してください。
+                </p>
+              )}
+              {participantResultsWaiting && (
+                <p className="mb-2 text-sm text-muted" role="status" aria-live="polite">
+                  結果は主催者が公開するまで表示されません。
+                </p>
+              )}
+              {participantResultsUnavailable && (
+                <p className="mb-2 text-sm text-muted" role="status" aria-live="polite">
+                  結果は現在確認できません。主催者にお問い合わせください。
+                </p>
+              )}
+              {participantResultsRefreshError && (
+                <p className="mb-2 text-sm text-error" role="alert">
+                  結果の公開状態は現在確認できません。
+                </p>
+              )}
+            </div>
+          )}
+          {!answeringForAssisted && participantResultsVisible && (
             <Link
               href="/results"
               className="mt-3 inline-flex min-h-11 items-center justify-center rounded-md border border-primary px-5 font-semibold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
@@ -345,7 +454,12 @@ export default function QuizRunner() {
             <div>
               <h1 className="text-3xl font-bold tracking-tight">受検票</h1>
               {access.kind === "ready" && (
-                <p className="mt-1 text-sm text-muted">受検者：{access.participant.name}</p>
+                <p className="mt-1 text-sm text-muted">
+                  回答者：
+                  {answerMode === "assisted"
+                    ? `${assistedParticipant?.participant?.name ?? "ほかの人"}（ほかの人の回答）`
+                    : `${access.participant.name}（本人の回答）`}
+                </p>
               )}
             </div>
             <p className="text-base font-bold" aria-live="polite">
@@ -355,6 +469,11 @@ export default function QuizRunner() {
           <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted">
             全5問を縦に確認しながら回答してください。回答は最後にまとめて確定します。
           </p>
+          {answerMode === "assisted" && (
+            <Button variant="outline" className="mt-4" onClick={returnToOwner}>
+              自分の回答に戻る
+            </Button>
+          )}
         </header>
 
         {phase.kind === "answering" && phase.message && (
@@ -666,6 +785,64 @@ function ParticipantForm({
       )}
       <Button type="submit" loading={busy}>
         {busy ? "確認しています…" : submitLabel}
+      </Button>
+    </form>
+  );
+}
+
+function AssistedParticipantForm({
+  onSubmit,
+  message,
+  busy,
+}: {
+  onSubmit: (name: string) => Promise<void>;
+  message: string | null;
+  busy: boolean;
+}) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    setError(null);
+    try {
+      await onSubmit(name.trim());
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "回答を開始できませんでした。入力内容をご確認ください。",
+      );
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-7 space-y-5">
+      <div>
+        <label htmlFor="assisted-name" className="mb-2 block text-sm font-semibold">
+          回答する人のお名前
+        </label>
+        <input
+          id="assisted-name"
+          name="name"
+          type="text"
+          autoComplete="name"
+          required
+          maxLength={120}
+          value={name}
+          onChange={(event) => setName(event.currentTarget.value)}
+          className="min-h-12 w-full rounded-lg border border-border bg-bg px-4 text-base text-text shadow-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+          disabled={busy}
+        />
+      </div>
+      {(error ?? message) && (
+        <p className="text-sm font-medium text-error" role="alert">
+          {error ?? message}
+        </p>
+      )}
+      <Button type="submit" disabled={busy || name.trim().length === 0}>
+        {busy ? "回答を準備しています…" : "回答をはじめる"}
       </Button>
     </form>
   );

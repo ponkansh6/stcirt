@@ -164,6 +164,12 @@ export async function fetchExamQuestions(): Promise<QuizQuestion[]> {
 
 export type Participant = { id: number; name: string };
 export type ParticipantSession = { participant: Participant; expiresAt: string };
+export type AssistedParticipantState = {
+  participant: Participant | null;
+  hasSubmission: boolean;
+  eligible: boolean;
+};
+export type AnswerScope = "owner" | "assisted";
 
 const participantSchema = z.object({ id: z.number(), name: z.string() });
 const participantSessionSchema = z.object({
@@ -171,6 +177,40 @@ const participantSessionSchema = z.object({
   expiresAt: z.string(),
 });
 const participantLookupSchema = z.object({ participant: participantSchema.nullable() });
+const assistedParticipantStateSchema = z.object({
+  participant: participantSchema.nullable(),
+  hasSubmission: z.boolean(),
+  eligible: z.boolean(),
+});
+const assistedParticipantResultSchema = z.object({
+  participant: participantSchema,
+  hasSubmission: z.boolean(),
+});
+
+export async function fetchAssistedParticipant(): Promise<AssistedParticipantState> {
+  return request(
+    "/api/participants/assisted",
+    undefined,
+    "check assisted participant",
+    assistedParticipantStateSchema,
+  );
+}
+
+export async function createAssistedParticipant(name: string): Promise<{
+  participant: Participant;
+  hasSubmission: boolean;
+}> {
+  return request(
+    "/api/participants/assisted",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    },
+    "start assisted answer",
+    assistedParticipantResultSchema,
+  );
+}
 
 export async function fetchParticipantSession(): Promise<Participant | null> {
   const result = await request(
@@ -242,9 +282,16 @@ export type AnswerBatchInput = {
 
 export type AnswerBatchResult = { submissionId: string; revision: number };
 
-export async function submitAnswerBatch(input: AnswerBatchInput): Promise<AnswerBatchResult> {
+function scopedPath(path: string, scope: AnswerScope): string {
+  return scope === "assisted" ? `${path}${path.includes("?") ? "&" : "?"}scope=assisted` : path;
+}
+
+export async function submitAnswerBatch(
+  input: AnswerBatchInput,
+  scope: AnswerScope = "owner",
+): Promise<AnswerBatchResult> {
   return request(
-    "/api/answers/batch",
+    scopedPath("/api/answers/batch", scope),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -257,18 +304,23 @@ export async function submitAnswerBatch(input: AnswerBatchInput): Promise<Answer
 
 export type AnswerSubmission = z.infer<typeof answerSubmissionSchema>;
 
-export async function fetchAnswerSubmission(submissionId: string): Promise<AnswerSubmission> {
+export async function fetchAnswerSubmission(
+  submissionId: string,
+  scope: AnswerScope = "owner",
+): Promise<AnswerSubmission> {
   return request(
-    `/api/answers/batch?submissionId=${encodeURIComponent(submissionId)}`,
+    scopedPath(`/api/answers/batch?submissionId=${encodeURIComponent(submissionId)}`, scope),
     undefined,
     "fetch answer submission",
     answerSubmissionSchema,
   );
 }
 
-export async function fetchLatestAnswerSubmission(): Promise<AnswerSubmission | null> {
+export async function fetchLatestAnswerSubmission(
+  scope: AnswerScope = "owner",
+): Promise<AnswerSubmission | null> {
   const result = await request(
-    "/api/answers/latest",
+    scopedPath("/api/answers/latest", scope),
     undefined,
     "fetch latest answer submission",
     latestAnswerSubmissionSchema,

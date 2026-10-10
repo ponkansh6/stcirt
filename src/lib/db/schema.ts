@@ -71,6 +71,21 @@ export const examParticipants = sqliteTable("exam_participants", {
     .default(sql`(unixepoch())`),
 });
 
+// Each signed-in participant may answer for one additional person. A target
+// can be linked to only one owner, and participants cannot own another proxy.
+export const assistedParticipants = sqliteTable("assisted_participants", {
+  ownerParticipantId: integer("owner_participant_id")
+    .primaryKey()
+    .references(() => examParticipants.id, { onDelete: "cascade" }),
+  targetParticipantId: integer("target_participant_id")
+    .notNull()
+    .unique()
+    .references(() => examParticipants.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export const participantRateLimits = sqliteTable("participant_rate_limits", {
   fingerprint: text("fingerprint").primaryKey(),
   attempts: integer("attempts").notNull(),
