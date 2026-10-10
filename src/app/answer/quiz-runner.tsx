@@ -41,6 +41,11 @@ export default function QuizRunner() {
     login,
   } = useQuizSession();
   const questionRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
+  const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const finalCheckHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const completionHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const previousPhaseKind = useRef(phase.kind);
+  const shouldFocusCompletion = useRef(false);
   const [participantResultsVisible, setParticipantResultsVisible] = useState(false);
   const [participantResultsWaiting, setParticipantResultsWaiting] = useState<boolean | null>(null);
   const [participantResultsUnavailable, setParticipantResultsUnavailable] = useState(false);
@@ -121,6 +126,41 @@ export default function QuizRunner() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [access.kind, answerMode, phase.kind]);
+  useEffect(() => {
+    const previousKind = previousPhaseKind.current;
+    previousPhaseKind.current = phase.kind;
+
+    if (previousKind === "answering" && phase.kind === "submitting") {
+      const submitButtonWasFocused = document.activeElement === submitButtonRef.current;
+      shouldFocusCompletion.current = submitButtonWasFocused;
+      if (submitButtonWasFocused) {
+        finalCheckHeadingRef.current?.focus({ preventScroll: true });
+      }
+      return;
+    }
+
+    if (previousKind === "submitting" && phase.kind === "complete") {
+      if (shouldFocusCompletion.current && document.activeElement === document.body) {
+        completionHeadingRef.current?.focus({ preventScroll: true });
+      }
+      shouldFocusCompletion.current = false;
+      return;
+    }
+
+    if (previousKind === "submitting") {
+      shouldFocusCompletion.current = false;
+    }
+  }, [phase.kind]);
+  useEffect(() => {
+    if (phase.kind !== "submitting" || !shouldFocusCompletion.current) return;
+    const handleFocusIn = (event: FocusEvent) => {
+      if (event.target !== finalCheckHeadingRef.current) {
+        shouldFocusCompletion.current = false;
+      }
+    };
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, [phase.kind]);
   const isSubmitting = phase.kind === "submitting";
   const isRefreshing = phase.kind === "refreshing";
   const unanswered = quizzes.filter(({ question }) =>
@@ -302,7 +342,13 @@ export default function QuizRunner() {
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
           <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
-          <h1 className="text-3xl font-bold tracking-tight">回答完了</h1>
+          <h1
+            ref={completionHeadingRef}
+            tabIndex={-1}
+            className="text-3xl font-bold tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4"
+          >
+            回答完了
+          </h1>
           <p className="mt-4 text-muted">全5問の回答を記録しました。</p>
           <p className="mt-2 text-sm font-medium text-muted">
             回答者：
@@ -595,7 +641,12 @@ export default function QuizRunner() {
           aria-labelledby="final-check-title"
         >
           <p className="text-sm font-semibold tracking-widest text-primary">最終確認</p>
-          <h2 id="final-check-title" className="mt-1 text-xl font-bold">
+          <h2
+            id="final-check-title"
+            ref={finalCheckHeadingRef}
+            tabIndex={-1}
+            className="mt-1 text-xl font-bold focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4"
+          >
             回答内容を確認してください
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-muted">
@@ -649,6 +700,7 @@ export default function QuizRunner() {
             </Button>
           )}
           <Button
+            ref={submitButtonRef}
             onClick={() => void saveAnswers()}
             disabled={unanswered.length > 0 || isRefreshing || authExpired || refreshRequired}
             aria-disabled={

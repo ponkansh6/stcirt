@@ -228,6 +228,134 @@ describe("QuizRunner batch answer sheet", () => {
     );
   });
 
+  it("moves keyboard focus to final confirmation while submitting and then to completion", async () => {
+    let currentPhase: object = { kind: "answering" };
+    mockUseQuizSession.mockImplementation(() =>
+      session(currentPhase, {
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        answeredCount: 5,
+      }),
+    );
+    const { rerender } = render(<RunnerPage />);
+    const submitButton = screen.getByRole("button", { name: "5問の回答を確定する" });
+
+    submitButton.focus();
+    expect(document.activeElement).toBe(submitButton);
+
+    currentPhase = { kind: "submitting" };
+    rerender(<RunnerPage />);
+    const submittingStatus = screen.getByRole("status");
+    expect(submittingStatus).toHaveTextContent("回答を送信しています…");
+    expect(submittingStatus).toHaveAttribute("aria-live", "polite");
+    expect(screen.getByRole("heading", { name: "回答内容を確認してください" })).toBeVisible();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { name: "回答内容を確認してください" }),
+      ),
+    );
+
+    currentPhase = { kind: "complete" };
+    rerender(<RunnerPage />);
+    const completionHeading = screen.getByRole("heading", { name: "回答完了" });
+    await waitFor(() => expect(document.activeElement).toBe(completionHeading));
+  });
+
+  it("does not move focus to completion when the initial phase is already complete", () => {
+    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
+    render(<RunnerPage />);
+    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答完了" }));
+  });
+
+  it("does not move focus when submission starts while a question navigation link is focused", () => {
+    let currentPhase: object = { kind: "answering" };
+    mockUseQuizSession.mockImplementation(() =>
+      session(currentPhase, {
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        answeredCount: 5,
+      }),
+    );
+    const { rerender } = render(<RunnerPage />);
+    const questionLink = screen.getByRole("link", { name: "第1問へ移動、回答済み" });
+    questionLink.focus();
+    expect(document.activeElement).toBe(questionLink);
+
+    currentPhase = { kind: "submitting" };
+    rerender(<RunnerPage />);
+    const finalCheckHeading = screen.getByRole("heading", {
+      name: "回答内容を確認してください",
+    });
+    expect(document.activeElement).not.toBe(finalCheckHeading);
+
+    currentPhase = { kind: "complete" };
+    rerender(<RunnerPage />);
+    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答完了" }));
+  });
+
+  it("keeps the completion handoff canceled after focus returns to final confirmation", async () => {
+    let currentPhase: object = { kind: "answering" };
+    mockUseQuizSession.mockImplementation(() =>
+      session(currentPhase, {
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        answeredCount: 5,
+      }),
+    );
+    const { rerender } = render(<RunnerPage />);
+    screen.getByRole("button", { name: "5問の回答を確定する" }).focus();
+
+    currentPhase = { kind: "submitting" };
+    rerender(<RunnerPage />);
+    const finalCheckHeading = screen.getByRole("heading", {
+      name: "回答内容を確認してください",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(finalCheckHeading));
+
+    const questionLink = screen.getByRole("link", { name: "第1問へ移動、回答済み" });
+    questionLink.focus();
+    expect(document.activeElement).toBe(questionLink);
+    finalCheckHeading.focus();
+    expect(document.activeElement).toBe(finalCheckHeading);
+
+    currentPhase = { kind: "complete" };
+    rerender(<RunnerPage />);
+    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答完了" }));
+  });
+
+  it("does not reuse a failed submission focus handoff on an unfocused retry", async () => {
+    let currentPhase: object = { kind: "answering" };
+    mockUseQuizSession.mockImplementation(() =>
+      session(currentPhase, {
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        answeredCount: 5,
+      }),
+    );
+    const { rerender } = render(<RunnerPage />);
+
+    screen.getByRole("button", { name: "5問の回答を確定する" }).focus();
+    currentPhase = { kind: "submitting" };
+    rerender(<RunnerPage />);
+    const finalCheckHeading = screen.getByRole("heading", {
+      name: "回答内容を確認してください",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(finalCheckHeading));
+
+    currentPhase = { kind: "answering" };
+    rerender(<RunnerPage />);
+    const questionLink = screen.getByRole("link", { name: "第1問へ移動、回答済み" });
+    questionLink.focus();
+    expect(document.activeElement).toBe(questionLink);
+
+    currentPhase = { kind: "submitting" };
+    rerender(<RunnerPage />);
+    const retryFinalCheckHeading = screen.getByRole("heading", {
+      name: "回答内容を確認してください",
+    });
+    expect(document.activeElement).not.toBe(retryFinalCheckHeading);
+
+    currentPhase = { kind: "complete" };
+    rerender(<RunnerPage />);
+    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答完了" }));
+  });
+
   it("moves focus to a question from the progress and unanswered links", () => {
     const select = vi.fn();
     const saveAnswers = vi.fn();
