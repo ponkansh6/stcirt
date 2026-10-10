@@ -1428,7 +1428,7 @@ describe("presentation admin console", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<PresentationAdmin />);
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
-    expect(poll).toBeDefined();
+    await waitFor(() => expect(poll).toBeDefined());
     act(() => poll?.());
     await waitFor(() => expect(presentationReads).toBe(2));
     fireEvent.click(screen.getByRole("button", { name: "投影を一時非表示" }));
