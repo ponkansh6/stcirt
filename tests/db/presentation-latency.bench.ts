@@ -1,5 +1,6 @@
 import { bench, describe, vi } from "vitest";
 import assert from "node:assert/strict";
+import { eq } from "drizzle-orm";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Logger } from "drizzle-orm/logger";
@@ -20,6 +21,7 @@ vi.mock("@/lib/db", async (importOriginal) => {
 });
 
 type Action = "start" | "advance" | "previous" | "hide" | "show";
+type RepositoryAction = Action | "aggregate";
 type Variant = "operatePresentation" | "operatePresentationControls";
 type SqlLogger = Logger & { reset(): void; count(): number };
 
@@ -65,6 +67,7 @@ describe("presentation repository latency benchmark", () => {
   let testDb: TestDb | null = null;
   let logger: SqlLogger | null = null;
   let repository: Record<string, unknown> | null = null;
+  let publicRouteHandler: (() => Promise<Response>) | null = null;
   let initialization: Promise<void> | null = null;
   let cleaned = false;
 
@@ -83,12 +86,15 @@ describe("presentation repository latency benchmark", () => {
           string,
           unknown
         >;
+      const route = await import("@/app/api/presentation/route");
+      publicRouteHandler = route.GET;
       activeLogger.reset();
     })();
     await initialization;
     assert.ok(testDb, "File-backed benchmark database must be initialized");
     assert.ok(logger, "Drizzle SQL logger must be initialized");
     assert.ok(repository, "Presentation repository must be initialized");
+    assert.ok(publicRouteHandler, "Public presentation route handler must be initialized");
   }
 
   function cleanupTestDb() {
@@ -131,10 +137,118 @@ describe("presentation repository latency benchmark", () => {
     ]);
   }
 
-  async function runOperation(variant: Variant, operationId: string, action: Action) {
+  type PublicStage =
+    | "hidden"
+    | "question"
+    | "selected-answer"
+    | "q5-free-text-answer"
+    | "non-q5-free-text-answer"
+    | "podium-preview"
+    | "finished"
+    | "rank";
+
+  async function preparePublicStage(stage: PublicStage) {
+    assert.ok(testDb, "File-backed benchmark database must be initialized");
+    await resetFixture();
+
+    const isFreeText = stage === "q5-free-text-answer" || stage === "non-q5-free-text-answer";
+    const sourceKey =
+      stage === "q5-free-text-answer"
+        ? "it-literacy-005"
+        : stage === "non-q5-free-text-answer"
+          ? "presentation-free-text"
+          : "bench-question-11";
+    const questionChoices = isFreeText ? [] : ["Correct", "Wrong"];
+    if (sourceKey !== "bench-question-11") {
+      await testDb.db
+        .update(schema.examQuestions)
+        .set({ key: sourceKey, choices: questionChoices })
+        .where(eq(schema.examQuestions.id, 11));
+    }
+
+    const state =
+      stage === "question" || stage === "hidden"
+        ? "question"
+        : stage === "selected-answer" || isFreeText
+          ? "answer"
+          : stage === "podium-preview"
+            ? "podium_preview"
+            : stage === "rank"
+              ? "third"
+              : "finished";
+    await testDb.db.insert(schema.presentationSessions).values({
+      id: 1,
+      state,
+      version: 1,
+      questionIndex: 0,
+      questionCount: 2,
+      snapshotRevision: 1,
+      projectionHidden: stage === "hidden",
+    });
+    await testDb.db.insert(schema.presentationQuestions).values([
+      {
+        sessionId: 1,
+        position: 0,
+        sourceQuestionId: 11,
+        question: isFreeText ? "Free-text question" : "Question 11",
+        choices: questionChoices,
+        correctIndex: 0,
+        explanation: "Explanation 11",
+      },
+      {
+        sessionId: 1,
+        position: 1,
+        sourceQuestionId: 22,
+        question: "Question 22",
+        choices: ["Correct", "Wrong"],
+        correctIndex: 0,
+        explanation: "Explanation 22",
+      },
+    ]);
+    await testDb.db.insert(schema.presentationEntries).values(
+      [1, 2, 3].map((rank) => ({
+        sessionId: 1,
+        participantId: rank,
+        displayName: `Participant ${rank}`,
+        score: 4 - rank,
+        rank,
+        answers: [
+          {
+            questionId: 11,
+            answerKind: isFreeText ? ("freeText" as const) : ("selected" as const),
+            selectedIndex: isFreeText ? null : 0,
+            freeText: isFreeText ? `Response ${rank}` : null,
+            rawScore: 1,
+            normalizedScore: 1,
+          },
+          {
+            questionId: 22,
+            answerKind: "selected" as const,
+            selectedIndex: 0,
+            freeText: null,
+            rawScore: 1,
+            normalizedScore: 1,
+          },
+        ],
+      })),
+    );
+  }
+
+  async function runPublicProjection(variant: "repository" | "route-handler") {
+    if (variant === "repository") {
+      assert.ok(repository, "Presentation repository was not initialized");
+      const getPublic = repository.getPublicPresentation as (() => Promise<unknown>) | undefined;
+      if (typeof getPublic !== "function") throw new Error("getPublicPresentation must exist");
+      return getPublic();
+    }
+    assert.ok(publicRouteHandler, "Public presentation route handler was not initialized");
+    return publicRouteHandler();
+  }
+
+  async function runOperation(variant: Variant, operationId: string, action: RepositoryAction) {
     assert.ok(repository, "Presentation repository was not initialized");
     const operation = repository[variant] as
-      | ((id: string, selectedAction: Action) => Promise<unknown>)
+      | ((id: string, selectedAction: RepositoryAction) => Promise<unknown>)
       | undefined;
     if (typeof operation !== "function") {
       throw new Error(`${variant} must exist for this benchmark`);
@@ -153,8 +267,8 @@ describe("presentation repository latency benchmark", () => {
       action: "start",
       actionToRun: "start",
       before: async () => {},
-      requiredReads: "source questions and current session state",
-      stateTransitions: [],
+      requiredReads: "current session and aggregate presentation snapshot",
+      stateTransitions: ["aggregate"],
     },
     {
       action: "advance",
@@ -163,7 +277,7 @@ describe("presentation repository latency benchmark", () => {
         await runOperation(variant, `${operationId}-setup-start`, "start");
       },
       requiredReads: "current session and presentation snapshot",
-      stateTransitions: ["start"],
+      stateTransitions: ["aggregate", "start"],
     },
     {
       action: "previous",
@@ -174,7 +288,7 @@ describe("presentation repository latency benchmark", () => {
         await runOperation(variant, `${operationId}-setup-advance-2`, "advance");
       },
       requiredReads: "current session and presentation snapshot",
-      stateTransitions: ["start", "advance", "advance"],
+      stateTransitions: ["aggregate", "start", "advance", "advance"],
     },
     {
       action: "hide",
@@ -183,7 +297,7 @@ describe("presentation repository latency benchmark", () => {
         await runOperation(variant, `${operationId}-setup-start`, "start");
       },
       requiredReads: "current session state",
-      stateTransitions: ["start"],
+      stateTransitions: ["aggregate", "start"],
     },
     {
       action: "show",
@@ -193,7 +307,7 @@ describe("presentation repository latency benchmark", () => {
         await runOperation(variant, `${operationId}-setup-hide`, "hide");
       },
       requiredReads: "current session state",
-      stateTransitions: ["start", "hide"],
+      stateTransitions: ["aggregate", "start", "hide"],
     },
     {
       action: "replay",
@@ -202,7 +316,7 @@ describe("presentation repository latency benchmark", () => {
         await runOperation(variant, operationId, "start");
       },
       requiredReads: "operation idempotency record and current session state",
-      stateTransitions: ["start (same operation ID before measurement)"],
+      stateTransitions: ["aggregate", "start (same operation ID before measurement)"],
     },
   ];
 
@@ -212,6 +326,7 @@ describe("presentation repository latency benchmark", () => {
       const statementCounts: number[] = [];
       const operationId = `presentation-bench-${scenario.action}`;
       const action = scenario.actionToRun;
+      let sampleSequence = 0;
       let unavailableReported = false;
       let unavailableRuns = 0;
 
@@ -233,17 +348,20 @@ describe("presentation repository latency benchmark", () => {
               });
               unavailableReported = true;
             }
-            if (
-              variant === "operatePresentationControls" &&
-              scenario.action === "replay" &&
-              unavailableRuns === 40
-            ) {
-              cleanupTestDb();
-            }
             return;
           }
           // Reset and fixture work are outside the measured operation.
           await resetFixture();
+          const aggregateOperationId = `${operationId}-${variant}-aggregate-${++sampleSequence}`;
+          const aggregateResult = await runOperation(variant, aggregateOperationId, "aggregate");
+          assert.ok(
+            aggregateResult !== null &&
+              typeof aggregateResult === "object" &&
+              "snapshotRevision" in aggregateResult &&
+              typeof aggregateResult.snapshotRevision === "number" &&
+              aggregateResult.snapshotRevision > 0,
+            "Each scenario must prepare a unique aggregate presentation snapshot",
+          );
           await scenario.before(variant, operationId);
           assert.ok(logger, "Drizzle SQL logger must be initialized");
           logger.reset();
@@ -278,9 +396,64 @@ describe("presentation repository latency benchmark", () => {
               vitestRunnerMetricReason:
                 "Vitest task timing includes fixture reset and state preparation; use durationMs only.",
             });
-            if (variant === "operatePresentationControls" && scenario.action === "replay") {
-              cleanupTestDb();
-            }
+          }
+        },
+        {
+          time: 0,
+          iterations: 40,
+          warmupIterations: 0,
+          warmupTime: 0,
+        },
+      );
+    }
+  }
+
+  const publicStages: PublicStage[] = [
+    "hidden",
+    "question",
+    "selected-answer",
+    "q5-free-text-answer",
+    "non-q5-free-text-answer",
+    "podium-preview",
+    "finished",
+    "rank",
+  ];
+  for (const stage of publicStages) {
+    for (const variant of ["repository", "route-handler"] as const) {
+      const durations: number[] = [];
+      const statementCounts: number[] = [];
+      bench(
+        `getPublicPresentation/${stage}/${variant}`,
+        async () => {
+          await ensureInitialized();
+          await preparePublicStage(stage);
+          assert.ok(logger, "Drizzle SQL logger must be initialized");
+          logger.reset();
+
+          const startedAt = performance.now();
+          const result = await runPublicProjection(variant);
+          const duration = performance.now() - startedAt;
+          const sqlStatements = logger.count();
+          assert.ok(result !== null && typeof result === "object");
+          assert.ok(sqlStatements > 0, "Projection must execute logged Drizzle SQL statements");
+          durations.push(duration);
+          statementCounts.push(sqlStatements);
+          if (durations.length === 40) {
+            emitResult({
+              benchmark: "presentation-latency",
+              variant,
+              available: true,
+              operation: "getPublicPresentation",
+              stage,
+              samples: durations.length,
+              sqlStatementsPerOperation: roundedMean(statementCounts),
+              durationMs: {
+                p50: percentile(durations, 50),
+                p95: percentile(durations, 95),
+              },
+              timingScope: "local in-process SQLite fixture; route-handler excludes wire HTTP",
+              sqlMetricScope: "aggregate Drizzle statement count; not network roundtrips",
+            });
           }
         },
         {
