@@ -250,6 +250,7 @@ describe("presentation projection and presenter progression", () => {
     const api = setup({ authenticated: true });
     render(<PresentationScreen />);
     expect(await screen.findByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "全画面表示" })).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     fireEvent.click(screen.getByTestId("presentation-canvas"));
     await settled();
@@ -396,7 +397,10 @@ describe("presentation projection and presenter progression", () => {
     render(<PresentationScreen presenterRequested />);
     expect(await screen.findByText("発表が始まるまで、少々お待ちください")).toBeInTheDocument();
     await settled();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    const presenter = within(screen.getByRole("main"));
+    expect(presenter.getByRole("button", { name: "全画面表示" })).toBeVisible();
+    expect(presenter.queryByRole("button", { name: "発表を開始" })).not.toBeInTheDocument();
+    expect(presenter.queryByRole("button", { name: "参加者結果を公開" })).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     fireEvent.keyDown(screen.getByRole("main"), { key: "Enter" });
     fireEvent.click(screen.getByTestId("presentation-canvas"));
@@ -1463,25 +1467,32 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
   });
 
-  it("requests fullscreen before a stage mutation and tolerates rejection", async () => {
+  it("keeps progression gestures independent of fullscreen", async () => {
     const api = setup();
+    const requestFullscreen = vi.fn().mockRejectedValue(new Error("denied"));
     render(<PresentationScreen presenterRequested />);
     const main = await screen.findByRole("main");
     await settled();
-    const fullscreenOrder: string[] = [];
-    main.requestFullscreen = vi.fn(() => {
-      fullscreenOrder.push("fullscreen");
-      return Promise.reject(new Error("denied"));
-    });
-    const originalFetch = api.fetchMock.getMockImplementation();
-    api.fetchMock.mockImplementation(async (input, init) => {
-      if (String(input) === "/api/admin/presentation" && init?.method === "POST")
-        fullscreenOrder.push("mutation");
-      return originalFetch!(input, init);
-    });
+    main.requestFullscreen = requestFullscreen;
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await settled();
-    expect(fullscreenOrder.slice(0, 2)).toEqual(["fullscreen", "mutation"]);
+    fireEvent.click(main);
+    await settled();
+    fireEvent.pointerDown(main, {
+      pointerId: 21,
+      isPrimary: true,
+      button: 0,
+      clientX: 240,
+      clientY: 100,
+    });
+    fireEvent.pointerUp(main, { pointerId: 21, isPrimary: true, clientX: 100, clientY: 102 });
+    await settled();
+    expect(requestFullscreen).not.toHaveBeenCalled();
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(3);
     expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
   });
 

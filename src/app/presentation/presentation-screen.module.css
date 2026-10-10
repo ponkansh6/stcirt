@@ -21,6 +21,52 @@
   outline-offset: -5px;
 }
 
+.fullscreenButton {
+  position: absolute;
+  z-index: 2;
+  top: calc(var(--presentation-safe-area-top) + 8px);
+  right: max(12px, calc(var(--presentation-safe-area-right) + 8px));
+  display: inline-flex;
+  min-width: 48px;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: 1px solid #fff;
+  border-radius: 999px;
+  background: #24343d;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 22%);
+  color: #fff;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  white-space: nowrap;
+}
+
+.screenWithFullscreenButton {
+  --presentation-safe-area-top: env(safe-area-inset-top, 0px);
+  --presentation-safe-area-right: env(safe-area-inset-right, 0px);
+}
+
+.screenWithFullscreenButton .canvas {
+  padding-top: max(var(--presentation-padding), calc(var(--presentation-safe-area-top) + 64px));
+}
+
+.screenWithFullscreenButton .fitViewport {
+  top: max(var(--presentation-padding), calc(var(--presentation-safe-area-top) + 64px));
+}
+
+.fullscreenButton:hover {
+  background: #354b56;
+}
+
+.fullscreenButton:focus-visible {
+  outline: 3px solid #e7c87a;
+  outline-offset: 3px;
+}
+
 .slideRegion {
   display: grid;
   width: 100%;

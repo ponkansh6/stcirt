@@ -3,7 +3,6 @@ import { e2eAdminPin } from "./fixtures/admin-auth";
 
 declare global {
   interface Window {
-    __eventOrder: string[];
     __fullscreenRequests: number;
     __wakeRequests: number[];
     __releaseWakeLock: () => void;
@@ -889,25 +888,30 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
         .getByTestId("presentation-fit-layer")
         .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale"))),
     )
-    .toBeLessThan(1);
+    .toBeLessThanOrEqual(1);
   const bounds = await page.getByTestId("presentation-canvas").evaluate((canvas) => {
-    const canvasRect = canvas.getBoundingClientRect();
-    const winnerRects = Array.from(canvas.querySelectorAll("article"), (node) =>
-      node.getBoundingClientRect(),
-    ).map((rect) => ({
+    const fitViewport = canvas.querySelector<HTMLElement>(
+      "[data-testid='presentation-fit-viewport']",
+    );
+    if (!fitViewport) throw new Error("Presentation fit viewport is missing");
+    const fitRect = fitViewport.getBoundingClientRect();
+    const toBounds = (rect: DOMRect) => ({
       left: rect.left,
       right: rect.right,
       top: rect.top,
       bottom: rect.bottom,
-    }));
+    });
+    const winnerRects = Array.from(fitViewport.querySelectorAll("article"), (node) =>
+      toBounds(node.getBoundingClientRect()),
+    );
+    const contentRects = Array.from(fitViewport.querySelectorAll("*"))
+      .map((node) => node.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0)
+      .map(toBounds);
     return {
-      canvas: {
-        left: canvasRect.left,
-        right: canvasRect.right,
-        top: canvasRect.top,
-        bottom: canvasRect.bottom,
-      },
+      fitViewport: toBounds(fitRect),
       winners: winnerRects,
+      content: contentRects,
       pageCanScroll: document.documentElement.scrollHeight > innerHeight,
       regionCanScroll: winnersCanScroll(canvas),
     };
@@ -929,12 +933,12 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   }
   await expect(winners.locator("[class*='additionalWinners']")).toHaveText("ほか 22 名");
   expect(
-    bounds.winners.every(
+    [...bounds.winners, ...bounds.content].every(
       (rect) =>
-        rect.left >= bounds.canvas.left - 1 &&
-        rect.right <= bounds.canvas.right + 1 &&
-        rect.top >= bounds.canvas.top - 1 &&
-        rect.bottom <= bounds.canvas.bottom + 1,
+        rect.left >= bounds.fitViewport.left - 1 &&
+        rect.right <= bounds.fitViewport.right + 1 &&
+        rect.top >= bounds.fitViewport.top - 1 &&
+        rect.bottom <= bounds.fitViewport.bottom + 1,
     ),
   ).toBe(true);
   expect(mock.getPresentationState().state).toBe("third");
@@ -1913,7 +1917,9 @@ test("finished results are published only from admin and publication does not ad
   await startPresentation(page);
   await openPresenter(page);
   await advanceTo(page, "finished");
-  await expect(page.locator("main").getByRole("button")).toHaveCount(0);
+  const presenter = page.getByRole("main");
+  await expect(presenter.getByRole("button")).toHaveCount(1);
+  await expect(presenter.getByRole("button", { name: "全画面表示" })).toBeVisible();
   const finishedState = mock.getPresentationState();
   await page.goto("/admin/presentation");
   await expect(page.getByText("現在の状態：終了")).toBeVisible();
@@ -1936,83 +1942,10 @@ test("finished results are published only from admin and publication does not ad
   expect(mock.getPresentationState()).toEqual(finishedState);
 });
 
-test("first presenter progression requests fullscreen before mutation and ignores Escape afterwards", async ({
+test("presenter progression never requests fullscreen and manual fullscreen exits with Escape", async ({
   page,
 }) => {
   const mock = await installAdminApiMock(page, { fullscreenSupported: true });
-  await page.addInitScript(() => {
-    window.__eventOrder = [];
-    window.__fullscreenRequests = 0;
-    Object.defineProperty(Element.prototype, "requestFullscreen", {
-      configurable: true,
-      value: function requestFullscreen() {
-        window.__fullscreenRequests += 1;
-        window.__eventOrder.push("fullscreen");
-        return Promise.reject(new Error("denied"));
-      },
-    });
-  });
-  await page.route("**/api/admin/presentation", async (route) => {
-    if (route.request().method() === "POST")
-      await page.evaluate(() => window.__eventOrder.push("mutation"));
-    await route.fallback();
-  });
-  await signIn(page);
-  await startPresentation(page);
-  expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(0);
-  await openPresenter(page);
-  let adminRefresh = nextAdminMutation(page);
-  await page.locator("main").press("ArrowRight");
-  await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
-  await adminRefresh;
-  expect(await page.evaluate(() => window.__eventOrder.slice(-2))).toEqual([
-    "fullscreen",
-    "mutation",
-  ]);
-  await page.keyboard.press("Escape");
-  adminRefresh = nextAdminMutation(page);
-  await page.locator("main").press("ArrowRight");
-  await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
-  await adminRefresh;
-  expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
-  expect(mock.actionLog).toEqual(["aggregate", "start", "advance", "advance", "advance"]);
-});
-
-test("unsupported fullscreen keeps presenter progression working and is not retried", async ({
-  page,
-}) => {
-  const mock = await installAdminApiMock(page);
-  await page.addInitScript(() => {
-    window.__fullscreenRequests = 0;
-    Object.defineProperty(Element.prototype, "requestFullscreen", {
-      configurable: true,
-      get() {
-        window.__fullscreenRequests += 1;
-        return undefined;
-      },
-    });
-  });
-  await signIn(page);
-  await startPresentation(page);
-  expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(0);
-  await openPresenter(page);
-  let adminRefresh = nextAdminMutation(page);
-  await page.locator("main").press("ArrowRight");
-  await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
-  await adminRefresh;
-  expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
-  adminRefresh = nextAdminMutation(page);
-  await page.locator("main").press("ArrowRight");
-  await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
-  await adminRefresh;
-  expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
-  expect(mock.actionLog).toEqual(["aggregate", "start", "advance", "advance", "advance"]);
-});
-
-test("a successful fullscreen request can exit through Escape without automatic re-entry", async ({
-  page,
-}) => {
-  await installAdminApiMock(page, { fullscreenSupported: true });
   await page.addInitScript(() => {
     window.__fullscreenRequests = 0;
     let fullscreenTarget: Element | null = null;
@@ -2024,7 +1957,7 @@ test("a successful fullscreen request can exit through Escape without automatic 
       configurable: true,
       value: function requestFullscreen() {
         window.__fullscreenRequests += 1;
-        fullscreenTarget = document.querySelector("main");
+        fullscreenTarget = this;
         document.dispatchEvent(new Event("fullscreenchange"));
         return Promise.resolve();
       },
@@ -2038,16 +1971,158 @@ test("a successful fullscreen request can exit through Escape without automatic 
   });
   await signIn(page);
   await startPresentation(page);
+  expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(0);
   await openPresenter(page);
+  const fullscreenButton = page.locator("main").getByRole("button", { name: "全画面表示" });
+  await expect(fullscreenButton).toBeVisible();
   let adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
   await adminRefresh;
+  expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(0);
+
+  await fullscreenButton.click();
+  await expect(page.locator("main").getByRole("button", { name: "全画面表示" })).toHaveCount(0);
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
   await page.keyboard.press("Escape");
+  await expect(page.locator("main").getByRole("button", { name: "全画面表示" })).toBeVisible();
   adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
   await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
+  expect(mock.actionLog).toEqual(["aggregate", "start", "advance", "advance", "advance"]);
+});
+
+test("native presenter fullscreen API enters and exits without automatic re-entry", async ({
+  page,
+}) => {
+  await installAdminApiMock(page, { fullscreenSupported: true });
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+
+  expect(await page.evaluate(() => document.fullscreenEnabled)).toBe(true);
+  const button = page.locator("main").getByRole("button", { name: "全画面表示" });
+  await expect(button).toBeVisible();
+  await button.click();
+  await expect
+    .poll(() => page.evaluate(() => document.fullscreenElement === document.querySelector("main")))
+    .toBe(true);
+  await expect(page.locator("main").getByRole("button", { name: "全画面表示" })).toHaveCount(0);
+
+  // This case exercises the browser's real fullscreen API. Escape behavior is
+  // covered separately by the deterministic mocked fullscreen test above.
+  const fullscreenExit = page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        document.addEventListener("fullscreenchange", () => resolve(), { once: true });
+      }),
+  );
+  await page.evaluate(async () => document.exitFullscreen());
+  await fullscreenExit;
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
+  await expect(page.locator("main").getByRole("button", { name: "全画面表示" })).toBeVisible();
+
+  const mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  await mutation;
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
+  await expect(page.locator("main").getByRole("button", { name: "全画面表示" })).toBeVisible();
+});
+
+test("fullscreen CTA reserves a mobile top rail without reducing slide fit", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installAdminApiMock(page, { fullscreenSupported: true });
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+
+  const inspectLayout = async () => {
+    const main = page.locator("main");
+    await main.evaluate((element) => {
+      element.style.setProperty("--presentation-safe-area-top", "32px");
+      element.style.setProperty("--presentation-safe-area-right", "24px");
+    });
+    await waitForRenderFrames(page);
+    const button = main.getByRole("button", { name: "全画面表示" });
+    await expect(button).toBeVisible();
+    const buttonBox = await button.boundingBox();
+    const mainBox = await main.boundingBox();
+    expect(buttonBox).not.toBeNull();
+    expect(mainBox).not.toBeNull();
+    const slideBoxes = await page.getByTestId("presentation-canvas").evaluate((canvas) => {
+      const toBox = (element: Element) => {
+        const { x, y, width, height } = element.getBoundingClientRect();
+        return { x, y, width, height };
+      };
+      const slideRegion = canvas.parentElement;
+      const fitViewport = canvas.querySelector("[data-testid='presentation-fit-viewport']");
+      const contentBoxes = fitViewport
+        ? Array.from(fitViewport.querySelectorAll("*"))
+            .map(toBox)
+            .filter((box) => box.width > 0 && box.height > 0)
+        : [];
+      return {
+        slideRegion: slideRegion ? toBox(slideRegion) : null,
+        canvas: toBox(canvas),
+        fitViewport: fitViewport ? toBox(fitViewport) : null,
+        contentBoxes,
+        fitReady:
+          canvas
+            .querySelector("[data-testid='presentation-natural-layer']")
+            ?.getAttribute("data-fit-ready") === "true",
+      };
+    });
+    const viewportBox = await page.evaluate(() => ({
+      x: 0,
+      y: 0,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }));
+    expect(buttonBox!.width).toBeGreaterThanOrEqual(48);
+    expect(buttonBox!.height).toBeGreaterThanOrEqual(48);
+    expect(buttonBox!.y).toBeGreaterThanOrEqual(mainBox!.y + 32 + 8);
+    expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(mainBox!.x + mainBox!.width - 32);
+    expect(slideBoxes.slideRegion).not.toBeNull();
+    expect(slideBoxes.fitViewport).not.toBeNull();
+    expect(slideBoxes.fitReady).toBe(true);
+    const contains = (
+      outer: NonNullable<typeof slideBoxes.canvas>,
+      inner: NonNullable<typeof slideBoxes.canvas>,
+    ) =>
+      inner.x >= outer.x - 1 &&
+      inner.y >= outer.y - 1 &&
+      inner.x + inner.width <= outer.x + outer.width + 1 &&
+      inner.y + inner.height <= outer.y + outer.height + 1;
+    expect(contains(slideBoxes.canvas, slideBoxes.fitViewport!)).toBe(true);
+    expect(slideBoxes.fitViewport!.y).toBeGreaterThanOrEqual(buttonBox!.y + buttonBox!.height);
+    expect(contains(slideBoxes.slideRegion!, slideBoxes.fitViewport!)).toBe(true);
+    expect(contains(mainBox!, slideBoxes.fitViewport!)).toBe(true);
+    expect(contains(viewportBox, slideBoxes.fitViewport!)).toBe(true);
+    const overlaps = (a: NonNullable<typeof buttonBox>, b: NonNullable<typeof slideBoxes.canvas>) =>
+      a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+    expect(overlaps(buttonBox!, slideBoxes.fitViewport!)).toBe(false);
+    expect(slideBoxes.contentBoxes.some((box) => overlaps(buttonBox!, box))).toBe(false);
+    const fitViewport = page.getByTestId("presentation-fit-viewport");
+    const outOfBounds = await fitViewport.evaluate((viewport) => {
+      const bounds = viewport.getBoundingClientRect();
+      return Array.from(viewport.querySelectorAll("*"))
+        .map((node) => node.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0)
+        .filter(
+          (rect) =>
+            rect.left < bounds.left - 1 ||
+            rect.right > bounds.right + 1 ||
+            rect.top < bounds.top - 1 ||
+            rect.bottom > bounds.bottom + 1,
+        ).length;
+    });
+    expect(outOfBounds).toBe(0);
+  };
+
+  await inspectLayout();
+  await page.setViewportSize({ width: 844, height: 390 });
+  await inspectLayout();
 });

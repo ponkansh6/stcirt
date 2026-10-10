@@ -476,7 +476,7 @@ export default function PresentationScreen({
   const fitViewportRef = useRef<HTMLDivElement | null>(null);
   const contentLayerRef = useRef<HTMLDivElement | null>(null);
   const [fit, setFit] = useState({ scale: 1, left: 0, top: 0, ready: false });
-  const fullscreenAttempted = useRef(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const pointerStart = useRef<{
     id: number;
     x: number;
@@ -791,15 +791,26 @@ export default function PresentationScreen({
     setData({ state: "standby" });
   }, [applyAdminControls]);
 
-  const requestFullscreenForIntent = useCallback(() => {
-    if (fullscreenAttempted.current) return;
-    fullscreenAttempted.current = true;
+  useLayoutEffect(() => {
+    const syncFullscreenState = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    syncFullscreenState();
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    document.addEventListener("fullscreenerror", syncFullscreenState);
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreenState);
+      document.removeEventListener("fullscreenerror", syncFullscreenState);
+    };
+  }, []);
+
+  const handleFullscreenClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
     const element = wrapperRef.current;
     if (!element?.requestFullscreen || document.fullscreenElement) return;
     try {
+      // Keep this call directly in the user's click activation; fullscreen is optional.
       void element.requestFullscreen().catch(() => {});
     } catch {
-      // Browser support and user permission are optional for projection.
+      // Unsupported and rejected fullscreen requests must not affect presentation controls.
     }
   }, []);
 
@@ -808,7 +819,6 @@ export default function PresentationScreen({
       const currentControls = adminControlsRef.current;
       const currentDeck = presenterDeckRef.current;
       if (!currentControls || !currentDeck || mutationInFlight.current) return;
-      requestFullscreenForIntent();
       const generation = ++mutationGeneration.current;
       mutationInFlight.current = true;
       try {
@@ -871,7 +881,7 @@ export default function PresentationScreen({
         }
       }
     },
-    [applyAdminControls, recoverUnauthorized, refreshAdmin, requestFullscreenForIntent],
+    [applyAdminControls, recoverUnauthorized, refreshAdmin],
   );
 
   useEffect(() => {
@@ -1112,6 +1122,7 @@ export default function PresentationScreen({
 
   const winners =
     data && data.state !== "question" && data.state !== "answer" ? (data.winners ?? []) : [];
+  const showFullscreenButton = presenterRequested && Boolean(adminControls) && !isFullscreen;
   const winnerGroups = winners.reduce<{ rank: number; winners: Winner[] }[]>((groups, winner) => {
     let group = groups.find((candidate) => candidate.rank === winner.rank);
     if (!group) {
@@ -1125,7 +1136,7 @@ export default function PresentationScreen({
   return (
     <main
       ref={wrapperRef}
-      className={styles.screen}
+      className={`${styles.screen} ${showFullscreenButton ? styles.screenWithFullscreenButton : ""}`}
       tabIndex={0}
       aria-label="プレゼンテーションスライド"
       onClick={handleSlideClick}
@@ -1294,6 +1305,17 @@ export default function PresentationScreen({
           </div>
         </div>
       </div>
+      {showFullscreenButton && (
+        <button
+          type="button"
+          className={styles.fullscreenButton}
+          onClick={handleFullscreenClick}
+          data-no-slide-advance
+          aria-label="全画面表示"
+        >
+          全画面表示
+        </button>
+      )}
       {pollError && (
         <p
           role="status"

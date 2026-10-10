@@ -2708,13 +2708,18 @@ describe("PresentationScreen", () => {
     }
   });
 
-  it("skips fullscreen when already active and tolerates a rejected request", async () => {
+  it("shows manual fullscreen only when no element is fullscreen and exits without re-entry", async () => {
     const originalMethod = Object.getOwnPropertyDescriptor(
       HTMLElement.prototype,
       "requestFullscreen",
     );
     const originalFullscreen = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
-    const requestFullscreen = vi.fn().mockRejectedValue(new Error("fullscreen denied"));
+    let fullscreenTarget: Element | null = null;
+    const requestFullscreen = vi.fn(function (this: HTMLElement) {
+      fullscreenTarget = this;
+      document.dispatchEvent(new Event("fullscreenchange"));
+      return Promise.resolve();
+    });
     Object.defineProperty(HTMLElement.prototype, "requestFullscreen", {
       configurable: true,
       value: requestFullscreen,
@@ -2723,7 +2728,7 @@ describe("PresentationScreen", () => {
     try {
       Object.defineProperty(document, "fullscreenElement", {
         configurable: true,
-        value: document.body,
+        get: () => fullscreenTarget,
       });
       const firstApi = installApi({
         projection: { state: "question", question },
@@ -2732,37 +2737,44 @@ describe("PresentationScreen", () => {
       const activeView = render(<PresentationScreen presenterRequested />);
       views.push(activeView);
       await flush();
+      const button = screen.getByRole("button", { name: "全画面表示" });
+      expect(button).toBeVisible();
       expect(firstApi.fetchMock).toHaveBeenCalledWith("/api/admin/session", expect.anything());
       expect(firstApi.fetchMock).toHaveBeenCalledWith(
         "/api/admin/presentation?view=controls",
         expect.anything(),
       );
+
+      // Any fullscreen element hides the control, even if it is unrelated to the slide.
+      fullscreenTarget = document.body;
+      act(() => document.dispatchEvent(new Event("fullscreenchange")));
+      await flush();
+      expect(screen.queryByRole("button", { name: "全画面表示" })).not.toBeInTheDocument();
+
+      fullscreenTarget = null;
+      act(() => document.dispatchEvent(new Event("fullscreenchange")));
+      await flush();
+      expect(screen.getByRole("button", { name: "全画面表示" })).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "全画面表示" }));
+      await flush();
+      expect(requestFullscreen).toHaveBeenCalledOnce();
+      expect(requestFullscreen).toHaveBeenCalledWith();
+      expect(fullscreenTarget).toBe(screen.getByRole("main"));
+      expect(screen.queryByRole("button", { name: "全画面表示" })).not.toBeInTheDocument();
+      expect(firstApi.actions).toHaveLength(0);
+
+      fullscreenTarget = null;
+      act(() => document.dispatchEvent(new Event("fullscreenchange")));
+      await flush();
+      expect(screen.getByRole("button", { name: "全画面表示" })).toBeVisible();
       fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
       await flush();
       expect(firstApi.fetchMock).toHaveBeenCalledWith(
         "/api/admin/presentation",
         expect.objectContaining({ method: "POST" }),
       );
-      expect(requestFullscreen).not.toHaveBeenCalled();
       activeView.unmount();
       views.pop();
-
-      if (originalFullscreen)
-        Object.defineProperty(document, "fullscreenElement", originalFullscreen);
-      else Reflect.deleteProperty(document, "fullscreenElement");
-      const secondApi = installApi({
-        projection: { state: "question", question },
-        admin: controls({ state: "question", questionIndex: 1 }),
-      });
-      views.push(render(<PresentationScreen presenterRequested />));
-      await flush();
-      expect(secondApi.fetchMock).toHaveBeenCalledWith(
-        "/api/admin/presentation?view=controls",
-        expect.anything(),
-      );
-      fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-      await flush();
-      expect(requestFullscreen).toHaveBeenCalledOnce();
     } finally {
       for (const view of views) view.unmount();
       if (originalMethod)
@@ -2771,6 +2783,68 @@ describe("PresentationScreen", () => {
       if (originalFullscreen)
         Object.defineProperty(document, "fullscreenElement", originalFullscreen);
       else Reflect.deleteProperty(document, "fullscreenElement");
+    }
+  });
+
+  it("keeps presenter controls usable when fullscreen is unavailable or rejected", async () => {
+    const originalMethod = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "requestFullscreen",
+    );
+    const requestFullscreen = vi.fn().mockRejectedValue(new Error("fullscreen denied"));
+    Object.defineProperty(HTMLElement.prototype, "requestFullscreen", {
+      configurable: true,
+      value: requestFullscreen,
+    });
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 1 }),
+    });
+    try {
+      const view = render(<PresentationScreen presenterRequested />);
+      await flush();
+      fireEvent.click(await screen.findByRole("button", { name: "全画面表示" }));
+      await flush();
+      expect(requestFullscreen).toHaveBeenCalledOnce();
+      act(() => document.dispatchEvent(new Event("fullscreenerror")));
+      await flush();
+      expect(screen.getByRole("button", { name: "全画面表示" })).toBeVisible();
+      fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+      await flush();
+      expect(api.actions).toEqual([
+        {
+          action: "advance",
+          expectedSnapshotRevision: 1,
+          operationId: "presentation-operation",
+        },
+      ]);
+      view.unmount();
+
+      Object.defineProperty(HTMLElement.prototype, "requestFullscreen", {
+        configurable: true,
+        value: undefined,
+      });
+      const unsupportedApi = installApi({
+        projection: { state: "question", question },
+        admin: controls({ state: "question", questionIndex: 1 }),
+      });
+      render(<PresentationScreen presenterRequested />);
+      await flush();
+      fireEvent.click(await screen.findByRole("button", { name: "全画面表示" }));
+      fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+      await flush();
+      expect(screen.getByRole("button", { name: "全画面表示" })).toBeVisible();
+      expect(unsupportedApi.actions).toEqual([
+        {
+          action: "advance",
+          expectedSnapshotRevision: 1,
+          operationId: "presentation-operation",
+        },
+      ]);
+    } finally {
+      if (originalMethod)
+        Object.defineProperty(HTMLElement.prototype, "requestFullscreen", originalMethod);
+      else Reflect.deleteProperty(HTMLElement.prototype, "requestFullscreen");
     }
   });
 
@@ -2809,7 +2883,10 @@ describe("PresentationScreen", () => {
       view.unmount();
       view = undefined;
       expect(removeSpy).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
-      expect(addSpy).not.toHaveBeenCalledWith("fullscreenchange", expect.any(Function));
+      expect(addSpy).toHaveBeenCalledWith("fullscreenchange", expect.any(Function));
+      expect(addSpy).toHaveBeenCalledWith("fullscreenerror", expect.any(Function));
+      expect(removeSpy).toHaveBeenCalledWith("fullscreenchange", expect.any(Function));
+      expect(removeSpy).toHaveBeenCalledWith("fullscreenerror", expect.any(Function));
       expect(windowRemoveSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
       expect(clearTimeoutSpy).toHaveBeenCalled();
       expect(windowAddSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
