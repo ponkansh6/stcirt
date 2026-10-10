@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   createParticipantSession: vi.fn(),
   deleteParticipantSession: vi.fn(),
   fetchAnswerSubmission: vi.fn(),
+  fetchExamQuestions: vi.fn(),
   fetchLatestAnswerSubmission: vi.fn(),
   fetchNextQuestion: vi.fn(),
   fetchParticipantSession: vi.fn(),
@@ -98,6 +99,15 @@ describe("useQuizSession state transitions", () => {
     api.fetchNextQuestion.mockImplementation(async (afterId?: number) =>
       question((afterId ?? 0) + 1),
     );
+    api.fetchExamQuestions.mockImplementation(async (): Promise<ReturnType<typeof question>[]> => {
+      const questions: ReturnType<typeof question>[] = [];
+      for (let index = 0; index < 5; index += 1) {
+        const next = await api.fetchNextQuestion(index === 0 ? undefined : questions.at(-1)?.id);
+        if (!next) return questions;
+        questions.push(next);
+      }
+      return questions;
+    });
     api.createParticipantSession.mockResolvedValue({ participant });
     api.deleteParticipantSession.mockResolvedValue(undefined);
     api.submitAnswerBatch.mockResolvedValue({ submissionId, revision: 1 });
@@ -147,11 +157,11 @@ describe("useQuizSession state transitions", () => {
   });
 
   it("drains a failed question load after unmount", async () => {
-    const pendingQuestion = deferred<ReturnType<typeof question>>();
+    const pendingQuestion = deferred<ReturnType<typeof question>[]>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchNextQuestion.mockReturnValueOnce(pendingQuestion.promise);
+    api.fetchExamQuestions.mockReturnValueOnce(pendingQuestion.promise);
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(api.fetchNextQuestion).toHaveBeenCalledOnce());
+    await waitFor(() => expect(api.fetchExamQuestions).toHaveBeenCalledOnce());
     hook.unmount();
     pendingQuestion.reject(new Error("offline"));
     await act(async () => {
@@ -283,12 +293,44 @@ describe("useQuizSession state transitions", () => {
     expect(hook.result.current.answeredCount).toBe(5);
   });
 
-  it("reports shortage and can retry a failed question load", async () => {
+  it("loads a complete ordered exam with exactly one batch call", async () => {
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchExamQuestions.mockResolvedValueOnce([1, 2, 3, 4, 5].map((id) => question(id)));
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+
+    expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
+    expect(hook.result.current.quizzes.map(({ question: item }) => item.id)).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+  });
+
+  it.each([
+    { label: "partial", questions: [question(1), question(2), question(3), question(4)] },
+    {
+      label: "duplicate",
+      questions: [question(1), question(2), question(2), question(4), question(5)],
+    },
+    {
+      label: "out of order",
+      questions: [question(2), question(1), question(3), question(4), question(5)],
+    },
+  ])("does not start an exam from a $label batch", async ({ questions }) => {
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchExamQuestions.mockResolvedValueOnce(questions);
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
+    expect(hook.result.current.quizzes).toEqual([]);
+  });
+
+  it("reports incomplete batch as a retryable load error", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
     api.fetchNextQuestion.mockResolvedValueOnce(question(1)).mockResolvedValueOnce(null);
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("shortage"));
-    expect(hook.result.current.quizzes).toHaveLength(1);
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
+    expect(hook.result.current.quizzes).toHaveLength(0);
   });
 
   it("marks a saved submission unrestorable when its questions are unavailable", async () => {
@@ -321,13 +363,13 @@ describe("useQuizSession state transitions", () => {
 
     const pending = deferred<ReturnType<typeof question>>();
     api.fetchNextQuestion.mockReturnValueOnce(pending.promise);
-    const callsBeforeRetry = api.fetchNextQuestion.mock.calls.length;
+    const callsBeforeRetry = api.fetchExamQuestions.mock.calls.length;
     act(() => {
       hook.result.current.retryLoad();
       hook.result.current.retryLoad();
     });
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("loading"));
-    expect(api.fetchNextQuestion).toHaveBeenCalledTimes(callsBeforeRetry + 1);
+    expect(api.fetchExamQuestions).toHaveBeenCalledTimes(callsBeforeRetry + 1);
 
     pending.resolve(question(1));
     await act(async () => {
@@ -397,7 +439,7 @@ describe("useQuizSession state transitions", () => {
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
     expect(hook.result.current.phase.kind).toBe("ready");
-    expect(api.fetchNextQuestion).not.toHaveBeenCalled();
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
     act(() => hook.result.current.retrySubmissionCheck());
     expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledOnce();
   });
@@ -417,19 +459,19 @@ describe("useQuizSession state transitions", () => {
   });
 
   it("stops question loading when the pending question resolves after unmount", async () => {
-    const pendingQuestion = deferred<ReturnType<typeof question>>();
+    const pendingQuestion = deferred<ReturnType<typeof question>[]>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchNextQuestion.mockReturnValueOnce(pendingQuestion.promise);
+    api.fetchExamQuestions.mockReturnValueOnce(pendingQuestion.promise);
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(api.fetchNextQuestion).toHaveBeenCalledOnce());
+    await waitFor(() => expect(api.fetchExamQuestions).toHaveBeenCalledOnce());
     hook.unmount();
-    pendingQuestion.resolve(question(1));
+    pendingQuestion.resolve([1, 2, 3, 4, 5].map((id) => question(id)));
     await act(async () => {
       await pendingQuestion.promise;
-      // Let loadQuestions resume from fetchNextQuestion and observe the unmounted hook.
+      // Let loadQuestions observe the completed batch after unmount.
       await Promise.resolve();
     });
-    expect(api.fetchNextQuestion).toHaveBeenCalledOnce();
+    expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
   });
 
   it("stops submission lookup updates after unmount", async () => {
@@ -445,7 +487,7 @@ describe("useQuizSession state transitions", () => {
       // Let resolveParticipant finish its post-fetch mounted check.
       await Promise.resolve();
     });
-    expect(api.fetchNextQuestion).not.toHaveBeenCalled();
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
   });
 
   it("does not update state when submission lookup rejects after unmount", async () => {
@@ -461,18 +503,18 @@ describe("useQuizSession state transitions", () => {
       // Let resolveParticipant finish its post-rejection mounted check.
       await Promise.resolve();
     });
-    expect(api.fetchNextQuestion).not.toHaveBeenCalled();
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
   });
 
   it("drains saved-submission question loading after unmount", async () => {
-    const pendingQuestion = deferred<ReturnType<typeof question>>();
+    const pendingQuestion = deferred<ReturnType<typeof question>[]>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
     api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
-    api.fetchNextQuestion.mockReturnValueOnce(pendingQuestion.promise);
+    api.fetchExamQuestions.mockReturnValueOnce(pendingQuestion.promise);
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(api.fetchNextQuestion).toHaveBeenCalledOnce());
+    await waitFor(() => expect(api.fetchExamQuestions).toHaveBeenCalledOnce());
     hook.unmount();
-    pendingQuestion.resolve(question(1));
+    pendingQuestion.resolve([1, 2, 3, 4, 5].map((id) => question(id)));
     await act(async () => {
       await pendingQuestion.promise;
       await Promise.resolve();
@@ -638,7 +680,7 @@ describe("useQuizSession state transitions", () => {
     [1, 2, 3, 4, 5].forEach((id) => act(() => hook.result.current.select(id, 0)));
     api.submitAnswerBatch.mockRejectedValueOnce(apiError(401, "expired"));
     await act(async () => hook.result.current.saveAnswers());
-    const questionCallCount = api.fetchNextQuestion.mock.calls.length;
+    const questionCallCount = api.fetchExamQuestions.mock.calls.length;
     api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
     await act(async () => hook.result.current.login("参加者", "1234"));
     await waitFor(() =>
@@ -648,7 +690,7 @@ describe("useQuizSession state transitions", () => {
       }),
     );
     expect(hook.result.current.selections).toEqual({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
-    expect(api.fetchNextQuestion).toHaveBeenCalledTimes(questionCallCount);
+    expect(api.fetchExamQuestions).toHaveBeenCalledTimes(questionCallCount);
   });
 
   it("resumes a reauthenticated draft without a retry message when no submission exists", async () => {

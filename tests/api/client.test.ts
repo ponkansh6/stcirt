@@ -3,6 +3,7 @@ import {
   ApiError,
   createParticipantSession,
   deleteParticipantSession,
+  fetchExamQuestions,
   fetchNextQuestion,
   fetchLatestAnswerSubmission,
   fetchParticipantSession,
@@ -10,6 +11,71 @@ import {
 } from "@/lib/api/client";
 
 describe("api client", () => {
+  const examQuestions = () =>
+    [1, 2, 3, 4, 5].map((id) => ({
+      id,
+      question: `Q${id}`,
+      choices: id === 5 ? [] : ["A", "B", "C", "D"],
+      answerType: id === 5 ? "freeText" : "selected",
+    }));
+
+  it("fetches the complete ordered exam in one same-origin request", async () => {
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ questions: examQuestions() }), { status: 200 }),
+      );
+    await expect(fetchExamQuestions()).resolves.toEqual(examQuestions());
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledWith("/api/questions/batch", {
+      credentials: "same-origin",
+    });
+  });
+
+  it.each([
+    { label: "a partial batch", questions: examQuestions().slice(0, 4) },
+    {
+      label: "duplicate IDs",
+      questions: [examQuestions()[0], examQuestions()[0], ...examQuestions().slice(2)],
+    },
+    {
+      label: "out of order IDs",
+      questions: [examQuestions()[1], examQuestions()[0], ...examQuestions().slice(2)],
+    },
+    {
+      label: "private answer fields",
+      questions: examQuestions().map((question, index) =>
+        index === 0 ? { ...question, correctIndex: 2 } : question,
+      ),
+    },
+    {
+      label: "choices on a free-text question",
+      questions: examQuestions().map((question, index) =>
+        index === 4 ? { ...question, choices: ["private"] } : question,
+      ),
+    },
+  ])("rejects $label before returning exam questions", async ({ questions }) => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ questions }), { status: 200 }),
+    );
+    await expect(fetchExamQuestions()).rejects.toThrow(
+      "Invalid response schema for fetch exam questions",
+    );
+  });
+
+  it("rejects selected exam questions that do not offer enough choices", async () => {
+    const questions = examQuestions().map((question, index) =>
+      index === 0 ? { ...question, choices: ["A"] } : question,
+    );
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ questions }), { status: 200 }),
+    );
+
+    await expect(fetchExamQuestions()).rejects.toThrow(
+      "Invalid response schema for fetch exam questions",
+    );
+  });
+
   it("fetches the participant's latest saved submission, including an explicit empty result", async () => {
     const fetchSpy = vi
       .spyOn(global, "fetch")

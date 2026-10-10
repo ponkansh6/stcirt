@@ -16,7 +16,11 @@ vi.mock("@/lib/db", async (importOriginal) => {
   };
 });
 
-import { getNextQuestion, getQuestionById } from "@/lib/db/repository/question-repository";
+import {
+  getExamQuestions,
+  getNextQuestion,
+  getQuestionById,
+} from "@/lib/db/repository/question-repository";
 
 async function insertQuestion(question: string) {
   const [count] = await dbRef
@@ -90,6 +94,33 @@ describe("question-repository", () => {
       choices: [],
       answerType: "freeText",
     });
+  });
+
+  it("returns the first five questions in order with only public exam fields", async () => {
+    for (let id = 1; id <= 6; id += 1) {
+      await testDb.db.insert(schema.examQuestions).values({
+        id,
+        key: id === 5 ? "it-literacy-005" : `test-${id}`,
+        question: `Question ${id}`,
+        choices: id === 5 ? [] : ["A", "B", "C", "D"],
+        correctIndex: id === 5 ? 0 : 2,
+        explanation: `Explanation ${id}`,
+      });
+    }
+
+    const questions = await getExamQuestions();
+    expect(questions.map(({ id }) => id)).toEqual([1, 2, 3, 4, 5]);
+    expect(questions[4]).toEqual({
+      id: 5,
+      question: "Question 5",
+      choices: [],
+      answerType: "freeText",
+    });
+    expect(
+      questions.every(
+        (question) => Object.keys(question).sort().join(",") === "answerType,choices,id,question",
+      ),
+    ).toBe(true);
   });
 
   it("returns the complete row for answer lookup", async () => {

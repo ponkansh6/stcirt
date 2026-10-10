@@ -116,22 +116,13 @@ async function mockParticipantSession(
 }
 
 async function mockQuestions(page: Page, requests: string[] = []) {
-  await page.route("**/api/questions/next*", async (route) => {
+  await page.route("**/api/questions/batch", async (route) => {
     const url = new URL(route.request().url());
     requests.push(`${url.pathname}${url.search}`);
-    const afterId = Number(url.searchParams.get("afterId") ?? 0);
-    if (afterId >= 5) {
-      await route.fulfill({
-        status: 404,
-        contentType: "application/json",
-        body: JSON.stringify({ error: "No question" }),
-      });
-      return;
-    }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(questionFor(afterId + 1)),
+      body: JSON.stringify({ questions: [1, 2, 3, 4, 5].map(questionFor) }),
     });
   });
 }
@@ -179,42 +170,26 @@ test("direct answer access requires name and four digit PIN before loading the q
   await signIn(page, "Aki", "0123");
 
   expect(loginRequests).toEqual([{ name: "Aki", pin: "0123" }]);
-  expect(requests).toEqual([
-    "/api/questions/next",
-    "/api/questions/next?afterId=1",
-    "/api/questions/next?afterId=2",
-    "/api/questions/next?afterId=3",
-    "/api/questions/next?afterId=4",
-  ]);
+  expect(requests).toEqual(["/api/questions/batch"]);
   await startQuiz(page);
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
-  expect(requests).toEqual([
-    "/api/questions/next",
-    "/api/questions/next?afterId=1",
-    "/api/questions/next?afterId=2",
-    "/api/questions/next?afterId=3",
-    "/api/questions/next?afterId=4",
-  ]);
+  expect(requests).toEqual(["/api/questions/batch"]);
 });
 
-test("direct answer access explains when five questions are unavailable", async ({ page }) => {
+test("direct answer access refuses an incomplete question batch", async ({ page }) => {
   await mockParticipantSession(page);
-  await page.route("**/api/questions/next*", async (route) => {
+  await page.route("**/api/questions/batch", async (route) => {
     await route.fulfill({
-      status: 404,
+      status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ error: "No question" }),
+      body: JSON.stringify({ questions: [questionFor(1)] }),
     });
   });
 
   await page.goto("/answer");
   await signIn(page);
-  await expect(page.getByRole("heading", { name: "問題が足りません" })).toBeVisible();
-  await expect(
-    page.getByText(
-      "全5問をそろえられないため、検定を開始できません。問題が5問そろったら、もう一度お試しください。",
-    ),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "問題を読み込めませんでした" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "もう一度読み込む" })).toBeVisible();
   await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
 });
 
@@ -318,29 +293,28 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   // This sets a 320 CSS px viewport; browser zoom at 200% needs a real-browser check.
   await page.setViewportSize({ width: 320, height: 900 });
   await mockParticipantSession(page);
-  await page.route("**/api/questions/next*", async (route) => {
-    const url = new URL(route.request().url());
-    const afterId = Number(url.searchParams.get("afterId") ?? 0);
-    const id = afterId + 1;
+  await page.route("**/api/questions/batch", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(
-        makeQuestion({
-          id,
-          question: "長文の設問です。".repeat(20),
-          choices:
-            id === 5
-              ? []
-              : [
-                  "長文の選択肢Aです。".repeat(20),
-                  "長文の選択肢Bです。".repeat(20),
-                  "長文の選択肢Cです。".repeat(20),
-                  "長文の選択肢Dです。".repeat(20),
-                ],
-          answerType: id === 5 ? "freeText" : "selected",
-        }),
-      ),
+      body: JSON.stringify({
+        questions: [1, 2, 3, 4, 5].map((id) =>
+          makeQuestion({
+            id,
+            question: "長文の設問です。".repeat(20),
+            choices:
+              id === 5
+                ? []
+                : [
+                    "長文の選択肢Aです。".repeat(20),
+                    "長文の選択肢Bです。".repeat(20),
+                    "長文の選択肢Cです。".repeat(20),
+                    "長文の選択肢Dです。".repeat(20),
+                  ],
+            answerType: id === 5 ? "freeText" : "selected",
+          }),
+        ),
+      }),
     });
   });
 
@@ -731,15 +705,13 @@ test("retains all choices through reauthentication and resubmits the batch only 
   expect(answerCalls).toBe(2);
 });
 
-test("retries only missing questions after a prefetch network failure", async ({ page }) => {
+test("retries a failed exam batch with one request per attempt", async ({ page }) => {
   await mockParticipantSession(page);
   let fail = true;
   const requests: string[] = [];
-  await page.route("**/api/questions/next*", async (route) => {
-    const url = new URL(route.request().url());
-    const afterId = Number(url.searchParams.get("afterId") ?? 0);
-    requests.push(`${url.pathname}${url.search}`);
-    if (afterId === 2 && fail) {
+  await page.route("**/api/questions/batch", async (route) => {
+    requests.push(new URL(route.request().url()).pathname);
+    if (fail) {
       fail = false;
       await route.fulfill({
         status: 500,
@@ -751,22 +723,15 @@ test("retries only missing questions after a prefetch network failure", async ({
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(questionFor(afterId + 1)),
+      body: JSON.stringify({ questions: [1, 2, 3, 4, 5].map(questionFor) }),
     });
   });
 
   await page.goto("/answer");
   await signIn(page);
-  await expect(page.getByRole("button", { name: "不足分を再読み込み" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "もう一度読み込む" })).toBeVisible();
   await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
-  await page.getByRole("button", { name: "不足分を再読み込み" }).click();
+  await page.getByRole("button", { name: "もう一度読み込む" }).click();
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
-  expect(requests).toEqual([
-    "/api/questions/next",
-    "/api/questions/next?afterId=1",
-    "/api/questions/next?afterId=2",
-    "/api/questions/next?afterId=2",
-    "/api/questions/next?afterId=3",
-    "/api/questions/next?afterId=4",
-  ]);
+  expect(requests).toEqual(["/api/questions/batch", "/api/questions/batch"]);
 });

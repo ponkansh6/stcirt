@@ -42,12 +42,14 @@ describe("useQuizSession saved answer validation", () => {
       vi.fn(async (url: string) => {
         if (url === "/api/participants/session")
           return { ok: true, json: async () => ({ participant }) };
-        if (url.startsWith("/api/questions/next")) {
-          const afterId = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0);
-          const id = afterId + 1;
+        if (url === "/api/questions/batch") {
           return {
             ok: true,
-            json: async () => (freeTextFifth && id === 5 ? quiz(id, true) : quiz(id)),
+            json: async () => ({
+              questions: [1, 2, 3, 4, 5].map((id) =>
+                freeTextFifth && id === 5 ? quiz(id, true) : quiz(id),
+              ),
+            }),
           };
         }
         throw new Error(`Unexpected request ${url}`);

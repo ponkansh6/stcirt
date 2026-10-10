@@ -6,12 +6,35 @@ import {
   latestAnswerSubmissionSchema,
 } from "./schemas";
 
-export const quizQuestionSchema = z.object({
-  id: z.number(),
-  question: z.string(),
-  choices: z.array(z.string()),
-  answerType: z.enum(["selected", "freeText"]),
-});
+export const quizQuestionSchema = z
+  .object({
+    id: z.number().int().positive(),
+    question: z.string().min(1),
+    choices: z.array(z.string().min(1)),
+    answerType: z.enum(["selected", "freeText"]),
+  })
+  .strict()
+  .superRefine((question, context) => {
+    if (question.answerType === "selected" && question.choices.length < 2) {
+      context.addIssue({ code: "custom", message: "Selected questions require choices" });
+    }
+    if (question.answerType === "freeText" && question.choices.length !== 0) {
+      context.addIssue({ code: "custom", message: "Free-text questions cannot expose choices" });
+    }
+  });
+
+const examQuestionsSchema = z
+  .object({ questions: z.array(quizQuestionSchema).length(5) })
+  .strict()
+  .superRefine(({ questions }, context) => {
+    const ids = questions.map(({ id }) => id);
+    if (new Set(ids).size !== ids.length) {
+      context.addIssue({ code: "custom", message: "Question IDs must be unique" });
+    }
+    if (ids.some((id, index) => index > 0 && id <= ids[index - 1]!)) {
+      context.addIssue({ code: "custom", message: "Questions must be ordered by ID" });
+    }
+  });
 
 export const answerResultSchema = z.object({
   recorded: z.literal(true),
@@ -127,6 +150,16 @@ export async function fetchNextQuestion(afterId?: number): Promise<QuizQuestion 
     quizQuestionSchema,
     { allowNotFound: true },
   );
+}
+
+export async function fetchExamQuestions(): Promise<QuizQuestion[]> {
+  const result = await request(
+    "/api/questions/batch",
+    undefined,
+    "fetch exam questions",
+    examQuestionsSchema,
+  );
+  return result.questions;
 }
 
 export type Participant = { id: number; name: string };

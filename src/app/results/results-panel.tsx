@@ -1,127 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { Button } from "@/components/Button";
+import { parseParticipantResult, type ParticipantResult } from "@/lib/participant-results-contract";
 
-export type InitialResult =
-  | { state: "waiting" }
-  | { state: "unavailable" }
-  | { state: "unauthenticated" }
-  | { state: "visible"; score: number; rank: number; questions: ResultQuestion[] };
-
-type ResultQuestion = {
-  position: number;
-  question: string;
-  answer:
-    | { kind: "selected"; value: string; correctness: "correct" | "incorrect" | "unavailable" }
-    | { kind: "freeText"; value: string; score: number | null }
-    | { kind: "unanswered" }
-    | { kind: "legacy" };
-};
-
-type PollResult = Exclude<InitialResult, { state: "unauthenticated" }>;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const isFiniteNumber = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value);
-
-const isPositiveInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isInteger(value) && value > 0;
-
-const isNonNegativeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isInteger(value) && value >= 0;
-
-const isNormalizedScore = (value: unknown): value is number =>
-  isFiniteNumber(value) && value >= 0 && value <= 1;
-
-const parsePollResult = (payload: unknown): PollResult => {
-  if (!isRecord(payload)) return { state: "unavailable" };
-  if (payload.state === "waiting") return { state: "waiting" };
-  if (payload.state === "unavailable") return { state: "unavailable" };
-  if (
-    payload.state !== "visible" ||
-    !isPositiveInteger(payload.rank) ||
-    !isFiniteNumber(payload.score) ||
-    !Array.isArray(payload.questions) ||
-    payload.questions.length === 0
-  ) {
-    return { state: "unavailable" };
-  }
-
-  const questions: ResultQuestion[] = [];
-  for (const candidate of payload.questions) {
-    if (
-      !isRecord(candidate) ||
-      !isNonNegativeInteger(candidate.position) ||
-      typeof candidate.question !== "string" ||
-      !isRecord(candidate.answer)
-    ) {
-      return { state: "unavailable" };
-    }
-
-    const answer = candidate.answer;
-    if (
-      answer.kind === "selected" &&
-      typeof answer.value === "string" &&
-      (answer.correctness === "correct" ||
-        answer.correctness === "incorrect" ||
-        answer.correctness === "unavailable")
-    ) {
-      questions.push({
-        position: candidate.position,
-        question: candidate.question,
-        answer: {
-          kind: "selected",
-          value: answer.value,
-          correctness: answer.correctness,
-        },
-      });
-    } else if (
-      answer.kind === "freeText" &&
-      typeof answer.value === "string" &&
-      (answer.score === null || isNormalizedScore(answer.score))
-    ) {
-      questions.push({
-        position: candidate.position,
-        question: candidate.question,
-        answer: { kind: "freeText", value: answer.value, score: answer.score },
-      });
-    } else if (answer.kind === "unanswered") {
-      questions.push({
-        position: candidate.position,
-        question: candidate.question,
-        answer: { kind: "unanswered" },
-      });
-    } else if (answer.kind === "legacy") {
-      questions.push({
-        position: candidate.position,
-        question: candidate.question,
-        answer: { kind: "legacy" },
-      });
-    } else {
-      return { state: "unavailable" };
-    }
-  }
-
-  if (payload.score < 0 || payload.score > questions.length) {
-    return { state: "unavailable" };
-  }
-
-  return {
-    state: "visible",
-    score: payload.score,
-    rank: payload.rank,
-    questions,
-  };
-};
+export type InitialResult = ParticipantResult | { state: "unauthenticated" };
+type PollResult = ParticipantResult;
 
 export default function ResultsPanel({ initial }: { initial: InitialResult }) {
   const [result, setResult] = useState<PollResult>(
-    initial.state === "unauthenticated" ? { state: "waiting" } : parsePollResult(initial),
+    initial.state === "unauthenticated"
+      ? { state: "waiting" }
+      : (parseParticipantResult(initial) ?? { state: "unavailable" }),
   );
   const [authorized, setAuthorized] = useState(initial.state !== "unauthenticated");
+  const [refreshError, setRefreshError] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshRef = useRef<(() => void) | null>(null);
 
   const answerStatus = (correctness: "correct" | "incorrect") => {
     if (correctness === "correct") {
@@ -142,6 +38,7 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
         return;
       }
       pending = true;
+      setRefreshing(true);
       const currentRevision = ++requestRevision;
       try {
         const response = await fetch("/api/participants/results", {
@@ -152,37 +49,49 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
         if (response.status === 401) {
           setAuthorized(false);
           setResult({ state: "waiting" });
+          setRefreshError(false);
           return;
         }
-        if (!response.ok) return;
+        if (!response.ok) {
+          setRefreshError(true);
+          return;
+        }
         let payload: unknown;
         try {
           payload = await response.json();
         } catch {
           if (!active || currentRevision !== requestRevision) return;
-          setAuthorized(true);
-          setResult({ state: "unavailable" });
+          setRefreshError(true);
           return;
         }
         if (!active || currentRevision !== requestRevision) return;
+        const parsed = parseParticipantResult(payload);
+        if (!parsed) {
+          setRefreshError(true);
+          return;
+        }
         setAuthorized(true);
-        setResult(parsePollResult(payload));
+        setResult(parsed);
+        setRefreshError(false);
       } catch {
-        // Keep the last server-confirmed state until the next visibility refresh.
+        if (active && currentRevision === requestRevision) setRefreshError(true);
       } finally {
         pending = false;
+        if (active) setRefreshing(false);
         if (active && refreshQueued) {
           refreshQueued = false;
           void refresh();
         }
       }
     };
+    refreshRef.current = () => void refresh();
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh();
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
+      refreshRef.current = null;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
@@ -301,6 +210,19 @@ export default function ResultsPanel({ initial }: { initial: InitialResult }) {
             回答中
           </h1>
         )}
+        {authorized && refreshError && (
+          <p className="mt-6 text-sm text-error" role="alert">
+            最新の結果を確認できませんでした。表示中の内容は保持しています。
+          </p>
+        )}
+        <Button
+          variant="outline"
+          onClick={() => refreshRef.current?.()}
+          disabled={refreshing}
+          className="mt-6 self-start"
+        >
+          {refreshing ? "結果を確認しています…" : "結果を再読み込み"}
+        </Button>
       </section>
     </main>
   );

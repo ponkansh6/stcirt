@@ -8,7 +8,7 @@ import {
   deleteParticipantSession,
   fetchAnswerSubmission,
   fetchLatestAnswerSubmission,
-  fetchNextQuestion,
+  fetchExamQuestions,
   fetchParticipantSession,
   submitAnswerBatch,
 } from "@/lib/api/client";
@@ -235,28 +235,30 @@ export function useQuizSession() {
       failedAttemptRef.current = null;
     }
     setPhase({ kind: "loading" });
-    const loaded: LoadedQuiz[] = [...initial];
     try {
-      while (loaded.length < EXAM_SIZE) {
-        const afterId = loaded.at(-1)?.question.id;
-        const next = await fetchNextQuestion(afterId);
-        if (!mountedRef.current) return null;
-        if (!next) {
-          quizzesRef.current = loaded;
-          setQuizzes(loaded);
-          setPhase({ kind: "shortage" });
-          return null;
-        }
-        loaded.push({ question: next, shuffled: shuffleChoices(next.choices) });
-        quizzesRef.current = [...loaded];
-        setQuizzes([...loaded]);
+      if (initial.length === EXAM_SIZE) {
+        setPhase({ kind: "answering" });
+        return initial;
       }
+      const questions = await fetchExamQuestions();
+      if (!mountedRef.current) return null;
+      if (
+        questions.length !== EXAM_SIZE ||
+        new Set(questions.map(({ id }) => id)).size !== EXAM_SIZE ||
+        questions.some(({ id }, index) => index > 0 && id <= questions[index - 1]!.id)
+      ) {
+        throw new Error("Invalid exam question batch");
+      }
+      const loaded = questions.map((question) => ({
+        question,
+        shuffled: shuffleChoices(question.choices),
+      }));
+      quizzesRef.current = loaded;
+      setQuizzes(loaded);
       setPhase({ kind: "answering" });
       return loaded;
     } catch {
       if (mountedRef.current) {
-        quizzesRef.current = loaded;
-        setQuizzes(loaded);
         setPhase({
           kind: "load-error",
           message: "問題を読み込めませんでした。通信状態を確認して、もう一度お試しください。",

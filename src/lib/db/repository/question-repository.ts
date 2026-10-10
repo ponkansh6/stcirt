@@ -39,3 +39,23 @@ export async function getNextQuestion(afterId?: number): Promise<QuizQuestion | 
       }
     : null;
 }
+
+export async function getExamQuestions(): Promise<QuizQuestion[]> {
+  const rows = await db
+    .select({
+      id: examQuestions.id,
+      question: examQuestions.question,
+      choices: examQuestions.choices,
+      key: examQuestions.key,
+    })
+    .from(examQuestions)
+    .orderBy(asc(examQuestions.id))
+    .limit(5);
+
+  return rows.map((question) => ({
+    id: question.id,
+    question: question.question,
+    choices: question.choices,
+    answerType: question.key === "it-literacy-005" ? "freeText" : "selected",
+  }));
+}

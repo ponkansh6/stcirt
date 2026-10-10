@@ -16,6 +16,12 @@ describe("useQuizSession hook", () => {
     choices: ["A", "B", "C", "D"],
     answerType: "selected" as const,
   });
+  const batchQuestions = (freeTextFifth = false) =>
+    [1, 2, 3, 4, 5].map((id) =>
+      id === 5 && freeTextFifth
+        ? { ...question(id), choices: [], answerType: "freeText" as const }
+        : question(id),
+    );
   const submissionId = "00000000-0000-4000-8000-000000000001";
 
   beforeEach(() => {
@@ -38,14 +44,10 @@ describe("useQuizSession hook", () => {
       if (url === "/api/participants/session") {
         return { ok: true, json: async () => ({ participant }) };
       }
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
+      if (url === "/api/questions/batch") {
         return {
           ok: true,
-          json: async () =>
-            id === 5 && overrides.freeTextFifth
-              ? { ...question(id), choices: [], answerType: "freeText" }
-              : question(id),
+          json: async () => ({ questions: batchQuestions(overrides.freeTextFifth) }),
         };
       }
       if (url.startsWith("/api/answers/batch") && !init?.method) {
@@ -81,19 +83,18 @@ describe("useQuizSession hook", () => {
     vi.restoreAllMocks();
   });
 
-  it("retries loading from the retained question cursor", async () => {
+  it("retries a failed all-question batch with one request per attempt", async () => {
     let failed = false;
     const requested: string[] = [];
     const fetchMock = vi.fn(async (url: string) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
       requested.push(url);
-      const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-      if (id === 3 && !failed) {
+      if (!failed) {
         failed = true;
         return { ok: false, status: 500, json: async () => ({ message: "temporary failure" }) };
       }
-      return { ok: true, json: async () => question(id) };
+      return { ok: true, json: async () => ({ questions: batchQuestions() }) };
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -103,14 +104,7 @@ describe("useQuizSession hook", () => {
     act(() => hook.result.current.retryLoad());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
 
-    expect(requested).toEqual([
-      "/api/questions/next",
-      "/api/questions/next?afterId=1",
-      "/api/questions/next?afterId=2",
-      "/api/questions/next?afterId=2",
-      "/api/questions/next?afterId=3",
-      "/api/questions/next?afterId=4",
-    ]);
+    expect(requested).toEqual(["/api/questions/batch", "/api/questions/batch"]);
     expect(hook.result.current.quizzes.map(({ question: item }) => item.id)).toEqual([
       1, 2, 3, 4, 5,
     ]);
@@ -122,11 +116,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([1, 2, 3, 4, 5]);
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/participants/session",
-      "/api/questions/next",
-      "/api/questions/next?afterId=1",
-      "/api/questions/next?afterId=2",
-      "/api/questions/next?afterId=3",
-      "/api/questions/next?afterId=4",
+      "/api/questions/batch",
     ]);
 
     act(() => result.current.select(1, 2));
@@ -183,9 +173,9 @@ describe("useQuizSession hook", () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return { ok: true, json: async () => question(id) };
+      if (url === "/api/questions/batch") {
+        const batch = [1, 2, 3, 4, 5].map((id) => question(id));
+        return { ok: true, json: async () => ({ questions: batch }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST") {
         attempts.push(String(init.body));
@@ -254,9 +244,8 @@ describe("useQuizSession hook", () => {
     const conflictFetch = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return { ok: true, json: async () => question(id) };
+      if (url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(false) }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST")
         return { ok: false, status: 409, json: async () => ({ message: "conflict" }) };
@@ -395,18 +384,17 @@ describe("useQuizSession hook", () => {
     });
   });
 
-  it("offers a shortage state when fewer than five questions remain", async () => {
+  it("keeps an incomplete batch out of the exam and exposes a retryable error", async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (url === "/api/questions/next") return { ok: true, json: async () => question(1) };
-      return { ok: false, status: 404, json: async () => ({}) };
+      return { ok: true, json: async () => ({ questions: [question(1)] }) };
     });
     vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.access.kind).toBe("ready"));
-    await waitFor(() => expect(result.current.phase.kind).toBe("shortage"));
-    expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([1]);
+    await waitFor(() => expect(result.current.phase.kind).toBe("load-error"));
+    expect(result.current.quizzes).toEqual([]);
   });
 
   it("keeps an explicitly rejected draft editable and gives changed answers a new retry operation", async () => {
@@ -415,9 +403,8 @@ describe("useQuizSession hook", () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return { ok: true, json: async () => question(id) };
+      if (url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(false) }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST") {
         attempts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
@@ -460,15 +447,8 @@ describe("useQuizSession hook", () => {
         };
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return {
-          ok: true,
-          json: async () =>
-            id === 5
-              ? { ...question(5), choices: [], answerType: "freeText" as const }
-              : question(id),
-        };
+      if (url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(true) }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST") {
         attempts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
@@ -528,9 +508,8 @@ describe("useQuizSession hook", () => {
         };
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return { ok: true, json: async () => question(id) };
+      if (url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(false) }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST") {
         attempts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
@@ -569,9 +548,8 @@ describe("useQuizSession hook", () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return { ok: true, json: async () => question(id) };
+      if (url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(false) }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST")
         return { ok: false, status: 409, json: async () => ({ message: "conflict" }) };
@@ -625,9 +603,8 @@ describe("useQuizSession hook", () => {
       }
       if (_url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (_url.startsWith("/api/questions/next")) {
-        const id = Number(_url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return { ok: true, json: async () => question(id) };
+      if (_url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(false) }) };
       }
       throw new Error(`Unexpected request: ${_url}`);
     });
@@ -659,9 +636,9 @@ describe("useQuizSession hook", () => {
       result.current.retryLoad();
       void result.current.switchParticipant();
     });
-    expect(
-      fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/questions/next")),
-    ).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/questions/batch")).toBe(
+      false,
+    );
     await waitFor(() => expect(result.current.access.kind).toBe("ready"));
     await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
     await waitFor(() => expect(result.current.quizzes).toHaveLength(5));
@@ -699,9 +676,8 @@ describe("useQuizSession hook", () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return { ok: true, json: async () => question(id) };
+      if (url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(false) }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST")
         return { ok: false, status: 409, json: async () => ({ message: "conflict" }) };
@@ -746,9 +722,8 @@ describe("useQuizSession hook", () => {
         };
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return { ok: true, json: async () => question(id) };
+      if (url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(false) }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST")
         return { ok: false, status: 409, json: async () => ({ message: "conflict" }) };
@@ -789,9 +764,8 @@ describe("useQuizSession hook", () => {
           ok: true,
           json: async () => ({ participant: sessionExists ? participant : null }),
         };
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return { ok: true, json: async () => question(id) };
+      if (url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(false) }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST")
         return { ok: false, status: 401, json: async () => ({ message: "expired" }) };
@@ -818,13 +792,8 @@ describe("useQuizSession hook", () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
-      if (url.startsWith("/api/questions/next")) {
-        const id = Number(url.match(/afterId=(\d+)/)?.[1] ?? 0) + 1;
-        return {
-          ok: true,
-          json: async () =>
-            id === 5 ? { ...question(5), choices: [], answerType: "freeText" } : question(id),
-        };
+      if (url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(true) }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST") {
         posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
@@ -931,13 +900,38 @@ describe("useQuizSession hook", () => {
     const fetchMock = setupFetch();
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.phase.kind).toBe("submission-error"));
-    expect(
-      fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/questions/next")),
-    ).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/questions/batch")).toBe(
+      false,
+    );
 
     act(() => result.current.retrySubmissionCheck());
     await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
     expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/questions/next")).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/questions/batch")).toBe(true);
+  });
+
+  it("reuses the loaded exam questions when restoring a submission after a status recheck", async () => {
+    vi.mocked(fetchLatestAnswerSubmission)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        submissionId,
+        revision: 2,
+        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 1,
+          freeText: null,
+        })),
+      });
+    const fetchMock = setupFetch();
+    const { result } = await start();
+
+    act(() => result.current.retrySubmissionCheck());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.submissionId).toBe(submissionId);
+    expect(result.current.revision).toBe(2);
+    expect(result.current.answeredCount).toBe(5);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(1);
   });
 });

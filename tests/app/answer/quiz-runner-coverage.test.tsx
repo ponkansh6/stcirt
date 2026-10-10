@@ -16,6 +16,13 @@ const selectedQuizzes = Array.from({ length: 5 }, (_, index) => ({
   shuffled: { choices: ["A", "B", "C", "D"], choiceIndices: [0, 1, 2, 3] },
 }));
 
+const visibleResultsPayload = {
+  state: "visible",
+  rank: 1,
+  score: 1,
+  questions: [{ position: 0, question: "設問", answer: { kind: "unanswered" } }],
+};
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -75,9 +82,9 @@ describe("QuizRunner remaining coverage states", () => {
     expect(retrySubmissionCheck).toHaveBeenCalledOnce();
   });
 
-  it("hides participant results after a later results request is rejected", async () => {
+  it("preserves the last confirmed results link after a later request is rejected and offers retry", async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ state: "visible" }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => visibleResultsPayload } as Response)
       .mockResolvedValueOnce({ ok: false } as Response);
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
     render(<QuizRunner />);
@@ -95,7 +102,8 @@ describe("QuizRunner remaining coverage states", () => {
     try {
       document.dispatchEvent(new Event("visibilitychange"));
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-      await waitFor(() => expect(resultsLink).not.toBeInTheDocument());
+      expect(resultsLink).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent("表示中の状態は保持しています");
     } finally {
       if (originalVisibilityDescriptor) {
         Object.defineProperty(document, "visibilityState", originalVisibilityDescriptor);
@@ -103,7 +111,7 @@ describe("QuizRunner remaining coverage states", () => {
         Reflect.deleteProperty(document, "visibilityState");
       }
     }
-    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "公開状況を再確認する" })).toBeInTheDocument();
   });
 
   it("renders a nonempty saved free response in the answer field", () => {
@@ -164,9 +172,9 @@ describe("QuizRunner remaining coverage states", () => {
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
   });
 
-  it("hides participant results when a later results request cannot be parsed", async () => {
+  it("preserves participant results when a later results request cannot be parsed", async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ state: "visible" }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => visibleResultsPayload } as Response)
       .mockResolvedValueOnce({
         ok: true,
         json: async () => {
@@ -185,7 +193,8 @@ describe("QuizRunner remaining coverage states", () => {
     try {
       document.dispatchEvent(new Event("visibilitychange"));
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-      await waitFor(() => expect(resultsLink).not.toBeInTheDocument());
+      expect(resultsLink).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent("表示中の状態は保持しています");
     } finally {
       if (originalVisibilityDescriptor) {
         Object.defineProperty(document, "visibilityState", originalVisibilityDescriptor);
@@ -193,6 +202,65 @@ describe("QuizRunner remaining coverage states", () => {
         Reflect.deleteProperty(document, "visibilityState");
       }
     }
+  });
+
+  it("preserves the confirmed results CTA when visible state lacks the required result fields", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => visibleResultsPayload } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ state: "visible" }) } as Response);
+    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
+    render(<QuizRunner />);
+    const resultsLink = await screen.findByRole("link", { name: "自分の結果を見る" });
+
+    fireEvent.click(screen.getByRole("button", { name: "公開状況を再確認する" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(resultsLink).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("表示中の状態は保持しています");
+  });
+
+  it("rechecks publication manually and clears the CTA only after a confirmed waiting response", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => visibleResultsPayload } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ state: "waiting" }) } as Response);
+    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
+    render(<QuizRunner />);
+    const resultsLink = await screen.findByRole("link", { name: "自分の結果を見る" });
+
+    fireEvent.click(screen.getByRole("button", { name: "公開状況を再確認する" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(resultsLink).not.toBeInTheDocument());
+    expect(screen.getByRole("status")).toHaveTextContent("結果はまだ公開されていません");
+  });
+
+  it("removes the results CTA and shows the confirmed unavailable state", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => visibleResultsPayload } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ state: "unavailable" }),
+      } as Response);
+    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
+    render(<QuizRunner />);
+    await screen.findByRole("link", { name: "自分の結果を見る" });
+
+    fireEvent.click(screen.getByRole("button", { name: "公開状況を再確認する" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("結果は現在確認できません");
+  });
+
+  it("clears the results CTA and reports session expiry after a 401", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => visibleResultsPayload } as Response)
+      .mockResolvedValueOnce({ ok: false, status: 401 } as Response);
+    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
+    render(<QuizRunner />);
+    await screen.findByRole("link", { name: "自分の結果を見る" });
+
+    fireEvent.click(screen.getByRole("button", { name: "公開状況を再確認する" }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("セッションの有効期限が切れました");
   });
 
   it("ignores an older results payload when visibility queues a newer request", async () => {
@@ -215,11 +283,11 @@ describe("QuizRunner remaining coverage states", () => {
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
     try {
       document.dispatchEvent(new Event("visibilitychange"));
-      stalePayload.resolve({ state: "visible" });
+      stalePayload.resolve(visibleResultsPayload);
       await stalePayload.promise;
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
       expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
-      currentPayload.resolve({ state: "visible" });
+      currentPayload.resolve(visibleResultsPayload);
       expect(await screen.findByRole("link", { name: "自分の結果を見る" })).toBeInTheDocument();
     } finally {
       if (originalVisibilityDescriptor) {
@@ -240,7 +308,7 @@ describe("QuizRunner remaining coverage states", () => {
     const view = render(<QuizRunner />);
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     view.unmount();
-    payload.resolve({ state: "visible" });
+    payload.resolve(visibleResultsPayload);
     await payload.promise;
     await Promise.resolve();
   });
@@ -249,7 +317,7 @@ describe("QuizRunner remaining coverage states", () => {
     const stalePayload = deferred<{ state: string }>();
     const currentPayload = deferred<{ state: string }>();
     vi.mocked(fetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ state: "visible" }) } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => visibleResultsPayload } as Response)
       .mockResolvedValueOnce({ ok: true, json: () => stalePayload.promise } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true,
@@ -271,7 +339,7 @@ describe("QuizRunner remaining coverage states", () => {
       stalePayload.reject(new Error("stale response failed"));
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
       expect(resultsLink).toBeInTheDocument();
-      currentPayload.resolve({ state: "visible" });
+      currentPayload.resolve(visibleResultsPayload);
       expect(await screen.findByRole("link", { name: "自分の結果を見る" })).toBeInTheDocument();
     } finally {
       if (originalVisibilityDescriptor) {

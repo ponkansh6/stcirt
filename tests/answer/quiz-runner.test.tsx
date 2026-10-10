@@ -21,6 +21,13 @@ const quizzes = Array.from({ length: 5 }, (_, index) => ({
   },
 }));
 
+const visibleResultsPayload = {
+  state: "visible",
+  rank: 1,
+  score: 1,
+  questions: [{ position: 0, question: "設問", answer: { kind: "unanswered" } }],
+};
+
 function session(phase: object, overrides: Record<string, unknown> = {}) {
   return {
     access: { kind: "ready", participant: { id: 7, name: "参加者" } },
@@ -374,7 +381,7 @@ describe("QuizRunner batch answer sheet", () => {
     const editAnswers = vi.fn();
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ state: "visible" }) }),
+      vi.fn().mockResolvedValue({ ok: true, json: async () => visibleResultsPayload }),
     );
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }, { editAnswers }));
 
@@ -383,12 +390,14 @@ describe("QuizRunner batch answer sheet", () => {
     const resultLink = await screen.findByRole("link", { name: "自分の結果を見る" });
     expect(resultLink).toHaveAttribute("href", "/results");
     expect(fetch).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "公開状況を再確認する" }));
+    expect(fetch).toHaveBeenCalledTimes(2);
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(fetch).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
     fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
     expect(editAnswers).toHaveBeenCalledOnce();
     expect(resultLink).toBeInTheDocument();
@@ -417,7 +426,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      firstResponse.resolve({ ok: true, json: async () => ({ state: "visible" }) });
+      firstResponse.resolve({ ok: true, json: async () => visibleResultsPayload });
       await firstResponse.promise;
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));

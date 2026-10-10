@@ -8,6 +8,7 @@ import { choiceLabel } from "@/lib/choice-label";
 import { Button } from "@/components/Button";
 import { Spinner } from "@/components/Spinner";
 import { ApiError } from "@/lib/api/client";
+import { parseParticipantResult } from "@/lib/participant-results-contract";
 import { HeaderPortal } from "./header-portal";
 
 export default function QuizRunner() {
@@ -32,9 +33,21 @@ export default function QuizRunner() {
   } = useQuizSession();
   const questionRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
   const [participantResultsVisible, setParticipantResultsVisible] = useState(false);
+  const [participantResultsWaiting, setParticipantResultsWaiting] = useState<boolean | null>(null);
+  const [participantResultsUnavailable, setParticipantResultsUnavailable] = useState(false);
+  const [participantResultsRefreshError, setParticipantResultsRefreshError] = useState(false);
+  const [participantResultsAuthExpired, setParticipantResultsAuthExpired] = useState(false);
+  const [participantResultsRefreshing, setParticipantResultsRefreshing] = useState(false);
+  const refreshParticipantResultsRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (phase.kind !== "complete" || access.kind !== "ready") {
       setParticipantResultsVisible(false);
+      setParticipantResultsWaiting(null);
+      setParticipantResultsUnavailable(false);
+      setParticipantResultsRefreshError(false);
+      setParticipantResultsAuthExpired(false);
+      setParticipantResultsRefreshing(false);
+      refreshParticipantResultsRef.current = null;
       return;
     }
     let active = true;
@@ -48,6 +61,7 @@ export default function QuizRunner() {
         return;
       }
       pending = true;
+      setParticipantResultsRefreshing(true);
       const currentRevision = ++requestRevision;
       try {
         const response = await fetch("/api/participants/results", {
@@ -55,24 +69,42 @@ export default function QuizRunner() {
           credentials: "same-origin",
         });
         if (!active || currentRevision !== requestRevision) return;
-        if (!response.ok) {
+        if (response.status === 401) {
           setParticipantResultsVisible(false);
+          setParticipantResultsWaiting(null);
+          setParticipantResultsUnavailable(false);
+          setParticipantResultsAuthExpired(true);
+          setParticipantResultsRefreshError(false);
           return;
         }
-        const result = (await response.json()) as { state?: unknown };
+        if (!response.ok) {
+          setParticipantResultsRefreshError(true);
+          return;
+        }
+        const result = parseParticipantResult(await response.json());
         if (active && currentRevision === requestRevision) {
+          if (!result) {
+            setParticipantResultsRefreshError(true);
+            return;
+          }
           setParticipantResultsVisible(result.state === "visible");
+          setParticipantResultsWaiting(result.state === "waiting");
+          setParticipantResultsUnavailable(result.state === "unavailable");
+          setParticipantResultsAuthExpired(false);
+          setParticipantResultsRefreshError(false);
         }
       } catch {
-        if (active && currentRevision === requestRevision) setParticipantResultsVisible(false);
+        if (active && currentRevision === requestRevision) setParticipantResultsRefreshError(true);
       } finally {
         pending = false;
+        if (active) setParticipantResultsRefreshing(false);
         if (active && refreshQueued) {
           refreshQueued = false;
           void refresh();
         }
       }
     };
+    refreshParticipantResultsRef.current = () => void refresh();
     void refresh();
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh();
@@ -80,6 +112,7 @@ export default function QuizRunner() {
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
+      refreshParticipantResultsRef.current = null;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [access.kind, phase.kind]);
@@ -225,6 +258,35 @@ export default function QuizRunner() {
           <Button onClick={editAnswers} className="mt-8" disabled={Boolean(restoreError)}>
             回答を修正する
           </Button>
+          <div className="mt-4">
+            {participantResultsAuthExpired && (
+              <p className="mb-2 text-sm text-error" role="alert">
+                参加者セッションの有効期限が切れました。もう一度参加状態を確認してください。
+              </p>
+            )}
+            {participantResultsWaiting && (
+              <p className="mb-2 text-sm text-muted" role="status" aria-live="polite">
+                結果はまだ公開されていません。公開状況はいつでも再確認できます。
+              </p>
+            )}
+            {participantResultsUnavailable && (
+              <p className="mb-2 text-sm text-muted" role="status" aria-live="polite">
+                結果は現在確認できません。主催者にお問い合わせください。
+              </p>
+            )}
+            {participantResultsRefreshError && (
+              <p className="mb-2 text-sm text-error" role="alert">
+                公開状況を確認できませんでした。表示中の状態は保持しています。
+              </p>
+            )}
+            <Button
+              variant="outline"
+              onClick={() => refreshParticipantResultsRef.current?.()}
+              disabled={participantResultsRefreshing}
+            >
+              {participantResultsRefreshing ? "公開状況を確認しています…" : "公開状況を再確認する"}
+            </Button>
+          </div>
           {participantResultsVisible && (
             <Link
               href="/results"
