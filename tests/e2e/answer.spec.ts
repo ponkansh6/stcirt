@@ -529,10 +529,10 @@ test("answers for one additional person, corrects that answer, and restores it a
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
   await expect(page.getByText(/代理回答者（代理回答）/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "ほかの人の回答を修正する" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "回答を修正する" })).toBeVisible();
   expect(assistedSaves).toHaveLength(1);
 
-  await page.getByRole("button", { name: "ほかの人の回答を修正する" }).click();
+  await page.getByRole("button", { name: "回答を修正する" }).click();
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   await expect(page.getByRole("radio", { name: /Option 1B/ })).toBeChecked();
   const latestRequestsBeforeReload = assistedLatestRequests.filter(
@@ -540,7 +540,7 @@ test("answers for one additional person, corrects that answer, and restores it a
   ).length;
   await page.reload();
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "ほかの人の回答を修正する" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "回答を修正する" })).toBeVisible();
   await expect
     .poll(() => assistedLatestRequests.filter((search) => search === "?scope=assisted").length)
     .toBeGreaterThan(latestRequestsBeforeReload);
