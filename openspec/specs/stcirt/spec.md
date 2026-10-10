@@ -222,7 +222,7 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - After a newly committed free-text answer, assessment starts asynchronously after the response and is scoped to the saved `submissionId` and revision. An idempotent operation replay does not start another assessment. Missing JEV configuration leaves the durable pending assessment for the retry worker.
 - Response 200: `{ submissionId, revision }`; no correctness, correct index, explanation, score, or pass/fail data is returned.
 - Response 400/401/403/404/409: invalid request/question set, missing participant, origin failure, missing submission, or operation/revision conflict.
-- If a save conflicts because its `expectedRevision` is stale, the client can use GET to reload the saved revision while retaining its local draft. Apply that draft only when the GET returns the same submission ID and a complete, valid answer set; otherwise remain on completion with correction disabled.
+- If a save conflicts because its `expectedRevision` is stale, the client reloads the canonical persisted submission and revision with GET while keeping the local draft separate for user review. It does not resend automatically; a user must explicitly resubmit the reviewed draft against the canonical revision. If GET does not return the same submission ID and a complete, valid answer set, remain on completion with correction disabled.
 
 ### `GET /api/answers/latest`
 
@@ -237,7 +237,7 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - Requires a valid signed participant cookie. By default, a submission is visible only to its owner; with `scope=assisted`, the authenticated owner resolves to their registered target. Missing and non-owned submissions both return 404.
 - Response 200: `{ submissionId, revision, answers: [{ questionId, answerKind, selectedIndex, freeText }] }`. Legacy answers have `answerKind: legacy`; no grading fields are returned.
 - A legacy fifth answer is identified as its known historical choice-shaped form. It remains unconverted and ungraded during restore; correction requires a newly entered free-text answer.
-- Used to restore confirmed answers or reload the saved revision after a conflict while preserving the local draft.
+- Used to restore confirmed answers or reload the canonical saved submission and revision after a conflict; the client preserves any unsaved local draft separately for review.
 - Response 400/401/404: invalid submission ID, missing participant session, or unavailable submission.
 
 ### `/api/participants/assisted`

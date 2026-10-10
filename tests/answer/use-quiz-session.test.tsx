@@ -594,6 +594,125 @@ describe("useQuizSession hook", () => {
     expect(result.current.answeredCount).toBe(5);
   });
 
+  it("preserves the local Q5 draft through conflict recovery and explicitly submits it at the canonical revision", async () => {
+    type PersistedAnswer = {
+      questionId: number;
+      answerKind: "selected" | "freeText";
+      selectedIndex: number | null;
+      freeText: string | null;
+    };
+    type SubmittedAnswer = { questionId: number; selectedIndex?: number; freeText?: string };
+    type SubmittedBatch = {
+      submissionId: string;
+      operationId: string;
+      expectedRevision: number;
+      answers: SubmittedAnswer[];
+    };
+
+    const posts: SubmittedBatch[] = [];
+    let currentSubmissionId = "";
+    let canonicalAnswers: PersistedAnswer[] = [];
+    const canonicalRevision = 7;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/questions/batch") {
+        return { ok: true, json: async () => ({ questions: batchQuestions(true) }) };
+      }
+      if (url === "/api/answers/batch" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as SubmittedBatch;
+        posts.push(body);
+        if (posts.length === 1) {
+          currentSubmissionId = body.submissionId;
+          return { ok: false, status: 409, json: async () => ({ message: "conflict" }) };
+        }
+        return {
+          ok: true,
+          json: async () => ({ submissionId: body.submissionId, revision: 8 }),
+        };
+      }
+      if (url.startsWith("/api/answers/batch?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            submissionId: currentSubmissionId,
+            revision: canonicalRevision,
+            answers: canonicalAnswers,
+          }),
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = await start();
+    for (const quiz of result.current.quizzes.filter(
+      ({ question: item }) => item.answerType === "selected",
+    )) {
+      act(() => result.current.select(quiz.question.id, quiz.question.id % 4));
+    }
+    const localSelections = { ...result.current.selections };
+    const localFreeResponse = "Bタブの未保存案";
+    act(() => result.current.setFreeResponse(5, localFreeResponse));
+    expect(result.current.answeredCount).toBe(5);
+
+    const canonicalSelections: Record<number, number> = {};
+    canonicalAnswers = result.current.quizzes
+      .filter(({ question: item }) => item.answerType === "selected")
+      .map(({ question: item, shuffled }) => {
+        const localIndex = localSelections[item.id]!;
+        const savedIndex = (localIndex + 1) % shuffled.choiceIndices.length;
+        const selectedIndex = shuffled.choiceIndices[savedIndex]!;
+        canonicalSelections[item.id] = savedIndex;
+        return {
+          questionId: item.id,
+          answerKind: "selected" as const,
+          selectedIndex,
+          freeText: null,
+        };
+      });
+    canonicalAnswers.push({
+      questionId: 5,
+      answerKind: "freeText",
+      selectedIndex: null,
+      freeText: "別タブで保存されたQ5回答",
+    });
+
+    await act(async () => result.current.saveAnswers());
+
+    expect(result.current.phase).toMatchObject({
+      kind: "answering",
+      message: expect.stringContaining("保存済み回答が更新されています"),
+    });
+    expect(result.current.selections).toEqual(localSelections);
+    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(result.current.savedSelections).toEqual(canonicalSelections);
+    expect(result.current.revision).toBe(canonicalRevision);
+    expect(result.current.answeredCount).toBe(5);
+    expect(posts).toHaveLength(1);
+
+    await act(async () => result.current.saveAnswers());
+
+    expect(result.current.phase.kind).toBe("complete");
+    expect(result.current.revision).toBe(8);
+    expect(posts).toHaveLength(2);
+    expect(posts[1]?.submissionId).toBe(currentSubmissionId);
+    expect(posts[1]?.expectedRevision).toBe(canonicalRevision);
+    expect(posts[1]?.operationId).not.toBe(posts[0]?.operationId);
+    for (const quiz of result.current.quizzes.filter(
+      ({ question: item }) => item.answerType === "selected",
+    )) {
+      expect(posts[1]?.answers).toContainEqual({
+        questionId: quiz.question.id,
+        selectedIndex: quiz.shuffled.choiceIndices[localSelections[quiz.question.id]!],
+      });
+    }
+    expect(posts[1]?.answers).toContainEqual({
+      questionId: 5,
+      freeText: localFreeResponse,
+    });
+  });
+
   it("clears participant data after switching and restores access if session deletion fails", async () => {
     let deletionFails = false;
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {

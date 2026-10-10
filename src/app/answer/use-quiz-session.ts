@@ -930,13 +930,11 @@ export function useQuizSession() {
               quizzesRef.current,
               currentSubmissionId,
             );
-            freeResponsesRef.current = restored.freeResponses;
-            setFreeResponses(restored.freeResponses);
             setLegacyAnswerIds(restored.legacyAnswerIds);
             setSavedSelections(restored.selections);
             setAnsweredCount(
-              Object.keys(restored.selections).length +
-                Object.values(restored.freeResponses).filter((value) => value.trim()).length,
+              Object.keys(selectionsRef.current).length +
+                Object.values(freeResponsesRef.current).filter((value) => value.trim()).length,
             );
             setRevision(persisted.revision);
             revisionRef.current = persisted.revision;

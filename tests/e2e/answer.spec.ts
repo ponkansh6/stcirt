@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Route } from "@playwright/test";
 import { makeQuestion } from "../fixtures/question";
 
 const questionFor = (id: number) =>
@@ -189,6 +189,45 @@ test("direct answer access requires name and four digit PIN before loading the q
   await startQuiz(page);
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   expect(requests).toEqual(["/api/questions/batch"]);
+});
+
+test("keeps DOM focus unchanged while checking whether a submission exists", async ({ page }) => {
+  await mockParticipantSession(page);
+  await mockQuestions(page);
+
+  let releaseLatestResponse!: () => void;
+  const latestResponseGate = new Promise<void>((resolve) => {
+    releaseLatestResponse = resolve;
+  });
+  await page.route("**/api/answers/latest", async (route) => {
+    await latestResponseGate;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ submission: null }),
+    });
+  });
+
+  await page.goto("/answer");
+  await page.getByLabel("お名前").fill("Aki");
+  await page.getByLabel("4桁PIN").fill("0123");
+  await page.getByRole("button", { name: "はじめる" }).click();
+
+  const checkingStatus = page.getByRole("status");
+  await expect(checkingStatus).toBeVisible();
+  await expect(checkingStatus).toHaveText("保存済みの回答状況を確認しています…");
+  await expect(checkingStatus).toHaveAttribute("aria-live", "polite");
+  const focusedElementBeforeRelease = await page.evaluateHandle(() => document.activeElement);
+
+  releaseLatestResponse();
+
+  await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
+  expect(
+    await page.evaluate(
+      (focusedElement) => document.activeElement === focusedElement,
+      focusedElementBeforeRelease,
+    ),
+  ).toBe(true);
 });
 
 test("direct answer access refuses an incomplete question batch", async ({ page }) => {
@@ -822,6 +861,140 @@ test("loads the canonical batch after a revision conflict while preserving the l
   expect(posts).toHaveLength(3);
   expect(posts[2]?.expectedRevision).toBe(2);
   expect(posts[2]?.answers).toEqual(editedAnswers);
+});
+
+test("keeps a stale second-tab draft distinct from the canonical submission after a 409", async ({
+  page,
+}) => {
+  const secondTab = await page.context().newPage();
+  const submissionId = "00000000-0000-4000-8000-000000000044";
+  const revisionOneAnswers: SavedBatchAnswer[] = [
+    ...[1, 2, 3, 4].map((questionId) => ({
+      questionId,
+      answerKind: "selected" as const,
+      selectedIndex: 0,
+      freeText: null,
+    })),
+    {
+      questionId: 5,
+      answerKind: "freeText",
+      selectedIndex: null,
+      freeText: "保存済み revision 1",
+    },
+  ];
+  await mockParticipantSession(page, "Shared Participant", {
+    submissionId,
+    revision: 1,
+    answers: revisionOneAnswers,
+  });
+  await mockParticipantSession(secondTab, "Shared Participant", {
+    submissionId,
+    revision: 1,
+    answers: revisionOneAnswers,
+  });
+  await mockQuestions(page);
+  await mockQuestions(secondTab);
+
+  // Both tabs share this deterministic API state; this exercises the client
+  // conflict recovery, not a real database concurrency scenario.
+  const writes: BatchPayload[] = [];
+  const canonicalReads: { revision: number; answers: SavedBatchAnswer[] }[] = [];
+  let canonical = {
+    submissionId,
+    revision: 1,
+    answers: revisionOneAnswers,
+  };
+  const handleBatchRoute = async (route: Route) => {
+    if (route.request().method() === "GET") {
+      canonicalReads.push({ revision: canonical.revision, answers: canonical.answers });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(canonical),
+      });
+      return;
+    }
+
+    const body = route.request().postDataJSON() as BatchPayload;
+    writes.push(body);
+    if (
+      body.submissionId === canonical.submissionId &&
+      body.expectedRevision === canonical.revision
+    ) {
+      canonical = {
+        submissionId,
+        revision: canonical.revision + 1,
+        answers: body.answers.map((answer) =>
+          "freeText" in answer
+            ? { ...answer, answerKind: "freeText" as const, selectedIndex: null }
+            : { ...answer, answerKind: "selected" as const, freeText: null },
+        ),
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ submissionId, revision: canonical.revision }),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Revision conflict" }),
+    });
+  };
+  await page.route("**/api/answers/batch**", handleBatchRoute);
+  await secondTab.route("**/api/answers/batch**", handleBatchRoute);
+
+  await page.goto("/answer");
+  await secondTab.goto("/answer");
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  await expect(secondTab.getByRole("heading", { name: "回答完了" })).toBeVisible();
+
+  await page.getByRole("button", { name: "回答を修正する" }).click();
+  await secondTab.getByRole("button", { name: "回答を修正する" }).click();
+
+  await answerQuestion(secondTab, 1, "D");
+  await secondTab.getByRole("textbox", { name: "回答（1000字以内）" }).fill("Bタブの未保存案");
+  await answerQuestion(page, 1, "B");
+  await page.getByRole("textbox", { name: "回答（1000字以内）" }).fill("Aタブで保存した回答");
+  await page.getByRole("button", { name: "修正内容を確定する" }).click();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  expect(canonical.revision).toBe(2);
+
+  await secondTab.getByRole("button", { name: "修正内容を確定する" }).click();
+  await expect(
+    secondTab.getByRole("alert").filter({ hasText: "保存済み回答が更新されています。" }),
+  ).toContainText("回答案は保持しています。内容を確認して、もう一度確定してください。");
+  await expect(secondTab.getByRole("radio", { name: /Option 1D/ })).toBeChecked();
+  await expect(secondTab.getByRole("textbox", { name: "回答（1000字以内）" })).toHaveValue(
+    "Bタブの未保存案",
+  );
+
+  const savedQuestionOne = canonical.answers.find((answer) => answer.questionId === 1);
+  const localQuestionOne = writes[1]?.answers.find((answer) => answer.questionId === 1);
+  const savedQuestionFive = canonical.answers.find((answer) => answer.questionId === 5);
+  const localQuestionFive = writes[1]?.answers.find((answer) => answer.questionId === 5);
+  expect(savedQuestionOne).toMatchObject({ answerKind: "selected" });
+  expect(localQuestionOne).toHaveProperty("selectedIndex");
+  if (!savedQuestionOne || !localQuestionOne || !savedQuestionFive || !localQuestionFive) {
+    throw new Error("Expected saved and local answers for questions 1 and 5");
+  }
+  if (
+    savedQuestionOne.answerKind !== "selected" ||
+    !("selectedIndex" in localQuestionOne) ||
+    savedQuestionFive.answerKind !== "freeText" ||
+    !("freeText" in localQuestionFive)
+  ) {
+    throw new Error("Expected matching answer kinds for the saved and local drafts");
+  }
+  expect(localQuestionOne.selectedIndex).not.toBe(savedQuestionOne.selectedIndex);
+  expect(localQuestionFive.freeText).not.toBe(savedQuestionFive.freeText);
+  expect(canonicalReads.at(-1)).toMatchObject({ revision: 2, answers: canonical.answers });
+  expect(writes).toHaveLength(2);
+  expect(writes[0]).toMatchObject({ submissionId, expectedRevision: 1 });
+  expect(writes[1]).toMatchObject({ submissionId, expectedRevision: 1 });
 });
 
 test("retains all choices through reauthentication and resubmits the batch only after an explicit action", async ({

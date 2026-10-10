@@ -884,7 +884,7 @@ describe("useQuizSession state transitions", () => {
     });
   });
 
-  it("includes restored free text in the answer count after conflict reconciliation", async () => {
+  it("preserves the local draft and refreshes canonical state after conflict reconciliation", async () => {
     const hook = await enterAnswering({ freeTextFifth: true });
     [1, 2, 3, 4].forEach((id) => act(() => hook.result.current.select(id, 0)));
     act(() => hook.result.current.setFreeResponse(5, "draft"));
@@ -892,7 +892,7 @@ describe("useQuizSession state transitions", () => {
     const persistedAnswers: AnswerSubmission["answers"] = [1, 2, 3, 4].map((questionId) => ({
       questionId,
       answerKind: "selected",
-      selectedIndex: 0,
+      selectedIndex: questionId === 1 ? 1 : 0,
       freeText: null,
     }));
     persistedAnswers.push({
@@ -903,12 +903,25 @@ describe("useQuizSession state transitions", () => {
     });
     api.fetchAnswerSubmission.mockResolvedValueOnce(
       makeSubmission({
+        revision: 3,
         answers: persistedAnswers,
+      }),
+    );
+    const canonicalSavedSelections = Object.fromEntries(
+      persistedAnswers.flatMap((answer) => {
+        const quiz = hook.result.current.quizzes.find(
+          ({ question: currentQuestion }) => currentQuestion.id === answer.questionId,
+        );
+        if (answer.answerKind !== "selected" || answer.selectedIndex === null || !quiz) return [];
+        return [[answer.questionId, quiz.shuffled.choiceIndices.indexOf(answer.selectedIndex)]];
       }),
     );
 
     await act(async () => hook.result.current.saveAnswers());
-    expect(hook.result.current.freeResponses).toEqual({ 5: "persisted" });
+    expect(hook.result.current.freeResponses).toEqual({ 5: "draft" });
+    expect(hook.result.current.selections).toEqual({ 1: 0, 2: 0, 3: 0, 4: 0 });
+    expect(hook.result.current.savedSelections).toEqual(canonicalSavedSelections);
+    expect(hook.result.current.revision).toBe(3);
     expect(hook.result.current.answeredCount).toBe(5);
   });
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "../helpers/db";
 import * as schema from "@/lib/db/schema";
 
@@ -1779,6 +1779,72 @@ describe("presentation repository", () => {
     });
   });
 
+  it("accepts legacy and same-revision graded Q5 answers in the aggregate", async () => {
+    await addQuestions();
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ key: "it-literacy-005", choices: [] })
+      .where(eq(schema.examQuestions.id, 22));
+    const legacyParticipant = await addParticipant("Legacy Q5");
+    const gradedParticipant = await addParticipant("Graded Q5");
+    await addSubmission(legacyParticipant, [0, 0], 1, "legacy");
+    await addSubmission(gradedParticipant, [0, 0], 1, "graded");
+    await testDb.db
+      .update(schema.examSubmissionAnswers)
+      .set({ answerKind: "legacy" })
+      .where(
+        and(
+          eq(schema.examSubmissionAnswers.submissionId, `submission-${legacyParticipant}-legacy`),
+          eq(schema.examSubmissionAnswers.questionId, 22),
+        ),
+      );
+    await testDb.db
+      .update(schema.examSubmissionAnswers)
+      .set({ answerKind: "freeText", selectedIndex: null, freeText: "graded response" })
+      .where(
+        and(
+          eq(schema.examSubmissionAnswers.submissionId, `submission-${gradedParticipant}-graded`),
+          eq(schema.examSubmissionAnswers.questionId, 22),
+        ),
+      );
+    await testDb.db.insert(schema.examAnswerAssessments).values({
+      submissionId: `submission-${gradedParticipant}-graded`,
+      questionId: 22,
+      revision: 1,
+      answerText: "graded response",
+      state: "graded",
+      rawScore: 1,
+      normalizedScore: 0.75,
+      rubricVersion: "test-rubric",
+    });
+
+    await op("aggregate", "q5-eligibility");
+
+    const entries = await testDb.db.select().from(schema.presentationEntries);
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          participantId: legacyParticipant,
+          score: 1,
+          answers: expect.arrayContaining([
+            expect.objectContaining({ questionId: 22, answerKind: "legacy" }),
+          ]),
+        }),
+        expect.objectContaining({
+          participantId: gradedParticipant,
+          score: 1.75,
+          answers: expect.arrayContaining([
+            expect.objectContaining({
+              questionId: 22,
+              answerKind: "freeText",
+              normalizedScore: 0.75,
+            }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
   it("returns the cookie owner's answers and correctness and fails closed on malformed snapshots", async () => {
     await addQuestions();
     const first = await addParticipant("First");
@@ -2172,6 +2238,37 @@ describe("presentation repository", () => {
 
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
       { participantId: participant, score: 1, rank: 1 },
+    ]);
+  });
+
+  it("falls back to an older complete submission when the newest is incomplete", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Older complete submission");
+    await addSubmission(participant, [0, 0], 1, "older-complete");
+    await addSubmission(participant, [1, 1], 2, "newer-incomplete");
+    await testDb.db
+      .delete(schema.examSubmissionAnswers)
+      .where(
+        and(
+          eq(
+            schema.examSubmissionAnswers.submissionId,
+            `submission-${participant}-newer-incomplete`,
+          ),
+          eq(schema.examSubmissionAnswers.questionId, 22),
+        ),
+      );
+
+    await op("aggregate", "fallback-older-complete");
+
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
+      {
+        participantId: participant,
+        score: 2,
+        answers: [
+          expect.objectContaining({ questionId: 11, selectedIndex: 0, answerKind: "selected" }),
+          expect.objectContaining({ questionId: 22, selectedIndex: 0, answerKind: "selected" }),
+        ],
+      },
     ]);
   });
 
