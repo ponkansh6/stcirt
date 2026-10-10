@@ -272,7 +272,7 @@ export function useQuizSession() {
   const resolvingParticipantIdRef = useRef<number | null>(null);
   const resumeAfterAuthRef = useRef(false);
   const reloadedAssistedRef = useRef(false);
-  const returnToOwnerRef = useRef<(afterSave?: boolean) => void>(() => {});
+  const returnToOwnerRef = useRef<((afterSave?: boolean) => void) | null>(null);
   const ownerReturnAfterAssistedSaveRef = useRef(false);
   const assistedRequestRef = useRef(false);
   const answerModeRef = useRef<AnswerMode>("owner");
@@ -588,7 +588,7 @@ export function useQuizSession() {
         }
       } finally {
         checkingSubmissionRef.current = false;
-        if (returnOwnerAfterReload) returnToOwnerRef.current();
+        if (returnOwnerAfterReload) returnToOwnerRef.current?.();
       }
     },
     [loadQuestions],
@@ -1069,7 +1069,7 @@ export function useQuizSession() {
       }
     } finally {
       busyRef.current = false;
-      if (returnToOwnerAfterSave) returnToOwnerRef.current(true);
+      if (returnToOwnerAfterSave) returnToOwnerRef.current?.(true);
     }
   }, [persistAssistedDraft]);
 

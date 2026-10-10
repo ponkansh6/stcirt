@@ -288,6 +288,42 @@ describe("QuizRunner batch answer sheet", () => {
     await waitFor(() => expect(document.activeElement).toBe(completionHeading));
   });
 
+  it("preserves focus moved elsewhere while the owner submission status is checked", async () => {
+    let currentPhase: object = { kind: "answering" };
+    mockUseQuizSession.mockImplementation(() =>
+      session(currentPhase, {
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        answeredCount: 5,
+      }),
+    );
+    const { rerender } = render(<RunnerPage />);
+    screen.getByRole("button", { name: "5問の回答を確定する" }).focus();
+
+    currentPhase = { kind: "submitting" };
+    rerender(<RunnerPage />);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { name: "回答内容を確認してください" }),
+      ),
+    );
+
+    currentPhase = { kind: "checking-submission" };
+    rerender(<RunnerPage />);
+    const externalControl = document.createElement("button");
+    externalControl.textContent = "ページ内の別操作";
+    document.body.append(externalControl);
+    try {
+      externalControl.focus();
+
+      currentPhase = { kind: "complete" };
+      rerender(<RunnerPage />);
+      expect(screen.getByRole("heading", { name: "回答完了" })).toBeInTheDocument();
+      expect(document.activeElement).toBe(externalControl);
+    } finally {
+      externalControl.remove();
+    }
+  });
+
   it("does not move focus to completion when the initial phase is already complete", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
     render(<RunnerPage />);
@@ -916,6 +952,24 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("代理回答は保存されました");
     fireEvent.click(screen.getByRole("button", { name: "自分の回答状況をもう一度確認する" }));
     expect(retrySubmissionCheck).toHaveBeenCalledOnce();
+  });
+
+  it("asks the owner to reauthenticate when recovery needs their session", () => {
+    mockUseQuizSession.mockReturnValue(
+      session(
+        {
+          kind: "owner-return-error",
+          message: "代理回答は保存されましたが、自分の回答状況を確認できませんでした。",
+        },
+        { access: { kind: "reauthentication", participant: { id: 7, name: "参加者" } } },
+      ),
+    );
+    render(<RunnerPage />);
+
+    expect(screen.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeInTheDocument();
+    expect(screen.getByLabelText("お名前")).toHaveValue("参加者");
+    expect(screen.getByLabelText("4桁PIN")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "自分の回答状況をもう一度確認する" })).toBeDisabled();
   });
 
   it("offers correction of the saved assisted answer and a path back to the owner", () => {
