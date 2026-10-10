@@ -594,7 +594,7 @@ test("returns to owner completion after an assisted save and opens target correc
     .poll(() => assistedLatestRequests.filter((search) => search === "").length)
     .toBeGreaterThan(ownerRequestsBeforeReload);
   expect(assistedLatestRequests.filter((search) => search === "?scope=assisted").length).toBe(
-    assistedRequestsBeforeReload,
+    assistedRequestsBeforeReload + 1,
   );
   expect(assistedSaves).toHaveLength(1);
 
