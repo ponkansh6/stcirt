@@ -1001,9 +1001,7 @@ test("tied rank cards share one rank label and keep each name with its score", a
   expect(geometry.height).toBeLessThanOrEqual(geometry.innerHeight);
 });
 
-test("rank announcements render each winner's saved answers and fit the slide", async ({
-  page,
-}) => {
+test("rank announcements compact saved answers and fit the slide", async ({ page }) => {
   const mock = await installAdminApiMock(page);
   mock.setWinnerEntries([
     {
@@ -1016,6 +1014,12 @@ test("rank announcements render each winner's saved answers and fit the slide", 
           question: "ふたりが初めて出会った場所は？",
           answer: { kind: "selected", value: "大学" },
           correctness: "correct",
+        },
+        {
+          position: 1,
+          question: "待ち合わせ場所は？",
+          answer: { kind: "selected", value: "駅" },
+          correctness: "incorrect",
         },
         {
           position: 4,
@@ -1039,7 +1043,13 @@ test("rank announcements render each winner's saved answers and fit the slide", 
         {
           position: 4,
           question: "思い出に残った出来事を教えてください",
-          answer: { kind: "legacy" },
+          answer: { kind: "freeText", value: "未採点の自由記述" },
+        },
+        {
+          position: 5,
+          question: "確認できない自由記述の問題文",
+          answer: { kind: "freeText", value: "得点確認不可の自由記述" },
+          scoreStatus: "unavailable",
         },
       ],
     },
@@ -1051,11 +1061,21 @@ test("rank announcements render each winner's saved answers and fit the slide", 
 
   const region = page.getByRole("region", { name: "第3位の勝者一覧" });
   await expect(region.locator("article")).toHaveCount(2);
-  await expect(region).toContainText("大学（正解）");
+  await expect(region.getByText("○", { exact: true })).toHaveCount(1);
+  await expect(region.getByText("×", { exact: true })).toHaveCount(1);
+  await expect(region.getByText("—", { exact: true })).toHaveCount(1);
+  await expect(region).not.toContainText("大学");
+  await expect(region).not.toContainText("駅");
+  await expect(region).not.toContainText("ふたりが初めて出会った場所は？");
+  await expect(region).not.toContainText("待ち合わせ場所は？");
+  await expect(region).not.toContainText("思い出に残った出来事を教えてください");
   await expect(region).toContainText("保存された自由記述");
-  await expect(region).toContainText("評価 0");
-  await expect(region).toContainText("正誤を確認できません");
-  await expect(region).toContainText("過去形式の回答");
+  await expect(region).toContainText("得点 0");
+  await expect(region).toContainText("未採点");
+  await expect(region).toContainText("得点を確認できません");
+  await expect(region).toContainText("未採点の自由記述");
+  await expect(region).toContainText("得点確認不可の自由記述");
+  await expect(region).not.toContainText("確認できない自由記述の問題文");
 
   const fit = await page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
     const winnerRegion = viewport.querySelector<HTMLElement>("[aria-label='第3位の勝者一覧']");
@@ -1072,6 +1092,8 @@ test("rank announcements render each winner's saved answers and fit the slide", 
   const publicRegion = spectator.getByRole("region", { name: "第3位の勝者一覧" });
   await expect(publicRegion.locator("article")).toHaveCount(2);
   await expect(publicRegion).toContainText("保存された自由記述");
+  await expect(publicRegion).not.toContainText("大学");
+  await expect(publicRegion).not.toContainText("ふたりが初めて出会った場所は？");
 });
 
 test("a single long winner name wraps fully inside the slide", async ({ page }) => {
