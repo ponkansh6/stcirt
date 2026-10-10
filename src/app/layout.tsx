@@ -16,7 +16,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Stcirt - 1ナレッジ1問学習アプリ",
+  title: "5問検定",
   description: "保存済みの問題を順番に解いて学習するアプリ",
 };
 

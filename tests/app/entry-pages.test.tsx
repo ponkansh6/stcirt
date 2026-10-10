@@ -48,7 +48,7 @@ describe("GlobalHeader entry behavior", () => {
 describe("root layout entry", () => {
   it("exports the app metadata and viewport settings", () => {
     expect(metadata).toEqual({
-      title: "Stcirt - 1ナレッジ1問学習アプリ",
+      title: "5問検定",
       description: "保存済みの問題を順番に解いて学習するアプリ",
     });
     expect(viewport).toEqual({
