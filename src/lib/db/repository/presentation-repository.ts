@@ -414,7 +414,25 @@ type PublicProjection =
       question?: PublicProjectedQuestion;
     };
 
-type Winner = { displayName: string; score: number; rank: number };
+type WinnerQuestionResult = {
+  position: number;
+  question: string | null;
+  answer:
+    | { kind: "selected"; value: string | null }
+    | { kind: "freeText"; value: string | null }
+    | { kind: "unanswered" }
+    | { kind: "legacy" }
+    | { kind: "unavailable" };
+  correctness?: "correct" | "incorrect" | "unavailable";
+  normalizedScore?: number | null;
+  scoreStatus?: "unavailable";
+};
+type Winner = {
+  displayName: string;
+  score: number;
+  rank: number;
+  questionResults: WinnerQuestionResult[];
+};
 type PublicProjectedQuestion = {
   id: number;
   ordinal: number;
@@ -485,10 +503,82 @@ function buildPublicProjection(
   if (rank !== null) {
     const winners = admin.entries
       .filter((entry) => entry.rank === rank)
-      .map(({ displayName, score, rank: winnerRank }) => ({
-        displayName,
-        score,
-        rank: winnerRank,
+      .map((entry) => ({
+        displayName: entry.displayName,
+        score: entry.score,
+        rank: entry.rank,
+        questionResults: admin.questions.map((question, position): WinnerQuestionResult => {
+          const answer = entry.answers?.find((item) => item.questionId === question.id);
+          const validQuestion =
+            typeof question.question === "string" &&
+            Array.isArray(question.choices) &&
+            question.choices.every((choice) => typeof choice === "string");
+          const questionText = validQuestion ? question.question : null;
+          const unavailable = {
+            position,
+            question: questionText,
+            answer: { kind: "unavailable" as const },
+          };
+          if (!answer || !validQuestion) return unavailable;
+          if (answer.answerKind === "selected") {
+            const selectedIndex = answer.selectedIndex;
+            const correctIndex = question.correctIndex;
+            const selectedValid =
+              Number.isInteger(selectedIndex) &&
+              selectedIndex !== null &&
+              selectedIndex >= 0 &&
+              selectedIndex < question.choices.length;
+            const correctValid =
+              Number.isInteger(correctIndex) &&
+              correctIndex >= 0 &&
+              correctIndex < question.choices.length;
+            return {
+              position,
+              question: questionText,
+              answer: {
+                kind: "selected",
+                value: selectedValid ? (question.choices[selectedIndex as number] ?? null) : null,
+              },
+              correctness:
+                selectedValid && correctValid
+                  ? selectedIndex === correctIndex
+                    ? "correct"
+                    : "incorrect"
+                  : "unavailable",
+            };
+          }
+          if (answer.answerKind === "freeText") {
+            const isFifthQuestion = sourceQuestions.get(question.id)?.key === "it-literacy-005";
+            const score = answer.normalizedScore;
+            const validScore =
+              score === null || (Number.isFinite(score) && score >= 0 && score <= 1);
+            return {
+              position,
+              question: questionText,
+              answer: {
+                kind: "freeText",
+                value: typeof answer.freeText === "string" ? answer.freeText : null,
+              },
+              ...(isFifthQuestion && validScore ? { normalizedScore: score } : {}),
+              ...(!validScore || !isFifthQuestion ? { scoreStatus: "unavailable" as const } : {}),
+            };
+          }
+          if (answer.answerKind === "unanswered") {
+            return {
+              position,
+              question: questionText,
+              answer: { kind: "unanswered" },
+            };
+          }
+          if (answer.answerKind === "legacy") {
+            return {
+              position,
+              question: questionText,
+              answer: { kind: "legacy" },
+            };
+          }
+          return unavailable;
+        }),
       }));
     return { state, winners };
   }
@@ -584,9 +674,9 @@ export async function getPublicPresentation(): Promise<
     if (session?.projectionHidden) return { state: "standby" };
     const admin = await readAdminPresentation(tx);
     let sourceQuestions = new Map<number, { key: string; explanation: string | null }>();
-    if (admin.state === "answer") {
+    if (admin.state === "answer" || rankForStage(admin.state) !== null) {
       // Snapshot IDs are not foreign-keyed. Resolve source data in one batch
-      // for legacy snapshots with an empty explanation and free-text privacy.
+      // for legacy explanation fallback, Q5 response privacy, and winner score identity.
       const rows = await tx
         .select({
           id: examQuestions.id,

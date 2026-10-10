@@ -1303,6 +1303,80 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.getByRole("region", { name: "第3位の勝者一覧" })).not.toHaveClass(/announce/);
   });
 
+  it("renders each winner's question answers and distinguishes unavailable scores", async () => {
+    setup({
+      projection: {
+        state: "third",
+        winners: [
+          {
+            displayName: "葵",
+            score: 12.5,
+            rank: 3,
+            questionResults: [
+              {
+                position: 0,
+                question: "一番の問題",
+                answer: { kind: "selected", value: "青" },
+                correctness: "correct",
+              },
+              {
+                position: 1,
+                question: "未回答の設問",
+                answer: { kind: "unanswered" },
+              },
+              {
+                position: 2,
+                question: "過去形式の設問",
+                answer: { kind: "legacy" },
+              },
+              {
+                position: 3,
+                question: null,
+                answer: { kind: "unavailable" },
+              },
+              {
+                position: 4,
+                question: "自由記述",
+                answer: { kind: "freeText", value: "保存された回答" },
+                scoreStatus: "unavailable",
+              },
+              {
+                position: 5,
+                question: "保存済みの0点",
+                answer: { kind: "freeText", value: "回答" },
+                normalizedScore: 0,
+              },
+              {
+                position: 6,
+                question: "未評価の設問",
+                answer: { kind: "freeText", value: "回答" },
+                normalizedScore: null,
+              },
+            ],
+          },
+        ],
+      },
+      admin: { state: "third", questionIndex: 5, questionCount: 5 },
+    });
+    render(<PresentationScreen />);
+    expect(await screen.findByText("一番の問題")).toBeInTheDocument();
+    expect(screen.getByText("青（正解）")).toBeInTheDocument();
+    expect(screen.getByText("保存された回答")).toBeInTheDocument();
+    expect(screen.getByText("評価を確認できません")).toBeInTheDocument();
+    expect(screen.getByText("未回答")).toBeInTheDocument();
+    expect(screen.getByText("過去形式の回答")).toBeInTheDocument();
+    expect(screen.getByText("設問を確認できません")).toBeInTheDocument();
+    expect(screen.getByText("評価 0")).toBeInTheDocument();
+    expect(screen.getByText("未評価")).toBeInTheDocument();
+    const questionLabels = Array.from(
+      screen
+        .getByRole("region", { name: "第3位の勝者一覧" })
+        .querySelectorAll("[class*='winnerQuestionLabel']"),
+      (label) => label.textContent,
+    );
+    expect(questionLabels).toEqual(["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7"]);
+  });
+
   it("keeps initial and previous-stage rank renders static", async () => {
     setup({
       projection: { state: "third", winners: [{ displayName: "葵", score: 12.5, rank: 3 }] },

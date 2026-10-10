@@ -614,7 +614,27 @@ describe("presentation repository", () => {
     await op("advance", "a5");
     await expect(getPublicPresentation()).resolves.toEqual({
       state: "third",
-      winners: [{ displayName: "Third", score: 1, rank: 3 }],
+      winners: [
+        {
+          displayName: "Third",
+          score: 1,
+          rank: 3,
+          questionResults: [
+            {
+              position: 0,
+              question: "Question 11",
+              answer: { kind: "selected", value: "Correct 11" },
+              correctness: "correct",
+            },
+            {
+              position: 1,
+              question: "Question 22",
+              answer: { kind: "selected", value: "Wrong 22" },
+              correctness: "incorrect",
+            },
+          ],
+        },
+      ],
     });
   });
 
@@ -646,8 +666,127 @@ describe("presentation repository", () => {
     });
     expect(deck.slides.find(({ state }) => state === "third")?.projection).toMatchObject({
       state: "third",
-      winners: [{ displayName: "Third", rank: 3 }],
+      winners: [
+        {
+          displayName: "Third",
+          rank: 3,
+          questionResults: [
+            { position: 0, answer: { kind: "selected", value: "Correct 11" } },
+            { position: 1, answer: { kind: "selected", value: "Wrong 22" } },
+          ],
+        },
+      ],
     });
+    const rankSlides = deck.slides.filter(({ state }) =>
+      ["third", "second", "first"].includes(state),
+    );
+    expect(rankSlides).toHaveLength(2);
+    for (const slide of rankSlides) {
+      if (
+        slide.projection.state === "third" ||
+        slide.projection.state === "second" ||
+        slide.projection.state === "first"
+      ) {
+        expect(slide.projection.winners.length).toBeGreaterThan(0);
+        expect(
+          slide.projection.winners.every((winner) => Array.isArray(winner.questionResults)),
+        ).toBe(true);
+      }
+    }
+    const firstSlide = deck.slides.find(({ state }) => state === "first");
+    expect(firstSlide?.projection).toMatchObject({
+      state: "first",
+      winners: [
+        { displayName: "First", questionResults: [{ position: 0 }, { position: 1 }] },
+        { displayName: "Tied", questionResults: [{ position: 0 }, { position: 1 }] },
+      ],
+    });
+  });
+
+  it("keeps tied winners' answers paired to each person and snapshot position", async () => {
+    await addQuestions();
+    const first = await addParticipant("First tied");
+    const second = await addParticipant("Second tied");
+    await addSubmission(first, [0, 1]);
+    await addSubmission(second, [1, 0]);
+    await startWithAggregate("tie-answer-start");
+    for (let index = 0; index < 5; index += 1)
+      await operatePresentation(`tie-answer-forward-${index}`, "advance");
+
+    const projection = await getPublicPresentation();
+    expect(projection).toMatchObject({ state: "first" });
+    if (projection.state !== "first") return;
+    expect(projection.winners).toHaveLength(2);
+    expect(projection.winners.map((winner) => winner.displayName)).toEqual([
+      "First tied",
+      "Second tied",
+    ]);
+    expect(projection.winners[0]?.questionResults.map((result) => result.position)).toEqual([0, 1]);
+    expect(projection.winners[0]?.questionResults).toMatchObject([
+      { answer: { kind: "selected", value: "Correct 11" }, correctness: "correct" },
+      { answer: { kind: "selected", value: "Wrong 22" }, correctness: "incorrect" },
+    ]);
+    expect(projection.winners[1]?.questionResults).toMatchObject([
+      { answer: { kind: "selected", value: "Wrong 11" }, correctness: "incorrect" },
+      { answer: { kind: "selected", value: "Correct 22" }, correctness: "correct" },
+    ]);
+  });
+
+  it("keeps missing, invalid, unknown, unanswered and legacy answers distinct", async () => {
+    await addQuestions();
+    const participantId = await addParticipant("Answer states");
+    await addSubmission(participantId, [0, 0]);
+    await startWithAggregate("answer-states-start");
+    for (let index = 0; index < 5; index += 1)
+      await operatePresentation(`answer-states-forward-${index}`, "advance");
+    const [entry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    const answers = entry!.answers;
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({
+        answers: [
+          { ...answers[0]!, selectedIndex: 99 },
+          { ...answers[1]!, answerKind: "unanswered", selectedIndex: null },
+        ],
+      })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+
+    let projection = await getPublicPresentation();
+    if (projection.state !== "first") throw new Error("Expected first-rank projection");
+    expect(projection.winners[0]?.questionResults[0]).toMatchObject({
+      answer: { kind: "selected", value: null },
+      correctness: "unavailable",
+    });
+    expect(projection.winners[0]?.questionResults[1]?.answer).toEqual({ kind: "unanswered" });
+
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({
+        answers: [answers[0]!, { ...answers[1]!, answerKind: "unexpected" as never }],
+      })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    projection = await getPublicPresentation();
+    if (projection.state !== "first") throw new Error("Expected first-rank projection");
+    expect(projection.winners[0]?.questionResults[1]?.answer).toEqual({ kind: "unavailable" });
+
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: [answers[0]!, { ...answers[1]!, answerKind: "legacy" }] })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    projection = await getPublicPresentation();
+    if (projection.state !== "first") throw new Error("Expected first-rank projection");
+    expect(projection.winners[0]?.questionResults[1]?.answer).toEqual({ kind: "legacy" });
+
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: [answers[0]!] })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    projection = await getPublicPresentation();
+    if (projection.state !== "first") throw new Error("Expected first-rank projection");
+    expect(projection.winners[0]?.questionResults[1]?.answer).toEqual({ kind: "unavailable" });
   });
 
   it("always includes answer explanations even when the legacy stored mode is short", async () => {

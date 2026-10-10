@@ -112,6 +112,72 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         normalizedScore: 0.75,
       }),
     );
+    for (let index = 0; index < 11; index += 1)
+      await operatePresentation(`fraction-rank-forward-${index}`, "advance");
+    let winnerProjection = await getPublicPresentation();
+    expect(winnerProjection).toMatchObject({
+      state: "second",
+      winners: [{ displayName: "fractional-two" }],
+    });
+    await operatePresentation("fraction-rank-forward-first", "advance");
+    winnerProjection = await getPublicPresentation();
+    expect(winnerProjection).toMatchObject({
+      state: "first",
+      winners: [{ displayName: "fractional-one" }],
+    });
+    if (winnerProjection.state === "first")
+      expect(winnerProjection.winners[0]?.questionResults[4]).toMatchObject({
+        position: 4,
+        answer: { kind: "freeText", value: "answer one" },
+        normalizedScore: 0.75,
+      });
+    expect(JSON.stringify(winnerProjection)).not.toContain('"rawScore"');
+  });
+
+  it("keeps normalized zero distinct from a null ungraded snapshot score", async () => {
+    const participantId = await addParticipant("zero-normalized-score");
+    const maximumParticipantId = await addParticipant("maximum-normalized-score");
+    await addFreeTextSubmission(participantId, 0, "zero");
+    await addFreeTextSubmission(maximumParticipantId, 2, "maximum");
+    await startWithAggregate("zero-score-start");
+    for (let index = 0; index < 11; index += 1)
+      await operatePresentation(`zero-score-forward-${index}`, "advance");
+
+    let projection = await getPublicPresentation();
+    if (projection.state !== "second") throw new Error("Expected second-rank projection");
+    expect(projection.winners[0]).toMatchObject({ displayName: "zero-normalized-score" });
+    expect(projection.winners[0]?.questionResults[4]).toMatchObject({
+      answer: { kind: "freeText", value: "answer zero" },
+      normalizedScore: 0,
+    });
+
+    const [entry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({
+        answers: entry!.answers.map((answer) =>
+          answer.questionId === 5 ? { ...answer, normalizedScore: null } : answer,
+        ),
+      })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    projection = await getPublicPresentation();
+    if (projection.state !== "second") throw new Error("Expected second-rank projection");
+    expect(projection.winners[0]?.questionResults[4]).toMatchObject({
+      answer: { kind: "freeText", value: "answer zero" },
+      normalizedScore: null,
+    });
+
+    await operatePresentation("zero-score-to-first", "advance");
+    projection = await getPublicPresentation();
+    if (projection.state !== "first") throw new Error("Expected first-rank projection");
+    expect(projection.winners[0]).toMatchObject({ displayName: "maximum-normalized-score" });
+    expect(projection.winners[0]?.questionResults[4]).toMatchObject({
+      answer: { kind: "freeText", value: "answer maximum" },
+      normalizedScore: 1,
+    });
   });
 
   it("suppresses responses only when the source key still identifies question five", async () => {
@@ -134,6 +200,16 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     expect(renamedQuestion).toHaveProperty("responses");
     if (renamedQuestion && "responses" in renamedQuestion)
       expect(renamedQuestion.responses).toHaveLength(1);
+    await operatePresentation("question-five-identity-rank-forward-1", "advance");
+    await operatePresentation("question-five-identity-rank-forward-2", "advance");
+    const renamedWinner = await getPublicPresentation();
+    const fifthResult =
+      renamedWinner.state === "first" ? renamedWinner.winners[0]?.questionResults[4] : undefined;
+    expect(fifthResult).toMatchObject({
+      answer: { kind: "freeText", value: "answer identity" },
+      scoreStatus: "unavailable",
+    });
+    expect(fifthResult).not.toHaveProperty("normalizedScore");
   });
 
   it("retains fifth-question responses when the source row is missing", async () => {
@@ -148,6 +224,18 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     const question = projection.state === "answer" ? projection.question : undefined;
     expect(question).toHaveProperty("responses");
     if (question && "responses" in question) expect(question.responses).toHaveLength(1);
+    await operatePresentation("missing-source-rank-forward-1", "advance");
+    await operatePresentation("missing-source-rank-forward-2", "advance");
+    const winnerProjection = await getPublicPresentation();
+    const fifthResult =
+      winnerProjection.state === "first"
+        ? winnerProjection.winners[0]?.questionResults[4]
+        : undefined;
+    expect(fifthResult).toMatchObject({
+      answer: { kind: "freeText", value: "answer missing-source" },
+      scoreStatus: "unavailable",
+    });
+    expect(fifthResult).not.toHaveProperty("normalizedScore");
   });
 
   it("keeps response data for an unrelated free-text answer stage", async () => {

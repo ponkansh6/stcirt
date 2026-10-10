@@ -24,6 +24,27 @@ type PresentationState =
   | "first"
   | "finished";
 
+type E2EWinnerQuestionResult = {
+  position: number;
+  question: string | null;
+  answer:
+    | { kind: "selected"; value: string | null }
+    | { kind: "freeText"; value: string | null }
+    | { kind: "unanswered" }
+    | { kind: "legacy" }
+    | { kind: "unavailable" };
+  correctness?: "correct" | "incorrect" | "unavailable";
+  normalizedScore?: number | null;
+  scoreStatus?: "unavailable";
+};
+
+type E2EWinnerEntry = {
+  displayName: string;
+  score: number;
+  rank: number;
+  questionResults?: E2EWinnerQuestionResult[];
+};
+
 const questions = [
   {
     id: 11,
@@ -54,7 +75,7 @@ async function installAdminApiMock(
   let projectionHidden = false;
   let snapshotExists = false;
   let participantResultsVisible = false;
-  let winnerEntries = [
+  let winnerEntries: E2EWinnerEntry[] = [
     { displayName: "花子", score: 1, rank: 1 },
     { displayName: "太郎", score: 0, rank: 2 },
   ];
@@ -138,10 +159,11 @@ async function installAdminApiMock(
           state: slideState,
           winners: winnerEntries
             .filter((entry) => entry.rank === rank)
-            .map(({ displayName, score, rank: winnerRank }) => ({
+            .map(({ displayName, score, rank: winnerRank, questionResults }) => ({
               displayName,
               score,
               rank: winnerRank,
+              ...(questionResults ? { questionResults } : {}),
             })),
         };
       } else {
@@ -299,10 +321,11 @@ async function installAdminApiMock(
             state,
             winners: payload()
               .entries.filter((entry) => entry.rank === rank)
-              .map(({ displayName, score, rank: winnerRank }) => ({
+              .map(({ displayName, score, rank: winnerRank, questionResults }) => ({
                 displayName,
                 score,
                 rank: winnerRank,
+                ...(questionResults ? { questionResults } : {}),
               })),
           };
         } else {
@@ -976,6 +999,79 @@ test("tied rank cards share one rank label and keep each name with its score", a
   ).toBe(true);
   expect(geometry.width).toBeLessThanOrEqual(geometry.innerWidth);
   expect(geometry.height).toBeLessThanOrEqual(geometry.innerHeight);
+});
+
+test("rank announcements render each winner's saved answers and fit the slide", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  mock.setWinnerEntries([
+    {
+      displayName: "葵",
+      score: 0.75,
+      rank: 3,
+      questionResults: [
+        {
+          position: 0,
+          question: "ふたりが初めて出会った場所は？",
+          answer: { kind: "selected", value: "大学" },
+          correctness: "correct",
+        },
+        {
+          position: 4,
+          question: "思い出に残った出来事を教えてください",
+          answer: { kind: "freeText", value: "保存された自由記述" },
+          normalizedScore: 0,
+        },
+      ],
+    },
+    {
+      displayName: "凛",
+      score: 0.75,
+      rank: 3,
+      questionResults: [
+        {
+          position: 0,
+          question: "ふたりが初めて出会った場所は？",
+          answer: { kind: "selected", value: null },
+          correctness: "unavailable",
+        },
+        {
+          position: 4,
+          question: "思い出に残った出来事を教えてください",
+          answer: { kind: "legacy" },
+        },
+      ],
+    },
+  ]);
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+  await advanceTo(page, "third");
+
+  const region = page.getByRole("region", { name: "第3位の勝者一覧" });
+  await expect(region.locator("article")).toHaveCount(2);
+  await expect(region).toContainText("大学（正解）");
+  await expect(region).toContainText("保存された自由記述");
+  await expect(region).toContainText("評価 0");
+  await expect(region).toContainText("正誤を確認できません");
+  await expect(region).toContainText("過去形式の回答");
+
+  const fit = await page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
+    const winnerRegion = viewport.querySelector<HTMLElement>("[aria-label='第3位の勝者一覧']");
+    return {
+      pageCanScroll: document.documentElement.scrollHeight > innerHeight,
+      regionCanScroll: winnerRegion ? winnerRegion.scrollHeight > winnerRegion.clientHeight : true,
+    };
+  });
+  expect(fit.pageCanScroll).toBe(false);
+  expect(fit.regionCanScroll).toBe(false);
+
+  const spectator = await page.context().newPage();
+  await spectator.goto("/presentation");
+  const publicRegion = spectator.getByRole("region", { name: "第3位の勝者一覧" });
+  await expect(publicRegion.locator("article")).toHaveCount(2);
+  await expect(publicRegion).toContainText("保存された自由記述");
 });
 
 test("a single long winner name wraps fully inside the slide", async ({ page }) => {

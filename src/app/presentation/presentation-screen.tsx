@@ -45,7 +45,25 @@ type PublicAnswerQuestion = PublicQuestion & {
   }[];
 };
 
-type Winner = { displayName: string; score: number; rank: number };
+type WinnerQuestionResult = {
+  position: number;
+  question: string | null;
+  answer:
+    | { kind: "selected"; value: string | null }
+    | { kind: "freeText"; value: string | null }
+    | { kind: "unanswered" }
+    | { kind: "legacy" }
+    | { kind: "unavailable" };
+  correctness?: "correct" | "incorrect" | "unavailable";
+  normalizedScore?: number | null;
+  scoreStatus?: "unavailable";
+};
+type Winner = {
+  displayName: string;
+  score: number;
+  rank: number;
+  questionResults?: WinnerQuestionResult[];
+};
 type ProjectionData =
   | { state: "question"; question?: PublicQuestion }
   | { state: "answer"; question?: PublicAnswerQuestion }
@@ -222,6 +240,48 @@ async function requestAdminAction(action: AdminAction, expectedSnapshotRevision:
 }
 
 const rankTitle: Record<string, string> = { third: "第3位", second: "第2位", first: "第1位" };
+function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] }) {
+  const answerText = (result: WinnerQuestionResult) => {
+    if (result.answer.kind === "unanswered") return "未回答";
+    if (result.answer.kind === "legacy") return "過去形式の回答";
+    if (result.answer.kind === "unavailable") return "回答を確認できません";
+    if (result.answer.kind === "selected") {
+      const value = result.answer.value ?? "回答を確認できません";
+      const correctness =
+        result.correctness === "correct"
+          ? "正解"
+          : result.correctness === "incorrect"
+            ? "不正解"
+            : "正誤を確認できません";
+      return `${value}（${correctness}）`;
+    }
+    return result.answer.value === null ? "回答を確認できません" : result.answer.value;
+  };
+  return (
+    <ol className={styles.winnerQuestionResults} aria-label="設問別の回答">
+      {results.map((result) => (
+        <li key={result.position}>
+          <span className={styles.winnerQuestionLabel}>Q{result.position + 1}</span>
+          <span className={styles.winnerQuestionPrompt}>
+            {result.question ?? "設問を確認できません"}
+          </span>
+          <span className={styles.winnerQuestionAnswer}>
+            {answerText(result)}
+            {result.answer.kind === "freeText" && (
+              <span className={styles.winnerQuestionScore}>
+                {result.scoreStatus === "unavailable"
+                  ? "評価を確認できません"
+                  : result.normalizedScore === null || result.normalizedScore === undefined
+                    ? "未評価"
+                    : `評価 ${result.normalizedScore}`}
+              </span>
+            )}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
 function QuestionPrompt({ question }: { question: PublicQuestion }) {
   return (
     <section className={styles.question} aria-labelledby="question-heading">
@@ -956,6 +1016,9 @@ export default function PresentationScreen({
                               </span>
                             </h1>
                             <p className={styles.winnerScore}>{winner.score.toFixed(2)} ポイント</p>
+                            {winner.questionResults && (
+                              <WinnerQuestionBreakdown results={winner.questionResults} />
+                            )}
                           </article>
                         ))
                       ) : (

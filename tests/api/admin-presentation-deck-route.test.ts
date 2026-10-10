@@ -20,7 +20,47 @@ const deck = {
   snapshotRevision: 3,
   questionCount: 1,
   questionIndex: 0,
-  slides: [{ state: "question", questionIndex: 0, projection: { state: "question" } }],
+  slides: [
+    { state: "question", questionIndex: 0, projection: { state: "question" } },
+    {
+      state: "third",
+      questionIndex: 0,
+      projection: {
+        state: "third",
+        winners: [
+          {
+            displayName: "葵",
+            score: 8,
+            rank: 3,
+            questionResults: [
+              {
+                position: 0,
+                question: "一問目",
+                answer: { kind: "selected", value: "青" },
+                correctness: "correct",
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      state: "second",
+      questionIndex: 0,
+      projection: {
+        state: "second",
+        winners: [{ displayName: "凛", score: 9, rank: 2, questionResults: [] }],
+      },
+    },
+    {
+      state: "first",
+      questionIndex: 0,
+      projection: {
+        state: "first",
+        winners: [{ displayName: "悠", score: 10, rank: 1, questionResults: [] }],
+      },
+    },
+  ],
 } satisfies Awaited<ReturnType<typeof getAdminPresentationDeck>>;
 
 function request() {
@@ -57,7 +97,15 @@ describe("GET /api/admin/presentation/deck", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store, private");
-    await expect(response.json()).resolves.toEqual(deck);
+    const payload = await response.json();
+    expect(payload).toEqual(deck);
+    expect(
+      payload.slides
+        .filter((slide: { state: string }) => ["third", "second", "first"].includes(slide.state))
+        .every((slide: { projection: { winners: { questionResults?: unknown[] }[] } }) =>
+          slide.projection.winners.every((winner) => Array.isArray(winner.questionResults)),
+        ),
+    ).toBe(true);
     expect(getAdminPresentationDeck).toHaveBeenCalledOnce();
   });
 

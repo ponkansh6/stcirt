@@ -378,6 +378,52 @@
   font-size: clamp(1rem, 2cqw, 2rem);
 }
 
+.winnerQuestionResults {
+  display: grid;
+  width: min(100%, 48rem);
+  gap: clamp(3px, 0.45cqh, 7px);
+  margin: clamp(8px, 1.2cqh, 14px) auto 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.winnerQuestionResults li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0 0.55em;
+  min-width: 0;
+  font-size: clamp(0.64rem, 0.95cqw, 0.95rem);
+  line-height: 1.25;
+}
+
+.winnerQuestionLabel {
+  grid-row: span 2;
+  color: #66717a;
+  font-weight: 700;
+}
+
+.winnerQuestionPrompt,
+.winnerQuestionAnswer {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.winnerQuestionPrompt {
+  color: #49535b;
+}
+
+.winnerQuestionAnswer {
+  font-weight: 600;
+}
+
+.winnerQuestionScore {
+  margin-left: 0.6em;
+  color: #66717a;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .noWinner {
   font-size: clamp(1.6rem, 3.5cqw, 3.5rem);
 }
