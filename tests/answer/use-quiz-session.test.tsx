@@ -512,10 +512,14 @@ describe("useQuizSession hook", () => {
         return { ok: true, json: async () => ({ questions: batchQuestions(false) }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST") {
-        attempts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        const request = JSON.parse(String(init.body)) as Record<string, unknown>;
+        attempts.push(request);
         return attempts.length === 1
           ? { ok: false, status: 401, json: async () => ({ message: "expired" }) }
-          : { ok: true, json: async () => ({ submissionId, revision: 1 }) };
+          : {
+              ok: true,
+              json: async () => ({ submissionId: request.submissionId, revision: 1 }),
+            };
       }
       throw new Error(`Unexpected request: ${url}`);
     });

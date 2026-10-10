@@ -871,6 +871,25 @@ describe("QuizRunner batch answer sheet", () => {
     expect(returnToOwner).toHaveBeenCalledOnce();
   });
 
+  it("explains that assisted answers were saved when reloading the owner fails", () => {
+    const retrySubmissionCheck = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(
+        {
+          kind: "owner-return-error",
+          message: "代理回答は保存されましたが、自分の回答状況を再読み込みできませんでした。",
+        },
+        { retrySubmissionCheck },
+      ),
+    );
+    render(<RunnerPage />);
+
+    expect(screen.getByRole("heading", { name: "代理回答を保存しました" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("代理回答は保存されました");
+    fireEvent.click(screen.getByRole("button", { name: "自分の回答状況をもう一度確認する" }));
+    expect(retrySubmissionCheck).toHaveBeenCalledOnce();
+  });
+
   it("offers correction of the saved assisted answer and a path back to the owner", () => {
     const editAnswers = vi.fn();
     const returnToOwner = vi.fn();

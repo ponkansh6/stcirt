@@ -128,6 +128,7 @@ type TestAssistedDraft = {
   }[];
   selections: Record<number, number>;
   freeResponses: Record<number, string>;
+  legacyAnswerIds: number[];
   submissionId: string;
   revision: number;
 };
@@ -144,6 +145,7 @@ function makeAssistedDraft(overrides: Partial<TestAssistedDraft> = {}): TestAssi
     quizzes,
     selections: { 1: 2 },
     freeResponses: {},
+    legacyAnswerIds: [],
     submissionId: "00000000-0000-4000-8000-000000000018",
     revision: 2,
     ...overrides,
@@ -464,12 +466,12 @@ describe("useQuizSession state transitions", () => {
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
   });
 
-  it("handles latest-submission authorization and transport errors, then retries the check", async () => {
+  it("requires reauthentication after latest-submission authorization expires, then retries transport errors", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
     api.fetchLatestAnswerSubmission.mockRejectedValueOnce(apiError(401, "expired"));
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
-    expect(hook.result.current.access.kind).toBe("login");
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
+    expect(hook.result.current.access).toEqual({ kind: "reauthentication", participant });
 
     api.createParticipantSession.mockResolvedValueOnce({ participant });
     await act(async () => hook.result.current.login("参加者", "1234"));
@@ -519,11 +521,12 @@ describe("useQuizSession state transitions", () => {
     });
   });
 
-  it("returns to login after latest-submission authorization expires", async () => {
+  it("requires reauthentication after latest-submission authorization expires", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
     api.fetchLatestAnswerSubmission.mockRejectedValueOnce(apiError(401, "expired"));
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
+    expect(hook.result.current.access).toEqual({ kind: "reauthentication", participant });
     expect(hook.result.current.phase.kind).toBe("ready");
     expect(api.fetchExamQuestions).not.toHaveBeenCalled();
     act(() => hook.result.current.retrySubmissionCheck());
@@ -1198,6 +1201,7 @@ describe("useQuizSession state transitions", () => {
   it("starts a name-only assisted answer, saves it in its own scope, edits it, and returns to the owner", async () => {
     const hook = await enterOwnerComplete();
     api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
 
     act(() => hook.result.current.openAssistedLogin());
     expect(hook.result.current.assistedScreen).toBe("login");
@@ -1217,19 +1221,15 @@ describe("useQuizSession state transitions", () => {
       act(() => hook.result.current.select(quiz.question.id, 2));
     }
     await act(async () => hook.result.current.saveAnswers());
-    expect(hook.result.current.phase.kind).toBe("complete");
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    expect(hook.result.current.answerMode).toBe("owner");
+    expect(hook.result.current.access).toEqual({ kind: "ready", participant });
     expect(api.submitAnswerBatch).toHaveBeenCalledWith(
       expect.objectContaining({ submissionId: hook.result.current.submissionId }),
       "assisted",
     );
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
 
-    act(() => hook.result.current.editAnswers());
-    expect(hook.result.current.phase.kind).toBe("answering");
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
-    act(() => hook.result.current.returnToOwner());
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
-    expect(hook.result.current.answerMode).toBe("owner");
     expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("owner");
     expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
   });
@@ -1258,30 +1258,275 @@ describe("useQuizSession state transitions", () => {
     });
   });
 
-  it("restores and corrects the linked completed answer in the assisted scope", async () => {
+  it("restores the linked completed answer directly into the assisted editor", async () => {
     api.fetchAssistedParticipant.mockResolvedValue({
       participant: assistedParticipant,
       hasSubmission: true,
       eligible: false,
     });
     const hook = await enterOwnerComplete();
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(
-      makeSubmission({
-        submissionId: "00000000-0000-4000-8000-000000000018",
-        revision: 4,
+    const saved = makeSubmission({
+      submissionId: "00000000-0000-4000-8000-000000000018",
+      revision: 4,
+      answers: [
+        ...[1, 2, 3, 4].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: questionId - 1,
+          freeText: null,
+        })),
+        { questionId: 5, answerKind: "legacy" as const, selectedIndex: 0, freeText: null },
+      ],
+    });
+    api.fetchExamQuestions.mockResolvedValueOnce(
+      [1, 2, 3, 4, 5].map((id) => question(id, id === 5 ? "freeText" : "selected")),
+    );
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(saved);
+    await act(async () => hook.result.current.resumeAssisted());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    expect(hook.result.current.answerMode).toBe("assisted");
+    expect(hook.result.current.submissionId).toBe("00000000-0000-4000-8000-000000000018");
+    expect(hook.result.current.revision).toBe(4);
+    expect(hook.result.current.savedSelections).toHaveProperty("1");
+    expect(hook.result.current.selections).toEqual(hook.result.current.savedSelections);
+    expect(hook.result.current.answeredCount).toBe(4);
+    expect(hook.result.current.legacyAnswerIds).toEqual([5]);
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("assisted");
+    act(() => hook.result.current.select(1, 0));
+    expect(
+      JSON.parse(window.sessionStorage.getItem("stcirt-assisted-answer-draft")!).legacyAnswerIds,
+    ).toEqual([5]);
+  });
+
+  it("restores assisted free text and answered count directly into correction", async () => {
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: true,
+      eligible: false,
+    });
+    const hook = await enterOwnerComplete();
+    const saved = makeSubmission({
+      submissionId: "00000000-0000-4000-8000-000000000018",
+      revision: 6,
+      answers: [
+        ...[1, 2, 3, 4].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: questionId - 1,
+          freeText: null,
+        })),
+        {
+          questionId: 5,
+          answerKind: "freeText" as const,
+          selectedIndex: null,
+          freeText: "保存済みの代理回答",
+        },
+      ],
+    });
+    api.fetchExamQuestions.mockResolvedValueOnce(
+      [1, 2, 3, 4, 5].map((id) => question(id, id === 5 ? "freeText" : "selected")),
+    );
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(saved);
+
+    await act(async () => hook.result.current.resumeAssisted());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+
+    expect(hook.result.current.freeResponses).toEqual({ 5: "保存済みの代理回答" });
+    expect(hook.result.current.answeredCount).toBe(5);
+    expect(hook.result.current.revision).toBe(6);
+  });
+
+  it("returns to owner completion after a confirmed assisted save and distinguishes owner reload failure", async () => {
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    const hook = await enterOwnerComplete();
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+    api.fetchLatestAnswerSubmission
+      .mockRejectedValueOnce(new Error("owner reload failed"))
+      .mockResolvedValueOnce(makeSubmission());
+    api.submitAnswerBatch.mockImplementationOnce(async ({ submissionId: currentId }) => ({
+      submissionId: currentId,
+      revision: 1,
+    }));
+
+    await act(async () => hook.result.current.resumeAssisted());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    for (const quiz of hook.result.current.quizzes) {
+      act(() => hook.result.current.select(quiz.question.id, 0));
+    }
+    await act(async () => hook.result.current.saveAnswers());
+
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("owner-return-error"));
+    expect(hook.result.current.answerMode).toBe("owner");
+    expect(api.submitAnswerBatch).toHaveBeenCalledWith(expect.any(Object), "assisted");
+    expect(hook.result.current.phase).toMatchObject({
+      kind: "owner-return-error",
+      message: expect.stringContaining("代理回答は保存されました"),
+    });
+
+    await act(async () => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("owner");
+    expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("reauthenticates after an owner reload 401 and retries owner status without resubmitting assisted answers", async () => {
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    const hook = await enterOwnerComplete();
+    api.fetchLatestAnswerSubmission
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(apiError(401, "expired"))
+      .mockResolvedValueOnce(makeSubmission());
+    api.submitAnswerBatch.mockImplementationOnce(async ({ submissionId: currentId }) => ({
+      submissionId: currentId,
+      revision: 1,
+    }));
+
+    await act(async () => hook.result.current.resumeAssisted());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    for (const quiz of hook.result.current.quizzes) {
+      act(() => hook.result.current.select(quiz.question.id, 0));
+    }
+    await act(async () => hook.result.current.saveAnswers());
+    await waitFor(() =>
+      expect(hook.result.current).toMatchObject({
+        answerMode: "owner",
+        access: { kind: "reauthentication", participant },
+        phase: { kind: "owner-return-error" },
+      }),
+    );
+    expect(hook.result.current.phase).toMatchObject({
+      kind: "owner-return-error",
+      message: expect.stringContaining("代理回答は保存されました"),
+    });
+
+    await act(async () => hook.result.current.login("参加者", "1234"));
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("owner");
+    expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.answerMode).toBe("owner");
+  });
+
+  it("does not treat a mismatched save response as assisted success or return to owner", async () => {
+    const draft = makeAssistedDraft();
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: true,
+      eligible: false,
+    });
+    api.fetchLatestAnswerSubmission.mockResolvedValue(
+      makeSubmission({ submissionId: draft.submissionId, revision: draft.revision }),
+    );
+    api.submitAnswerBatch.mockResolvedValueOnce({
+      submissionId: "00000000-0000-4000-8000-000000000099",
+      revision: draft.revision + 1,
+    });
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    for (const quiz of hook.result.current.quizzes) {
+      act(() => hook.result.current.select(quiz.question.id, 0));
+    }
+
+    await act(async () => hook.result.current.saveAnswers());
+
+    expect(hook.result.current).toMatchObject({
+      answerMode: "assisted",
+      phase: { kind: "complete" },
+    });
+    expect(hook.result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledTimes(1);
+    expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).not.toBeNull();
+
+    act(() => hook.result.current.editAnswers());
+    await act(async () => hook.result.current.saveAnswers());
+    expect(hook.result.current.phase.kind).toBe("complete");
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledTimes(1);
+    expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.answerMode).toBe("assisted");
+  });
+
+  it("resubmits assisted corrections to the same submission revision and returns to owner completion", async () => {
+    const draft = makeAssistedDraft({
+      selections: { 1: 2 },
+      revision: 2,
+    });
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: true,
+      eligible: true,
+    });
+    const hook = await enterOwnerComplete();
+    api.fetchLatestAnswerSubmission
+      .mockResolvedValueOnce(makeSubmission({ submissionId: draft.submissionId, revision: 2 }))
+      .mockResolvedValueOnce(makeSubmission());
+    api.submitAnswerBatch.mockResolvedValueOnce({
+      submissionId: draft.submissionId,
+      revision: 3,
+    });
+
+    await act(async () => hook.result.current.resumeAssisted());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    for (const quiz of hook.result.current.quizzes) {
+      if (quiz.question.id !== 1) act(() => hook.result.current.select(quiz.question.id, 0));
+    }
+    await act(async () => hook.result.current.saveAnswers());
+    await waitFor(() =>
+      expect(hook.result.current).toMatchObject({
+        answerMode: "owner",
+        phase: { kind: "complete" },
       }),
     );
 
-    await act(async () => hook.result.current.resumeAssisted());
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
-    expect(hook.result.current.answerMode).toBe("assisted");
-    expect(hook.result.current.submissionId).toBe("00000000-0000-4000-8000-000000000018");
-    expect(hook.result.current.savedSelections).toHaveProperty("1");
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("assisted");
+    expect(api.submitAnswerBatch).toHaveBeenCalledWith(
+      expect.objectContaining({ submissionId: draft.submissionId, expectedRevision: 2 }),
+      "assisted",
+    );
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("owner");
+    expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
+  });
 
-    act(() => hook.result.current.editAnswers());
-    expect(hook.result.current.phase.kind).toBe("answering");
-    expect(hook.result.current.selections).toEqual(hook.result.current.savedSelections);
+  it("clears a completed assisted reload and returns to the owner's completion", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem(
+      "stcirt-assisted-answer-draft",
+      JSON.stringify(makeAssistedDraft()),
+    );
+    api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: true,
+      eligible: false,
+    });
+    api.fetchExamQuestions.mockResolvedValue([1, 2, 3, 4, 5].map((id) => question(id)));
+    api.fetchLatestAnswerSubmission
+      .mockResolvedValueOnce(
+        makeSubmission({ submissionId: makeAssistedDraft().submissionId, revision: 3 }),
+      )
+      .mockResolvedValueOnce(makeSubmission());
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() =>
+      expect(hook.result.current).toMatchObject({
+        answerMode: "owner",
+        phase: { kind: "complete" },
+      }),
+    );
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenNthCalledWith(1, "assisted");
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenNthCalledWith(2, "owner");
   });
 
   it("restores an assisted draft on revisit, persists edits, and removes it after save", async () => {

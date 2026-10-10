@@ -440,7 +440,7 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport);
 });
 
-test("answers for one additional person, corrects that answer, and restores it after reload", async ({
+test("returns to owner completion after an assisted save and opens target correction directly", async ({
   page,
 }) => {
   const questions: SavedBatchAnswer[] = [
@@ -458,6 +458,7 @@ test("answers for one additional person, corrects that answer, and restores it a
   } | null = null;
   const assistedLatestRequests: string[] = [];
   const assistedSaves: BatchPayload[] = [];
+  const ownerSubmissions: Array<{ submissionId: string; revision: number }> = [];
 
   await page.route("**/api/participants/session", async (route) => {
     await route.fulfill({
@@ -506,17 +507,22 @@ test("answers for one additional person, corrects that answer, and restores it a
     const url = new URL(route.request().url());
     assistedLatestRequests.push(url.search);
     const assisted = url.searchParams.get("scope") === "assisted";
+    const ownerSubmission = {
+      submissionId: "00000000-0000-4000-8000-000000000041",
+      revision: 1,
+      answers: questions,
+    };
+    if (!assisted) {
+      ownerSubmissions.push({
+        submissionId: ownerSubmission.submissionId,
+        revision: ownerSubmission.revision,
+      });
+    }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        submission: assisted
-          ? assistedSubmission
-          : {
-              submissionId: "00000000-0000-4000-8000-000000000041",
-              revision: 1,
-              answers: questions,
-            },
+        submission: assisted ? assistedSubmission : ownerSubmission,
       }),
     });
   });
@@ -566,24 +572,60 @@ test("answers for one additional person, corrects that answer, and restores it a
 
   for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "B");
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();
+  // Saving an assisted answer returns directly to the owner's completion view.
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
-  await expect(page.getByText(/代理回答者（代理回答）/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "回答を修正する" })).toBeVisible();
+  await expect(page.getByText("本人（本人の回答）")).toBeVisible();
+  await expect(page.getByText("代理回答者（代理回答）")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
   expect(assistedSaves).toHaveLength(1);
+
+  await page.getByRole("button", { name: "代理回答を修正する" }).click();
+  await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: /Option 1B/ })).toBeChecked();
+  const assistedRequestsBeforeReload = assistedLatestRequests.filter(
+    (search) => search === "?scope=assisted",
+  ).length;
+  const ownerRequestsBeforeReload = assistedLatestRequests.filter((search) => search === "").length;
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  await expect(page.getByText(/本人（本人の回答）/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
+  await expect
+    .poll(() => assistedLatestRequests.filter((search) => search === "").length)
+    .toBeGreaterThan(ownerRequestsBeforeReload);
+  expect(assistedLatestRequests.filter((search) => search === "?scope=assisted").length).toBe(
+    assistedRequestsBeforeReload,
+  );
+  expect(assistedSaves).toHaveLength(1);
+
+  await page.getByRole("button", { name: "代理回答を修正する" }).click();
+  await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: /Option 1B/ })).toBeChecked();
+  await answerQuestion(page, 1, "C");
+  await page.getByRole("button", { name: "5問の回答を確定する" }).click();
+  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  await expect(page.getByText("本人（本人の回答）")).toBeVisible();
+  await expect(page.getByText("代理回答者（代理回答）")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
+  expect(assistedSaves).toHaveLength(2);
+  expect(assistedSaves[1]).toMatchObject({
+    submissionId: assistedSaves[0]?.submissionId,
+    expectedRevision: 1,
+  });
+  expect(assistedSubmission).toMatchObject({
+    submissionId: assistedSaves[0]?.submissionId,
+    revision: 2,
+  });
+  expect(ownerSubmissions.length).toBeGreaterThan(0);
+  expect(ownerSubmissions.at(-1)).toEqual(ownerSubmissions[0]);
+  expect(ownerSubmissions[0]).toEqual({
+    submissionId: "00000000-0000-4000-8000-000000000041",
+    revision: 1,
+  });
 
   await page.getByRole("button", { name: "回答を修正する" }).click();
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
-  await expect(page.getByRole("radio", { name: /Option 1B/ })).toBeChecked();
-  const latestRequestsBeforeReload = assistedLatestRequests.filter(
-    (search) => search === "?scope=assisted",
-  ).length;
-  await page.reload();
-  await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "回答を修正する" })).toBeVisible();
-  await expect
-    .poll(() => assistedLatestRequests.filter((search) => search === "?scope=assisted").length)
-    .toBeGreaterThan(latestRequestsBeforeReload);
-  expect(assistedSaves).toHaveLength(1);
+  await expect(page.getByRole("radio", { name: /Option 1A/ })).toBeChecked();
 });
 
 test("shows neutral completion after one batch and can reopen the same answer set for correction", async ({

@@ -29,6 +29,7 @@ export type Phase =
   | { kind: "ready" }
   | { kind: "checking-submission" }
   | { kind: "submission-error"; message: string }
+  | { kind: "owner-return-error"; message: string }
   | { kind: "loading" }
   | { kind: "shortage" }
   | { kind: "load-error"; message: string }
@@ -192,6 +193,7 @@ type AssistedDraft = {
   quizzes: LoadedQuiz[];
   selections: Record<number, number>;
   freeResponses: Record<number, string>;
+  legacyAnswerIds: number[];
   submissionId: string;
   revision: number;
 };
@@ -208,6 +210,9 @@ function readAssistedDraft(): AssistedDraft | null {
       typeof draft.selections !== "object" ||
       !draft.freeResponses ||
       typeof draft.freeResponses !== "object" ||
+      (draft.legacyAnswerIds !== undefined &&
+        (!Array.isArray(draft.legacyAnswerIds) ||
+          draft.legacyAnswerIds.some((id) => !Number.isInteger(id) || id <= 0))) ||
       typeof draft.submissionId !== "string" ||
       !Number.isInteger(draft.revision)
     )
@@ -226,7 +231,7 @@ function readAssistedDraft(): AssistedDraft | null {
       )
     )
       return null;
-    return draft as AssistedDraft;
+    return { ...draft, legacyAnswerIds: draft.legacyAnswerIds ?? [] } as AssistedDraft;
   } catch {
     return null;
   }
@@ -246,6 +251,7 @@ export function useQuizSession() {
   const [selections, setSelections] = useState<Record<number, number | undefined>>({});
   const [freeResponses, setFreeResponses] = useState<Record<number, string>>({});
   const [legacyAnswerIds, setLegacyAnswerIds] = useState<number[]>([]);
+  const legacyAnswerIdsRef = useRef(legacyAnswerIds);
   const [savedSelections, setSavedSelections] = useState<Record<number, number | undefined>>({});
   const [answeredCount, setAnsweredCount] = useState(0);
   const [submissionId, setSubmissionId] = useState<string | null>(null);
@@ -265,6 +271,9 @@ export function useQuizSession() {
   const failedAttemptRef = useRef<SaveAttempt | null>(null);
   const resolvingParticipantIdRef = useRef<number | null>(null);
   const resumeAfterAuthRef = useRef(false);
+  const reloadedAssistedRef = useRef(false);
+  const returnToOwnerRef = useRef<(afterSave?: boolean) => void>(() => {});
+  const ownerReturnAfterAssistedSaveRef = useRef(false);
   const assistedRequestRef = useRef(false);
   const answerModeRef = useRef<AnswerMode>("owner");
   answerModeRef.current = answerMode;
@@ -275,6 +284,7 @@ export function useQuizSession() {
   freeResponsesRef.current = freeResponses;
   submissionIdRef.current = submissionId;
   revisionRef.current = revision;
+  legacyAnswerIdsRef.current = legacyAnswerIds;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -293,6 +303,7 @@ export function useQuizSession() {
           }
         }
         if (!mountedRef.current) return;
+        reloadedAssistedRef.current = initialMode === "assisted";
         answerModeRef.current = initialMode;
         setAnswerMode(initialMode);
         setAssistedScreen(initialMode === "assisted" ? "active" : "closed");
@@ -325,6 +336,7 @@ export function useQuizSession() {
       setFreeResponses({});
       freeResponsesRef.current = {};
       setLegacyAnswerIds([]);
+      legacyAnswerIdsRef.current = [];
       selectionsRef.current = {};
       setSavedSelections({});
       setAnsweredCount(0);
@@ -372,7 +384,11 @@ export function useQuizSession() {
   }, []);
 
   const resolveParticipant = useCallback(
-    async (participant: Participant, scope: AnswerScope = answerModeRef.current) => {
+    async (
+      participant: Participant,
+      scope: AnswerScope = answerModeRef.current,
+      editAssistedSubmission = false,
+    ) => {
       if (busyRef.current || checkingSubmissionRef.current) return;
       const sessionEpoch = sessionEpochRef.current;
       const resumingDraft = resumeAfterAuthRef.current && phaseRef.current.kind === "answering";
@@ -381,14 +397,24 @@ export function useQuizSession() {
       resolvingParticipantIdRef.current = participant.id;
       setAccess({ kind: "ready", participant });
       setPhase({ kind: "checking-submission" });
+      let returnOwnerAfterReload = false;
       try {
         const latest = await fetchLatestAnswerSubmission(scope);
         if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
         if (!latest) {
+          if (scope === "owner" && ownerReturnAfterAssistedSaveRef.current) {
+            setPhase({
+              kind: "owner-return-error",
+              message: "代理回答は保存されましたが、自分の保存済み回答を確認できませんでした。",
+            });
+            return;
+          }
+          if (scope === "owner") ownerReturnAfterAssistedSaveRef.current = false;
           setRestoreError(null);
           if (scope === "assisted") {
             const draft = readAssistedDraft();
             if (draft) {
+              reloadedAssistedRef.current = false;
               quizzesRef.current = draft.quizzes;
               setQuizzes(draft.quizzes);
               submissionIdRef.current = draft.submissionId;
@@ -400,7 +426,7 @@ export function useQuizSession() {
               setSavedSelections({});
               freeResponsesRef.current = draft.freeResponses;
               setFreeResponses(draft.freeResponses);
-              setLegacyAnswerIds([]);
+              setLegacyAnswerIds(draft.legacyAnswerIds);
               const count =
                 Object.keys(draft.selections).length +
                 Object.values(draft.freeResponses).filter((value) => value.trim()).length;
@@ -408,6 +434,7 @@ export function useQuizSession() {
               setPhase({ kind: "answering" });
               return;
             }
+            reloadedAssistedRef.current = false;
           }
           if (resumingDraft && quizzesRef.current.length === EXAM_SIZE && submissionIdRef.current) {
             setPhase({
@@ -422,7 +449,6 @@ export function useQuizSession() {
           await loadQuestions(true);
           return;
         }
-
         if (
           resumingDraft &&
           submissionIdRef.current === latest.submissionId &&
@@ -456,6 +482,7 @@ export function useQuizSession() {
             draft.submissionId === latest.submissionId &&
             draft.revision === latest.revision
           ) {
+            reloadedAssistedRef.current = false;
             quizzesRef.current = draft.quizzes;
             setQuizzes(draft.quizzes);
             submissionIdRef.current = draft.submissionId;
@@ -466,7 +493,7 @@ export function useQuizSession() {
             setSelections(draft.selections);
             freeResponsesRef.current = draft.freeResponses;
             setFreeResponses(draft.freeResponses);
-            setLegacyAnswerIds([]);
+            setLegacyAnswerIds(draft.legacyAnswerIds);
             setSavedSelections({});
             setAnsweredCount(
               Object.keys(draft.selections).length +
@@ -478,6 +505,13 @@ export function useQuizSession() {
           }
         }
 
+        if (scope === "assisted" && reloadedAssistedRef.current) {
+          reloadedAssistedRef.current = false;
+          window.sessionStorage.removeItem(ASSISTED_DRAFT_KEY);
+          returnOwnerAfterReload = true;
+          return;
+        }
+
         submissionIdRef.current = latest.submissionId;
         setSubmissionId(latest.submissionId);
         revisionRef.current = latest.revision;
@@ -486,6 +520,13 @@ export function useQuizSession() {
         const loaded = await loadQuestions();
         if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
         if (!loaded) {
+          if (scope === "owner" && ownerReturnAfterAssistedSaveRef.current) {
+            setPhase({
+              kind: "owner-return-error",
+              message: "代理回答は保存されましたが、自分の回答を復元できませんでした。",
+            });
+            return;
+          }
           setRestoreError(
             "保存済み回答を復元するための設問を読み込めませんでした。時間をおいて再読み込みしてください。",
           );
@@ -495,8 +536,15 @@ export function useQuizSession() {
 
         let restored: ReturnType<typeof restoreSavedAnswers>;
         try {
-          restored = restoreSavedAnswers(latest, loaded);
+          restored = restoreSavedAnswers(latest, loaded, latest.submissionId);
         } catch {
+          if (scope === "owner" && ownerReturnAfterAssistedSaveRef.current) {
+            setPhase({
+              kind: "owner-return-error",
+              message: "代理回答は保存されましたが、自分の保存済み回答を復元できませんでした。",
+            });
+            return;
+          }
           setRestoreError("保存済み回答と現在の設問が一致しないため、回答を復元できません。");
           setPhase({ kind: "complete" });
           return;
@@ -512,15 +560,25 @@ export function useQuizSession() {
             Object.values(restored.freeResponses).filter((value) => value.trim()).length,
         );
         setRestoreError(null);
-        setPhase({ kind: "complete" });
+        if (scope === "owner") ownerReturnAfterAssistedSaveRef.current = false;
+        if (scope === "assisted" && editAssistedSubmission) {
+          setPhase({ kind: "answering" });
+        } else {
+          setPhase({ kind: "complete" });
+        }
       } catch (error) {
         if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
-        if (error instanceof ApiError && error.status === 401) {
+        const unauthorized = error instanceof ApiError && error.status === 401;
+        if (unauthorized) {
           resolvingParticipantIdRef.current = null;
-          setAccess({
-            kind: "login",
-            message: "参加状態を確認できません。もう一度ログインしてください。",
+          setAccess({ kind: "reauthentication", participant });
+        }
+        if (ownerReturnAfterAssistedSaveRef.current) {
+          setPhase({
+            kind: "owner-return-error",
+            message: "代理回答は保存されましたが、自分の回答状況を再読み込みできませんでした。",
           });
+        } else if (unauthorized) {
           setPhase({ kind: "ready" });
         } else {
           setPhase({
@@ -530,6 +588,7 @@ export function useQuizSession() {
         }
       } finally {
         checkingSubmissionRef.current = false;
+        if (returnOwnerAfterReload) returnToOwnerRef.current();
       }
     },
     [loadQuestions],
@@ -586,6 +645,7 @@ export function useQuizSession() {
           quizzes: currentQuizzes,
           selections: copyAnsweredSelections(selectionsRef.current),
           freeResponses: freeResponsesRef.current,
+          legacyAnswerIds: legacyAnswerIdsRef.current,
           submissionId: currentSubmissionId,
           revision: revisionRef.current,
         } satisfies AssistedDraft),
@@ -601,7 +661,12 @@ export function useQuizSession() {
   }, []);
 
   const activateAssisted = useCallback(
-    async (participant: Participant, hasSubmission: boolean, eligible = true) => {
+    async (
+      participant: Participant,
+      hasSubmission: boolean,
+      eligible = true,
+      editAssistedSubmission = false,
+    ) => {
       const current = accessRef.current;
       if (current.kind !== "ready" || busyRef.current || checkingSubmissionRef.current) return;
       sessionEpochRef.current += 1;
@@ -618,6 +683,7 @@ export function useQuizSession() {
       freeResponsesRef.current = {};
       setFreeResponses({});
       setLegacyAnswerIds([]);
+      legacyAnswerIdsRef.current = [];
       setSavedSelections({});
       setAnsweredCount(0);
       submissionIdRef.current = null;
@@ -627,7 +693,7 @@ export function useQuizSession() {
       failedAttemptRef.current = null;
       setRestoreError(null);
       resolvingParticipantIdRef.current = null;
-      await resolveParticipant(current.participant, "assisted");
+      await resolveParticipant(current.participant, "assisted", editAssistedSubmission);
     },
     [resolveParticipant],
   );
@@ -667,41 +733,47 @@ export function useQuizSession() {
   const resumeAssisted = useCallback(async () => {
     const state = assistedParticipant;
     if (!state?.participant) return;
-    await activateAssisted(state.participant, state.hasSubmission, state.eligible);
+    await activateAssisted(state.participant, state.hasSubmission, state.eligible, true);
   }, [activateAssisted, assistedParticipant]);
 
-  const returnToOwner = useCallback(() => {
-    if (assistedRequestRef.current) return;
-    const current = accessRef.current;
-    if (answerModeRef.current !== "assisted") {
+  const returnToOwner = useCallback(
+    (afterSave = false) => {
+      if (assistedRequestRef.current) return;
+      const current = accessRef.current;
+      if (answerModeRef.current !== "assisted") {
+        setAssistedScreen("closed");
+        setAssistedError(null);
+        return;
+      }
+      if (current.kind !== "ready") return;
+      ownerReturnAfterAssistedSaveRef.current = afterSave;
+      sessionEpochRef.current += 1;
+      answerModeRef.current = "owner";
+      setAnswerMode("owner");
       setAssistedScreen("closed");
-      setAssistedError(null);
-      return;
-    }
-    if (current.kind !== "ready") return;
-    sessionEpochRef.current += 1;
-    answerModeRef.current = "owner";
-    setAnswerMode("owner");
-    setAssistedScreen("closed");
-    window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
-    quizzesRef.current = [];
-    setQuizzes([]);
-    selectionsRef.current = {};
-    setSelections({});
-    freeResponsesRef.current = {};
-    setFreeResponses({});
-    setLegacyAnswerIds([]);
-    setSavedSelections({});
-    setAnsweredCount(0);
-    submissionIdRef.current = null;
-    setSubmissionId(null);
-    revisionRef.current = 0;
-    setRevision(0);
-    failedAttemptRef.current = null;
-    setRestoreError(null);
-    resolvingParticipantIdRef.current = null;
-    void resolveParticipant(current.participant, "owner");
-  }, [resolveParticipant]);
+      window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
+      quizzesRef.current = [];
+      setQuizzes([]);
+      selectionsRef.current = {};
+      setSelections({});
+      freeResponsesRef.current = {};
+      setFreeResponses({});
+      setLegacyAnswerIds([]);
+      legacyAnswerIdsRef.current = [];
+      setSavedSelections({});
+      setAnsweredCount(0);
+      submissionIdRef.current = null;
+      setSubmissionId(null);
+      revisionRef.current = 0;
+      setRevision(0);
+      failedAttemptRef.current = null;
+      setRestoreError(null);
+      resolvingParticipantIdRef.current = null;
+      void resolveParticipant(current.participant, "owner");
+    },
+    [resolveParticipant],
+  );
+  returnToOwnerRef.current = returnToOwner;
 
   const login = useCallback(async (name: string, pin: string): Promise<number> => {
     const currentAccess = accessRef.current;
@@ -711,6 +783,9 @@ export function useQuizSession() {
         if (currentAccess.kind === "reauthentication") {
           const sameParticipant = participant.id === currentAccess.participant.id;
           resumeAfterAuthRef.current = sameParticipant;
+          if (ownerReturnAfterAssistedSaveRef.current && !sameParticipant) {
+            ownerReturnAfterAssistedSaveRef.current = false;
+          }
           resolvingParticipantIdRef.current = null;
           if (!sameParticipant) {
             quizzesRef.current = [];
@@ -720,6 +795,7 @@ export function useQuizSession() {
             freeResponsesRef.current = {};
             setFreeResponses({});
             setLegacyAnswerIds([]);
+            legacyAnswerIdsRef.current = [];
             setSavedSelections({});
             setAnsweredCount(0);
             submissionIdRef.current = null;
@@ -768,6 +844,7 @@ export function useQuizSession() {
       setFreeResponses({});
       freeResponsesRef.current = {};
       setLegacyAnswerIds([]);
+      legacyAnswerIdsRef.current = [];
       selectionsRef.current = {};
       setSavedSelections({});
       setAnsweredCount(0);
@@ -809,6 +886,7 @@ export function useQuizSession() {
           quizzes: quizzesRef.current,
           selections: next,
           freeResponses: freeResponsesRef.current,
+          legacyAnswerIds: legacyAnswerIdsRef.current,
           submissionId: submissionIdRef.current,
           revision: revisionRef.current,
         }),
@@ -832,6 +910,7 @@ export function useQuizSession() {
           quizzes: quizzesRef.current,
           selections: selectionsRef.current,
           freeResponses: next,
+          legacyAnswerIds: legacyAnswerIdsRef.current,
           submissionId: submissionIdRef.current,
           revision: revisionRef.current,
         }),
@@ -882,6 +961,7 @@ export function useQuizSession() {
     }
     const sessionEpoch = sessionEpochRef.current;
     const scope = answerModeRef.current;
+    let returnToOwnerAfterSave = false;
     if (scope === "assisted") persistAssistedDraft(currentSubmissionId, currentQuizzes);
     busyRef.current = true;
     setPhase({ kind: "submitting" });
@@ -913,7 +993,10 @@ export function useQuizSession() {
       failedAttemptRef.current = null;
       setPhase({ kind: "complete" });
       setRestoreError(null);
-      if (scope === "assisted") window.sessionStorage.removeItem(ASSISTED_DRAFT_KEY);
+      if (scope === "assisted") {
+        window.sessionStorage.removeItem(ASSISTED_DRAFT_KEY);
+        returnToOwnerAfterSave = true;
+      }
     } catch (error) {
       if (mountedRef.current && sessionEpoch === sessionEpochRef.current) {
         if (error instanceof ApiError && error.status === 401) {
@@ -986,6 +1069,7 @@ export function useQuizSession() {
       }
     } finally {
       busyRef.current = false;
+      if (returnToOwnerAfterSave) returnToOwnerRef.current(true);
     }
   }, [persistAssistedDraft]);
 

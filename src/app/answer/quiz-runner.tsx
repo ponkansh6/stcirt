@@ -151,10 +151,26 @@ export default function QuizRunner() {
       return;
     }
 
+    if (
+      previousKind === "submitting" &&
+      phase.kind === "checking-submission" &&
+      answerMode === "owner"
+    ) {
+      return;
+    }
+
+    if (phase.kind === "complete" && shouldFocusCompletion.current) {
+      if (document.activeElement === document.body) {
+        completionHeadingRef.current?.focus({ preventScroll: true });
+      }
+      shouldFocusCompletion.current = false;
+      return;
+    }
+
     if (previousKind === "submitting") {
       shouldFocusCompletion.current = false;
     }
-  }, [phase.kind]);
+  }, [answerMode, phase.kind]);
   useEffect(() => {
     if (phase.kind !== "submitting" || !shouldFocusCompletion.current) return;
     const handleFocusIn = (event: FocusEvent) => {
@@ -255,7 +271,7 @@ export default function QuizRunner() {
           <Button
             variant="outline"
             className="mt-5"
-            onClick={returnToOwner}
+            onClick={() => returnToOwner()}
             disabled={assistedBusy}
           >
             自分の回答に戻る
@@ -311,6 +327,45 @@ export default function QuizRunner() {
           </p>
           <Button onClick={retrySubmissionCheck} className="mt-8">
             もう一度確認する
+          </Button>
+        </ParticipantCard>
+      </main>
+    );
+  }
+
+  if (phase.kind === "owner-return-error") {
+    return (
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+        <ParticipantCard>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <h1 className="text-3xl font-bold tracking-tight">代理回答を保存しました</h1>
+          <p className="mt-4 text-muted" role="alert">
+            {phase.message}
+          </p>
+          {access.kind === "reauthentication" && (
+            <section
+              className="mt-6 rounded-xl border border-border bg-surface-2 p-5"
+              aria-labelledby="owner-return-reauth-title"
+            >
+              <h2 id="owner-return-reauth-title" className="text-lg font-bold">
+                参加状態の確認が必要です
+              </h2>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                代理回答は保存されています。本人として再ログインすると、自分の回答状況を確認します。
+              </p>
+              <ParticipantForm
+                onLogin={login}
+                initialName={access.participant.name}
+                submitLabel="再ログインする"
+              />
+            </section>
+          )}
+          <Button
+            onClick={retrySubmissionCheck}
+            className="mt-8"
+            disabled={access.kind !== "ready"}
+          >
+            自分の回答状況をもう一度確認する
           </Button>
         </ParticipantCard>
       </main>
@@ -422,7 +477,7 @@ export default function QuizRunner() {
             回答を修正する
           </Button>
           {answeringForAssisted && (
-            <Button variant="outline" className="mt-3" onClick={returnToOwner}>
+            <Button variant="outline" className="mt-3" onClick={() => returnToOwner()}>
               自分の回答に戻る
             </Button>
           )}
@@ -550,7 +605,7 @@ export default function QuizRunner() {
             全5問を縦に確認しながら回答してください。回答は最後にまとめて確定します。
           </p>
           {answerMode === "assisted" && (
-            <Button variant="outline" className="mt-4" onClick={returnToOwner}>
+            <Button variant="outline" className="mt-4" onClick={() => returnToOwner()}>
               自分の回答に戻る
             </Button>
           )}
