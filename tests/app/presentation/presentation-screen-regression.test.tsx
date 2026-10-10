@@ -450,7 +450,7 @@ describe("PresentationScreen", () => {
         projectionCalls += 1;
         return projectionCalls === 1
           ? response({ state: "question", question })
-          : response({ state: "unknown" });
+          : response({ state: "question", question: null });
       },
     });
     render(<PresentationScreen />);
@@ -979,6 +979,55 @@ describe("PresentationScreen", () => {
       expect(pendingPollTimers.size).toBe(1);
       view.unmount();
       expect(pendingPollTimers.size).toBe(0);
+    } finally {
+      if (originalVisibility)
+        Object.defineProperty(document, "visibilityState", originalVisibility);
+      else Reflect.deleteProperty(document, "visibilityState");
+    }
+  });
+
+  it("clears a pending presenter poll timer when visibility returns", async () => {
+    vi.useFakeTimers();
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+    });
+
+    try {
+      render(<PresentationScreen presenterRequested />);
+      await flush();
+      expect(
+        api.fetchMock.mock.calls.filter(([input]) => String(input) === "/api/admin/session"),
+      ).toHaveLength(1);
+      expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 2500)).toBe(false);
+
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: "visible",
+      });
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+        for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      });
+      await flush();
+      const pollTimer = setTimeoutSpy.mock.results.find(
+        (_, index) => setTimeoutSpy.mock.calls[index]?.[1] === 2500,
+      )?.value;
+      expect(pollTimer).toBeDefined();
+
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(pollTimer);
+      await flush();
+      expect(
+        api.fetchMock.mock.calls.filter(
+          ([input]) => String(input) === "/api/admin/presentation?view=controls",
+        ),
+      ).toHaveLength(3);
     } finally {
       if (originalVisibility)
         Object.defineProperty(document, "visibilityState", originalVisibility);

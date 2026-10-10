@@ -1281,6 +1281,43 @@ describe("presentation repository", () => {
     expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(4);
   });
 
+  it("fails closed when previous encounters an unsupported persisted state", async () => {
+    await addQuestions();
+    await op("aggregate", "unsupported-state-aggregate");
+    await operatePresentation("unsupported-state-start", "start");
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ state: "unsupported_persisted_state" })
+      .where(eq(schema.presentationSessions.id, 1));
+
+    await expect(
+      operatePresentation("unsupported-state-previous", "previous"),
+    ).rejects.toMatchObject({
+      message: "Presentation is already at its first state",
+      status: 409,
+    });
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+      { state: "unsupported_persisted_state" },
+    ]);
+    await expect(
+      testDb.db
+        .select()
+        .from(schema.presentationOperations)
+        .where(eq(schema.presentationOperations.operationId, "unsupported-state-previous")),
+    ).resolves.toHaveLength(0);
+  });
+
+  it("rejects reusing an operation ID for a different action", async () => {
+    await operatePresentation("direct-operation-id-conflict", "hide");
+
+    await expect(operatePresentation("direct-operation-id-conflict", "show")).rejects.toMatchObject(
+      {
+        message: "Operation ID conflict",
+        status: 409,
+      },
+    );
+  });
+
   it("returns lightweight controls for new and replayed operations while preserving full callers", async () => {
     await addQuestions();
 

@@ -362,9 +362,10 @@ describe("presentation admin console", () => {
     await act(async () => {
       document.dispatchEvent(new Event("visibilitychange"));
       for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      // Invoke the already queued callback before React commits the unauthenticated render.
+      queuedPoll?.();
     });
     expect(await screen.findByLabelText("管理者 PIN")).toBeInTheDocument();
-    act(() => queuedPoll?.());
     expect(stateReads).toBe(1);
     if (originalVisibility) Object.defineProperty(document, "visibilityState", originalVisibility);
     else Reflect.deleteProperty(document, "visibilityState");
