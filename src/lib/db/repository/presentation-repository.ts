@@ -537,7 +537,7 @@ function buildPublicProjection(
               question: questionText,
               answer: {
                 kind: "selected",
-                value: selectedValid ? (question.choices[selectedIndex as number] ?? null) : null,
+                value: selectedValid ? question.choices[selectedIndex as number] : null,
               },
               correctness:
                 selectedValid && correctValid

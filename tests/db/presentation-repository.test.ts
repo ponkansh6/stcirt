@@ -1797,6 +1797,63 @@ describe("presentation repository", () => {
     await expect(getParticipantResult(1)).resolves.toEqual({ state: "unavailable" });
   });
 
+  it("marks malformed winner question snapshots unavailable", async () => {
+    await addFreeTextProjectionFixture("another-free-text-question");
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ state: "first" })
+      .where(eq(schema.presentationSessions.id, 1));
+    // JSON persistence stores null slots, which must fail dense string-choice
+    // validation before the answer can be projected.
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ choices: ["Only choice", null] as never })
+      .where(eq(schema.presentationQuestions.position, 0));
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "first",
+      winners: [
+        {
+          questionResults: [
+            {
+              question: null,
+              answer: { kind: "unavailable" },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("preserves a null free-text answer as an unavailable value in winner results", async () => {
+    await addFreeTextProjectionFixture("another-free-text-question");
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ state: "first" })
+      .where(eq(schema.presentationSessions.id, 1));
+    const [entry] = await testDb.db.select().from(schema.presentationEntries);
+    const [snapshot] = entry!.answers;
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: [{ ...snapshot!, freeText: null }] })
+      .where(eq(schema.presentationEntries.participantId, 1));
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "first",
+      winners: [
+        {
+          questionResults: [
+            {
+              question: "Free-text question",
+              answer: { kind: "freeText", value: null },
+              scoreStatus: "unavailable",
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   it("rejects selected answers for a free-text question and free-text snapshots without text", async () => {
     await addFreeTextProjectionFixture("another-free-text-question");
     const [entry] = await testDb.db.select().from(schema.presentationEntries);

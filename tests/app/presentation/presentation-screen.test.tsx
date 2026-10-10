@@ -1352,6 +1352,24 @@ describe("presentation projection and presenter progression", () => {
                 answer: { kind: "freeText", value: "回答" },
                 normalizedScore: null,
               },
+              {
+                position: 7,
+                question: "不正解の設問",
+                answer: { kind: "selected", value: "赤" },
+                correctness: "incorrect",
+              },
+              {
+                position: 8,
+                question: "正誤を確認できない設問",
+                answer: { kind: "selected", value: null },
+                correctness: "unavailable",
+              },
+              {
+                position: 9,
+                question: "回答を確認できない自由記述",
+                answer: { kind: "freeText", value: null },
+                normalizedScore: 0.25,
+              },
             ],
           },
         ],
@@ -1368,13 +1386,17 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.getByText("設問を確認できません")).toBeInTheDocument();
     expect(screen.getByText("評価 0")).toBeInTheDocument();
     expect(screen.getByText("未評価")).toBeInTheDocument();
+    expect(screen.getByText("赤（不正解）")).toBeInTheDocument();
+    expect(screen.getByText("回答を確認できません（正誤を確認できません）")).toBeInTheDocument();
+    expect(screen.getAllByText("回答を確認できません")).toHaveLength(2);
+    expect(screen.getByText("評価 0.25")).toBeInTheDocument();
     const questionLabels = Array.from(
       screen
         .getByRole("region", { name: "第3位の勝者一覧" })
         .querySelectorAll("[class*='winnerQuestionLabel']"),
       (label) => label.textContent,
     );
-    expect(questionLabels).toEqual(["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7"]);
+    expect(questionLabels).toEqual(["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10"]);
   });
 
   it("keeps initial and previous-stage rank renders static", async () => {
