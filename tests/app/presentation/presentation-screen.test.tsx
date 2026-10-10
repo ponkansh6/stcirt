@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PresentationScreen from "@/app/presentation/presentation-screen";
 import { installPresentationFitLayout } from "./presentation-fit-test-helpers";
@@ -105,21 +105,21 @@ function setup(
   };
   const slideProjection = (state: DeckProjectionFixture["state"]): DeckProjectionFixture =>
     state === "question" || state === "answer"
-      ? ({
-          ...(projection as Record<string, unknown>),
+      ? {
           state,
-          ...(state === "answer" &&
-          typeof (projection as Record<string, unknown>).question === "object" &&
-          (projection as Record<string, unknown>).question !== null
-            ? {
-                question: {
-                  ...((projection as Record<string, unknown>).question as Record<string, unknown>),
-                  correctIndex: 0,
-                  explanation: "ふたりの思い出です。",
-                },
-              }
-            : {}),
-        } as DeckProjectionFixture)
+          question: {
+            id: 1,
+            ordinal: 1,
+            total: 5,
+            question: "思い出の場所は？",
+            choices: ["海", "山"],
+            ...(typeof (projection as Record<string, unknown>).question === "object" &&
+            (projection as Record<string, unknown>).question !== null
+              ? ((projection as Record<string, unknown>).question as Record<string, unknown>)
+              : {}),
+            ...(state === "answer" ? { correctIndex: 0, explanation: "ふたりの思い出です。" } : {}),
+          },
+        }
       : state === "third" || state === "second" || state === "first"
         ? { state, winners: [] }
         : { state };
@@ -593,7 +593,16 @@ describe("presentation projection and presenter progression", () => {
   });
 
   it("fails closed when the presenter deck response is malformed", async () => {
-    await expectDeckLoadFailureToBeInert(async () => response({ slides: null }));
+    await expectDeckLoadFailureToBeInert(async () => response({ slides: [null] }));
+  });
+
+  it("reaches the deck parser for a slide with an invalid projection", async () => {
+    await expectDeckLoadFailureToBeInert(async () =>
+      response({
+        snapshotRevision: 1,
+        slides: [{ state: "question", questionIndex: 0, projection: null }],
+      }),
+    );
   });
 
   it("fails closed when the presenter deck response contains invalid JSON", async () => {
@@ -646,7 +655,16 @@ describe("presentation projection and presenter progression", () => {
             {
               state: "question",
               questionIndex: 1,
-              projection: { state: "question", question: { question: "別の質問" } },
+              projection: {
+                state: "question",
+                question: {
+                  id: 2,
+                  ordinal: 2,
+                  total: 5,
+                  question: "別の質問",
+                  choices: ["A"],
+                },
+              },
             },
           ],
         }),
@@ -678,7 +696,13 @@ describe("presentation projection and presenter progression", () => {
                     questionIndex: 1,
                     projection: {
                       state: "question",
-                      question: { question: "古いカーソル" },
+                      question: {
+                        id: 2,
+                        ordinal: 2,
+                        total: 5,
+                        question: "古いカーソル",
+                        choices: ["回答A"],
+                      },
                     },
                   },
                 ]
@@ -689,6 +713,7 @@ describe("presentation projection and presenter progression", () => {
                     projection: {
                       state: "question",
                       question: {
+                        id: 1,
                         ordinal: 1,
                         total: 5,
                         question: "再取得した質問",
@@ -708,85 +733,57 @@ describe("presentation projection and presenter progression", () => {
     expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(2);
   });
 
-  it("discards a pending replacement deck after the presenter session expires", async () => {
+  it("clears the private presenter deck when a scheduled controls GET returns 401", async () => {
     vi.useFakeTimers();
-    let resolveReplacementDeck!: (value: Response) => void;
-    const replacementDeck = new Promise<Response>((resolve) => {
-      resolveReplacementDeck = resolve;
-    });
     let sessionReads = 0;
-    let deckReads = 0;
+    let controlsReads = 0;
     const api = setup({
       sessionGetter: async () => {
         sessionReads += 1;
-        return response({ authenticated: sessionReads === 1 });
+        return response({ authenticated: true });
       },
-      deckGetter: async () => {
-        deckReads += 1;
-        if (deckReads === 1)
-          return response({
-            slides: [
-              {
-                state: "question",
-                questionIndex: 1,
-                projection: { state: "question", question: { question: "違うカーソル" } },
-              },
-            ],
-          });
-        return replacementDeck;
+      controlsGetter: async () => {
+        controlsReads += 1;
+        return controlsReads === 1
+          ? response({
+              state: "question",
+              version: 0,
+              snapshotRevision: 1,
+              questionIndex: 0,
+              questionCount: 5,
+              projectionHidden: false,
+            })
+          : response({}, 401);
       },
     });
     const view = render(<PresentationScreen presenterRequested />);
 
     try {
       await settled();
-      expect(deckReads).toBe(2);
-      expect(screen.getByText("スライドを読み込んでいます")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+      expect(sessionReads).toBe(1);
+      expect(controlsReads).toBe(1);
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2500);
       });
       await settled();
-      expect(sessionReads).toBe(2);
+      expect(sessionReads).toBe(1);
+      expect(controlsReads).toBe(2);
       expect(screen.getByText("ただいま休憩中です")).toBeInTheDocument();
-
-      await act(async () => {
-        resolveReplacementDeck(
-          response({
-            slides: [
-              {
-                state: "question",
-                questionIndex: 0,
-                projection: {
-                  state: "question",
-                  question: { ordinal: 1, total: 5, question: "古い再取得結果", choices: ["A"] },
-                },
-              },
-            ],
-          }),
-        );
-        await replacementDeck;
-      });
-      await settled();
-
       expect(screen.getByText("ただいま休憩中です")).toBeInTheDocument();
-      expect(screen.queryByText("古い再取得結果")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "思い出の場所は？" })).not.toBeInTheDocument();
       expect(
         api.calls.filter(
           ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
         ),
       ).toHaveLength(0);
     } finally {
-      resolveReplacementDeck(response({ slides: [] }));
-      await act(async () => {
-        await replacementDeck;
-      });
-      await settled();
       view.unmount();
     }
   });
 
-  it("uses the newest controls when an older deck refresh finishes late", async () => {
+  it("does not overlap a controls refresh while a deck load is pending", async () => {
     vi.useFakeTimers();
     let resolveDeck!: (value: Response) => void;
     const deckPending = new Promise<Response>((resolve) => {
@@ -829,7 +826,7 @@ describe("presentation projection and presenter progression", () => {
         await vi.advanceTimersByTimeAsync(2500);
       });
       await settled();
-      expect(controlsReads).toBe(2);
+      expect(controlsReads).toBe(1);
 
       await act(async () => {
         resolveDeck(
@@ -840,20 +837,12 @@ describe("presentation projection and presenter progression", () => {
                 questionIndex: 0,
                 projection: {
                   state: "question",
-                  question: { ordinal: 1, total: 5, question: "質問", choices: ["A"] },
-                },
-              },
-              {
-                state: "answer",
-                questionIndex: 0,
-                projection: {
-                  state: "answer",
                   question: {
+                    id: 1,
                     ordinal: 1,
                     total: 5,
-                    question: "最新controlsの回答",
+                    question: "質問",
                     choices: ["A"],
-                    correctIndex: 0,
                   },
                 },
               },
@@ -863,8 +852,7 @@ describe("presentation projection and presenter progression", () => {
         await deckPending;
       });
       await settled();
-      expect(screen.getByText("正解")).toBeInTheDocument();
-      expect(screen.getByText("最新controlsの回答")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "質問" })).toBeInTheDocument();
     } finally {
       resolveDeck(response({ slides: [] }));
       await act(async () => {
@@ -874,6 +862,180 @@ describe("presentation projection and presenter progression", () => {
       view.unmount();
     }
   });
+
+  it("ignores a controls response invalidated when presenter mode is disabled", async () => {
+    vi.useFakeTimers();
+    let controlsReads = 0;
+    let resolveControls!: (value: Response) => void;
+    const pendingControls = new Promise<Response>((resolve) => {
+      resolveControls = resolve;
+    });
+    const api = setup({
+      controlsGetter: async () => {
+        controlsReads += 1;
+        return controlsReads === 1
+          ? response({
+              state: "question",
+              version: 0,
+              snapshotRevision: 1,
+              questionIndex: 0,
+              questionCount: 5,
+              projectionHidden: false,
+            })
+          : pendingControls;
+      },
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+
+    try {
+      await settled();
+      expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500);
+      });
+      expect(controlsReads).toBe(2);
+
+      view.rerender(<PresentationScreen presenterRequested={false} />);
+      await act(async () => {
+        resolveControls(
+          response({
+            state: "answer",
+            version: 1,
+            snapshotRevision: 1,
+            questionIndex: 0,
+            questionCount: 5,
+            projectionHidden: false,
+          }),
+        );
+        await pendingControls;
+      });
+      await settled();
+
+      expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+      expect(screen.queryByText("THE STORY BEHIND IT")).not.toBeInTheDocument();
+      expect(api.calls.some(({ path }) => path === "/api/admin/presentation/deck")).toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("ignores a deck response invalidated when presenter mode is disabled", async () => {
+    let resolveDeck!: (value: Response) => void;
+    const pendingDeck = new Promise<Response>((resolve) => {
+      resolveDeck = resolve;
+    });
+    const api = setup({ deckGetter: () => pendingDeck });
+    const view = render(<PresentationScreen presenterRequested />);
+
+    try {
+      expect(await screen.findByText("スライドを読み込んでいます")).toBeInTheDocument();
+      view.rerender(<PresentationScreen presenterRequested={false} />);
+
+      await act(async () => {
+        resolveDeck(
+          response({
+            snapshotRevision: 1,
+            slides: [
+              {
+                state: "question",
+                questionIndex: 0,
+                projection: {
+                  state: "answer",
+                  question: {
+                    id: 1,
+                    ordinal: 1,
+                    total: 5,
+                    question: "思い出の場所は？",
+                    choices: ["海", "山"],
+                    correctIndex: 0,
+                    explanation: "プレゼンター専用の古い回答",
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        await pendingDeck;
+      });
+      await settled();
+
+      expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+      expect(screen.queryByText("THE STORY BEHIND IT")).not.toBeInTheDocument();
+      expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(
+        1,
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("ignores a rejected deck load after presenter mode is disabled", async () => {
+    let rejectDeck!: (error: Error) => void;
+    const pendingDeck = new Promise<Response>((_resolve, reject) => {
+      rejectDeck = reject;
+    });
+    const api = setup({ deckGetter: () => pendingDeck });
+    const view = render(<PresentationScreen presenterRequested />);
+
+    try {
+      expect(await screen.findByText("スライドを読み込んでいます")).toBeInTheDocument();
+      view.rerender(<PresentationScreen presenterRequested={false} />);
+
+      await act(async () => {
+        rejectDeck(new Error("stale deck request failed"));
+        await pendingDeck.catch(() => undefined);
+      });
+      await settled();
+
+      expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+      expect(screen.queryByText("スライドを読み込めませんでした")).not.toBeInTheDocument();
+      expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(
+        1,
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it.each([
+    { label: "authenticated", makeResponse: () => response({ authenticated: true }) },
+    { label: "unauthenticated", makeResponse: () => response({}, 401) },
+  ])(
+    "keeps the public slide when a stale $label session response resolves after presenter mode is disabled",
+    async ({ makeResponse }) => {
+      let resolveSession!: (value: Response) => void;
+      const pendingSession = new Promise<Response>((resolve) => {
+        resolveSession = resolve;
+      });
+      const api = setup({ sessionGetter: () => pendingSession });
+      const view = render(<PresentationScreen presenterRequested />);
+
+      try {
+        await waitFor(() => {
+          expect(api.calls.some(({ path }) => path === "/api/admin/session")).toBe(true);
+        });
+        view.rerender(<PresentationScreen presenterRequested={false} />);
+        await settled();
+        expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+
+        await act(async () => {
+          resolveSession(makeResponse());
+          await pendingSession;
+        });
+        await settled();
+
+        expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+        expect(api.calls.filter(({ path }) => path === "/api/admin/session")).toHaveLength(1);
+        expect(
+          api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls"),
+        ).toHaveLength(0);
+        expect(api.calls.some(({ path }) => path === "/api/admin/presentation/deck")).toBe(false);
+      } finally {
+        view.unmount();
+      }
+    },
+  );
 
   it("renders a rank slide without winners statically", async () => {
     const api = setup({
@@ -933,15 +1095,34 @@ describe("presentation projection and presenter progression", () => {
       );
       expect(
         api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls"),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
 
       await act(async () => {
-        resolveDeck(response({ slides: [] }));
+        resolveDeck(
+          response({
+            slides: [
+              {
+                state: "question",
+                questionIndex: 0,
+                projection: {
+                  state: "question",
+                  question: {
+                    id: 1,
+                    ordinal: 1,
+                    total: 5,
+                    question: "初期カーソルの質問",
+                    choices: ["A"],
+                  },
+                },
+              },
+            ],
+          }),
+        );
         await deckPending;
       });
       await settled();
       expect(screen.queryByText("スライドを読み込んでいます")).not.toBeInTheDocument();
-      expect(screen.getByRole("main")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "初期カーソルの質問" })).toBeInTheDocument();
     } finally {
       await act(async () => {
         resolveDeck(response({ slides: [] }));
@@ -1074,7 +1255,13 @@ describe("presentation projection and presenter progression", () => {
                     questionIndex: 0,
                     projection: {
                       state: "question",
-                      question: { ordinal: 1, total: 5, question: "現在の質問", choices: ["A"] },
+                      question: {
+                        id: 1,
+                        ordinal: 1,
+                        total: 5,
+                        question: "現在の質問",
+                        choices: ["A"],
+                      },
                     },
                   },
                 ]
@@ -1085,6 +1272,7 @@ describe("presentation projection and presenter progression", () => {
                     projection: {
                       state: "answer",
                       question: {
+                        id: 2,
                         ordinal: 2,
                         total: 5,
                         question: "同期後カーソル",
@@ -1343,13 +1531,13 @@ describe("presentation projection and presenter progression", () => {
               {
                 position: 5,
                 question: "保存済みの0点",
-                answer: { kind: "freeText", value: "回答" },
+                answer: { kind: "freeText", value: "0点の回答" },
                 normalizedScore: 0,
               },
               {
                 position: 6,
                 question: "未評価の設問",
-                answer: { kind: "freeText", value: "回答" },
+                answer: { kind: "freeText", value: "未採点の回答" },
                 normalizedScore: null,
               },
               {
@@ -1377,23 +1565,55 @@ describe("presentation projection and presenter progression", () => {
       admin: { state: "third", questionIndex: 5, questionCount: 5 },
     });
     render(<PresentationScreen />);
-    expect(await screen.findByText("一番の問題")).toBeInTheDocument();
-    expect(screen.getByText("青（正解）")).toBeInTheDocument();
+    const region = await screen.findByRole("region", { name: "第3位の勝者一覧" });
+    expect(within(region).getByText("Q1")).toBeInTheDocument();
+    expect(within(region).getByText("Q8")).toBeInTheDocument();
+    expect(within(region).getByText("Q9")).toBeInTheDocument();
+    const correctRow = within(region).getByText("Q1").closest("li") as HTMLLIElement;
+    expect(within(correctRow).getByLabelText("正解")).toBeInTheDocument();
+    expect(within(correctRow).getByText("○")).toBeInTheDocument();
+    expect(within(region).getByText("Q2").parentElement).toHaveTextContent("—");
+    expect(within(region).getByText("Q3").parentElement).toHaveTextContent("—");
+    expect(within(region).getByText("Q4").parentElement).toHaveTextContent("—");
+    const incorrectRow = within(region).getByText("Q8").closest("li") as HTMLLIElement;
+    expect(within(incorrectRow).getByLabelText("不正解")).toBeInTheDocument();
+    expect(within(incorrectRow).getByText("×")).toBeInTheDocument();
+    const unavailableRow = within(region).getByText("Q9").closest("li") as HTMLLIElement;
+    expect(within(unavailableRow).getByLabelText("正誤を確認できません")).toBeInTheDocument();
+    expect(within(unavailableRow).getByText("—")).toBeInTheDocument();
+    const missingFreeTextRow = within(region).getByText("Q10").closest("li") as HTMLLIElement;
+    expect(within(missingFreeTextRow).getByText("回答を確認できません")).toBeInTheDocument();
+    expect(within(missingFreeTextRow).getByText("得点 0.25")).toBeInTheDocument();
+    for (const questionLabel of ["Q1", "Q2", "Q3", "Q4", "Q8", "Q9"]) {
+      const nonFreeTextRow = within(region).getByText(questionLabel).closest("li") as HTMLLIElement;
+      expect(within(nonFreeTextRow).queryByText("回答を確認できません")).not.toBeInTheDocument();
+    }
     expect(screen.getByText("保存された回答")).toBeInTheDocument();
-    expect(screen.getByText("評価を確認できません")).toBeInTheDocument();
-    expect(screen.getByText("未回答")).toBeInTheDocument();
-    expect(screen.getByText("過去形式の回答")).toBeInTheDocument();
-    expect(screen.getByText("設問を確認できません")).toBeInTheDocument();
-    expect(screen.getByText("評価 0")).toBeInTheDocument();
-    expect(screen.getByText("未評価")).toBeInTheDocument();
-    expect(screen.getByText("赤（不正解）")).toBeInTheDocument();
-    expect(screen.getByText("回答を確認できません（正誤を確認できません）")).toBeInTheDocument();
-    expect(screen.getAllByText("回答を確認できません")).toHaveLength(2);
-    expect(screen.getByText("評価 0.25")).toBeInTheDocument();
+    expect(screen.getByText("得点を確認できません")).toBeInTheDocument();
+    expect(screen.getByText("得点 0")).toBeInTheDocument();
+    expect(screen.getByText("未採点")).toBeInTheDocument();
+    expect(screen.getByText("0点の回答")).toBeInTheDocument();
+    expect(screen.getByText("未採点の回答")).toBeInTheDocument();
+    expect(screen.getByText("得点 0.25")).toBeInTheDocument();
+    for (const hiddenText of [
+      "一番の問題",
+      "未回答の設問",
+      "過去形式の設問",
+      "自由記述",
+      "保存済みの0点",
+      "未評価の設問",
+      "不正解の設問",
+      "正誤を確認できない設問",
+      "回答を確認できない自由記述",
+      "青",
+      "赤",
+      "未回答",
+      "過去形式の回答",
+    ]) {
+      expect(within(region).queryByText(hiddenText, { exact: true })).not.toBeInTheDocument();
+    }
     const questionLabels = Array.from(
-      screen
-        .getByRole("region", { name: "第3位の勝者一覧" })
-        .querySelectorAll("[class*='winnerQuestionLabel']"),
+      region.querySelectorAll("[class*='winnerQuestionLabel']"),
       (label) => label.textContent,
     );
     expect(questionLabels).toEqual(["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10"]);

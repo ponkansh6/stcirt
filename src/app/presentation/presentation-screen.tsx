@@ -134,6 +134,7 @@ type ScreenLock = {
 type WakeLockNavigator = Navigator & {
   wakeLock?: { request: (type: "screen") => Promise<ScreenLock> };
 };
+const POLL_TIMEOUT_MS = 8_000;
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
@@ -147,8 +148,12 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   );
 }
 
-async function getProjection(): Promise<ProjectionData> {
-  const response = await fetch("/api/presentation", { cache: "no-store", credentials: "omit" });
+async function getProjection(signal?: AbortSignal): Promise<ProjectionData> {
+  const response = await fetch("/api/presentation", {
+    cache: "no-store",
+    credentials: "omit",
+    signal,
+  });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const detail =
@@ -160,13 +165,62 @@ async function getProjection(): Promise<ProjectionData> {
         : "投影状態を取得できませんでした。";
     throw new Error(detail);
   }
+  if (!isProjectionData(payload)) throw new Error("投影状態を取得できませんでした。");
   return payload as ProjectionData;
 }
 
-async function getAdminControls(): Promise<AdminControls> {
+function isProjectionData(payload: unknown): payload is ProjectionData {
+  if (typeof payload !== "object" || payload === null || !("state" in payload)) return false;
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.state !== "string" ||
+    ![
+      "standby",
+      "not_started",
+      "question",
+      "answer",
+      "podium_preview",
+      "third",
+      "second",
+      "first",
+      "finished",
+    ].includes(value.state)
+  )
+    return false;
+  if (value.state === "question" || value.state === "answer") {
+    if (typeof value.question !== "object" || value.question === null) return false;
+    const question = value.question as Record<string, unknown>;
+    return (
+      (typeof question.id === "string" || typeof question.id === "number") &&
+      Number.isInteger(question.ordinal) &&
+      Number.isInteger(question.total) &&
+      typeof question.question === "string" &&
+      Array.isArray(question.choices) &&
+      question.choices.every((choice) => typeof choice === "string")
+    );
+  }
+  if (["third", "second", "first"].includes(value.state) && value.winners !== undefined) {
+    return (
+      Array.isArray(value.winners) &&
+      value.winners.every((winner) => {
+        if (typeof winner !== "object" || winner === null) return false;
+        const entry = winner as Record<string, unknown>;
+        return (
+          typeof entry.displayName === "string" &&
+          typeof entry.score === "number" &&
+          typeof entry.rank === "number"
+        );
+      })
+    );
+  }
+  return true;
+}
+
+async function getAdminControls(signal?: AbortSignal): Promise<AdminControls> {
   const response = await fetch("/api/admin/presentation?view=controls", {
     cache: "no-store",
     credentials: "same-origin",
+    signal,
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok)
@@ -176,10 +230,11 @@ async function getAdminControls(): Promise<AdminControls> {
   return controls;
 }
 
-async function getPresenterDeck(): Promise<PresenterDeck> {
+async function getPresenterDeck(signal?: AbortSignal): Promise<PresenterDeck> {
   const response = await fetch("/api/admin/presentation/deck", {
     cache: "no-store",
     credentials: "same-origin",
+    signal,
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok)
@@ -191,7 +246,17 @@ async function getPresenterDeck(): Promise<PresenterDeck> {
     !Array.isArray(payload.slides) ||
     !("snapshotRevision" in payload) ||
     !Number.isInteger(payload.snapshotRevision) ||
-    (payload.snapshotRevision as number) < 0
+    (payload.snapshotRevision as number) < 0 ||
+    !payload.slides.every((slide) => {
+      if (typeof slide !== "object" || slide === null) return false;
+      const item = slide as Record<string, unknown>;
+      return (
+        adminStates.includes(item.state as AdminState) &&
+        Number.isInteger(item.questionIndex) &&
+        (item.questionIndex as number) >= 0 &&
+        isProjectionData(item.projection)
+      );
+    })
   )
     throw new Error("スライドを読み込めませんでした。");
   return payload as unknown as PresenterDeck;
@@ -241,39 +306,42 @@ async function requestAdminAction(action: AdminAction, expectedSnapshotRevision:
 
 const rankTitle: Record<string, string> = { third: "第3位", second: "第2位", first: "第1位" };
 function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] }) {
-  const answerText = (result: WinnerQuestionResult) => {
-    if (result.answer.kind === "unanswered") return "未回答";
-    if (result.answer.kind === "legacy") return "過去形式の回答";
-    if (result.answer.kind === "unavailable") return "回答を確認できません";
-    if (result.answer.kind === "selected") {
-      const value = result.answer.value ?? "回答を確認できません";
-      const correctness =
-        result.correctness === "correct"
-          ? "正解"
-          : result.correctness === "incorrect"
-            ? "不正解"
-            : "正誤を確認できません";
-      return `${value}（${correctness}）`;
-    }
-    return result.answer.value === null ? "回答を確認できません" : result.answer.value;
-  };
   return (
     <ol className={styles.winnerQuestionResults} aria-label="設問別の回答">
       {results.map((result) => (
-        <li key={result.position}>
+        <li
+          key={result.position}
+          className={result.answer.kind === "freeText" ? styles.freeTextResult : undefined}
+        >
           <span className={styles.winnerQuestionLabel}>Q{result.position + 1}</span>
-          <span className={styles.winnerQuestionPrompt}>
-            {result.question ?? "設問を確認できません"}
-          </span>
           <span className={styles.winnerQuestionAnswer}>
-            {answerText(result)}
-            {result.answer.kind === "freeText" && (
-              <span className={styles.winnerQuestionScore}>
-                {result.scoreStatus === "unavailable"
-                  ? "評価を確認できません"
-                  : result.normalizedScore === null || result.normalizedScore === undefined
-                    ? "未評価"
-                    : `評価 ${result.normalizedScore}`}
+            {result.answer.kind === "freeText" ? (
+              <>
+                {result.answer.value ?? "回答を確認できません"}
+                <span className={styles.winnerQuestionScore}>
+                  {result.scoreStatus === "unavailable"
+                    ? "得点を確認できません"
+                    : result.normalizedScore === null || result.normalizedScore === undefined
+                      ? "未採点"
+                      : `得点 ${result.normalizedScore}`}
+                </span>
+              </>
+            ) : (
+              <span
+                className={styles.winnerQuestionMark}
+                aria-label={
+                  result.correctness === "correct"
+                    ? "正解"
+                    : result.correctness === "incorrect"
+                      ? "不正解"
+                      : "正誤を確認できません"
+                }
+              >
+                {result.correctness === "correct"
+                  ? "○"
+                  : result.correctness === "incorrect"
+                    ? "×"
+                    : "—"}
               </span>
             )}
           </span>
@@ -386,6 +454,7 @@ export default function PresentationScreen({
   const [presenterDeck, setPresenterDeck] = useState<PresenterDeck | null>(null);
   const [deckSyncPending, setDeckSyncPending] = useState(false);
   const [deckLoadError, setDeckLoadError] = useState(false);
+  const [pollError, setPollError] = useState(false);
   const presenterDeckRef = useRef<PresenterDeck | null>(null);
   const presenterDeckRequest = useRef<Promise<PresenterDeck> | null>(null);
   const wrapperRef = useRef<HTMLElement | null>(null);
@@ -403,6 +472,9 @@ export default function PresentationScreen({
   const suppressClick = useRef(false);
   const suppressClickTimer = useRef<number | undefined>(undefined);
   const adminSequence = useRef(0);
+  const presenterAuthenticated = useRef(false);
+  const adminPollAbort = useRef<AbortController | null>(null);
+  const adminPollFlight = useRef<Promise<void> | null>(null);
   const mutationInFlight = useRef(false);
   const mutationGeneration = useRef(0);
   const applyAdminControls = useCallback((controls: AdminControls | null) => {
@@ -417,164 +489,277 @@ export default function PresentationScreen({
     if (presenterRequested) return;
     let active = true;
     let timer = 0;
+    let controller: AbortController | null = null;
     const refresh = async () => {
       if (!active) return;
       if (mutationInFlight.current) {
         timer = window.setTimeout(refresh, 1400);
         return;
       }
+      controller = new AbortController();
+      const timeout = window.setTimeout(() => controller?.abort(), POLL_TIMEOUT_MS);
       try {
-        const next = await getProjection();
-        if (active) applyProjection(next);
+        const next = await getProjection(controller.signal);
+        if (active) {
+          applyProjection(next);
+          setPollError(false);
+        }
       } catch {
-        // Keep the last usable projection visible while the polling loop retries.
+        if (active) setPollError(true);
       } finally {
+        window.clearTimeout(timeout);
         if (active) timer = window.setTimeout(refresh, 1400);
       }
     };
     void refresh();
     return () => {
       active = false;
+      controller?.abort();
       window.clearTimeout(timer);
     };
   }, [applyProjection, presenterRequested]);
 
-  const refreshAdmin = useCallback(async () => {
-    const sequence = ++adminSequence.current;
-    let controls: AdminControls | null = null;
-    let loadingDeck = false;
-    try {
-      const sessionResponse = await fetch("/api/admin/session", {
-        cache: "no-store",
-        credentials: "same-origin",
-      });
-      const session = (await sessionResponse.json().catch(() => null)) as {
-        authenticated?: unknown;
-      } | null;
-      if (!sessionResponse.ok || session?.authenticated !== true) {
-        if (sequence === adminSequence.current) {
-          presenterDeckRef.current = null;
-          presenterDeckRequest.current = null;
-          setPresenterDeck(null);
-          applyAdminControls(null);
+  const performRefreshAdmin = useCallback(
+    async (checkSession = false) => {
+      const sequence = ++adminSequence.current;
+      const controller = new AbortController();
+      adminPollAbort.current = controller;
+      const timeout = window.setTimeout(() => controller.abort(), POLL_TIMEOUT_MS);
+      let controls: AdminControls | null = null;
+      let loadingDeck = false;
+      try {
+        if (checkSession || !presenterAuthenticated.current) {
+          const sessionResponse = await fetch("/api/admin/session", {
+            cache: "no-store",
+            credentials: "same-origin",
+            signal: controller.signal,
+          });
+          const session = (await sessionResponse.json().catch(() => null)) as {
+            authenticated?: unknown;
+          } | null;
+          if (sessionResponse.ok && typeof session?.authenticated !== "boolean")
+            throw new Error("管理者セッションを確認できませんでした。");
+          if (
+            sessionResponse.status === 401 ||
+            (sessionResponse.ok && session?.authenticated !== true)
+          ) {
+            if (sequence === adminSequence.current) {
+              presenterAuthenticated.current = false;
+              presenterDeckRef.current = null;
+              presenterDeckRequest.current = null;
+              setPresenterDeck(null);
+              applyAdminControls(null);
+              setDeckSyncPending(false);
+              setDeckLoadError(false);
+              setData({ state: "standby" });
+              setPollError(false);
+            }
+            return;
+          }
+          if (!sessionResponse.ok)
+            throw Object.assign(new Error("管理者セッションを確認できませんでした。"), {
+              status: sessionResponse.status,
+            });
+          if (sequence !== adminSequence.current) return;
+          presenterAuthenticated.current = true;
+        }
+        // Session checks return on unauthenticated outcomes or set this ref before continuing; ordinary polls run only after authentication.
+        /* v8 ignore if */
+        if (!presenterAuthenticated.current) return;
+        controls = await getAdminControls(controller.signal);
+        if (sequence !== adminSequence.current) return;
+        if (controls.state === "not_started") {
+          applyAdminControls(controls);
           setDeckSyncPending(false);
           setDeckLoadError(false);
-          setData({ state: "standby" });
+          setPollError(false);
+          setData({ state: "not_started" });
+          return;
         }
-        return;
-      }
-      controls = await getAdminControls();
-      if (sequence !== adminSequence.current) return;
-      if (controls.state === "not_started") {
-        applyAdminControls(controls);
-        setDeckSyncPending(false);
-        setDeckLoadError(false);
-        setData({ state: "not_started" });
-        return;
-      }
-      let deck = presenterDeckRef.current;
-      if (!deck || deck.snapshotRevision !== controls.snapshotRevision) {
-        presenterDeckRef.current = null;
-        setPresenterDeck(null);
-        loadingDeck = true;
-        setDeckSyncPending(true);
-        setDeckLoadError(false);
-        const request = presenterDeckRequest.current ?? getPresenterDeck();
-        presenterDeckRequest.current = request;
-        try {
-          deck = await request;
-        } finally {
-          if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
-        }
-        if (sequence !== adminSequence.current) return;
-        if (deck.snapshotRevision !== controls.snapshotRevision) {
+        let deck = presenterDeckRef.current;
+        if (!deck || deck.snapshotRevision !== controls.snapshotRevision) {
+          if (deck && deck.snapshotRevision !== controls.snapshotRevision) setData(null);
+          presenterDeckRef.current = null;
+          setPresenterDeck(null);
+          loadingDeck = true;
+          setDeckSyncPending(true);
+          setDeckLoadError(false);
+          const request = presenterDeckRequest.current ?? getPresenterDeck(controller.signal);
+          presenterDeckRequest.current = request;
+          try {
+            deck = await request;
+          } finally {
+            // Single-flight keeps this request current until its awaited fetch settles.
+            /* v8 ignore else */
+            if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
+          }
+          if (sequence !== adminSequence.current) return;
+          if (deck.snapshotRevision !== controls.snapshotRevision) {
+            setDeckSyncPending(false);
+            setDeckLoadError(true);
+            applyAdminControls(null);
+            setData(null);
+            return;
+          }
           setDeckSyncPending(false);
-          setDeckLoadError(true);
+          presenterDeckRef.current = deck;
+          setPresenterDeck(deck);
+          setDeckLoadError(false);
+        }
+        const projection = projectionForControl(deck, controls);
+        if (!projection) {
+          // A same-revision deck should contain every reachable slide. Its current
+          // slide cannot be trusted until both controls and deck are reconciled.
           applyAdminControls(null);
-          return;
-        }
-        setDeckSyncPending(false);
-        presenterDeckRef.current = deck;
-        setPresenterDeck(deck);
-        setDeckLoadError(false);
-      }
-      const projection = projectionForControl(deck, controls);
-      if (!projection) {
-        // A same-revision deck should contain every reachable slide. Refresh it
-        // once as recovery, while keeping controls disabled and dropping its view.
-        applyAdminControls(null);
-        presenterDeckRef.current = null;
-        setPresenterDeck(null);
-        setDeckSyncPending(true);
-        setDeckLoadError(false);
-        loadingDeck = true;
-        const request = getPresenterDeck();
-        presenterDeckRequest.current = request;
-        try {
-          deck = await request;
-        } finally {
-          if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
-        }
-        if (sequence !== adminSequence.current) return;
-        const recoveredProjection =
-          deck.snapshotRevision === controls.snapshotRevision
-            ? projectionForControl(deck, controls)
-            : null;
-        if (!recoveredProjection) {
+          presenterDeckRef.current = null;
+          setPresenterDeck(null);
+          setData(null);
+          setDeckSyncPending(true);
+          setDeckLoadError(false);
+          loadingDeck = true;
+          const request = getPresenterDeck(controller.signal);
+          presenterDeckRequest.current = request;
+          try {
+            deck = await request;
+          } finally {
+            // Single-flight keeps this request current until its awaited fetch settles.
+            /* v8 ignore else */
+            if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
+          }
+          if (sequence !== adminSequence.current) return;
+          const recoveredProjection =
+            deck.snapshotRevision === controls.snapshotRevision
+              ? projectionForControl(deck, controls)
+              : null;
+          if (!recoveredProjection) {
+            setDeckSyncPending(false);
+            setDeckLoadError(true);
+            return;
+          }
+          presenterDeckRef.current = deck;
+          setPresenterDeck(deck);
           setDeckSyncPending(false);
-          setDeckLoadError(true);
+          setDeckLoadError(false);
+          setData(recoveredProjection);
+          applyAdminControls(controls);
+          setPollError(false);
           return;
         }
-        presenterDeckRef.current = deck;
-        setPresenterDeck(deck);
-        setDeckSyncPending(false);
-        setDeckLoadError(false);
-        setData(recoveredProjection);
         applyAdminControls(controls);
-        return;
-      }
-      applyAdminControls(controls);
-      setDeckLoadError(false);
-      setData(projection);
-    } catch {
-      if (sequence === adminSequence.current) {
-        setDeckSyncPending(false);
-        if (loadingDeck) {
-          setDeckLoadError(true);
+        setDeckLoadError(false);
+        setPollError(false);
+        setData(projection);
+      } catch (error) {
+        if (sequence === adminSequence.current) {
+          if ((error as { status?: number })?.status === 401) {
+            presenterAuthenticated.current = false;
+            presenterDeckRef.current = null;
+            presenterDeckRequest.current = null;
+            setPresenterDeck(null);
+            applyAdminControls(null);
+            setDeckSyncPending(false);
+            setDeckLoadError(false);
+            setData({ state: "standby" });
+            setPollError(false);
+          } else {
+            setPollError(true);
+            if (loadingDeck && !presenterDeckRef.current) {
+              setDeckSyncPending(false);
+              setDeckLoadError(true);
+            }
+          }
         }
-        applyAdminControls(null);
+      } finally {
+        window.clearTimeout(timeout);
+        // Single-flight keeps this invocation as the current controller until it finishes.
+        /* v8 ignore else */
+        if (adminPollAbort.current === controller) adminPollAbort.current = null;
       }
-    }
-  }, [applyAdminControls]);
+    },
+    [applyAdminControls],
+  );
+
+  const refreshAdmin = useCallback(
+    (checkSession = false): Promise<void> => {
+      if (adminPollFlight.current) {
+        const current = adminPollFlight.current;
+        // Timer polls await the prior flight, while visible refreshes set checkSession.
+        /* v8 ignore else */
+        if (checkSession) return current.then(() => refreshAdmin(true));
+        // Ordinary timer polls await their prior flight before scheduling, so no public caller joins here with checkSession=false.
+        /* v8 ignore next */
+        return current;
+      }
+      const pending = performRefreshAdmin(checkSession);
+      adminPollFlight.current = pending;
+      const clearFlight = () => {
+        // Single-flight keeps this promise in the slot until its cleanup runs.
+        /* v8 ignore else */
+        if (adminPollFlight.current === pending) adminPollFlight.current = null;
+      };
+      void pending.then(clearFlight, clearFlight);
+      return pending;
+    },
+    [performRefreshAdmin],
+  );
 
   useEffect(() => {
     if (!presenterRequested) {
+      presenterAuthenticated.current = false;
       applyAdminControls(null);
       setDeckSyncPending(false);
       setDeckLoadError(false);
+      setPollError(false);
       return;
     }
+    setPollError(false);
     let active = true;
-    const refresh = async () => {
+    let timer: number | undefined;
+    async function refresh() {
+      // Cleanup clears the scheduled timer before an unmounted poll callback can run.
+      /* v8 ignore if */
       if (!active) return;
+      // Scheduling and visibility changes prevent this guard from being reached in these states.
+      /* v8 ignore if */
+      if (document.visibilityState === "hidden" || !presenterAuthenticated.current) return;
       if (!mutationInFlight.current) await refreshAdmin();
+      schedulePoll();
+    }
+    function schedulePoll() {
+      if (!active || document.visibilityState === "hidden" || !presenterAuthenticated.current)
+        return;
+      timer = window.setTimeout(() => void refresh(), 2500);
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        if (timer !== undefined) window.clearTimeout(timer);
+        return;
+      }
+      if (timer !== undefined) window.clearTimeout(timer);
+      void refreshAdmin(true).then(schedulePoll);
     };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 2500);
+    void refreshAdmin(true).then(schedulePoll);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
-      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      adminSequence.current += 1;
+      adminPollAbort.current?.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [applyAdminControls, presenterRequested, refreshAdmin]);
 
   const recoverUnauthorized = useCallback(() => {
     adminSequence.current += 1;
+    presenterAuthenticated.current = false;
+    adminPollAbort.current?.abort();
     applyAdminControls(null);
     presenterDeckRef.current = null;
     presenterDeckRequest.current = null;
     setPresenterDeck(null);
     setDeckSyncPending(false);
     setDeckLoadError(false);
+    setPollError(false);
     setData({ state: "standby" });
   }, [applyAdminControls]);
 
@@ -597,20 +782,23 @@ export default function PresentationScreen({
       if (!currentControls || !currentDeck || mutationInFlight.current) return;
       requestFullscreenForIntent();
       const generation = ++mutationGeneration.current;
-      // Any poll already in flight predates this mutation and must not win later.
-      adminSequence.current += 1;
       mutationInFlight.current = true;
-      const currentSlideIndex = currentDeck.slides.findIndex(
-        (slide) => slide === slideForControl(currentDeck, currentControls),
-      );
-      const optimisticSlide =
-        currentSlideIndex < 0
-          ? /* v8 ignore next */ undefined // Unreachable: operate requires an aligned controls/deck cursor.
-          : currentDeck.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
-      if (optimisticSlide) {
-        setData(optimisticSlide.projection);
-      }
       try {
+        // Let any active poll finish before starting the mutation. Its result is
+        // authoritative for the cursor used by this action.
+        await adminPollFlight.current;
+        const currentControls = adminControlsRef.current;
+        const currentDeck = presenterDeckRef.current;
+        if (!currentControls || !currentDeck) return;
+        adminSequence.current += 1;
+        const currentSlideIndex = currentDeck.slides.findIndex(
+          (slide) => slide === slideForControl(currentDeck, currentControls),
+        );
+        const optimisticSlide =
+          currentSlideIndex < 0
+            ? /* v8 ignore next */ undefined // Unreachable: operate requires an aligned controls/deck cursor.
+            : currentDeck.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
+        if (optimisticSlide) setData(optimisticSlide.projection);
         const confirmedControls = await requestAdminAction(
           action,
           currentControls.snapshotRevision,
@@ -1046,6 +1234,15 @@ export default function PresentationScreen({
           </div>
         </div>
       </div>
+      {pollError && (
+        <p
+          role="status"
+          className={styles.subtitle}
+          style={{ position: "fixed", top: 12, right: 16, zIndex: 40, margin: 0 }}
+        >
+          接続を確認しています。自動で再試行します
+        </p>
+      )}
     </main>
   );
 }

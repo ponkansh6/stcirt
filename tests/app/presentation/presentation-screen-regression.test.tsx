@@ -69,11 +69,11 @@ function installApi(
     projection?: Projection;
     actionProjection?: Projection;
     actionAdmin?: Record<string, unknown>;
-    projectionResponse?: () => Promise<Response>;
+    projectionResponse?: (signal?: AbortSignal) => Promise<Response>;
     actionResponse?: () => Promise<Response>;
     admin?: Record<string, unknown>;
-    adminResponse?: () => Promise<Response>;
-    sessionResponse?: () => Promise<Response>;
+    adminResponse?: (signal?: AbortSignal) => Promise<Response>;
+    sessionResponse?: (signal?: AbortSignal) => Promise<Response>;
     authenticated?: boolean;
     actionError?: number;
     visibilityError?: number;
@@ -122,10 +122,12 @@ function installApi(
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     if (path === "/api/presentation")
-      return options.projectionResponse ? options.projectionResponse() : response(projection);
+      return options.projectionResponse
+        ? options.projectionResponse(init?.signal ?? undefined)
+        : response(projection);
     if (path === "/api/admin/session")
       return options.sessionResponse
-        ? options.sessionResponse()
+        ? options.sessionResponse(init?.signal ?? undefined)
         : response({ authenticated: options.authenticated ?? true });
     if (path === "/api/admin/presentation" && init?.method === "POST") {
       const action = JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -181,7 +183,9 @@ function installApi(
       return response({});
     }
     if (path === "/api/admin/presentation?view=controls")
-      return options.adminResponse ? options.adminResponse() : response(admin);
+      return options.adminResponse
+        ? options.adminResponse(init?.signal ?? undefined)
+        : response(admin);
     if (path === "/api/admin/presentation/deck")
       return options.deckResponse
         ? options.deckResponse()
@@ -233,8 +237,17 @@ function installApi(
 
 async function flush() {
   await act(async () => {
-    for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    for (let index = 0; index < 24; index += 1) await Promise.resolve();
   });
+}
+
+function observePresenterControls() {
+  const addEventListener = vi.spyOn(window, "addEventListener");
+  return async () => {
+    await flush();
+    expect(addEventListener).toHaveBeenCalledWith("keydown", expect.any(Function));
+    addEventListener.mockRestore();
+  };
 }
 
 describe("PresentationScreen", () => {
@@ -249,6 +262,7 @@ describe("PresentationScreen", () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -260,7 +274,27 @@ describe("PresentationScreen", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/presentation", {
       cache: "no-store",
       credentials: "omit",
+      signal: expect.any(AbortSignal),
     });
+  });
+
+  it("keeps public projection polling active while the document is hidden", async () => {
+    vi.useFakeTimers();
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/presentation") return response({ state: "not_started" });
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PresentationScreen />);
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(1400));
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === "/api/presentation"),
+    ).toHaveLength(2);
+    if (originalVisibility) Object.defineProperty(document, "visibilityState", originalVisibility);
+    else Reflect.deleteProperty(document, "visibilityState");
   });
 
   it("fits natural content before paint and expands again when its natural height shrinks", async () => {
@@ -407,6 +441,31 @@ describe("PresentationScreen", () => {
     expect(screen.getByText("ただいま休憩中です")).toBeInTheDocument();
   });
 
+  it("keeps the displayed stage when a later public projection payload is invalid", async () => {
+    vi.useFakeTimers();
+    let projectionCalls = 0;
+    installApi({
+      projectionResponse: async () => {
+        projectionCalls += 1;
+        return projectionCalls === 1
+          ? response({ state: "question", question })
+          : response({ state: "unknown" });
+      },
+    });
+    render(<PresentationScreen />);
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(1400));
+    await flush();
+
+    expect(projectionCalls).toBe(2);
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "接続を確認しています。自動で再試行します",
+    );
+  });
+
   it("does not start a queued projection poll after unmount", async () => {
     vi.useFakeTimers();
     const api = installApi({ projection: { state: "standby" } });
@@ -420,6 +479,55 @@ describe("PresentationScreen", () => {
     expect(
       api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/presentation"),
     ).toHaveLength(1);
+  });
+
+  it("aborts a timed out public projection poll and retains the last rendered slide", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    let activeSignal: AbortSignal | undefined;
+    const api = installApi({
+      projection: { state: "question", question },
+      projectionResponse: (signal) => {
+        reads += 1;
+        if (reads === 1) return Promise.resolve(response({ state: "question", question }));
+        activeSignal = signal;
+        return new Promise<Response>(() => {});
+      },
+    });
+    const view = render(<PresentationScreen />);
+    try {
+      await flush();
+      expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+
+      await act(async () => vi.advanceTimersByTimeAsync(1400));
+      await flush();
+      expect(reads).toBe(2);
+      expect(activeSignal?.aborted).toBe(false);
+
+      await act(async () => vi.advanceTimersByTimeAsync(8000));
+      expect(activeSignal?.aborted).toBe(true);
+      expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+      expect(
+        api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/presentation"),
+      ).toHaveLength(2);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("aborts an in-flight public projection request when unmounted", async () => {
+    let activeSignal: AbortSignal | undefined;
+    installApi({
+      projectionResponse: (signal) => {
+        activeSignal = signal;
+        return new Promise<Response>(() => {});
+      },
+    });
+    const view = render(<PresentationScreen />);
+    await flush();
+    expect(activeSignal?.aborted).toBe(false);
+    view.unmount();
+    expect(activeSignal?.aborted).toBe(true);
   });
 
   it("ignores a queued projection callback invoked after unmount", async () => {
@@ -555,6 +663,102 @@ describe("PresentationScreen", () => {
     expect(api.actions).toHaveLength(0);
   });
 
+  it("keeps the displayed stage when the presenter deck payload is invalid", async () => {
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question" }),
+      deckResponse: async () =>
+        response({
+          snapshotRevision: 1,
+          questionCount: 2,
+          questionIndex: 0,
+          slides: [{}],
+        }),
+    });
+    const view = render(<PresentationScreen />);
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+
+    view.rerender(<PresentationScreen presenterRequested />);
+    await flush();
+
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "スライドを読み込めませんでした" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("接続を確認しています。自動で再試行します").length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it("rejects a deck with a malformed winner projection", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "third", questionIndex: 0 }),
+      deckResponse: async () =>
+        response({
+          snapshotRevision: 1,
+          questionCount: 2,
+          questionIndex: 0,
+          slides: [
+            {
+              state: "third",
+              questionIndex: 0,
+              projection: {
+                state: "third",
+                winners: [{ displayName: "不正な勝者", score: "10", rank: 3 }],
+              },
+            },
+          ],
+        }),
+    });
+
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    expect(
+      screen.getByRole("heading", { name: "スライドを読み込めませんでした" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("不正な勝者")).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(0);
+  });
+
+  it.each([
+    ["null", null],
+    ["primitive", 7],
+  ])("rejects a deck whose winner entry is %s", async (_description, winner) => {
+    const api = installApi({
+      projection: { state: "third", winners: [] },
+      admin: controls({ state: "third", questionIndex: 0 }),
+      deckResponse: async () =>
+        response({
+          snapshotRevision: 1,
+          questionCount: 2,
+          questionIndex: 0,
+          slides: [
+            {
+              state: "third",
+              questionIndex: 0,
+              projection: { state: "third", winners: [winner] },
+            },
+          ],
+        }),
+    });
+
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    expect(
+      screen.getByRole("heading", { name: "スライドを読み込めませんでした" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "第3位の勝者一覧" })).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(0);
+  });
+
   it("keeps presenter controls unavailable when admin state JSON is not an object", async () => {
     const api = installApi({
       projection: { state: "question", question },
@@ -585,6 +789,22 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
     expect(api.actions).toHaveLength(0);
+  });
+
+  it("retries after a non-auth admin session check error", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      sessionResponse: async () => response({}, false, 503),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/session", expect.anything());
+    expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
+    expect(api.fetchMock).not.toHaveBeenCalledWith(
+      "/api/admin/presentation?view=controls",
+      expect.anything(),
+    );
   });
 
   it("keeps presenter controls unavailable when the admin controls JSON is malformed", async () => {
@@ -645,9 +865,249 @@ describe("PresentationScreen", () => {
     );
   });
 
-  it("does not refresh admin controls when a queued interval callback runs after unmount", async () => {
+  it("checks presenter auth on entry and visibility return, polling controls without focus gating", async () => {
     vi.useFakeTimers();
-    const intervalSpy = vi.spyOn(window, "setInterval");
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    const api = installApi({
+      projectionResponse: async () => response({ state: "standby" }),
+      admin: controls({ state: "question", questionIndex: 0 }),
+    });
+    const count = (path: string) =>
+      api.fetchMock.mock.calls.filter(([input]) => String(input) === path).length;
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    expect(count("/api/admin/session")).toBe(1);
+    expect(count("/api/admin/presentation?view=controls")).toBe(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(count("/api/admin/session")).toBe(1);
+    expect(count("/api/admin/presentation?view=controls")).toBe(2);
+    act(() => window.dispatchEvent(new Event("focus")));
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(count("/api/admin/session")).toBe(1);
+    expect(count("/api/admin/presentation?view=controls")).toBe(3);
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(count("/api/admin/presentation?view=controls")).toBe(3);
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+    });
+    expect(count("/api/admin/session")).toBe(2);
+    expect(count("/api/admin/presentation?view=controls")).toBe(4);
+    if (originalVisibility) Object.defineProperty(document, "visibilityState", originalVisibility);
+    else Reflect.deleteProperty(document, "visibilityState");
+  });
+
+  it("does not schedule the first presenter poll when the page becomes hidden during entry", async () => {
+    vi.useFakeTimers();
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    const timeoutSpy = vi.spyOn(window, "setTimeout");
+    let resolveSession!: (value: Response) => void;
+    try {
+      installApi({
+        projection: { state: "question", question },
+        sessionResponse: () =>
+          new Promise<Response>((resolve) => {
+            resolveSession = resolve;
+          }),
+      });
+      render(<PresentationScreen presenterRequested />);
+      await flush();
+      expect(resolveSession).toBeDefined();
+
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      await act(async () => {
+        resolveSession(response({ authenticated: true }));
+        await Promise.resolve();
+      });
+      await flush();
+
+      expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 2500)).toBe(false);
+    } finally {
+      timeoutSpy.mockRestore();
+      if (originalVisibility)
+        Object.defineProperty(document, "visibilityState", originalVisibility);
+      else Reflect.deleteProperty(document, "visibilityState");
+    }
+  });
+
+  it("retains the current presenter slide across transient poll errors and recovers", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      adminResponse: async () => {
+        reads += 1;
+        if (reads === 2) return response({}, false, 503);
+        return response(controls({ state: reads >= 3 ? "answer" : "question", questionIndex: 0 }));
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(reads).toBe(3);
+    expect(screen.queryAllByRole("status")).toHaveLength(0);
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+  });
+
+  it("aborts a timed out presenter poll and resumes with the next poll", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    let timedOutSignal: AbortSignal | undefined;
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      adminResponse: async (signal) => {
+        reads += 1;
+        if (reads === 2) {
+          timedOutSignal = signal;
+          return new Promise<Response>((_resolve, reject) => {
+            signal?.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError")),
+            );
+          });
+        }
+        return response(controls({ state: reads > 2 ? "answer" : "question", questionIndex: 0 }));
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(reads).toBe(2);
+    await act(async () => vi.advanceTimersByTimeAsync(8000));
+    await flush();
+    expect(timedOutSignal?.aborted).toBe(true);
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(reads).toBe(3);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("clears the private presenter deck when controls polling returns 401", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      adminResponse: async () => {
+        reads += 1;
+        return reads === 1
+          ? response(controls({ state: "question", questionIndex: 0 }))
+          : response({}, false, 401);
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(screen.getByRole("heading", { name: "ただいま休憩中です" })).toBeInTheDocument();
+    expect(api.actions).toHaveLength(0);
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(reads).toBe(2);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+    });
+    expect(
+      api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/admin/session"),
+    ).toHaveLength(2);
+    expect(reads).toBe(3);
+  });
+
+  it("does not treat an invalid controls payload as auth loss and retries it", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      adminResponse: async () => {
+        reads += 1;
+        if (reads === 2) return malformedJsonResponse();
+        return response(controls({ state: reads > 2 ? "answer" : "question", questionIndex: 0 }));
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
+    expect(screen.queryByRole("heading", { name: "ただいま休憩中です" })).not.toBeInTheDocument();
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(reads).toBe(3);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("hides an old slide after controls confirm a new snapshot revision", async () => {
+    vi.useFakeTimers();
+    let controlsReads = 0;
+    let deckReads = 0;
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+      adminResponse: async () => {
+        controlsReads += 1;
+        return response(
+          controls({
+            state: "question",
+            questionIndex: 0,
+            snapshotRevision: controlsReads > 1 ? 2 : 1,
+          }),
+        );
+      },
+      deckResponse: async () => {
+        deckReads += 1;
+        if (deckReads > 1) return response({}, false, 503);
+        return response({
+          snapshotRevision: 1,
+          questionCount: 2,
+          questionIndex: 0,
+          slides: [deckSlide("question", 0, { state: "question", question })],
+        });
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(screen.queryByRole("heading", { name: question.question })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "スライドを読み込めませんでした" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not refresh admin controls when a queued poll callback runs after unmount", async () => {
+    vi.useFakeTimers();
+    const timeoutSpy = vi.spyOn(window, "setTimeout");
     const api = installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 1 }),
@@ -655,24 +1115,86 @@ describe("PresentationScreen", () => {
     try {
       const view = render(<PresentationScreen presenterRequested />);
       await flush();
-      const adminInterval = intervalSpy.mock.calls.find(([, delay]) => delay === 2500);
-      expect(adminInterval).toBeDefined();
-      if (!adminInterval) throw new Error("expected presenter refresh interval");
+      const adminTimeout = timeoutSpy.mock.calls.find(([, delay]) => delay === 2500);
+      expect(adminTimeout).toBeDefined();
+      if (!adminTimeout) throw new Error("expected presenter refresh timeout");
       view.unmount();
       const requestCount = api.fetchMock.mock.calls.filter(
         ([path]) => String(path) === "/api/admin/session",
       ).length;
-      act(() => (adminInterval[0] as () => void)());
+      act(() => (adminTimeout[0] as () => void)());
       await flush();
       expect(
         api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/admin/session"),
       ).toHaveLength(requestCount);
     } finally {
-      intervalSpy.mockRestore();
+      timeoutSpy.mockRestore();
     }
   });
 
-  it("keeps current presenter controls when an older session refresh later fails", async () => {
+  it("aborts the active presenter poll when unmounted", async () => {
+    vi.useFakeTimers();
+    let reads = 0;
+    let activeSignal: AbortSignal | undefined;
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      adminResponse: async (signal) => {
+        reads += 1;
+        if (reads === 2) {
+          activeSignal = signal;
+          return new Promise<Response>(() => {});
+        }
+        return response(controls({ state: "question", questionIndex: 0 }));
+      },
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(reads).toBe(2);
+    expect(activeSignal?.aborted).toBe(false);
+    view.unmount();
+    expect(activeSignal?.aborted).toBe(true);
+  });
+
+  it("ignores a pending cursor-recovery deck after presenter mode is disabled", async () => {
+    let deckReads = 0;
+    let resolveRecoveryDeck!: (value: Response) => void;
+    const api = installApi({
+      projectionResponse: async () => response({ state: "standby" }),
+      admin: controls({ state: "question", questionIndex: 0 }),
+      deckResponse: () => {
+        deckReads += 1;
+        if (deckReads === 1) return Promise.resolve(response({ snapshotRevision: 1, slides: [] }));
+        return new Promise<Response>((resolve) => {
+          resolveRecoveryDeck = resolve;
+        });
+      },
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    await flush();
+    expect(deckReads).toBe(2);
+    expect(resolveRecoveryDeck).toBeDefined();
+
+    view.rerender(<PresentationScreen />);
+    await flush();
+    expect(screen.getByText("ただいま休憩中です")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveRecoveryDeck(
+        response({
+          snapshotRevision: 1,
+          slides: [deckSlide("question", 0, { state: "question", question })],
+        }),
+      );
+      await Promise.resolve();
+    });
+    await flush();
+    expect(screen.getByText("ただいま休憩中です")).toBeInTheDocument();
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/presentation", expect.anything());
+  });
+
+  it("does not start a second presenter refresh while the first session check is pending", async () => {
     vi.useFakeTimers();
     let rejectFirstSession!: (error: Error) => void;
     let sessionCalls = 0;
@@ -692,26 +1214,19 @@ describe("PresentationScreen", () => {
     await flush();
     expect(sessionCalls).toBe(1);
 
-    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
     await flush();
-    expect(sessionCalls).toBe(2);
-    expect(api.fetchMock).toHaveBeenCalledWith(
+    expect(sessionCalls).toBe(1);
+    expect(api.fetchMock).not.toHaveBeenCalledWith(
       "/api/admin/presentation?view=controls",
       expect.anything(),
     );
-    await act(async () => {
-      rejectFirstSession(new Error("stale session failure"));
-      await Promise.resolve();
-    });
+    rejectFirstSession(new Error("temporary failure"));
     await flush();
-
-    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    await flush();
-    expect(api.actions).toHaveLength(1);
-    expect(api.actions[0]).toMatchObject({ action: "advance" });
+    expect(sessionCalls).toBe(1);
   });
 
-  it("keeps admin access after an older unauthenticated session response", async () => {
+  it("does not overlap presenter refreshes while a session request is pending", async () => {
     vi.useFakeTimers();
     let resolveOldSession!: (value: Response) => void;
     let sessionReads = 0;
@@ -730,26 +1245,58 @@ describe("PresentationScreen", () => {
     render(<PresentationScreen presenterRequested />);
     await flush();
 
-    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
     await flush();
-    expect(sessionReads).toBe(2);
+    expect(sessionReads).toBe(1);
+    resolveOldSession(response({ authenticated: true }));
+    await flush();
     expect(api.fetchMock).toHaveBeenCalledWith(
       "/api/admin/presentation?view=controls",
       expect.anything(),
     );
-
-    await act(async () => {
-      resolveOldSession(response({ authenticated: false }));
-      await Promise.resolve();
-    });
-    await flush();
-    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    await flush();
-    expect(api.actions).toHaveLength(1);
-    expect(api.actions[0]).toMatchObject({ action: "advance" });
   });
 
-  it("keeps newer admin controls after an older state response arrives", async () => {
+  it("queues a visibility session check behind an in-flight presenter refresh", async () => {
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    let resolveFirstSession!: (value: Response) => void;
+    let sessionReads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      sessionResponse: () => {
+        sessionReads += 1;
+        if (sessionReads === 1)
+          return new Promise<Response>((resolve) => {
+            resolveFirstSession = resolve;
+          });
+        return Promise.resolve(response({ authenticated: true }));
+      },
+    });
+
+    try {
+      render(<PresentationScreen presenterRequested />);
+      await flush();
+      expect(sessionReads).toBe(1);
+
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      await flush();
+      expect(sessionReads).toBe(1);
+
+      resolveFirstSession(response({ authenticated: true }));
+      await flush();
+      expect(sessionReads).toBe(2);
+      expect(api.fetchMock).toHaveBeenCalledWith(
+        "/api/admin/presentation?view=controls",
+        expect.anything(),
+      );
+    } finally {
+      if (originalVisibility)
+        Object.defineProperty(document, "visibilityState", originalVisibility);
+      else Reflect.deleteProperty(document, "visibilityState");
+    }
+  });
+
+  it("polls again after an older state response settles", async () => {
     vi.useFakeTimers();
     let resolveOldState!: (value: Response) => void;
     let adminReads = 0;
@@ -769,20 +1316,97 @@ describe("PresentationScreen", () => {
 
     await act(async () => vi.advanceTimersByTimeAsync(2500));
     await flush();
-    expect(adminReads).toBe(2);
+    expect(adminReads).toBe(1);
 
     await act(async () => {
       resolveOldState(response(controls({ state: "not_started" })));
       await Promise.resolve();
     });
     await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+    expect(adminReads).toBe(2);
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
     expect(api.actions).toHaveLength(1);
     expect(api.actions[0]).toMatchObject({ action: "advance" });
   });
 
+  it("waits for the active poll before sending navigation and uses its latest controls", async () => {
+    vi.useFakeTimers();
+    let controlReads = 0;
+    let resolveSecondControls!: (value: Response) => void;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      actionAdmin: controls({ state: "podium_preview", questionIndex: 0 }),
+      adminResponse: () => {
+        controlReads += 1;
+        if (controlReads === 2)
+          return new Promise<Response>((resolve) => {
+            resolveSecondControls = resolve;
+          });
+        return Promise.resolve(
+          response(
+            controls({ state: controlReads > 2 ? "podium_preview" : "question", questionIndex: 0 }),
+          ),
+        );
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(controlReads).toBe(2);
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(0);
+    await act(async () => {
+      resolveSecondControls(response(controls({ state: "answer", questionIndex: 0 })));
+      await Promise.resolve();
+    });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({ action: "advance", expectedSnapshotRevision: 1 });
+    expect(screen.getByText("いよいよ、結果発表です")).toBeInTheDocument();
+  });
+
+  it("does not send a queued operation when the protected refresh resolves with 401", async () => {
+    vi.useFakeTimers();
+    let controlReads = 0;
+    let resolveSecondControls!: (value: Response) => void;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      adminResponse: () => {
+        controlReads += 1;
+        if (controlReads === 2)
+          return new Promise<Response>((resolve) => {
+            resolveSecondControls = resolve;
+          });
+        return Promise.resolve(response(controls({ state: "question", questionIndex: 0 })));
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(controlReads).toBe(2);
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(0);
+    await act(async () => {
+      resolveSecondControls(response({}, false, 401));
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(api.actions).toHaveLength(0);
+    expect(screen.getByRole("heading", { name: "ただいま休憩中です" })).toBeInTheDocument();
+  });
+
   it("drops presenter controls after an expired admin session", async () => {
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 1 }),
@@ -796,6 +1420,7 @@ describe("PresentationScreen", () => {
       ),
     );
     await flush();
+    await waitForControls();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(1));
     expect(api.actions[0]).toMatchObject({ action: "advance", expectedSnapshotRevision: 1 });
@@ -803,6 +1428,26 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
     expect(api.actions).toHaveLength(1);
+  });
+
+  it("keeps presenter access after a mutation is rejected with Origin 403", async () => {
+    const waitForControls = observePresenterControls();
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 1 }),
+      actionError: 403,
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    await waitForControls();
+    const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "ただいま休憩中です" })).not.toBeInTheDocument();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(2);
   });
 
   it("keeps presenter actions unavailable when admin controls JSON is malformed", async () => {
@@ -832,27 +1477,49 @@ describe("PresentationScreen", () => {
   });
 
   it("does not enable presenter actions when session JSON is malformed", async () => {
+    vi.useFakeTimers();
+    let sessionReads = 0;
     const api = installApi({
       projection: { state: "question", question },
-      sessionResponse: async () => malformedJsonResponse(),
+      admin: controls({ state: "question", questionIndex: 0 }),
+      sessionResponse: async () => {
+        sessionReads += 1;
+        return sessionReads === 1 ? malformedJsonResponse() : response({ authenticated: true });
+      },
     });
     render(<PresentationScreen presenterRequested />);
-    const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
-
-    await waitFor(() =>
-      expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/session", expect.anything()),
-    );
+    const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
     await flush();
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await flush();
 
-    expect(screen.getByRole("heading", { name: "ただいま休憩中です" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /ふたりの思い出を/ })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
     expect(
       api.fetchMock.mock.calls.some(
         ([path]) => String(path) === "/api/admin/presentation?view=controls",
       ),
     ).toBe(false);
     expect(api.actions).toHaveLength(0);
+
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    await flush();
+    expect(sessionReads).toBe(1);
+    expect(api.fetchMock).not.toHaveBeenCalledWith(
+      "/api/admin/presentation?view=controls",
+      expect.anything(),
+    );
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+    });
+    expect(sessionReads).toBe(2);
+    expect(api.fetchMock).toHaveBeenCalledWith(
+      "/api/admin/presentation?view=controls",
+      expect.anything(),
+    );
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(screen.queryAllByRole("status")).toHaveLength(0);
   });
 
   it("uses keyboard navigation only for slide targets and ignores repeated or modified keys", async () => {
@@ -942,6 +1609,7 @@ describe("PresentationScreen", () => {
   });
 
   it("uses the controls returned by a successful action without an extra controls GET", async () => {
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 0 }),
@@ -950,6 +1618,7 @@ describe("PresentationScreen", () => {
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
     await screen.findByRole("heading", { name: question.question });
     await flush();
+    await waitForControls();
     const controlReadsBeforeAction = api.fetchMock.mock.calls.filter(
       ([path]) => String(path) === "/api/admin/presentation?view=controls",
     ).length;
@@ -1064,10 +1733,13 @@ describe("PresentationScreen", () => {
       screen.getByRole("heading", { name: "スライドを読み込めませんでした" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: question.question })).not.toBeInTheDocument();
-    expect(screen.getByText("接続を確認しています。自動で再試行します")).toBeInTheDocument();
+    expect(screen.getAllByText("接続を確認しています。自動で再試行します").length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("resynchronizes controls and deck when an action returns another snapshot revision", async () => {
+    const waitForControls = observePresenterControls();
     let actionResponses = 0;
     const api = installApi({
       projection: { state: "question", question },
@@ -1086,6 +1758,7 @@ describe("PresentationScreen", () => {
     const main = render(<PresentationScreen presenterRequested />).getByRole("main");
     await screen.findByRole("heading", { name: question.question });
     await flush();
+    await waitForControls();
     const deckReadsBeforeAction = api.fetchMock.mock.calls.filter(
       ([path]) => String(path) === "/api/admin/presentation/deck",
     ).length;
@@ -1105,6 +1778,7 @@ describe("PresentationScreen", () => {
   });
 
   it("fails closed on an invalid successful action payload and resynchronizes controls", async () => {
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 0 }),
@@ -1114,6 +1788,7 @@ describe("PresentationScreen", () => {
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
     await screen.findByRole("heading", { name: question.question });
     await flush();
+    await waitForControls();
     const readsBeforeAction = api.fetchMock.mock.calls.filter(
       ([path]) => String(path) === "/api/admin/presentation?view=controls",
     ).length;
@@ -1131,7 +1806,7 @@ describe("PresentationScreen", () => {
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
   });
 
-  it("ignores a controls poll that began before a successful action", async () => {
+  it("waits for an active controls poll before sending a successful action", async () => {
     vi.useFakeTimers();
     let resolveStaleControls!: (value: Response) => void;
     let controlReads = 0;
@@ -1154,18 +1829,20 @@ describe("PresentationScreen", () => {
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
-    expect(api.actions).toHaveLength(1);
+    expect(api.actions).toHaveLength(0);
     await act(async () => {
       resolveStaleControls(response(controls({ state: "question", questionIndex: 0 })));
       await Promise.resolve();
     });
     await flush();
+    expect(api.actions).toHaveLength(1);
 
     expect(screen.getByText("THE STORY BEHIND IT")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
   });
 
   it("resynchronizes after an action error and accepts a later action", async () => {
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 0 }),
@@ -1175,6 +1852,7 @@ describe("PresentationScreen", () => {
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
     await screen.findByRole("heading", { name: question.question });
     await flush();
+    await waitForControls();
     const readsBeforeAction = api.fetchMock.mock.calls.filter(
       ([path]) => String(path) === "/api/admin/presentation?view=controls",
     ).length;
@@ -1195,6 +1873,7 @@ describe("PresentationScreen", () => {
   });
 
   it("renders tied winners immediately when the podium advances", async () => {
+    const waitForControls = observePresenterControls();
     vi.stubGlobal(
       "matchMedia",
       vi.fn(() => ({ matches: false })),
@@ -1224,6 +1903,7 @@ describe("PresentationScreen", () => {
       ),
     );
     await flush();
+    await waitForControls();
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(1));
     expect(api.actions[0]).toMatchObject({ action: "advance" });
@@ -1237,6 +1917,7 @@ describe("PresentationScreen", () => {
   });
 
   it("renders the first-place winner immediately when advancing from second place", async () => {
+    const waitForControls = observePresenterControls();
     vi.stubGlobal(
       "matchMedia",
       vi.fn(() => ({ matches: false })),
@@ -1269,6 +1950,7 @@ describe("PresentationScreen", () => {
       ),
     );
     await flush();
+    await waitForControls();
 
     fireEvent.keyDown(main, { key: "ArrowRight" });
 
@@ -1280,6 +1962,7 @@ describe("PresentationScreen", () => {
   });
 
   it("does not advance from interactive descendants and advances on a slide click", async () => {
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       actionProjection: { state: "answer", question },
@@ -1293,6 +1976,7 @@ describe("PresentationScreen", () => {
         expect.anything(),
       ),
     );
+    await waitForControls();
     const button = document.createElement("button");
     main.append(button);
     fireEvent.click(button);
@@ -1303,6 +1987,7 @@ describe("PresentationScreen", () => {
   });
 
   it("allows a click event from non-element slide text to advance", async () => {
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 1 }),
@@ -1315,6 +2000,7 @@ describe("PresentationScreen", () => {
         expect.anything(),
       ),
     );
+    await waitForControls();
     const textTarget = document.createTextNode("slide text");
     screen.getByTestId("presentation-canvas").append(textTarget);
 
@@ -1325,6 +2011,7 @@ describe("PresentationScreen", () => {
   });
 
   it("allows ArrowRight from non-element slide text", async () => {
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 1 }),
@@ -1338,6 +2025,7 @@ describe("PresentationScreen", () => {
       ),
     );
     await flush();
+    await waitForControls();
     const textTarget = document.createTextNode("keyboard slide text");
     screen.getByTestId("presentation-canvas").append(textTarget);
 
@@ -1415,6 +2103,7 @@ describe("PresentationScreen", () => {
 
   it("restarts the swipe click guard for each intentional swipe", async () => {
     vi.useFakeTimers();
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       actionProjection: { state: "answer", question },
@@ -1423,6 +2112,7 @@ describe("PresentationScreen", () => {
     });
     render(<PresentationScreen presenterRequested />);
     await flush();
+    await waitForControls();
     const main = screen.getByRole("main");
     const swipeLeft = (pointerId: number) => {
       fireEvent.pointerDown(main, {
@@ -1456,6 +2146,7 @@ describe("PresentationScreen", () => {
 
   it("expires the swipe click guard when no synthetic click consumes it", async () => {
     vi.useFakeTimers();
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       actionProjection: { state: "answer", question },
@@ -1464,6 +2155,7 @@ describe("PresentationScreen", () => {
     });
     render(<PresentationScreen presenterRequested />);
     await flush();
+    await waitForControls();
     const main = screen.getByRole("main");
     fireEvent.pointerDown(main, {
       pointerId: 18,
@@ -1483,6 +2175,7 @@ describe("PresentationScreen", () => {
   });
 
   it("allows a right swipe to go previous after the first question", async () => {
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       actionProjection: { state: "question", question },
@@ -1491,6 +2184,7 @@ describe("PresentationScreen", () => {
     });
     render(<PresentationScreen presenterRequested />);
     await flush();
+    await waitForControls();
     const main = screen.getByRole("main");
     fireEvent.pointerDown(main, {
       pointerId: 15,
@@ -1506,12 +2200,14 @@ describe("PresentationScreen", () => {
   });
 
   it("does not swipe previous from the first question", async () => {
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 0 }),
     });
     render(<PresentationScreen presenterRequested />);
     await flush();
+    await waitForControls();
     const main = screen.getByRole("main");
     fireEvent.pointerDown(main, {
       pointerId: 16,
@@ -1526,6 +2222,7 @@ describe("PresentationScreen", () => {
   });
 
   it("does not advance a finished presentation when the slide is clicked", async () => {
+    const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "finished" },
       admin: controls({ state: "finished" }),
@@ -1537,6 +2234,7 @@ describe("PresentationScreen", () => {
         expect.anything(),
       ),
     );
+    await waitForControls();
     fireEvent.click(screen.getByTestId("presentation-canvas"));
     await flush();
     expect(api.actions).toHaveLength(0);
@@ -1922,8 +2620,7 @@ describe("PresentationScreen", () => {
     const removeSpy = vi.spyOn(document, "removeEventListener");
     const windowAddSpy = vi.spyOn(window, "addEventListener");
     const windowRemoveSpy = vi.spyOn(window, "removeEventListener");
-    const setIntervalSpy = vi.spyOn(window, "setInterval");
-    const clearIntervalSpy = vi.spyOn(window, "clearInterval");
+    const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
     const setTimeoutSpy = vi.spyOn(window, "setTimeout");
     const api = installApi({
       projection: { state: "question", question },
@@ -1940,7 +2637,7 @@ describe("PresentationScreen", () => {
       );
       await flush();
       expect(windowAddSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
-      expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 2500);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 2500);
       expect(
         api.fetchMock.mock.calls.filter(
           ([path]) => String(path) === "/api/admin/presentation/deck",
@@ -1949,15 +2646,13 @@ describe("PresentationScreen", () => {
       expect(
         api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/presentation"),
       ).toHaveLength(0);
-      const adminIntervalIndex = setIntervalSpy.mock.calls.findIndex(([, delay]) => delay === 2500);
-      const adminInterval = setIntervalSpy.mock.results[adminIntervalIndex]?.value;
       expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 1400)).toBe(false);
       view.unmount();
       view = undefined;
       expect(removeSpy).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
       expect(addSpy).not.toHaveBeenCalledWith("fullscreenchange", expect.any(Function));
       expect(windowRemoveSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
-      expect(clearIntervalSpy).toHaveBeenCalledWith(adminInterval);
+      expect(clearTimeoutSpy).toHaveBeenCalled();
       expect(windowAddSpy).toHaveBeenCalledWith("keydown", expect.any(Function));
     } finally {
       view?.unmount();
@@ -1965,8 +2660,7 @@ describe("PresentationScreen", () => {
       removeSpy.mockRestore();
       windowAddSpy.mockRestore();
       windowRemoveSpy.mockRestore();
-      setIntervalSpy.mockRestore();
-      clearIntervalSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
       setTimeoutSpy.mockRestore();
     }
   });
