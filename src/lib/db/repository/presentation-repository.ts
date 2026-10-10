@@ -454,13 +454,17 @@ type PublicProjectedQuestion = {
 };
 
 function buildPublicProjection(
-  admin: AdminPresentation,
+  admin: Pick<
+    AdminPresentation,
+    "state" | "questionIndex" | "questionCount" | "questions" | "entries"
+  >,
   state: PresentationState,
   questionIndex: number,
   sourceQuestions: Map<number, { key: string; explanation: string | null }>,
+  currentQuestion?: AdminPresentation["questions"][number],
 ): PublicProjection {
   if (state === "question" || state === "answer") {
-    const row = admin.questions[questionIndex];
+    const row = currentQuestion ?? admin.questions[questionIndex];
     if (!row) return { state };
     const sourceQuestion = sourceQuestions.get(row.id);
     const explanation = row.explanation?.trim() ? row.explanation : sourceQuestion?.explanation;
@@ -668,31 +672,163 @@ export async function getPublicPresentation(): Promise<
 > {
   return db.transaction(async (tx) => {
     const [session] = await tx
-      .select({ projectionHidden: presentationSessions.projectionHidden })
+      .select({
+        state: presentationSessions.state,
+        questionIndex: presentationSessions.questionIndex,
+        questionCount: presentationSessions.questionCount,
+        projectionHidden: presentationSessions.projectionHidden,
+      })
       .from(presentationSessions)
       .where(eq(presentationSessions.id, 1));
     if (session?.projectionHidden) return { state: "standby" };
-    const admin = await readAdminPresentation(tx);
-    let sourceQuestions = new Map<number, { key: string; explanation: string | null }>();
-    if (admin.state === "answer" || rankForStage(admin.state) !== null) {
-      // Snapshot IDs are not foreign-keyed. Resolve source data in one batch
-      // for legacy explanation fallback, Q5 response privacy, and winner score identity.
+    const state = (session?.state ?? "not_started") as PresentationState;
+    const questionIndex = session?.questionIndex ?? 0;
+    const questionCount = session?.questionCount ?? 0;
+    const rank = rankForStage(state);
+    const activeQuestion = state === "question" || state === "answer";
+    let questions: AdminPresentation["questions"];
+    if (state === "answer") {
       const rows = await tx
         .select({
-          id: examQuestions.id,
-          key: examQuestions.key,
-          explanation: examQuestions.explanation,
+          sourceQuestionId: presentationQuestions.sourceQuestionId,
+          question: presentationQuestions.question,
+          choices: presentationQuestions.choices,
+          correctIndex: presentationQuestions.correctIndex,
+          explanation: presentationQuestions.explanation,
         })
-        .from(examQuestions)
+        .from(presentationQuestions)
         .where(
-          inArray(
-            examQuestions.id,
-            admin.questions.map(({ id }) => id),
+          and(
+            eq(presentationQuestions.sessionId, 1),
+            eq(presentationQuestions.position, questionIndex),
           ),
         );
-      sourceQuestions = new Map(rows.map(({ id, key, explanation }) => [id, { key, explanation }]));
+      questions = rows.map((row) => ({
+        id: row.sourceQuestionId,
+        question: row.question,
+        choices: row.choices,
+        correctIndex: row.correctIndex,
+        correctAnswer: row.choices[row.correctIndex] ?? "",
+        explanation: row.explanation,
+        answerType: row.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
+      }));
+    } else if (state === "question") {
+      const rows = await tx
+        .select({
+          sourceQuestionId: presentationQuestions.sourceQuestionId,
+          question: presentationQuestions.question,
+          choices: presentationQuestions.choices,
+        })
+        .from(presentationQuestions)
+        .where(
+          and(
+            eq(presentationQuestions.sessionId, 1),
+            eq(presentationQuestions.position, questionIndex),
+          ),
+        );
+      questions = rows.map((row) => ({
+        id: row.sourceQuestionId,
+        question: row.question,
+        choices: row.choices,
+        correctIndex: 0,
+        correctAnswer: row.choices[0] ?? "",
+        explanation: null,
+        answerType: row.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
+      }));
+    } else if (rank !== null) {
+      const rows = await tx
+        .select({
+          sourceQuestionId: presentationQuestions.sourceQuestionId,
+          question: presentationQuestions.question,
+          choices: presentationQuestions.choices,
+          correctIndex: presentationQuestions.correctIndex,
+        })
+        .from(presentationQuestions)
+        .where(eq(presentationQuestions.sessionId, 1))
+        .orderBy(asc(presentationQuestions.position));
+      questions = rows.map((row) => ({
+        id: row.sourceQuestionId,
+        question: row.question,
+        choices: row.choices,
+        correctIndex: row.correctIndex,
+        correctAnswer: row.choices[row.correctIndex] ?? "",
+        explanation: null,
+        answerType: row.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
+      }));
+    } else {
+      questions = [];
     }
-    return buildPublicProjection(admin, admin.state, admin.questionIndex, sourceQuestions);
+    const admin = {
+      state,
+      questionIndex,
+      questionCount,
+      questions: activeQuestion ? [] : questions,
+      entries: [] as AdminPresentation["entries"],
+    };
+    let sourceQuestions = new Map<number, { key: string; explanation: string | null }>();
+    if ((state === "answer" || rank !== null) && questions.length > 0) {
+      // Snapshot IDs are not foreign-keyed. Resolve only this stage's questions
+      // for legacy explanation fallback, Q5 privacy, and winner score identity.
+      if (state === "answer") {
+        const rows = await tx
+          .select({
+            id: examQuestions.id,
+            key: examQuestions.key,
+            explanation: examQuestions.explanation,
+          })
+          .from(examQuestions)
+          .where(
+            inArray(
+              examQuestions.id,
+              questions.map(({ id }) => id),
+            ),
+          );
+        sourceQuestions = new Map(
+          rows.map(({ id, key, explanation }) => [id, { key, explanation }]),
+        );
+      } else {
+        const rows = await tx
+          .select({ id: examQuestions.id, key: examQuestions.key })
+          .from(examQuestions)
+          .where(
+            inArray(
+              examQuestions.id,
+              questions.map(({ id }) => id),
+            ),
+          );
+        sourceQuestions = new Map(rows.map(({ id, key }) => [id, { key, explanation: null }]));
+      }
+    }
+    const currentQuestion = activeQuestion ? questions[0] : undefined;
+    if (
+      state === "answer" &&
+      currentQuestion?.answerType === "freeText" &&
+      sourceQuestions.get(currentQuestion.id)?.key !== "it-literacy-005"
+    ) {
+      const entryRows = await tx
+        .select({
+          displayName: presentationEntries.displayName,
+          answers: presentationEntries.answers,
+          rank: presentationEntries.rank,
+        })
+        .from(presentationEntries)
+        .where(eq(presentationEntries.sessionId, 1))
+        .orderBy(asc(presentationEntries.rank), asc(presentationEntries.displayName));
+      admin.entries = entryRows.map((entry) => ({ ...entry, score: 0 }));
+    } else if (rank !== null) {
+      const entryRows = await tx
+        .select({
+          displayName: presentationEntries.displayName,
+          score: presentationEntries.score,
+          rank: presentationEntries.rank,
+          answers: presentationEntries.answers,
+        })
+        .from(presentationEntries)
+        .where(and(eq(presentationEntries.sessionId, 1), eq(presentationEntries.rank, rank)))
+        .orderBy(asc(presentationEntries.rank), asc(presentationEntries.displayName));
+      admin.entries = entryRows;
+    }
+    return buildPublicProjection(admin, state, questionIndex, sourceQuestions, currentQuestion);
   });
 }
 

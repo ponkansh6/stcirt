@@ -268,6 +268,51 @@ async function returnNoSelectedRows<T>(table: unknown, run: () => Promise<T>, re
   }
 }
 
+async function countTableSelectCalls<T>(run: () => Promise<T>) {
+  const database = dbRef.db!;
+  const originalTransaction = database.transaction.bind(database);
+  const transactionSpy = vi.spyOn(database, "transaction");
+  const selectCalls = new Map<unknown, number>();
+  transactionSpy.mockImplementation((callback, config) =>
+    originalTransaction((tx) => {
+      const wrappedTx = new Proxy(tx, {
+        get(target, property, receiver) {
+          if (property !== "select") return Reflect.get(target, property, receiver);
+          return (...args: unknown[]) => {
+            const builder = Reflect.apply(
+              Reflect.get(target, property, target) as (...args: unknown[]) => object,
+              target,
+              args,
+            );
+            return new Proxy(builder, {
+              get(builderTarget, builderProperty, builderReceiver) {
+                if (builderProperty !== "from")
+                  return Reflect.get(builderTarget, builderProperty, builderReceiver);
+                return (table: unknown) => {
+                  selectCalls.set(table, (selectCalls.get(table) ?? 0) + 1);
+                  return Reflect.apply(
+                    Reflect.get(builderTarget, builderProperty, builderTarget) as (
+                      table: unknown,
+                    ) => unknown,
+                    builderTarget,
+                    [table],
+                  );
+                };
+              },
+            });
+          };
+        },
+      });
+      return callback(wrappedTx);
+    }, config),
+  );
+  try {
+    return { value: await run(), selectCalls };
+  } finally {
+    transactionSpy.mockRestore();
+  }
+}
+
 describe("presentation repository", () => {
   let testDb: TestDb;
 
@@ -419,11 +464,13 @@ describe("presentation repository", () => {
         },
       ],
     });
-    await testDb.db.insert(schema.participantResultSettings).values({
-      id: 1,
-      visible: true,
-      everPublished: true,
-    });
+    await testDb.db
+      .insert(schema.participantResultSettings)
+      .values({ id: 1, visible: true, everPublished: true })
+      .onConflictDoUpdate({
+        target: schema.participantResultSettings.id,
+        set: { visible: true, everPublished: true },
+      });
   }
 
   async function op(
@@ -636,6 +683,142 @@ describe("presentation repository", () => {
         },
       ],
     });
+  });
+
+  it("limits Drizzle SELECT-call counts to the public data required by each stage", async () => {
+    await addRankFixture();
+    await startWithAggregate("stage-read-counts");
+
+    const tableSelectCalls = async (state: string, projectionHidden = false) => {
+      await testDb.db
+        .update(schema.presentationSessions)
+        .set({ state, projectionHidden })
+        .where(eq(schema.presentationSessions.id, 1));
+      const { selectCalls } = await countTableSelectCalls(getPublicPresentation);
+      return {
+        questions: selectCalls.get(schema.presentationQuestions) ?? 0,
+        entries: selectCalls.get(schema.presentationEntries) ?? 0,
+        sourceQuestions: selectCalls.get(schema.examQuestions) ?? 0,
+      };
+    };
+
+    expect(await tableSelectCalls("question")).toEqual({
+      questions: 1,
+      entries: 0,
+      sourceQuestions: 0,
+    });
+    expect(await tableSelectCalls("answer")).toEqual({
+      questions: 1,
+      entries: 0,
+      sourceQuestions: 1,
+    });
+    expect(await tableSelectCalls("podium_preview")).toEqual({
+      questions: 0,
+      entries: 0,
+      sourceQuestions: 0,
+    });
+    expect(await tableSelectCalls("third")).toEqual({
+      questions: 1,
+      entries: 1,
+      sourceQuestions: 1,
+    });
+    expect(await tableSelectCalls("answer", true)).toEqual({
+      questions: 0,
+      entries: 0,
+      sourceQuestions: 0,
+    });
+
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ state: "answer", questionIndex: 1, projectionHidden: false })
+      .where(eq(schema.presentationSessions.id, 1));
+    const secondAnswer = await countTableSelectCalls(getPublicPresentation);
+    expect(secondAnswer.value).toMatchObject({
+      state: "answer",
+      question: { id: 22, ordinal: 2, question: "Question 22" },
+    });
+    expect(secondAnswer.selectCalls.get(schema.presentationQuestions)).toBe(1);
+    expect(secondAnswer.selectCalls.get(schema.presentationEntries) ?? 0).toBe(0);
+  });
+
+  it("reads free-text response entries only when the current question permits publishing them", async () => {
+    await addFreeTextProjectionFixture("presentation-free-text");
+    const ordinary = await countTableSelectCalls(getPublicPresentation);
+    expect(ordinary.value).toMatchObject({
+      state: "answer",
+      question: { responses: [{ displayName: "Private Name", answer: "Private response" }] },
+    });
+    expect(ordinary.selectCalls.get(schema.presentationEntries)).toBe(1);
+    expect(ordinary.selectCalls.get(schema.examQuestions)).toBe(1);
+
+    await testDb.db.delete(schema.presentationSessions);
+    await testDb.db.delete(schema.presentationQuestions);
+    await testDb.db.delete(schema.presentationEntries);
+    await testDb.db.delete(schema.examQuestions);
+    await addFreeTextProjectionFixture("it-literacy-005");
+    const q5 = await countTableSelectCalls(getPublicPresentation);
+    expect(q5.value).toMatchObject({
+      state: "answer",
+      question: { expectedAnswer: "Model answer" },
+    });
+    expect(q5.value).not.toHaveProperty("question.responses");
+    expect(q5.selectCalls.get(schema.presentationEntries) ?? 0).toBe(0);
+    expect(q5.selectCalls.get(schema.examQuestions)).toBe(1);
+  });
+
+  it("orders free-text responses by rank and then display name", async () => {
+    await addFreeTextProjectionFixture("presentation-free-text");
+    const answer = [
+      {
+        questionId: 105,
+        answerKind: "freeText" as const,
+        selectedIndex: null,
+        freeText: "Response",
+        rawScore: 1,
+        normalizedScore: 0.5,
+      },
+    ];
+    await testDb.db.insert(schema.presentationEntries).values([
+      { sessionId: 1, participantId: 2, displayName: "Zulu", score: 0.5, rank: 2, answers: answer },
+      {
+        sessionId: 1,
+        participantId: 3,
+        displayName: "Bravo",
+        score: 0.5,
+        rank: 1,
+        answers: answer,
+      },
+      {
+        sessionId: 1,
+        participantId: 4,
+        displayName: "Alpha",
+        score: 0.5,
+        rank: 1,
+        answers: answer,
+      },
+    ]);
+
+    const projection = await getPublicPresentation();
+    expect(
+      projection.state === "answer" && projection.question && "responses" in projection.question
+        ? projection.question.responses?.map(({ displayName }) => displayName)
+        : [],
+    ).toEqual(["Alpha", "Bravo", "Private Name", "Zulu"]);
+  });
+
+  it("skips source-question SELECT calls when the active snapshot question is missing", async () => {
+    await testDb.db.insert(schema.presentationSessions).values({
+      id: 1,
+      state: "answer",
+      version: 1,
+      questionIndex: 0,
+      questionCount: 1,
+    });
+    const result = await countTableSelectCalls(getPublicPresentation);
+    expect(result.value).toEqual({ state: "answer" });
+    expect(result.selectCalls.get(schema.presentationQuestions)).toBe(1);
+    expect(result.selectCalls.get(schema.examQuestions) ?? 0).toBe(0);
+    expect(result.selectCalls.get(schema.presentationEntries) ?? 0).toBe(0);
   });
 
   it("preloads every question, answer, podium and completion slide into the presenter deck", async () => {
@@ -1886,6 +2069,10 @@ describe("presentation repository", () => {
     });
 
     await expect(getPublicPresentation()).resolves.toEqual({ state: "question" });
+  });
+
+  it("defaults to the not-started projection when no presentation session exists", async () => {
+    await expect(getPublicPresentation()).resolves.toEqual({ state: "not_started" });
   });
 
   it("skips older submissions for an already-ranked participant", async () => {
