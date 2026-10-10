@@ -602,7 +602,7 @@ test("returns to owner completion after an assisted save and opens target correc
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
   await expect(page.getByRole("radio", { name: /Option 1B/ })).toBeChecked();
   await answerQuestion(page, 1, "C");
-  await page.getByRole("button", { name: "5問の回答を確定する" }).click();
+  await page.getByRole("button", { name: "修正内容を確定する" }).click();
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
   await expect(page.getByText("本人（本人の回答）")).toBeVisible();
   await expect(page.getByText("代理回答者（代理回答）")).toHaveCount(0);
