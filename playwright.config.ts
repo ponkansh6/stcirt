@@ -25,7 +25,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: "pnpm exec next dev --turbopack --port 3001",
+    command: "pnpm exec next dev --turbopack --hostname 127.0.0.1 --port 3001",
     url: "http://localhost:3001",
     reuseExistingServer: false,
     env: {
