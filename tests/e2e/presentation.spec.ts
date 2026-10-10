@@ -697,8 +697,10 @@ test("keyboard and horizontal swipe progress once and honor stage boundaries", a
   await startPresentation(page);
   await openPresenter(page);
   const main = page.locator("main");
+  const openingPreviousRefresh = nextAdminMutation(page);
   await main.press("ArrowLeft");
   expect(mock.getPresentationState().state).toBe("opening");
+  await openingPreviousRefresh;
   const openingNextRefresh = nextAdminMutation(page);
   await main.press("ArrowRight");
   await expect(slideFor(page, "question")).toBeVisible();
