@@ -232,6 +232,12 @@ async function ensurePresentationSnapshot(
   const assessmentBySubmission = new Map(
     assessments.map((assessment) => [assessment.submissionId, assessment]),
   );
+  type ValidatedLatestSubmission = {
+    submission: (typeof submissions)[number];
+    assessment: (typeof assessments)[number];
+    q5Score: number;
+  };
+  const validatedLatestSubmissionByParticipant = new Map<number, ValidatedLatestSubmission>();
 
   const answersBySubmission = new Map<string, Map<number, (typeof savedAnswers)[number]>>();
   for (const answer of savedAnswers) {
@@ -242,45 +248,32 @@ async function ensurePresentationSnapshot(
     answersBySubmission.set(answer.submissionId, answers);
   }
 
-  const latestSubmissionByParticipant = new Map<number, (typeof submissions)[number]>();
+  const q5 = currentQuestions.find((question) => question.key === "it-literacy-005")!;
+  const q5Id = q5.id;
   for (const submission of submissions) {
-    if (!latestSubmissionByParticipant.has(submission.participantId)) {
-      latestSubmissionByParticipant.set(submission.participantId, submission);
-    }
-  }
-  for (const submission of latestSubmissionByParticipant.values()) {
-    if (!sameVersionMap(submission.questionVersions, versionMaps.questionVersions)) {
-      throw new PresentationConflictError(
-        `Submission ${submission.id} has missing or outdated question versions; audit or resubmit it before aggregating`,
-      );
-    }
-    const q5 = currentQuestions.find((question) => question.key === "it-literacy-005");
-    const q5Answer = q5 ? answersBySubmission.get(submission.id)?.get(q5.id) : undefined;
-    const assessment = assessmentBySubmission.get(submission.id);
-    if (
-      !q5 ||
-      q5Answer?.answerKind !== "freeText" ||
-      !assessment ||
-      assessment.revision !== submission.revision ||
-      assessment.state !== "graded" ||
-      assessment.questionVersion !== q5.questionVersion ||
-      assessment.rubricVersion !== versionMaps.rubricVersions[String(q5.id)] ||
-      !isSupportedGraderVersionPair(assessment.questionVersion, assessment.rubricVersion)
-    ) {
-      throw new PresentationConflictError(
-        `Submission ${submission.id} has a missing or incompatible Q5 answer/assessment version; audit and regrade it before aggregating`,
-      );
-    }
-  }
+    if (validatedLatestSubmissionByParticipant.has(submission.participantId)) continue;
 
-  const firstSubmissionByParticipant = new Set<number>();
-  for (const submission of submissions) {
-    if (firstSubmissionByParticipant.has(submission.participantId)) continue;
-    firstSubmissionByParticipant.add(submission.participantId);
-    const q5 = currentQuestions.find((question) => question.key === "it-literacy-005");
-    const answer = q5 ? answersBySubmission.get(submission.id)?.get(q5.id) : undefined;
-    if (answer?.answerKind === "freeText") {
-      const assessment = assessmentBySubmission.get(submission.id);
+    const answers = answersBySubmission.get(submission.id);
+    const q5Answer = answers?.get(q5Id);
+    const hasCurrentQuestionSet =
+      submission.questionIds.length === currentQuestions.length &&
+      currentQuestions.every((question) => submission.questionIds.includes(question.id));
+    const hasCompleteValidAnswers =
+      answers !== undefined &&
+      answers.size === currentQuestions.length &&
+      currentQuestions.every((question) => {
+        const answer = answers.get(question.id);
+        return question.key === "it-literacy-005"
+          ? answer?.answerKind === "legacy" || answer?.answerKind === "freeText"
+          : answer?.answerKind === "selected" &&
+              answer.selectedIndex !== null &&
+              answer.selectedIndex >= 0 &&
+              answer.selectedIndex < question.choices.length;
+      });
+    if (!hasCurrentQuestionSet || !hasCompleteValidAnswers) continue;
+
+    const assessment = assessmentBySubmission.get(submission.id);
+    if (q5Answer?.answerKind === "freeText") {
       if (
         !assessment ||
         assessment.revision !== submission.revision ||
@@ -290,35 +283,40 @@ async function ensurePresentationSnapshot(
           "Free-response assessments must finish before results are aggregated",
         );
       }
+    } else {
+      throw new PresentationConflictError(
+        `Submission ${submission.id} has an unsupported legacy Q5 answer; audit or resubmit it before aggregating`,
+      );
     }
+
+    if (!sameVersionMap(submission.questionVersions, versionMaps.questionVersions)) {
+      throw new PresentationConflictError(
+        `Submission ${submission.id} has missing or outdated question versions; audit or resubmit it before aggregating`,
+      );
+    }
+    if (
+      assessment.questionVersion !== q5.questionVersion ||
+      assessment.rubricVersion !== versionMaps.rubricVersions[String(q5Id)] ||
+      !isSupportedGraderVersionPair(assessment.questionVersion, assessment.rubricVersion)
+    ) {
+      throw new PresentationConflictError(
+        `Submission ${submission.id} has a missing or incompatible Q5 answer/assessment version; audit and regrade it before aggregating`,
+      );
+    }
+
+    validatedLatestSubmissionByParticipant.set(submission.participantId, {
+      submission,
+      assessment,
+      q5Score: Number(assessment.normalizedScore),
+    });
   }
 
   const scored = participants.map((participant) => {
-    const submission = submissions.find((candidate) => {
-      if (candidate.participantId !== participant.id) return false;
-      const answers = answersBySubmission.get(candidate.id);
-      const assessment = assessmentBySubmission.get(candidate.id);
-      return (
-        candidate.questionIds.length === currentQuestions.length &&
-        currentQuestions.every((question) => candidate.questionIds.includes(question.id)) &&
-        answers?.size === currentQuestions.length &&
-        currentQuestions.every((question) => {
-          const selected = answers?.get(question.id);
-          return question.key === "it-literacy-005"
-            ? selected?.answerKind === "legacy" ||
-                (selected?.answerKind === "freeText" &&
-                  assessment?.revision === candidate.revision &&
-                  assessment.state === "graded")
-            : selected?.answerKind === "selected" &&
-                selected.selectedIndex !== null &&
-                selected.selectedIndex >= 0 &&
-                selected.selectedIndex < question.choices.length;
-        })
-      );
-    });
+    const validatedLatest = validatedLatestSubmissionByParticipant.get(participant.id);
+    const submission = validatedLatest?.submission;
     const answers = submission ? answersBySubmission.get(submission.id) : undefined;
-    const validCompleteSet = Boolean(submission);
-    const assessment = submission ? assessmentBySubmission.get(submission.id) : undefined;
+    const validCompleteSet = validatedLatest !== undefined;
+    const assessment = validatedLatest?.assessment;
     const answerSnapshot: PresentationAnswerSnapshot[] = currentQuestions.map((question) => {
       const answer = validCompleteSet ? answers?.get(question.id) : undefined;
       const answerKind: PresentationAnswerSnapshot["answerKind"] =
@@ -332,20 +330,14 @@ async function ensurePresentationSnapshot(
         answerKind,
         selectedIndex: answer?.selectedIndex ?? null,
         freeText: answer?.freeText ?? null,
-        rawScore:
-          question.key === "it-literacy-005" && assessment?.state === "graded"
-            ? assessment.rawScore
-            : null,
+        rawScore: question.key === "it-literacy-005" && assessment ? assessment.rawScore : null,
         normalizedScore:
-          question.key === "it-literacy-005" && assessment?.state === "graded"
-            ? assessment.normalizedScore
-            : null,
+          question.key === "it-literacy-005" && assessment ? assessment.normalizedScore : null,
       };
     });
-    const score = validCompleteSet
+    const score = validatedLatest
       ? currentQuestions.reduce((sum, question) => {
-          if (question.key === "it-literacy-005")
-            return sum + (assessment?.state === "graded" ? Number(assessment.normalizedScore) : 0);
+          if (question.key === "it-literacy-005") return sum + validatedLatest.q5Score;
           return sum + Number(answers?.get(question.id)?.selectedIndex === question.correctIndex);
         }, 0)
       : 0;
@@ -368,20 +360,18 @@ async function ensurePresentationSnapshot(
   await tx.delete(presentationEntries).where(eq(presentationEntries.sessionId, 1));
   setOperationPhase?.("delete_questions");
   await tx.delete(presentationQuestions).where(eq(presentationQuestions.sessionId, 1));
-  if (currentQuestions.length) {
-    setOperationPhase?.("insert_questions");
-    await tx.insert(presentationQuestions).values(
-      currentQuestions.map((question, position) => ({
-        sessionId: 1,
-        position,
-        sourceQuestionId: question.id,
-        question: question.question,
-        choices: question.choices,
-        correctIndex: question.correctIndex,
-        explanation: question.explanation,
-      })),
-    );
-  }
+  setOperationPhase?.("insert_questions");
+  await tx.insert(presentationQuestions).values(
+    currentQuestions.map((question, position) => ({
+      sessionId: 1,
+      position,
+      sourceQuestionId: question.id,
+      question: question.question,
+      choices: question.choices,
+      correctIndex: question.correctIndex,
+      explanation: question.explanation,
+    })),
+  );
   if (ranked.length) {
     setOperationPhase?.("insert_entries");
     await tx.insert(presentationEntries).values(
@@ -400,11 +390,7 @@ async function ensurePresentationSnapshot(
   const preserveTerminalOrUnstartedState =
     session.state === "not_started" || session.state === "opening" || session.state === "finished";
   const nextState =
-    invalidQuestionCursor && !preserveTerminalOrUnstartedState
-      ? currentQuestions.length === 0
-        ? "podium_preview"
-        : "question"
-      : session.state;
+    invalidQuestionCursor && !preserveTerminalOrUnstartedState ? "question" : session.state;
   const questionIndex = invalidQuestionCursor ? 0 : session.questionIndex;
   setOperationPhase?.("update_session");
   const updated = await tx

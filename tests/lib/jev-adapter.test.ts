@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { gradeFreeResponse, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
+import {
+  getRubricVersionForQuestionVersion,
+  gradeFreeResponse,
+  isSupportedGraderVersionPair,
+  JEV_QUESTION_VERSION,
+  JEV_RUBRIC_VERSION,
+} from "@/lib/jev/adapter";
 
 function gradeCurrentAnswer(answer: string) {
   return gradeFreeResponse(answer, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION);
@@ -33,6 +39,15 @@ function respond(payload: unknown, status = 200) {
 }
 
 describe("JEV score adapter", () => {
+  it("maps only the current question version to a rubric and accepts only its matching pair", () => {
+    expect(getRubricVersionForQuestionVersion(JEV_QUESTION_VERSION)).toBe(JEV_RUBRIC_VERSION);
+    expect(getRubricVersionForQuestionVersion("omiwatari-v1")).toBeNull();
+    expect(getRubricVersionForQuestionVersion(null)).toBeNull();
+    expect(isSupportedGraderVersionPair(JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION)).toBe(true);
+    expect(isSupportedGraderVersionPair(JEV_QUESTION_VERSION, "omiwatari-v1")).toBe(false);
+    expect(isSupportedGraderVersionPair(undefined, JEV_RUBRIC_VERSION)).toBe(false);
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();

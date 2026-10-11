@@ -457,6 +457,130 @@ describe("presentation repository", () => {
     });
   });
 
+  it("builds an empty presentation deck without querying source questions", async () => {
+    await expect(getAdminPresentationDeck()).resolves.toMatchObject({
+      snapshotRevision: 0,
+      questionCount: 0,
+      slides: [{ state: "opening" }, { state: "podium_preview" }, { state: "finished" }],
+    });
+  });
+
+  it("exposes empty-choice Q5 as free text while keeping its answer private", async () => {
+    await addQuestions();
+    await startWithAggregate("free-text-question-stage");
+    await operatePresentation("free-text-answer-one", "advance");
+    await operatePresentation("free-text-question-two", "advance");
+
+    const admin = await getAdminPresentation();
+    expect(admin.state).toBe("question");
+    expect(admin.questions.find(({ id }) => id === 5)).toMatchObject({
+      choices: [],
+      correctAnswer: "",
+      answerType: "freeText",
+    });
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "question",
+      question: {
+        id: 5,
+        choices: [],
+        answerType: "freeText",
+      },
+    });
+    await expect(getPublicPresentation()).resolves.not.toHaveProperty("question.correctAnswer");
+  });
+
+  it("rejects starting when the snapshot question version map is invalid", async () => {
+    await addCurrentFiveQuestions();
+    await op("aggregate", "stale-question-version-aggregate");
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ questionVersions: { "1": "nagano-001-v1", "5": "omiwatari-v1" } })
+      .where(eq(schema.presentationSessions.id, 1));
+
+    await expect(op("start", "stale-question-version-start")).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  it.each([
+    ["questionVersions", null],
+    ["questionVersions", []],
+    ["questionVersions", "invalid"],
+    ["rubricVersions", null],
+    ["rubricVersions", []],
+    ["rubricVersions", "invalid"],
+  ] as const)("rejects starting with a non-object %s map (%s)", async (field, value) => {
+    await addCurrentFiveQuestions();
+    await op("aggregate", `invalid-${field}-map-aggregate`);
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ [field]: value } as never)
+      .where(eq(schema.presentationSessions.id, 1));
+
+    await expect(op("start", `invalid-${field}-map-start`)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  it.each([
+    ["null", null],
+    ["array", []],
+    ["scalar", "invalid"],
+  ] as const)(
+    "rejects aggregating a submission with a %s question-version map",
+    async (_label, value) => {
+      await addQuestions();
+      const participantId = await addParticipant("Invalid version map");
+      await addSubmission(participantId, [0, 0]);
+      await testDb.db
+        .update(schema.examAnswerSubmissions)
+        .set({ questionVersions: value as never })
+        .where(eq(schema.examAnswerSubmissions.id, `submission-${participantId}-latest`));
+
+      await expect(
+        op("aggregate", `invalid-submission-version-map-${_label}`),
+      ).rejects.toMatchObject({ status: 409 });
+    },
+  );
+
+  it("snapshots a participant without a submission with a zero score", async () => {
+    await addQuestions();
+    await addParticipant("No submission");
+
+    const aggregated = await op("aggregate", "no-submission-zero-score");
+
+    expect(aggregated.entries).toMatchObject([{ displayName: "No submission", score: 0, rank: 1 }]);
+  });
+
+  it("advances an opening presentation with no questions to the podium preview", async () => {
+    await addQ5OnlyQuestion();
+    await op("aggregate", "empty-opening-aggregate");
+    await op("start", "empty-opening-start");
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ questionCount: 0 })
+      .where(eq(schema.presentationSessions.id, 1));
+
+    await expect(op("advance", "empty-opening-advance")).resolves.toMatchObject({
+      state: "podium_preview",
+      questionIndex: 0,
+    });
+  });
+
+  it("moves backward from an empty podium preview to opening", async () => {
+    await addQuestions();
+    await op("aggregate", "empty-preview-aggregate");
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ state: "podium_preview", questionCount: 0 })
+      .where(eq(schema.presentationSessions.id, 1));
+
+    await expect(op("previous", "empty-preview-previous")).resolves.toMatchObject({
+      state: "opening",
+      questionIndex: 0,
+    });
+  });
+
   async function addFreeTextProjectionFixture(sourceKey?: string) {
     await testDb.db.insert(schema.presentationSessions).values({
       id: 1,
@@ -1378,6 +1502,22 @@ describe("presentation repository", () => {
     },
   );
 
+  it("fails aggregation closed when the current Q5 version has no grader mapping", async () => {
+    await addCurrentFiveQuestions();
+    const participant = await addParticipant("Unsupported Q5 version");
+    await addSubmission(participant, [0, 0]);
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ questionVersion: "omiwatari-v1" })
+      .where(eq(schema.examQuestions.id, 5));
+
+    await expect(op("aggregate", "unsupported-current-q5-version")).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+  });
+
   it("aggregates the complete current Q1–Q5 set with matching submitted and assessed versions", async () => {
     await addCurrentFiveQuestions();
     const participant = await addParticipant("Current five-question participant");
@@ -1428,6 +1568,62 @@ describe("presentation repository", () => {
       { questionVersions, rubricVersions: { "5": "tamami-egg-v1" } },
     ]);
   });
+
+  it.each([
+    {
+      name: "assessment question version",
+      questionVersion: "omiwatari-v1",
+      rubricVersion: "tamami-egg-v1",
+    },
+    {
+      name: "assessment rubric version",
+      questionVersion: "tamami-egg-v1",
+      rubricVersion: "omiwatari-v1",
+    },
+  ])(
+    "fails aggregation closed for a mismatched $name",
+    async ({ name, questionVersion, rubricVersion }) => {
+      await addCurrentFiveQuestions();
+      const participant = await addParticipant(`Mismatched ${questionVersion}-${rubricVersion}`);
+      const submissionId = "mismatched-q5-assessment-submission";
+      const questionVersions = {
+        "1": "nagano-001-v1",
+        "2": "nagano-002-v1",
+        "3": "nagano-003-v1",
+        "4": "nagano-004-v1",
+        "5": "tamami-egg-v1",
+      };
+      await testDb.db.insert(schema.examAnswerSubmissions).values({
+        id: submissionId,
+        participantId: participant,
+        questionIds: [1, 2, 3, 4, 5],
+        questionVersions,
+        revision: 1,
+      });
+      await testDb.db
+        .insert(schema.examSubmissionAnswers)
+        .values([
+          ...[1, 2, 3, 4].map((questionId) => ({ submissionId, questionId, selectedIndex: 0 })),
+          { submissionId, questionId: 5, answerKind: "freeText", freeText: "Q5 current answer" },
+        ]);
+      await testDb.db.insert(schema.examAnswerAssessments).values({
+        submissionId,
+        questionId: 5,
+        revision: 1,
+        answerText: "Q5 current answer",
+        questionVersion,
+        state: "graded",
+        rawScore: 1,
+        normalizedScore: 0.5,
+        rubricVersion,
+      });
+
+      await expect(
+        op("aggregate", `mismatched-q5-${name.replaceAll(" ", "-")}`),
+      ).rejects.toBeInstanceOf(PresentationConflictError);
+      await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+    },
+  );
 
   it.each([
     { name: "an older rubric version", rubricVersions: { "5": "omiwatari-v1" } },
@@ -2437,7 +2633,7 @@ describe("presentation repository", () => {
     ]);
   });
 
-  it("rejects aggregation when the newest submission has an incomplete Q5 answer", async () => {
+  it("falls back to an older complete submission when the newest Q5 answer is incomplete", async () => {
     await addQuestions();
     const participant = await addParticipant("Older complete submission");
     await addSubmission(participant, [0, 0], 1, "older-complete");
@@ -2454,10 +2650,38 @@ describe("presentation repository", () => {
         ),
       );
 
-    await expect(op("aggregate", "fallback-older-complete")).rejects.toBeInstanceOf(
-      PresentationConflictError,
-    );
-    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+    const aggregated = await op("aggregate", "fallback-older-complete");
+
+    expect(aggregated.entries).toMatchObject([{ score: 2, rank: 1 }]);
+  });
+
+  it("scores a participant with only an incomplete Q5 submission as unanswered", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Incomplete only submission");
+    await addSubmission(participant, [0, 0], 1, "incomplete-only");
+    await testDb.db
+      .delete(schema.examSubmissionAnswers)
+      .where(
+        and(
+          eq(
+            schema.examSubmissionAnswers.submissionId,
+            `submission-${participant}-incomplete-only`,
+          ),
+          eq(schema.examSubmissionAnswers.questionId, 5),
+        ),
+      );
+
+    const aggregated = await op("aggregate", "incomplete-only-submission");
+
+    expect(aggregated.entries).toMatchObject([
+      {
+        score: 0,
+        answers: [
+          { questionId: 1, answerKind: "unanswered" },
+          { questionId: 5, answerKind: "unanswered" },
+        ],
+      },
+    ]);
   });
 
   it("rejects deprecated mode actions and advancing with invalid state", async () => {

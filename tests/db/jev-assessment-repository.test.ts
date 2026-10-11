@@ -163,6 +163,65 @@ describe("durable free-response assessment and restoration", () => {
     expect(await testDb.db.select().from(schema.examAnswerAssessments)).toHaveLength(0);
   });
 
+  it("keeps an unsupported Q5 version explicitly unversioned across revisions", async () => {
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ questionVersion: "omiwatari-v1" })
+      .where(eq(schema.examQuestions.id, 5));
+
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    const [initial] = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(initial).toMatchObject({
+      questionVersion: "omiwatari-v1",
+      rubricVersion: "unversioned",
+      state: "pending",
+    });
+
+    await saveAnswerSubmission({
+      submissionId,
+      operationId: "00000000-0000-4000-8000-000000000105",
+      expectedRevision: 1,
+      participantId,
+      answers: [...validAnswers.slice(0, 4), { questionId: 5, freeText: "Revised answer" }],
+    });
+    const [revised] = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(revised).toMatchObject({
+      revision: 2,
+      answerText: "Revised answer",
+      questionVersion: "omiwatari-v1",
+      rubricVersion: "unversioned",
+      state: "pending",
+      attempts: 0,
+    });
+  });
+
+  it("records unsupported grader version pairs as terminal unknown-version failures", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    vi.mocked(gradeFreeResponse).mockRejectedValueOnce(
+      new Error("Unsupported question/rubric version pair"),
+    );
+
+    await expect(processDueAssessments()).resolves.toMatchObject({ processed: 1, failed: 1 });
+    const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(assessment).toMatchObject({
+      state: "failed",
+      errorCode: "jev_unknown_version_pair",
+      nextAttemptAt: null,
+    });
+  });
+
   it("retries transient provider failures with persisted backoff and increments durable attempts", async () => {
     await saveAnswerSubmission({
       submissionId,

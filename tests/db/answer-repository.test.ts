@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "../helpers/db";
 import * as schema from "@/lib/db/schema";
 import { jstDayStart } from "@/lib/date";
@@ -449,6 +450,60 @@ describe("answer-repository", () => {
       await expect(testDb.db.select().from(schema.examSubmissionOperations)).resolves.toHaveLength(
         0,
       );
+    });
+  });
+
+  describe("saveAnswerSubmission question versions", () => {
+    it("preserves an unversioned Q5 assessment on insertion and revision", async () => {
+      const questionIds = await insertFiveQuestions();
+      const questionId = questionIds[4]!;
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({ key: "it-literacy-005", questionVersion: null })
+        .where(eq(schema.examQuestions.id, questionId));
+      const participantId = await insertParticipant("unversioned-q5");
+      const answers = [
+        ...selectedAnswers(questionIds.slice(0, 4)),
+        { questionId, freeText: "回答" },
+      ];
+
+      await saveAnswerSubmission({
+        submissionId: "unversioned-q5-submission",
+        operationId: "unversioned-q5-insert",
+        expectedRevision: 0,
+        participantId,
+        answers,
+      });
+
+      const [insertedSubmission] = await dbRef
+        .db!.select()
+        .from(schema.examAnswerSubmissions)
+        .where(eq(schema.examAnswerSubmissions.id, "unversioned-q5-submission"));
+      const [insertedAssessment] = await dbRef
+        .db!.select()
+        .from(schema.examAnswerAssessments)
+        .where(eq(schema.examAnswerAssessments.submissionId, "unversioned-q5-submission"));
+      expect(insertedSubmission?.questionVersions).not.toHaveProperty(String(questionId));
+      expect(insertedAssessment?.questionVersion).toBeNull();
+
+      await saveAnswerSubmission({
+        submissionId: "unversioned-q5-submission",
+        operationId: "unversioned-q5-revision",
+        expectedRevision: 1,
+        participantId,
+        answers: [...answers.slice(0, 4), { questionId, freeText: "回答を更新" }],
+      });
+
+      const [updatedSubmission] = await dbRef
+        .db!.select()
+        .from(schema.examAnswerSubmissions)
+        .where(eq(schema.examAnswerSubmissions.id, "unversioned-q5-submission"));
+      const [updatedAssessment] = await dbRef
+        .db!.select()
+        .from(schema.examAnswerAssessments)
+        .where(eq(schema.examAnswerAssessments.submissionId, "unversioned-q5-submission"));
+      expect(updatedSubmission?.questionVersions).not.toHaveProperty(String(questionId));
+      expect(updatedAssessment?.questionVersion).toBeNull();
     });
   });
 
