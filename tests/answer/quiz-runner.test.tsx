@@ -994,7 +994,14 @@ describe("QuizRunner batch answer sheet", () => {
 
     expect(screen.getByRole("heading", { name: "回答完了" })).toBeInTheDocument();
     expect(screen.getByText("全5問の回答を記録しました。")).toBeInTheDocument();
-    expect(screen.getByText("回答者：代理回答者（代理回答）")).toBeInTheDocument();
+    const nameTerm = screen.getByRole("term");
+    expect(nameTerm).toHaveTextContent("氏名");
+    const nameField = nameTerm.closest("dl");
+    expect(nameField).toBeInTheDocument();
+    expect(within(nameField as HTMLElement).getByRole("definition")).toHaveTextContent(
+      "代理回答者",
+    );
+    expect(screen.getByText("代理回答")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
     expect(editAnswers).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "自分の回答に戻る" }));

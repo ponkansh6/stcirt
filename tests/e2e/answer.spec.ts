@@ -147,7 +147,9 @@ async function signIn(page: Page, name = "Test Participant", pin = "0123") {
   await page.getByLabel("4桁PIN").fill(pin);
   await page.getByRole("button", { name: "はじめる" }).click();
   await expect(
-    page.getByRole("heading", { name: /受検票|問題が足りません|問題を読み込めませんでした/ }),
+    page.getByRole("heading", {
+      name: /5問検定|しゅんたま検定|受検票|問題が足りません|問題を読み込めませんでした/,
+    }),
   ).toBeVisible();
 }
 
@@ -270,6 +272,12 @@ test("keeps choices local, blocks an incomplete batch, then confirms all five wi
   await signIn(page, "Aki");
   await startQuiz(page);
   await expect(page.getByRole("heading", { name: "Question 1?" })).toBeVisible();
+  const answeringNameField = page.getByRole("term");
+  await expect(answeringNameField).toHaveText("氏名");
+  await expect(answeringNameField).toBeVisible();
+  await expect(answeringNameField.locator("xpath=following-sibling::dd")).toHaveText("Aki");
+  await expect(page.getByText("本人の回答", { exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "設問へ移動" })).toBeVisible();
   const confirm = page.getByRole("button", { name: "5問の回答を確定する" });
   await expect(confirm).toBeDisabled();
   await answerQuestion(page, 1, "B");
@@ -279,6 +287,11 @@ test("keeps choices local, blocks an incomplete batch, then confirms all five wi
   await confirm.click();
 
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
+  const completionNameField = page.getByRole("term");
+  await expect(completionNameField).toHaveText("氏名");
+  await expect(completionNameField.locator("xpath=following-sibling::dd")).toHaveText("Aki");
+  await expect(page.getByText("本人の回答", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "回答を修正する" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "設問へ移動" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
   await expect(page.getByText(/正解！|不正解|解説:|正答率|合格/)).toHaveCount(0);
@@ -574,8 +587,9 @@ test("returns to owner completion after an assisted save and opens target correc
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();
   // Saving an assisted answer returns directly to the owner's completion view.
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
-  await expect(page.getByText("本人（本人の回答）")).toBeVisible();
-  await expect(page.getByText("代理回答者（代理回答）")).toHaveCount(0);
+  await expect(page.getByRole("definition")).toHaveText("本人");
+  await expect(page.getByText("本人の回答", { exact: true })).toBeVisible();
+  await expect(page.getByText("代理回答者", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
   expect(assistedSaves).toHaveLength(1);
 
@@ -588,7 +602,8 @@ test("returns to owner completion after an assisted save and opens target correc
   const ownerRequestsBeforeReload = assistedLatestRequests.filter((search) => search === "").length;
   await page.reload();
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
-  await expect(page.getByText(/本人（本人の回答）/)).toBeVisible();
+  await expect(page.getByRole("definition")).toHaveText("本人");
+  await expect(page.getByText("本人の回答", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
   await expect
     .poll(() => assistedLatestRequests.filter((search) => search === "").length)
@@ -604,8 +619,9 @@ test("returns to owner completion after an assisted save and opens target correc
   await answerQuestion(page, 1, "C");
   await page.getByRole("button", { name: "修正内容を確定する" }).click();
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
-  await expect(page.getByText("本人（本人の回答）")).toBeVisible();
-  await expect(page.getByText("代理回答者（代理回答）")).toHaveCount(0);
+  await expect(page.getByRole("definition")).toHaveText("本人");
+  await expect(page.getByText("本人の回答", { exact: true })).toBeVisible();
+  await expect(page.getByText("代理回答者", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
   expect(assistedSaves).toHaveLength(2);
   expect(assistedSaves[1]).toMatchObject({
@@ -1064,7 +1080,8 @@ test("retains all choices through reauthentication and resubmits the batch only 
   });
 
   await page.goto("/answer");
-  await expect(page.getByRole("heading", { name: "受検票" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "しゅんたま検定" })).toBeVisible();
+  await expect(page.getByText("Aki", { exact: true })).toBeVisible();
   await startQuiz(page);
   for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "C");
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();

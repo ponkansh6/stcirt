@@ -57,6 +57,7 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 **THEN** `POST /api/answers/batch` atomically saves the five answers for one stable submission.
 
 - The user first joins with a display name and event-wide four-ASCII-digit PIN. A valid existing participant session may be reused without re-entry.
+- During answering, show a read-only exam-style name field with `氏名` and the registered answerer's name. Show `本人の回答` or `代理回答` beside the field, using the existing owner/assisted identity resolution and `ほかの人` fallback. Switching answer scope updates this display; the name is not editable here.
 - Every answer POST requires a valid signed participant cookie and same-origin `Origin`; anonymous POSTs are rejected. The legacy single-answer endpoint keeps its logging behavior but returns only `{ recorded: true }`, never grading details.
 - The participant ID comes only from the validated cookie. A client-supplied `participantId` is rejected.
 - A batch submission is associated with the validated participant. Historical single-answer rows remain unchanged with a NULL participant ID.
@@ -82,6 +83,7 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 **THEN** show `回答完了` and offer `回答を修正する` only when the saved set can be safely restored.
 
 - Completion has no score, correctness, explanation, or pass/fail result.
+- Show the same read-only exam-style `氏名` field and answerer classification as during answering, using the registered answerer's name and the existing assisted fallback. Do not provide name editing on completion.
 - The saved submission revision is updated in place when corrections are confirmed.
 - Saved answers must match the current five-question ID set and answer types, with valid selected-choice indices or non-empty free text, before correction is enabled. If restoration fails, keep the completion screen and disable correction.
 - A known legacy choice-shaped answer for the current fifth free-response question is a supported historical format, not a malformed current answer. Preserve it as legacy without converting or regrading its value, and allow completion and correction.
@@ -107,6 +109,7 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - Use a restrained exam-paper visual style with light surfaces, ink text, subtle borders, and a primary accent; do not use medals, pass/fail imagery, or certificate visuals.
 - Always use the light color palette regardless of the operating system's color-scheme preference.
 - Provide readable contrast, visible keyboard focus, native radio semantics, live status updates, and textual progress labels so color is not the sole signal. Choice rows and the primary confirmation action have at least 44 CSS px of interaction height.
+- Render the answerer's name as a semantic `dl` with `dt` (`氏名`) and `dd` (registered name), accompanied by the `本人の回答` or `代理回答` classification. Keep the field display-only and use a horizontal framed layout that wraps at narrow widths. Show the registered name without omission for ordinary registered names; no length limit or guarantee for exceptionally long names is specified.
 - Keep content in a single readable column on narrow screens, avoid horizontal scrolling at 320 CSS px and 200% zoom, and respect reduced-motion preferences.
 - During the active answering session, show one five-question navigation in the shared sticky header. Keep its sizing and spacing, show answered state, retain answers while navigating, and move focus to each question heading below the sticky header. Do not show home navigation in any answer state.
 - If keyboard focus is on the confirmation action when submission starts, move focus to the final confirmation heading while retaining the polite sending status announcement. On completion, move focus to the completion heading only while that handoff still owns focus; preserve focus on question navigation and other user-selected destinations. After a submission receives 401, successful reauthentication for the same participant moves focus to the explicit same-answer resubmit action only if focus has not moved outside the reauthentication form during recovery; otherwise preserve the outside focus. Logging in as a different participant clears the answer batch and does not request this focus handoff. Failed login does not request this focus handoff, and answers are never resubmitted automatically.

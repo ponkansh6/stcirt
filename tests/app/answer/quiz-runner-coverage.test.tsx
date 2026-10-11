@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
 import QuizRunner from "@/app/answer/quiz-runner";
 
 const mockUseQuizSession = vi.hoisted(() => vi.fn());
@@ -388,27 +389,60 @@ describe("QuizRunner remaining coverage states", () => {
     expect(returnToOwner).not.toHaveBeenCalled();
   });
 
-  it("shows the assisted respondent while answering and returns to the owner", () => {
-    const returnToOwner = vi.fn();
-    mockUseQuizSession.mockReturnValue(
-      session(
-        { kind: "answering" },
-        {
-          answerMode: "assisted",
-          assistedParticipant: {
-            participant: { id: 18, name: "代理回答者" },
-            hasSubmission: false,
-            eligible: false,
+  it("switches the displayed name and classification when returning to the owner", () => {
+    const assistedParticipant = {
+      participant: { id: 18, name: "代理回答者" },
+      hasSubmission: false,
+      eligible: false,
+    };
+    function SwitchableAnswerer() {
+      const [answerMode, setAnswerMode] = useState<"owner" | "assisted">("assisted");
+      mockUseQuizSession.mockReturnValue(
+        session(
+          { kind: "answering" },
+          {
+            answerMode,
+            assistedParticipant,
+            returnToOwner: () => setAnswerMode("owner"),
           },
-          returnToOwner,
-        },
-      ),
+        ),
+      );
+      return <QuizRunner />;
+    }
+    render(<SwitchableAnswerer />);
+
+    const nameTerm = screen.getByRole("term");
+    expect(nameTerm).toHaveTextContent("氏名");
+    const field = nameTerm.closest("dl");
+    expect(field).toBeInTheDocument();
+    expect(within(field as HTMLElement).getByRole("definition")).toHaveTextContent("代理回答者");
+    expect(screen.getByText("代理回答")).toBeInTheDocument();
+    expect(within(field as HTMLElement).getByRole("definition")).toHaveClass(
+      "min-w-0",
+      "break-words",
     );
+    expect(field?.parentElement).toHaveClass("min-w-0");
+    fireEvent.click(screen.getByRole("button", { name: "自分の回答に戻る" }));
+    const ownerNameTerm = screen.getByRole("term");
+    expect(ownerNameTerm).toHaveTextContent("氏名");
+    const ownerField = ownerNameTerm.closest("dl");
+    expect(within(ownerField as HTMLElement).getByRole("definition")).toHaveTextContent("参加者");
+    expect(screen.getByText("本人の回答")).toBeInTheDocument();
+    expect(screen.queryByText("代理回答者")).not.toBeInTheDocument();
+    expect(screen.queryByText("代理回答", { exact: true })).not.toBeInTheDocument();
+  });
+
+  it("uses the owner's registered name and classification while answering", () => {
+    mockUseQuizSession.mockReturnValue(session({ kind: "answering" }));
     render(<QuizRunner />);
 
-    expect(screen.getByText("回答者：代理回答者（代理回答）")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "自分の回答に戻る" }));
-    expect(returnToOwner).toHaveBeenCalledOnce();
+    const nameTerm = screen.getByRole("term");
+    expect(nameTerm).toHaveTextContent("氏名");
+    const field = nameTerm.closest("dl");
+    expect(field).toBeInTheDocument();
+    expect(within(field as HTMLElement).getByRole("definition")).toHaveTextContent("参加者");
+    expect(screen.getByText("本人の回答")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeInTheDocument();
   });
 
   it.each([
@@ -421,8 +455,13 @@ describe("QuizRunner remaining coverage states", () => {
     render(<QuizRunner />);
 
     expect(screen.getByText("全5問の回答を記録しました。")).toBeInTheDocument();
-    expect(screen.getByText("回答者：ほかの人（代理回答）")).toBeInTheDocument();
-    expect(screen.queryByText("回答者：参加者（本人の回答）")).not.toBeInTheDocument();
+    const nameTerm = screen.getByRole("term");
+    expect(nameTerm).toHaveTextContent("氏名");
+    const field = nameTerm.closest("dl");
+    expect(field).toBeInTheDocument();
+    expect(within(field as HTMLElement).getByRole("definition")).toHaveTextContent("ほかの人");
+    expect(screen.getByText("代理回答")).toBeInTheDocument();
+    expect(screen.queryByText("参加者")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
       "/api/participants/results?scope=assisted",
@@ -441,8 +480,13 @@ describe("QuizRunner remaining coverage states", () => {
       );
       render(<QuizRunner />);
 
-      expect(screen.getByText("回答者：ほかの人（代理回答）")).toBeInTheDocument();
-      expect(screen.queryByText("回答者：参加者（本人の回答）")).not.toBeInTheDocument();
+      const nameTerm = screen.getByRole("term");
+      expect(nameTerm).toHaveTextContent("氏名");
+      const field = nameTerm.closest("dl");
+      expect(field).toBeInTheDocument();
+      expect(within(field as HTMLElement).getByRole("definition")).toHaveTextContent("ほかの人");
+      expect(screen.getByText("代理回答")).toBeInTheDocument();
+      expect(screen.queryByText("参加者")).not.toBeInTheDocument();
     },
   );
 

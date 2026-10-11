@@ -10,6 +10,8 @@ import { Spinner } from "@/components/Spinner";
 import { ApiError } from "@/lib/api/client";
 import { parseParticipantResult } from "@/lib/participant-results-contract";
 import { HeaderPortal } from "./header-portal";
+import { resolveAnswererDisplay } from "./answerer-display";
+import type { AnswerMode } from "./use-quiz-session";
 
 export default function QuizRunner() {
   const {
@@ -441,12 +443,12 @@ export default function QuizRunner() {
             回答完了
           </h1>
           <p className="mt-4 text-muted">全5問の回答を記録しました。</p>
-          <p className="mt-2 text-sm font-medium text-muted">
-            回答者：
-            {answeringForAssisted
-              ? `${assistedParticipant?.participant?.name ?? "ほかの人"}（代理回答）`
-              : `${access.kind === "ready" ? access.participant.name : "本人"}（本人の回答）`}
-          </p>
+          <AnswererNameField
+            answerMode={answerMode}
+            ownerName={access.kind === "ready" ? access.participant.name : "本人"}
+            assistedName={assistedParticipant?.participant?.name}
+            className="mt-3"
+          />
           <p className="mt-2 text-sm leading-relaxed text-muted">
             回答を見直す場合は、同じ5問の回答を復元して修正できます。
           </p>
@@ -588,12 +590,12 @@ export default function QuizRunner() {
             <div>
               <h1 className="text-3xl font-bold tracking-tight">しゅんたま検定</h1>
               {access.kind === "ready" && (
-                <p className="mt-1 text-sm text-muted">
-                  回答者：
-                  {answerMode === "assisted"
-                    ? `${assistedParticipant?.participant?.name ?? "ほかの人"}（代理回答）`
-                    : `${access.participant.name}（本人の回答）`}
-                </p>
+                <AnswererNameField
+                  answerMode={answerMode}
+                  ownerName={access.participant.name}
+                  assistedName={assistedParticipant?.participant?.name}
+                  className="mt-2"
+                />
               )}
             </div>
             <p className="text-base font-bold" aria-live="polite">
@@ -830,6 +832,32 @@ export default function QuizRunner() {
         </section>
       </main>
     </>
+  );
+}
+
+function AnswererNameField({
+  answerMode,
+  ownerName,
+  assistedName,
+  className = "",
+}: {
+  answerMode: AnswerMode;
+  ownerName: string;
+  assistedName?: string | null;
+  className?: string;
+}) {
+  const answerer = resolveAnswererDisplay(answerMode, ownerName, assistedName);
+
+  return (
+    <div
+      className={`flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm ${className}`}
+    >
+      <dl className="flex min-w-0 items-baseline gap-2">
+        <dt className="shrink-0 text-muted">氏名</dt>
+        <dd className="min-w-0 break-words font-medium">{answerer.name}</dd>
+      </dl>
+      <span className="shrink-0 text-muted">{answerer.kind}</span>
+    </div>
   );
 }
 
