@@ -81,4 +81,8 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       # E2E は現状ローカルの pre-push でしか走っていない。
       # 環境非依存の最終防衛線として CI にも置く。
+      - name: Install Japanese CJK fonts for presentation E2E
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes fonts-noto-cjk
       - run: pnpm test:e2e
