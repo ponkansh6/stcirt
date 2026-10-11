@@ -427,7 +427,7 @@ describe("QuizRunner remaining coverage states", () => {
     expect(ownerNameTerm).toHaveTextContent("氏名");
     const ownerField = ownerNameTerm.closest("dl");
     expect(within(ownerField as HTMLElement).getByRole("definition")).toHaveTextContent("参加者");
-    expect(screen.getByText("本人の回答")).toBeInTheDocument();
+    expect(screen.queryByText("本人の回答")).not.toBeInTheDocument();
     expect(screen.queryByText("代理回答者")).not.toBeInTheDocument();
     expect(screen.queryByText("代理回答", { exact: true })).not.toBeInTheDocument();
   });
@@ -441,7 +441,7 @@ describe("QuizRunner remaining coverage states", () => {
     const field = nameTerm.closest("dl");
     expect(field).toBeInTheDocument();
     expect(within(field as HTMLElement).getByRole("definition")).toHaveTextContent("参加者");
-    expect(screen.getByText("本人の回答")).toBeInTheDocument();
+    expect(screen.queryByText("本人の回答")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeInTheDocument();
   });
 

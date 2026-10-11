@@ -276,7 +276,7 @@ test("keeps choices local, blocks an incomplete batch, then confirms all five wi
   await expect(answeringNameField).toHaveText("氏名");
   await expect(answeringNameField).toBeVisible();
   await expect(answeringNameField.locator("xpath=following-sibling::dd")).toHaveText("Aki");
-  await expect(page.getByText("本人の回答", { exact: true })).toBeVisible();
+  await expect(page.getByText("本人の回答", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "設問へ移動" })).toBeVisible();
   const confirm = page.getByRole("button", { name: "5問の回答を確定する" });
   await expect(confirm).toBeDisabled();
@@ -290,7 +290,7 @@ test("keeps choices local, blocks an incomplete batch, then confirms all five wi
   const completionNameField = page.getByRole("term");
   await expect(completionNameField).toHaveText("氏名");
   await expect(completionNameField.locator("xpath=following-sibling::dd")).toHaveText("Aki");
-  await expect(page.getByText("本人の回答", { exact: true })).toBeVisible();
+  await expect(page.getByText("本人の回答", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "回答を修正する" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "設問へ移動" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
@@ -588,7 +588,7 @@ test("returns to owner completion after an assisted save and opens target correc
   // Saving an assisted answer returns directly to the owner's completion view.
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
   await expect(page.getByRole("definition")).toHaveText("本人");
-  await expect(page.getByText("本人の回答", { exact: true })).toBeVisible();
+  await expect(page.getByText("本人の回答", { exact: true })).toHaveCount(0);
   await expect(page.getByText("代理回答者", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
   expect(assistedSaves).toHaveLength(1);
@@ -603,7 +603,7 @@ test("returns to owner completion after an assisted save and opens target correc
   await page.reload();
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
   await expect(page.getByRole("definition")).toHaveText("本人");
-  await expect(page.getByText("本人の回答", { exact: true })).toBeVisible();
+  await expect(page.getByText("本人の回答", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
   await expect
     .poll(() => assistedLatestRequests.filter((search) => search === "").length)
@@ -620,7 +620,7 @@ test("returns to owner completion after an assisted save and opens target correc
   await page.getByRole("button", { name: "修正内容を確定する" }).click();
   await expect(page.getByRole("heading", { name: "回答完了" })).toBeVisible();
   await expect(page.getByRole("definition")).toHaveText("本人");
-  await expect(page.getByText("本人の回答", { exact: true })).toBeVisible();
+  await expect(page.getByText("本人の回答", { exact: true })).toHaveCount(0);
   await expect(page.getByText("代理回答者", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
   expect(assistedSaves).toHaveLength(2);

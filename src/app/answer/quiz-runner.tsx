@@ -861,7 +861,9 @@ function AnswererNameField({
         <dt className="shrink-0 text-muted">氏名</dt>
         <dd className="min-w-0 break-words font-medium">{answerer.name}</dd>
       </dl>
-      <span className="shrink-0 text-muted">{answerer.kind}</span>
+      {answerer.kind !== "本人の回答" && (
+        <span className="shrink-0 text-muted">{answerer.kind}</span>
+      )}
     </div>
   );
 }
