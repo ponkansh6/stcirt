@@ -515,7 +515,7 @@ function nextAdminMutation(page: import("@playwright/test").Page) {
 function slideFor(page: import("@playwright/test").Page, state: PresentationState) {
   switch (state) {
     case "opening":
-      return page.getByRole("heading", { name: "しゅんたま検定" });
+      return page.getByRole("heading", { name: /^しゅんたま\s*検定$/ });
     case "question":
       return page.getByRole("heading", { name: questions[0].question });
     case "answer":
@@ -614,7 +614,9 @@ test("start and reset use the opening slide with reversible first-question bound
   expect(mock.getPresentationState().state).toBe("opening");
 });
 
-test("opening cover geometry matches before and after presentation start", async ({ page }) => {
+test("opening cover geometry matches before and after presentation start", async ({
+  page,
+}, testInfo) => {
   await installAdminApiMock(page);
   const viewports = [
     { width: 1920, height: 1080 },
@@ -624,28 +626,130 @@ test("opening cover geometry matches before and after presentation start", async
   const inspectOpening = async (targetPage: import("@playwright/test").Page) => {
     await targetPage.evaluate(() => document.fonts.ready);
     await waitForRenderFrames(targetPage);
-    const heading = targetPage.getByRole("heading", { name: "しゅんたま検定" });
+    const heading = targetPage.getByRole("heading", { name: /^しゅんたま\s*検定$/ });
     return heading.evaluate((element) => {
       const rect = element.getBoundingClientRect();
       const headingStyle = getComputedStyle(element);
       const fontSize = Number.parseFloat(headingStyle.fontSize);
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      const lineTops = Array.from(range.getClientRects())
-        .map((lineRect) => lineRect.top)
-        .sort((left, right) => left - right)
-        .filter((top, index, tops) => index === 0 || Math.abs(top - tops[index - 1]!) > 1);
       const section = element.closest("section");
       const titleColumn = section?.querySelector<HTMLElement>("[class*='openingTitle']");
-      const markColumn = section?.querySelector<HTMLElement>("[class*='openingMark']");
-      const emblem = markColumn?.querySelector<HTMLElement>("[class*='openingEmblem']");
-      const seal = markColumn?.querySelector<HTMLElement>("[class*='openingSeal']");
-      const waitingCopy = markColumn?.querySelector<HTMLElement>("[class*='openingWait']");
+      const lockup = section?.querySelector<HTMLElement>("[class*='openingLockup']");
+      const emblem = lockup?.querySelector<HTMLElement>("[class*='examEmblem']");
+      const emblemSvg = emblem?.querySelector<SVGSVGElement>("svg");
+      const waitSlot = section?.querySelector<HTMLElement>("[class*='openingWaitSlot']");
+      const waitingCopy = waitSlot?.querySelector<HTMLElement>("[class*='openingWait']");
+      const fitLayer = document.querySelector<HTMLElement>(
+        "[data-testid='presentation-fit-layer']",
+      );
+      const measuredFitScale = Number.parseFloat(
+        fitLayer?.style.getPropertyValue("--presentation-fit-scale") ?? "1",
+      );
+      const fitScale =
+        Number.isFinite(measuredFitScale) && measuredFitScale > 0 ? measuredFitScale : 1;
+      const lockupRect = lockup?.getBoundingClientRect();
+      const fitLayerRect = fitLayer?.getBoundingClientRect();
+      const isTextClippedByOverflow = (
+        element: HTMLElement,
+        textBounds: { x: number; y: number; width: number; height: number },
+      ) => {
+        for (
+          let ancestor: HTMLElement | null = element;
+          ancestor;
+          ancestor = ancestor.parentElement
+        ) {
+          const style = getComputedStyle(ancestor);
+          const rect = ancestor.getBoundingClientRect();
+          const scaleX = ancestor.offsetWidth > 0 ? rect.width / ancestor.offsetWidth : 1;
+          const scaleY = ancestor.offsetHeight > 0 ? rect.height / ancestor.offsetHeight : 1;
+          const clipLeft = rect.left + ancestor.clientLeft * scaleX;
+          const clipTop = rect.top + ancestor.clientTop * scaleY;
+          const clipRight = clipLeft + ancestor.clientWidth * scaleX;
+          const clipBottom = clipTop + ancestor.clientHeight * scaleY;
+          const clipsX = ["hidden", "clip", "auto", "scroll"].includes(style.overflowX);
+          const clipsY = ["hidden", "clip", "auto", "scroll"].includes(style.overflowY);
+          if (
+            (clipsX &&
+              (textBounds.x < clipLeft - 1 || textBounds.x + textBounds.width > clipRight + 1)) ||
+            (clipsY &&
+              (textBounds.y < clipTop - 1 || textBounds.y + textBounds.height > clipBottom + 1))
+          ) {
+            return true;
+          }
+        }
+        return false;
+      };
+      const titleSpans = Array.from(
+        titleColumn?.querySelectorAll<HTMLElement>("h1 > span") ?? [],
+        (span) => {
+          const spanRect = span.getBoundingClientRect();
+          const spanRange = document.createRange();
+          spanRange.selectNodeContents(span);
+          const textRects = Array.from(spanRange.getClientRects());
+          const lineTops = textRects
+            .map((textRect) => textRect.top)
+            .sort((left, right) => left - right)
+            .filter((top, index, tops) => index === 0 || Math.abs(top - tops[index - 1]!) > 2);
+          const textRect = spanRange.getBoundingClientRect();
+          const spanBounds = {
+            x: spanRect.x,
+            y: spanRect.y,
+            width: spanRect.width,
+            height: spanRect.height,
+          };
+          const textBounds = {
+            x: textRect.x,
+            y: textRect.y,
+            width: textRect.width,
+            height: textRect.height,
+          };
+          const scrollOverflowWidth = Math.max(0, span.scrollWidth - span.clientWidth) * fitScale;
+          const scrollOverflowHeight =
+            Math.max(0, span.scrollHeight - span.clientHeight) * fitScale;
+          return {
+            content: span.textContent?.trim() ?? "",
+            fontSize: Number.parseFloat(getComputedStyle(span).fontSize),
+            span: spanBounds,
+            textBounds,
+            scrollWidth: span.scrollWidth,
+            clientWidth: span.clientWidth,
+            scrollHeight: span.scrollHeight,
+            clientHeight: span.clientHeight,
+            scrollOverflowWidth,
+            scrollOverflowHeight,
+            lineCount: lineTops.length,
+            textInsideLockup: Boolean(
+              lockupRect &&
+              textBounds.x >= lockupRect.left &&
+              textBounds.x + textBounds.width <= lockupRect.right &&
+              textBounds.y >= lockupRect.top &&
+              textBounds.y + textBounds.height <= lockupRect.bottom,
+            ),
+            textInsideFitLayer: Boolean(
+              fitLayerRect &&
+              textBounds.x >= fitLayerRect.left &&
+              textBounds.x + textBounds.width <= fitLayerRect.right &&
+              textBounds.y >= fitLayerRect.top &&
+              textBounds.y + textBounds.height <= fitLayerRect.bottom,
+            ),
+            clipped: isTextClippedByOverflow(span, textBounds),
+          };
+        },
+      );
       const canvas = document.querySelector<HTMLElement>("[data-testid='presentation-canvas']");
       const fitViewport = document.querySelector<HTMLElement>(
         "[data-testid='presentation-fit-viewport']",
       );
-      if (!section || !titleColumn || !markColumn || !emblem || !seal || !canvas || !fitViewport) {
+      if (
+        !section ||
+        !titleColumn ||
+        !lockup ||
+        !emblem ||
+        !emblemSvg ||
+        !waitSlot ||
+        !fitLayer ||
+        !canvas ||
+        !fitViewport
+      ) {
         throw new Error("Presentation opening geometry is missing");
       }
       const canvasRect = canvas.getBoundingClientRect();
@@ -660,6 +764,7 @@ test("opening cover geometry matches before and after presentation start", async
         };
       };
       const outOfBounds = Array.from(fitViewport.querySelectorAll("*"))
+        .filter((node) => getComputedStyle(node).visibility === "visible")
         .map((node) => node.getBoundingClientRect())
         .filter((bounds) => bounds.width > 0 && bounds.height > 0)
         .filter(
@@ -676,13 +781,21 @@ test("opening cover geometry matches before and after presentation start", async
           width: rect.width,
           height: rect.height,
           fontSize,
-          lineCount: lineTops.length,
+          lineCount: Math.max(0, ...titleSpans.map((span) => span.lineCount)),
         },
+        titleSpans,
+        fitScale,
         titleColumn: bounds(titleColumn),
-        markColumn: bounds(markColumn),
+        lockup: bounds(lockup),
+        fitLayer: bounds(fitLayer!),
         emblem: bounds(emblem),
-        seal: bounds(seal),
+        emblemSvg: bounds(emblemSvg),
+        lockupContainsTitle: lockup.contains(titleColumn),
+        lockupContainsEmblem: lockup.contains(emblem),
+        waitSlot: bounds(waitSlot),
+        waitSlotAriaHidden: waitSlot.getAttribute("aria-hidden"),
         waitingCopy: waitingCopy?.textContent?.trim() ?? null,
+        waitSlotVisibility: getComputedStyle(waitSlot).visibility,
         waitingCopyVisibility: waitingCopy ? getComputedStyle(waitingCopy).visibility : null,
         canvas: {
           width: canvasRect.width,
@@ -702,6 +815,61 @@ test("opening cover geometry matches before and after presentation start", async
     });
   };
 
+  const renderedPlatformFonts = async (
+    targetPage: import("@playwright/test").Page,
+    selector: string,
+  ) => {
+    const session = await targetPage.context().newCDPSession(targetPage);
+    try {
+      await session.send("DOM.enable");
+      await session.send("CSS.enable");
+      const { root } = await session.send("DOM.getDocument");
+      const { nodeId } = await session.send("DOM.querySelector", {
+        nodeId: root.nodeId,
+        selector,
+      });
+      if (!nodeId) throw new Error(`Rendered font target is missing: ${selector}`);
+      const { fonts } = await session.send("CSS.getPlatformFontsForNode", { nodeId });
+      return fonts;
+    } finally {
+      await session.detach();
+    }
+  };
+
+  const expectRenderedJapaneseFont = async (targetPage: import("@playwright/test").Page) => {
+    const observed: {
+      selector: string;
+      text: string;
+      fonts: Awaited<ReturnType<typeof renderedPlatformFonts>>;
+      hasJapaneseSerifFace: boolean;
+    }[] = [];
+    for (const [selector, expectedText] of [
+      ["#presentation-title span:first-child, #opening-title span:first-child", "しゅんたま"],
+      ["#presentation-title span:nth-child(2), #opening-title span:nth-child(2)", "検定"],
+    ] as const) {
+      const fonts = await renderedPlatformFonts(targetPage, selector);
+      observed.push({
+        selector,
+        text: expectedText,
+        fonts,
+        hasJapaneseSerifFace: fonts.some(
+          (font) =>
+            font.glyphCount > 0 && /serif|mincho|明朝|ming|song|batang/i.test(font.familyName),
+        ),
+      });
+    }
+    await testInfo.attach("opening-platform-fonts", {
+      body: JSON.stringify(observed, null, 2),
+      contentType: "application/json",
+    });
+    for (const result of observed) {
+      expect(
+        result.hasJapaneseSerifFace,
+        `${result.text} must render from a Japanese Mincho/serif face; observed platform fonts: ${JSON.stringify(result.fonts)}`,
+      ).toBe(true);
+    }
+  };
+
   await page.setViewportSize(viewports[0]!);
   await page.goto("/presentation");
   await expect(page.locator("#presentation-title")).toBeVisible();
@@ -719,13 +887,44 @@ test("opening cover geometry matches before and after presentation start", async
     await page.setViewportSize(viewport);
     const geometry = await inspectOpening(page);
     expect(geometry.heading.lineCount).toBe(1);
+    expect(geometry.titleSpans).toHaveLength(2);
+    expect(
+      geometry.titleSpans.every(
+        (span) =>
+          span.textBounds.width > 0 &&
+          span.textBounds.height > 0 &&
+          span.lineCount === 1 &&
+          !span.clipped &&
+          span.textInsideLockup &&
+          span.textInsideFitLayer,
+      ),
+      `Opening title span text must fit without clipping; geometry: ${JSON.stringify(
+        {
+          titleSpans: geometry.titleSpans,
+          lockup: geometry.lockup,
+          fitLayer: geometry.fitLayer,
+          fitScale: geometry.fitScale,
+        },
+        null,
+        2,
+      )}`,
+    ).toBe(true);
     expect(geometry.waitingCopy).toBe("発表が始まるまで、少々お待ちください");
+    expect(geometry.waitSlotVisibility).toBe("visible");
+    expect(geometry.waitingCopyVisibility).toBe("visible");
+    expect(geometry.waitSlotAriaHidden).toBeNull();
     expect(geometry.canvas.aspectRatio).toBeCloseTo(16 / 9, 2);
     expect(geometry.canvas.insideViewport).toBe(true);
     expect(geometry.outOfBounds).toBe(0);
     expect(geometry.pageCanScroll).toBe(false);
+    await expect(page.locator("#presentation-title")).toBeVisible();
+    await testInfo.attach(`public-not-started-${viewport.width}x${viewport.height}`, {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
     notStarted.push(geometry);
   }
+  await expectRenderedJapaneseFont(page);
 
   const adminPage = await page.context().newPage();
   await signIn(adminPage);
@@ -760,23 +959,89 @@ test("opening cover geometry matches before and after presentation start", async
     expect(geometry.heading.width).toBeCloseTo(beforeStart.heading.width, 1);
     expect(geometry.heading.height).toBeCloseTo(beforeStart.heading.height, 1);
     expect(geometry.heading.fontSize).toBeCloseTo(beforeStart.heading.fontSize, 1);
+    expect(geometry.titleSpans.map((span) => span.content)).toEqual(
+      beforeStart.titleSpans.map((span) => span.content),
+    );
+    for (const span of geometry.titleSpans) {
+      const beforeSpan = beforeStart.titleSpans.find(
+        (candidate) => candidate.content === span.content,
+      )!;
+      expect(span.fontSize).toBeCloseTo(beforeSpan.fontSize, 1);
+      expectSameBounds(span.span, beforeSpan.span);
+      expectSameBounds(span.textBounds, beforeSpan.textBounds);
+      expect(span.textBounds.width).toBeGreaterThan(0);
+      expect(span.textBounds.height).toBeGreaterThan(0);
+      expect(span.lineCount).toBe(1);
+      expect(
+        !span.clipped && span.textInsideLockup && span.textInsideFitLayer,
+        `Opening title text must fit after start; geometry: ${JSON.stringify(
+          {
+            span,
+            lockup: geometry.lockup,
+            fitLayer: geometry.fitLayer,
+            fitScale: geometry.fitScale,
+          },
+          null,
+          2,
+        )}`,
+      ).toBe(true);
+    }
     expectSameBounds(geometry.titleColumn, beforeStart.titleColumn);
-    expectSameBounds(geometry.markColumn, beforeStart.markColumn);
+    expectSameBounds(geometry.lockup, beforeStart.lockup);
     expectSameBounds(geometry.emblem, beforeStart.emblem);
-    expectSameBounds(geometry.seal, beforeStart.seal);
+    expectSameBounds(geometry.emblemSvg, beforeStart.emblemSvg);
+    expectSameBounds(geometry.waitSlot, beforeStart.waitSlot);
+    expect(geometry.lockupContainsTitle).toBe(true);
+    expect(geometry.lockupContainsEmblem).toBe(true);
     if (viewports[index]!.width > 640) {
-      expect(geometry.markColumn.x).toBeGreaterThan(geometry.titleColumn.x);
+      expect(geometry.emblem.x + geometry.emblem.width).toBeLessThanOrEqual(geometry.titleColumn.x);
     } else {
-      expect(geometry.markColumn.y).toBeGreaterThan(geometry.titleColumn.y);
+      expect(geometry.emblem.y + geometry.emblem.height).toBeLessThanOrEqual(
+        geometry.titleColumn.y,
+      );
     }
     expect(geometry.waitingCopy).toBe("発表が始まるまで、少々お待ちください");
+    expect(geometry.waitSlotVisibility).toBe("visible");
     expect(geometry.waitingCopyVisibility).toBe("hidden");
+    expect(geometry.waitSlotAriaHidden).toBe("true");
     expect(geometry.canvas.aspectRatio).toBeCloseTo(16 / 9, 2);
     expect(geometry.canvas.insideViewport).toBe(true);
     expect(geometry.outOfBounds).toBe(0);
     expect(geometry.pageCanScroll).toBe(false);
+    await expect(page.locator("#opening-title")).toBeVisible();
+    await testInfo.attach(`public-opening-${viewports[index]!.width}x${viewports[index]!.height}`, {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
   }
   await adminPage.close();
+});
+
+test("authenticated presenter not-started cover is captured at reference and small viewports", async ({
+  page,
+}, testInfo) => {
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  const viewports = [
+    { width: 1920, height: 1080 },
+    { width: 1440, height: 1080 },
+    { width: 480, height: 900 },
+  ];
+
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+    const controlsRefresh = nextAdminRefresh(page);
+    await page.goto("/presentation?presenter=1");
+    await controlsRefresh;
+    await waitForRenderFrames(page);
+    expect(mock.getPresentationState().state).toBe("not_started");
+    expect(page.viewportSize()).toEqual(viewport);
+    await expect(page.locator("#presentation-title")).toBeVisible();
+    await testInfo.attach(`auth-presenter-not-started-${viewport.width}x${viewport.height}`, {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+  }
 });
 
 test("an empty presentation moves between opening and podium preview", async ({ page }) => {
@@ -1038,12 +1303,13 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   await advanceTo(page, "third");
   const winners = page.getByRole("region", { name: "第3位の勝者一覧" });
   await expect(winners).toBeVisible();
-  await expect(winners.locator("[class*='rank']")).toHaveCount(1);
-  await expect(winners.locator("[class*='rank']")).toHaveText("第3位");
-  const stamp = winners.locator("[class*='certificateStamp']");
-  await expect(stamp).toHaveAttribute("aria-hidden", "true");
-  await expect(stamp).toContainText("しゅんたま");
-  await expect(stamp).toContainText("検定");
+  const rankTitle = winners.locator("[class*='rankHeader'] > h1[class*='rank']");
+  await expect(rankTitle).toHaveCount(1);
+  await expect(rankTitle).toHaveText("第3位");
+  const rankHeader = winners.locator("[class*='rankHeader']");
+  const emblem = rankHeader.locator("[class*='examEmblem']");
+  await expect(emblem).toHaveAttribute("aria-hidden", "true");
+  await expect(emblem.locator("svg")).toBeVisible();
   await expect
     .poll(() =>
       winners.evaluate((region) => {
@@ -1055,18 +1321,15 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   await expect
     .poll(() =>
       winners.evaluate((region) => {
-        const stamp = region.querySelector("[class*='certificateStamp']");
-        if (!(stamp instanceof HTMLElement)) return false;
-        const stampRect = stamp.getBoundingClientRect();
-        const contentRects = Array.from(region.children)
-          .filter((child) => child !== stamp)
-          .map((child) => child.getBoundingClientRect());
-        return contentRects.every(
-          (rect) =>
-            stampRect.right <= rect.left ||
-            stampRect.left >= rect.right ||
-            stampRect.bottom <= rect.top ||
-            stampRect.top >= rect.bottom,
+        const header = region.querySelector<HTMLElement>("[class*='rankHeader']");
+        const emblem = header?.querySelector<HTMLElement>("[class*='examEmblem']");
+        const rankTitle = header?.querySelector<HTMLElement>("h1[class*='rank']");
+        return Boolean(
+          header &&
+          emblem &&
+          rankTitle &&
+          emblem.parentElement === header &&
+          rankTitle.parentElement === header,
         );
       }),
     )
@@ -1133,7 +1396,9 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   expect(mock.getPresentationState().state).toBe("third");
 });
 
-test("rank content is static on every entry and the slide fits the viewport", async ({ page }) => {
+test("rank content is static on every entry and the slide fits the viewport", async ({
+  page,
+}, testInfo) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await installAdminApiMock(page);
   await signIn(page);
@@ -1172,6 +1437,11 @@ test("rank content is static on every entry and the slide fits the viewport", as
     expect(geometry.hasTopline).toBe(false);
     expect(geometry.hasBottomline).toBe(false);
     expect(geometry.background).toBe("rgb(255, 255, 255)");
+    await expect(winners).toBeVisible();
+    await testInfo.attach(`presenter-third-${viewport.width}x${viewport.height}`, {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
   }
   const previousRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowLeft");
@@ -1187,9 +1457,16 @@ test("rank content is static on every entry and the slide fits the viewport", as
   await expect(slideFor(page, "second")).toBeVisible();
   await secondRefresh;
   await expect(page.getByRole("region", { name: "第2位の勝者一覧" })).not.toHaveClass(/announce/);
+  await expect(page.getByRole("region", { name: "第2位の勝者一覧" })).toBeVisible();
+  await testInfo.attach("presenter-second-480x900", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
 });
 
-test("every stage keeps its fixture text inside the canvas content bounds", async ({ page }) => {
+test("every stage keeps its fixture text inside the canvas content bounds", async ({
+  page,
+}, testInfo) => {
   await installAdminApiMock(page);
   const inspectSlide = async () => {
     await waitForRenderFrames(page);
@@ -1213,11 +1490,16 @@ test("every stage keeps its fixture text inside the canvas content bounds", asyn
     });
   };
   await page.goto("/presentation");
-  await expect(page.getByRole("heading", { name: "しゅんたま検定" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^しゅんたま\s*検定$/ })).toBeVisible();
   const notStartedInspection = await inspectSlide();
   expect(notStartedInspection.text).toContain("しゅんたま検定");
   expect(notStartedInspection.outOfBounds).toBe(0);
   expect(notStartedInspection.pageCanScroll).toBe(false);
+  await expect(page.getByRole("heading", { name: /^しゅんたま\s*検定$/ })).toBeVisible();
+  await testInfo.attach("all-stages-public-not-started", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
 
   await signIn(page);
   await startPresentation(page);
@@ -1249,6 +1531,10 @@ test("every stage keeps its fixture text inside the canvas content bounds", asyn
     for (const text of stage.text) expect(inspection.text).toContain(text);
     expect(inspection.outOfBounds).toBe(0);
     expect(inspection.pageCanScroll).toBe(false);
+    await testInfo.attach(`all-stages-presenter-${stage.state}`, {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
 
     const nextStage = stages[index + 1];
     if (!nextStage) continue;
@@ -1332,42 +1618,60 @@ test("reference-size long presentation content stays readable after fitting", as
       );
       const scale = Number(fitLayer?.style.getPropertyValue("--presentation-fit-scale"));
       const selectors: Partial<Record<PresentationState, string>> = {
-        opening: "[class*='openingTitle'] h1, [class*='openingSeal']",
+        opening: "[class*='openingTitle'] h1 > span",
         question:
           "[class*='question']:not([class*='answerReview']) h1, [class*='question']:not([class*='answerReview']) [class*='choiceText']",
         answer:
           "[class*='answerReview'] h1, [class*='answerReview'] [class*='choiceText'], [class*='answerReview'] [class*='explanation'] p",
         podium_preview: "[class*='podiumPreview'] h1, [class*='podiumPreview'] [class*='subtitle']",
         third:
-          "[class*='winners'] [class*='rank'], [class*='winners'] [class*='winnerName__'], [class*='winners'] [class*='__winnerName']:not([class*='__winnerNames']), [class*='winners'] [class*='winnerScore'], [class*='winners'] [class*='winnerQuestionAnswer']",
+          "[class*='winners'] [class*='rankHeader'] > h1[class*='rank'], [class*='winners'] [class*='winnerName__'], [class*='winners'] [class*='__winnerName']:not([class*='__winnerNames']), [class*='winners'] [class*='winnerScore'], [class*='winners'] [class*='winnerQuestionAnswer']",
         second:
-          "[class*='winners'] [class*='rank'], [class*='winners'] [class*='winnerName__'], [class*='winners'] [class*='__winnerName']:not([class*='__winnerNames']), [class*='winners'] [class*='winnerScore'], [class*='winners'] [class*='winnerQuestionAnswer']",
+          "[class*='winners'] [class*='rankHeader'] > h1[class*='rank'], [class*='winners'] [class*='winnerName__'], [class*='winners'] [class*='__winnerName']:not([class*='__winnerNames']), [class*='winners'] [class*='winnerScore'], [class*='winners'] [class*='winnerQuestionAnswer']",
         first:
-          "[class*='winners'] [class*='rank'], [class*='winners'] [class*='winnerName__'], [class*='winners'] [class*='__winnerName']:not([class*='__winnerNames']), [class*='winners'] [class*='winnerScore'], [class*='winners'] [class*='winnerQuestionAnswer']",
+          "[class*='winners'] [class*='rankHeader'] > h1[class*='rank'], [class*='winners'] [class*='winnerName__'], [class*='winners'] [class*='__winnerName']:not([class*='__winnerNames']), [class*='winners'] [class*='winnerScore'], [class*='winners'] [class*='winnerQuestionAnswer']",
         finished: "[class*='finished'] h1, [class*='finished'] [class*='subtitle']",
       };
       const selector = selectors[stage] ?? "";
       const selectorParts = selector.split(",").map((part) => part.trim());
-      return Array.from(viewport.querySelectorAll<HTMLElement>(selector), (element) => {
-        const fontSizePx = Number.parseFloat(getComputedStyle(element).fontSize);
-        return {
-          selector: selectorParts.filter((part) => element.matches(part)).join(", "),
-          className: element.className,
-          text: (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
-          fontSizePx,
-          fitScale: scale,
-          effectivePt: fontSizePx * scale * 0.75,
-        };
-      }).filter((measurement) => Number.isFinite(measurement.effectivePt));
+      return Array.from(viewport.querySelectorAll<HTMLElement>(selector))
+        .filter((element) => getComputedStyle(element).visibility === "visible")
+        .map((element) => {
+          const fontSizePx = Number.parseFloat(getComputedStyle(element).fontSize);
+          const rect = element.getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          const textRect = range.getBoundingClientRect();
+          return {
+            selector: selectorParts.filter((part) => element.matches(part)).join(", "),
+            className: element.className,
+            text: (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 120),
+            fontSizePx,
+            fitScale: scale,
+            naturalWidth: rect.width / scale,
+            naturalHeight: rect.height / scale,
+            textWidth: textRect.width,
+            textHeight: textRect.height,
+            effectivePt: fontSizePx * scale * 0.75,
+          };
+        })
+        .filter((measurement) => Number.isFinite(measurement.effectivePt));
     }, stage);
   };
   const expectMainContentAt20pt = async (stage: PresentationState) => {
     const measurements = await effectiveMainTextMeasurements(stage);
     expect(measurements.length, `${stage} must expose measurable main content`).toBeGreaterThan(0);
     const insufficient = measurements.filter((measurement) => measurement.effectivePt < 20);
+    const unmeasurable = measurements.filter(
+      (measurement) =>
+        measurement.naturalWidth <= 0 ||
+        measurement.naturalHeight <= 0 ||
+        (measurement.text.trim().length > 0 &&
+          (measurement.textWidth <= 0 || measurement.textHeight <= 0)),
+    );
     expect(
-      insufficient.length === 0,
-      `${stage} main content must remain at least 20pt; insufficient elements: ${JSON.stringify(insufficient, null, 2)}`,
+      insufficient.length === 0 && unmeasurable.length === 0,
+      `${stage} visible main content must remain at least 20pt and have measurable natural geometry; insufficient: ${JSON.stringify(insufficient, null, 2)}, unmeasurable: ${JSON.stringify(unmeasurable, null, 2)}`,
     ).toBe(true);
   };
   const expectTwoWinnerLongContentFitException = async () => {
@@ -1381,13 +1685,20 @@ test("reference-size long presentation content stays readable after fitting", as
   };
   await expect(slideFor(page, "opening")).toBeVisible();
   await expect(page.getByRole("heading", { name: longQuestion })).toBeHidden();
-  const opening = page.getByRole("heading", { name: "しゅんたま検定" }).locator("..").locator("..");
+  const opening = page
+    .getByRole("heading", { name: /^しゅんたま\s*検定$/ })
+    .locator("xpath=ancestor::section");
   const openingColumns = await opening.evaluate((section) => {
     const title = section.querySelector("[class*='openingTitle']")!.getBoundingClientRect();
-    const mark = section.querySelector(":scope > [class*='openingMark']")!.getBoundingClientRect();
-    return { titleRight: title.right, markLeft: mark.left };
+    const emblem = section.querySelector("[class*='examEmblem']")!.getBoundingClientRect();
+    const lockup = section.querySelector("[class*='openingLockup']")!;
+    return {
+      emblemBeforeTitle: emblem.right <= title.left,
+      lockupContainsTitle: lockup.contains(section.querySelector("[class*='openingTitle']")),
+    };
   });
-  expect(openingColumns.titleRight).toBeLessThan(openingColumns.markLeft);
+  expect(openingColumns.emblemBeforeTitle).toBe(true);
+  expect(openingColumns.lockupContainsTitle).toBe(true);
   await expect(page.getByText("検定", { exact: true })).toBeVisible();
   await expect(page.getByText("PRESENTATION", { exact: true })).toHaveCount(0);
   await expect(page.getByText("これまでの思い出を振り返りましょう", { exact: true })).toHaveCount(
@@ -1495,8 +1806,8 @@ test("reference-size long presentation content stays readable after fitting", as
       const card = article.getBoundingClientRect();
       return {
         q5AnswerText: q5AnswerNode?.textContent?.trim() ?? "",
-        identityRight: identity.right,
-        resultsLeft: results.left,
+        identityBottom: identity.bottom,
+        resultsTop: results.top,
         firstFourTop: rows.slice(0, 4).map((rect) => rect.top),
         q5Top: rows[4]?.top,
         nameFits: name.scrollWidth <= name.clientWidth + 1,
@@ -1536,7 +1847,7 @@ test("reference-size long presentation content stays readable after fitting", as
   expect(cardGeometry.cardsDoNotOverlap).toBe(true);
   for (const card of cardGeometry.cards) {
     expect(card.q5AnswerText).toBe(longQ5Answer);
-    expect(card.identityRight).toBeLessThan(card.resultsLeft);
+    expect(card.identityBottom).toBeLessThanOrEqual(card.resultsTop + 1);
     expect(new Set(card.firstFourTop).size).toBe(1);
     expect(card.q5Top).toBeGreaterThan(card.firstFourTop[0]!);
     expect(card.nameFits).toBe(true);
@@ -1553,7 +1864,23 @@ test("reference-size long presentation content stays readable after fitting", as
   });
   await expect(region.locator("article")).toHaveCount(2);
   await next("second");
+  const secondPlaceRegion = page.getByRole("region", { name: "第2位の勝者一覧" });
+  const secondPlaceHeading = secondPlaceRegion.locator("[class*='rankHeader'] > h1[class*='rank']");
+  await expect(secondPlaceHeading).toBeVisible();
+  await expect(secondPlaceHeading).toHaveText("第2位");
+  await testInfo.attach("second-podium-current-state", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
   await next("first");
+  const firstPlaceRegion = page.getByRole("region", { name: "第1位の勝者一覧" });
+  const firstPlaceHeading = firstPlaceRegion.locator("[class*='rankHeader'] > h1[class*='rank']");
+  await expect(firstPlaceHeading).toBeVisible();
+  await expect(firstPlaceHeading).toHaveText("第1位");
+  await testInfo.attach("first-podium-current-state", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
   await next("finished");
 });
 
@@ -1573,7 +1900,7 @@ test("tied rank cards share one rank label and keep each name with its score", a
     const fitLayer = document.querySelector<HTMLElement>("[data-testid='presentation-fit-layer']");
     const scale = Number(fitLayer?.style.getPropertyValue("--presentation-fit-scale"));
     const mainText = viewport.querySelectorAll<HTMLElement>(
-      "[class*='winners'] [class*='rank'], [class*='winners'] [class*='winnerName__'], [class*='winners'] [class*='__winnerName']:not([class*='__winnerNames']), [class*='winners'] [class*='winnerScore'], [class*='winners'] [class*='winnerQuestionAnswer']",
+      "[class*='winners'] [class*='rankHeader'] > h1[class*='rank'], [class*='winners'] [class*='winnerName__'], [class*='winners'] [class*='__winnerName']:not([class*='__winnerNames']), [class*='winners'] [class*='winnerScore'], [class*='winners'] [class*='winnerQuestionAnswer']",
     );
     return Array.from(
       mainText,
@@ -1584,7 +1911,7 @@ test("tied rank cards share one rank label and keep each name with its score", a
   expect(fit.every((sizePt) => sizePt >= 20)).toBe(true);
   const region = page.getByRole("region", { name: "第3位の勝者一覧" });
   const cards = region.locator("article");
-  const rank = region.locator("[class*='rank']");
+  const rank = region.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(rank).toHaveCount(1);
   await expect(rank).toHaveText("第3位");
   await expect(cards).toHaveCount(2);
@@ -1603,7 +1930,7 @@ test("tied rank cards share one rank label and keep each name with its score", a
       ["もう一人 さん", "0.75 ポイント"],
     ]);
   const rankPrecedesNames = await region.evaluate((node) => {
-    const label = node.querySelector("[class*='rank']");
+    const label = node.querySelector("[class*='rankHeader'] > h1[class*='rank']");
     const firstName = node.querySelector("article h1");
     return Boolean(
       label &&
@@ -1736,7 +2063,7 @@ test("rank announcements compact saved answers and fit the slide", async ({ page
   await expect(publicRegion).not.toContainText("ふたりが初めて出会った場所は？");
 });
 
-test("a single long winner name wraps fully inside the slide", async ({ page }) => {
+test("a single long winner name wraps fully inside the slide", async ({ page }, testInfo) => {
   const mock = await installAdminApiMock(page);
   const longName = "とても長い氏名を折り返して最後まで表示する受賞者の名前".repeat(3);
   mock.setWinnerEntries([
@@ -1748,11 +2075,14 @@ test("a single long winner name wraps fully inside the slide", async ({ page }) 
   await startPresentation(page);
   await openPresenter(page);
   await advanceTo(page, "third");
+  const spectator = await page.context().newPage();
+  await spectator.setViewportSize({ width: 1920, height: 1080 });
+  await spectator.goto("/presentation");
 
   const region = page.getByRole("region", { name: "第3位の勝者一覧" });
   const name = region.locator("article h1");
   await expect(region.locator("article")).toHaveCount(1);
-  await expect(region.locator("[class*='rank']")).toHaveCount(1);
+  await expect(region.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveCount(1);
   await expect(name).toContainText(longName);
   await expect(name).toContainText("さん");
   await expect(region.locator("[class*='winnerScore']")).toHaveText("0.75 ポイント");
@@ -1782,8 +2112,10 @@ test("a single long winner name wraps fully inside the slide", async ({ page }) 
       const region = page.getByRole("region", { name: `${rankStage.label}の勝者一覧` });
       const name = region.locator("article h1");
       await expect(region.locator("article")).toHaveCount(1);
-      await expect(region.locator("[class*='rank']")).toHaveCount(1);
-      await expect(region.locator("[class*='rank']")).toHaveText(rankStage.label);
+      await expect(region.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveCount(1);
+      await expect(region.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveText(
+        rankStage.label,
+      );
       await expect(name).toContainText(longName);
       await expect(name).toContainText("さん");
       await expect(region.locator("[class*='winnerScore']")).toHaveText(rankStage.score);
@@ -1794,12 +2126,17 @@ test("a single long winner name wraps fully inside the slide", async ({ page }) 
           const bounds = fitViewport.getBoundingClientRect();
           const canvas = document.querySelector('[data-testid="presentation-canvas"]');
           const region = fitViewport.querySelector(`section[aria-label="${rankLabel}の勝者一覧"]`);
-          const rank = region?.querySelector("[class*='rank']");
-          const heading = region?.querySelector("article h1");
-          const score = region?.querySelector("[class*='winnerScore']");
+          const rank = region?.querySelector("[class*='rankHeader'] > h1[class*='rank']");
+          const identity = region?.querySelector<HTMLElement>("[class*='winnerIdentity']");
+          const heading = identity?.querySelector("h1");
+          const score = identity?.querySelector<HTMLElement>("[class*='winnerScore']");
           const winnerName = heading?.querySelector(
             "[class*='winnerName']:not([class*='winnerNames'])",
           );
+          const rankRect = rank?.getBoundingClientRect();
+          const identityRect = identity?.getBoundingClientRect();
+          const headingRect = heading?.getBoundingClientRect();
+          const scoreRect = score?.getBoundingClientRect();
           const elements = [rank, heading, score];
           const rects = elements.map((element) => {
             const rect = element?.getBoundingClientRect();
@@ -1807,9 +2144,9 @@ test("a single long winner name wraps fully inside the slide", async ({ page }) 
               ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
               : null;
           });
-          const textRange = document.createRange();
-          if (heading) textRange.selectNodeContents(heading);
-          const textRects = Array.from(textRange.getClientRects()).map((rect) => ({
+          const nameRange = document.createRange();
+          if (winnerName) nameRange.selectNodeContents(winnerName);
+          const textRects = Array.from(nameRange.getClientRects()).map((rect) => ({
             left: rect.left,
             right: rect.right,
             top: rect.top,
@@ -1819,12 +2156,36 @@ test("a single long winner name wraps fully inside the slide", async ({ page }) 
           const fontSizes = elements.map((element) =>
             element ? Number.parseFloat(getComputedStyle(element).fontSize) : 0,
           );
-          const visualOrder = Boolean(
-            rects[0] &&
-            rects[1] &&
-            rects[2] &&
-            rects[0].bottom <= rects[1].top &&
-            rects[1].bottom <= rects[2].top,
+          const fitLayer = document.querySelector<HTMLElement>(
+            "[data-testid='presentation-fit-layer']",
+          );
+          const fitScale = Number(
+            fitLayer?.style.getPropertyValue("--presentation-fit-scale") ?? "1",
+          );
+          const effectiveFontSizesPt = fontSizes.map((fontSize) => fontSize * fitScale * 0.75);
+          const identityGap = identity ? getComputedStyle(identity) : null;
+          const columnGap = Number.parseFloat(identityGap?.columnGap ?? "0") || 0;
+          const rowGap = Number.parseFloat(identityGap?.rowGap ?? "0") || 0;
+          const nameAndScoreDoNotOverlap = Boolean(
+            scoreRect &&
+            textRects.every(
+              (line) =>
+                line.right <= scoreRect.left ||
+                scoreRect.right <= line.left ||
+                line.bottom <= scoreRect.top ||
+                scoreRect.bottom <= line.top,
+            ),
+          );
+          const nameAndScoreAdjacent = Boolean(
+            headingRect &&
+            scoreRect &&
+            (headingRect.top < scoreRect.bottom && scoreRect.top < headingRect.bottom
+              ? scoreRect.left >= headingRect.right &&
+                scoreRect.left - headingRect.right <= columnGap + 2
+              : headingRect.left < scoreRect.right &&
+                scoreRect.left < headingRect.right &&
+                scoreRect.top >= headingRect.bottom - 1 &&
+                scoreRect.top - headingRect.bottom <= rowGap + 2),
           );
           const contrastRatio = (
             element: Element | null | undefined,
@@ -1850,18 +2211,20 @@ test("a single long winner name wraps fully inside the slide", async ({ page }) 
           return {
             rankText: rank?.textContent?.trim() ?? "",
             text: heading?.textContent?.replace(/\s+/g, " ").trim() ?? "",
-            rankPrecedesName: Boolean(
-              rank &&
-              heading &&
-              rank.compareDocumentPosition(heading) === Node.DOCUMENT_POSITION_FOLLOWING,
+            rankAboveIdentity: Boolean(
+              rankRect && identityRect && rankRect.bottom <= identityRect.top + 1,
+            ),
+            headingAndScoreShareIdentity: Boolean(
+              identity && heading?.parentElement === identity && score?.parentElement === identity,
             ),
             namePrecedesScore: Boolean(
               heading &&
               score &&
               heading.compareDocumentPosition(score) === Node.DOCUMENT_POSITION_FOLLOWING,
             ),
+            nameAndScoreDoNotOverlap,
+            nameAndScoreAdjacent,
             lineCount: lineTops.size,
-            visualOrder,
             bounds: {
               left: bounds.left,
               right: bounds.right,
@@ -1871,6 +2234,8 @@ test("a single long winner name wraps fully inside the slide", async ({ page }) 
             rects,
             textRects,
             fontSizes,
+            fitScale,
+            effectiveFontSizesPt,
             contrasts: elements.map((element) => contrastRatio(element, canvas)),
             nameFits: Boolean(
               winnerName instanceof HTMLElement &&
@@ -1887,12 +2252,28 @@ test("a single long winner name wraps fully inside the slide", async ({ page }) 
       expect(geometry.rankText).toBe(rankStage.label);
       expect(geometry.text).toContain(longName);
       expect(geometry.text).toContain("さん");
-      expect(geometry.rankPrecedesName).toBe(true);
+      expect(geometry.rankAboveIdentity).toBe(true);
+      expect(geometry.headingAndScoreShareIdentity).toBe(true);
       expect(geometry.namePrecedesScore).toBe(true);
+      expect(geometry.nameAndScoreDoNotOverlap).toBe(true);
+      expect(geometry.nameAndScoreAdjacent).toBe(true);
       expect(geometry.lineCount).toBeGreaterThan(1);
-      expect(geometry.visualOrder).toBe(true);
       expect(geometry.fontSizes[1]).toBeGreaterThan(geometry.fontSizes[0]!);
       expect(geometry.fontSizes[1]).toBeGreaterThan(geometry.fontSizes[2]!);
+      if (viewport.width === 1920) {
+        expect(
+          geometry.effectiveFontSizesPt[1],
+          `Single long winner name must remain at least 20pt at ${viewport.width}x${viewport.height} (${rankStage.label}); measurements: ${JSON.stringify(
+            {
+              fontSizesPx: geometry.fontSizes,
+              fitScale: geometry.fitScale,
+              effectiveFontSizesPt: geometry.effectiveFontSizesPt,
+            },
+            null,
+            2,
+          )}`,
+        ).toBeGreaterThanOrEqual(20);
+      }
       expect(geometry.contrasts.every((ratio) => ratio >= 4.5)).toBe(true);
       expect(geometry.nameFits).toBe(true);
       expect(geometry.pageCanScroll).toBe(false);
@@ -1913,6 +2294,182 @@ test("a single long winner name wraps fully inside the slide", async ({ page }) 
             rect.bottom <= geometry.bounds.bottom + 1,
         ),
       ).toBe(true);
+      const emblemTier = await region
+        .locator(`span[data-tier="${rankStage.state}"] svg`)
+        .evaluate((svg) => {
+          const computed = (part: string) => {
+            const element = svg.querySelector<SVGElement>(`[data-emblem-part="${part}"]`);
+            if (!element) throw new Error(`Missing emblem part: ${part}`);
+            const style = getComputedStyle(element);
+            return {
+              strokeWidth: Number.parseFloat(style.strokeWidth),
+              opacity: Number.parseFloat(style.opacity),
+            };
+          };
+          return {
+            rim: computed("rim"),
+            highlight: computed("highlight"),
+            reflection: computed("reflection"),
+            detailLevel: Number(svg.getAttribute("data-emblem-detail-level")),
+            detailCount: svg.querySelectorAll("[data-emblem-detail]").length,
+          };
+        });
+      expect(emblemTier.rim.strokeWidth).toBe(
+        rankStage.state === "third" ? 2.5 : rankStage.state === "second" ? 3.5 : 4.5,
+      );
+      expect(emblemTier.highlight.strokeWidth).toBe(
+        rankStage.state === "third" ? 3 : rankStage.state === "second" ? 4 : 5,
+      );
+      expect(emblemTier.reflection.strokeWidth).toBe(
+        rankStage.state === "third" ? 2.5 : rankStage.state === "second" ? 4 : 5.5,
+      );
+      expect(emblemTier.reflection.opacity).toBe(
+        rankStage.state === "third" ? 0.35 : rankStage.state === "second" ? 0.68 : 0.95,
+      );
+      expect(emblemTier.detailLevel).toBe(rankIndex);
+      expect(emblemTier.detailCount).toBe(rankIndex);
+      const nextRank = ranks[rankIndex + 1];
+      if (nextRank) {
+        const nextRefresh = nextAdminMutation(page);
+        await page.locator("main").press("ArrowRight");
+        await expect(slideFor(page, nextRank.state)).toBeVisible();
+        await nextRefresh;
+      }
+    }
+  }
+
+  for (const viewport of [
+    { width: 1920, height: 1080 },
+    { width: 1440, height: 1080 },
+    { width: 480, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await waitForRenderFrames(page);
+    const firstRegion = page.getByRole("region", { name: "第1位の勝者一覧" });
+    await expect(firstRegion).toBeVisible();
+    await expect(firstRegion.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveText(
+      "第1位",
+    );
+    const fit = await page.getByTestId("presentation-fit-viewport").evaluate((fitViewport) => {
+      const viewportRect = fitViewport.getBoundingClientRect();
+      const region = fitViewport.querySelector<HTMLElement>("[aria-label='第1位の勝者一覧']");
+      const identity = region?.querySelector<HTMLElement>("[class*='winnerIdentity']");
+      const name = identity?.querySelector<HTMLElement>(
+        "[class*='winnerName']:not([class*='winnerNames'])",
+      );
+      const score = identity?.querySelector<HTMLElement>("[class*='winnerScore']");
+      const regionRect = region?.getBoundingClientRect();
+      const identityRect = identity?.getBoundingClientRect();
+      const scoreRect = score?.getBoundingClientRect();
+      const nameRange = document.createRange();
+      if (name) nameRange.selectNodeContents(name);
+      const nameRects = Array.from(nameRange.getClientRects()).map((rect) => ({
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+      }));
+      const rank = region?.querySelector<HTMLElement>("[class*='rankHeader'] > h1[class*='rank']");
+      const rankRect = rank?.getBoundingClientRect();
+      const fitLayer = document.querySelector<HTMLElement>(
+        "[data-testid='presentation-fit-layer']",
+      );
+      const scale = Number(fitLayer?.style.getPropertyValue("--presentation-fit-scale"));
+      const nameFontSizePx = name ? Number.parseFloat(getComputedStyle(name).fontSize) : 0;
+      const visibleContentRects = Array.from(fitViewport.querySelectorAll<HTMLElement>("*"))
+        .filter((element) => getComputedStyle(element).visibility === "visible")
+        .map((element) => element.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0);
+      return {
+        scale,
+        nameFontSizePx,
+        effectiveNamePt: nameFontSizePx * scale * 0.75,
+        regionInsideViewport: Boolean(
+          regionRect &&
+          regionRect.left >= viewportRect.left - 1 &&
+          regionRect.right <= viewportRect.right + 1 &&
+          regionRect.top >= viewportRect.top - 1 &&
+          regionRect.bottom <= viewportRect.bottom + 1,
+        ),
+        rankAboveIdentity: Boolean(
+          rankRect && identityRect && rankRect.bottom <= identityRect.top + 1,
+        ),
+        nameFits: Boolean(name && name.scrollWidth <= name.clientWidth + 1),
+        nameAndScoreDoNotOverlap: Boolean(
+          nameRects.length > 0 &&
+          scoreRect &&
+          nameRects.every(
+            (rect) =>
+              rect.right <= scoreRect.left ||
+              scoreRect.right <= rect.left ||
+              rect.bottom <= scoreRect.top ||
+              scoreRect.bottom <= rect.top,
+          ),
+        ),
+        allVisibleContentInsideViewport: visibleContentRects.every(
+          (rect) =>
+            rect.left >= viewportRect.left - 1 &&
+            rect.right <= viewportRect.right + 1 &&
+            rect.top >= viewportRect.top - 1 &&
+            rect.bottom <= viewportRect.bottom + 1,
+        ),
+        pageCanScroll:
+          document.documentElement.scrollWidth > innerWidth ||
+          document.documentElement.scrollHeight > innerHeight,
+        regionCanScroll: Boolean(region && region.scrollHeight > region.clientHeight),
+      };
+    });
+    expect(fit.scale).toBeGreaterThan(0);
+    expect(fit.scale).toBeLessThanOrEqual(1);
+    if (viewport.width >= 1440) {
+      expect(
+        fit.effectiveNamePt,
+        `Single long first-place name must remain at least 20pt at ${viewport.width}x${viewport.height}; measurements: ${JSON.stringify(
+          {
+            nameFontSizePx: fit.nameFontSizePx,
+            fitScale: fit.scale,
+            effectiveNamePt: fit.effectiveNamePt,
+          },
+          null,
+          2,
+        )}`,
+      ).toBeGreaterThanOrEqual(20);
+    }
+    expect(fit.regionInsideViewport).toBe(true);
+    expect(fit.rankAboveIdentity).toBe(true);
+    expect(fit.nameFits).toBe(true);
+    expect(fit.nameAndScoreDoNotOverlap).toBe(true);
+    expect(fit.allVisibleContentInsideViewport).toBe(true);
+    expect(fit.pageCanScroll).toBe(false);
+    expect(fit.regionCanScroll).toBe(false);
+    await testInfo.attach(`presenter-first-long-name-${viewport.width}x${viewport.height}`, {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+
+    await spectator.setViewportSize(viewport);
+    for (const previousState of ["second", "third"] as const) {
+      const previousRefresh = nextAdminMutation(page);
+      await page.locator("main").press("ArrowLeft");
+      await expect(slideFor(page, previousState)).toBeVisible();
+      await previousRefresh;
+    }
+    for (const [rankIndex, rankStage] of ranks.entries()) {
+      await expect(slideFor(spectator, rankStage.state)).toBeVisible();
+      const spectatorRegion = spectator.getByRole("region", {
+        name: `${rankStage.label}の勝者一覧`,
+      });
+      await expect(spectatorRegion).toBeVisible();
+      await expect(spectatorRegion.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveText(
+        rankStage.label,
+      );
+      await testInfo.attach(
+        `public-spectator-${rankStage.state}-${viewport.width}x${viewport.height}`,
+        {
+          body: await spectator.screenshot({ animations: "disabled" }),
+          contentType: "image/png",
+        },
+      );
       const nextRank = ranks[rankIndex + 1];
       if (nextRank) {
         const nextRefresh = nextAdminMutation(page);
@@ -2042,7 +2599,7 @@ test("a long tied-winner list shows two names and the remaining winner count", a
 
   const winnerRegion = page.getByRole("region", { name: "第3位の勝者一覧" });
   const cards = winnerRegion.locator("article");
-  const rankLabels = winnerRegion.locator("[class*='rank']");
+  const rankLabels = winnerRegion.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(rankLabels).toHaveCount(1);
   await expect(rankLabels).toHaveText("第3位");
   await expect(cards).toHaveCount(2);
@@ -2200,7 +2757,7 @@ test("presenter progression never requests fullscreen and manual fullscreen exit
 
 test("native presenter fullscreen API enters and exits without automatic re-entry", async ({
   page,
-}) => {
+}, testInfo) => {
   await installAdminApiMock(page, { fullscreenSupported: true });
   await signIn(page);
   await startPresentation(page);
@@ -2213,6 +2770,11 @@ test("native presenter fullscreen API enters and exits without automatic re-entr
   await expect
     .poll(() => page.evaluate(() => document.fullscreenElement === document.querySelector("main")))
     .toBe(true);
+  await expect(slideFor(page, "question")).toBeVisible();
+  await testInfo.attach("presenter-native-fullscreen-question", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
   await expect(page.locator("main").getByRole("button", { name: "全画面表示" })).toHaveCount(0);
 
   // This case exercises the browser's real fullscreen API. Escape behavior is
@@ -2234,6 +2796,135 @@ test("native presenter fullscreen API enters and exits without automatic re-entr
   await mutation;
   await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
   await expect(page.locator("main").getByRole("button", { name: "全画面表示" })).toBeVisible();
+});
+
+test("opening cover stays on the same state before and after native fullscreen", async ({
+  page,
+}, testInfo) => {
+  const mock = await installAdminApiMock(page, { fullscreenSupported: true });
+  await signIn(page);
+  await page.getByRole("button", { name: "集計" }).click();
+  await expect(page.getByText(/集計済み/)).toBeVisible();
+  await page.getByRole("button", { name: "発表を開始" }).click();
+  await expect(page.getByText("現在の状態：進行中：オープニング")).toBeVisible();
+  await openPresenter(page);
+
+  for (const viewport of [
+    { width: 1920, height: 1080 },
+    { width: 1440, height: 1080 },
+    { width: 480, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await waitForRenderFrames(page);
+    await expect(slideFor(page, "opening")).toBeVisible();
+    await expect(page).toHaveURL(/\/presentation\?presenter=1$/);
+    expect(mock.getPresentationState().state).toBe("opening");
+    expect(page.viewportSize()).toEqual(viewport);
+    expect(await page.evaluate(() => document.fullscreenElement)).toBeNull();
+    const fit = await page.getByTestId("presentation-fit-viewport").evaluate((fitViewport) => {
+      const bounds = fitViewport.getBoundingClientRect();
+      const fitLayer = document.querySelector<HTMLElement>(
+        "[data-testid='presentation-fit-layer']",
+      );
+      const scale = Number(fitLayer?.style.getPropertyValue("--presentation-fit-scale"));
+      const contentRects = Array.from(fitViewport.querySelectorAll<HTMLElement>("*"))
+        .filter((element) => getComputedStyle(element).visibility === "visible")
+        .map((element) => element.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0);
+      return {
+        scale,
+        allContentInsideFitViewport: contentRects.every(
+          (rect) =>
+            rect.left >= bounds.left - 1 &&
+            rect.right <= bounds.right + 1 &&
+            rect.top >= bounds.top - 1 &&
+            rect.bottom <= bounds.bottom + 1,
+        ),
+        pageCanScroll:
+          document.documentElement.scrollWidth > innerWidth ||
+          document.documentElement.scrollHeight > innerHeight,
+      };
+    });
+    expect(fit.scale).toBeGreaterThan(0);
+    expect(fit.scale).toBeLessThanOrEqual(1);
+    expect(fit.allContentInsideFitViewport).toBe(true);
+    expect(fit.pageCanScroll).toBe(false);
+    await testInfo.attach(`auth-presenter-opening-${viewport.width}x${viewport.height}`, {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+  }
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await waitForRenderFrames(page);
+  await expect(slideFor(page, "opening")).toBeVisible();
+  await waitForRenderFrames(page);
+  await testInfo.attach("presenter-opening-before-native-fullscreen", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
+
+  await page.locator("main").getByRole("button", { name: "全画面表示" }).click();
+  await expect
+    .poll(() => page.evaluate(() => document.fullscreenElement === document.querySelector("main")))
+    .toBe(true);
+  await expect(slideFor(page, "opening")).toBeVisible();
+  await waitForRenderFrames(page);
+  await testInfo.attach("presenter-opening-after-native-fullscreen", {
+    body: await page.screenshot({ animations: "disabled" }),
+    contentType: "image/png",
+  });
+});
+
+test("authenticated presenter captures all podium ranks in native fullscreen", async ({
+  page,
+}, testInfo) => {
+  const viewport = { width: 1920, height: 1080 };
+  await page.setViewportSize(viewport);
+  const mock = await installAdminApiMock(page, { fullscreenSupported: true });
+  mock.setWinnerEntries([
+    { displayName: "三位の受賞者", score: 0.75, rank: 3 },
+    { displayName: "二位の受賞者", score: 0.8, rank: 2 },
+    { displayName: "一位の受賞者", score: 0.9, rank: 1 },
+  ]);
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+  await advanceTo(page, "third");
+
+  await expect(slideFor(page, "third")).toBeVisible();
+  const fullscreenButton = page.locator("main").getByRole("button", { name: "全画面表示" });
+  await expect(fullscreenButton).toBeVisible();
+  await fullscreenButton.click();
+  await expect
+    .poll(() => page.evaluate(() => document.fullscreenElement === document.querySelector("main")))
+    .toBe(true);
+
+  const ranks = [
+    { state: "third" as const, label: "第3位" },
+    { state: "second" as const, label: "第2位" },
+    { state: "first" as const, label: "第1位" },
+  ];
+  for (const [index, rank] of ranks.entries()) {
+    await expect(slideFor(page, rank.state)).toBeVisible();
+    await expect(page.getByRole("region", { name: `${rank.label}の勝者一覧` })).toBeVisible();
+    expect(mock.getPresentationState().state).toBe(rank.state);
+    expect(page.viewportSize()).toEqual(viewport);
+    expect(
+      await page.evaluate(() => document.fullscreenElement === document.querySelector("main")),
+    ).toBe(true);
+    await testInfo.attach(`auth-presenter-fullscreen-${rank.state}-1920x1080`, {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    const nextRank = ranks[index + 1];
+    if (nextRank) {
+      const refresh = nextAdminMutation(page);
+      await page.locator("main").press("ArrowRight");
+      await expect(slideFor(page, nextRank.state)).toBeVisible();
+      await refresh;
+    }
+  }
 });
 
 test("fullscreen CTA reserves a mobile top rail without reducing slide fit", async ({ page }) => {

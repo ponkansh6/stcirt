@@ -366,14 +366,14 @@ describe("presentation projection and presenter progression", () => {
         projection.state === "second" ||
         projection.state === "first"
       ) {
-        const rank = slide.querySelector("[class*='rank']");
+        const rank = slide.querySelector("[class*='rankHeader'] > h1[class*='rank']");
         const winner = slide.querySelector("article");
         const name = winner?.querySelector("h1");
         const score = winner?.querySelector("[class*='winnerScore']");
         expect(rank).not.toBeNull();
         expect(name).not.toBeNull();
         expect(score).not.toBeNull();
-        expect(slide.querySelectorAll("[class*='rank']")).toHaveLength(1);
+        expect(slide.querySelectorAll("[class*='rankHeader'] > h1[class*='rank']")).toHaveLength(1);
         expect(rank?.textContent).toBe(
           projection.state === "third"
             ? "第3位"
@@ -397,15 +397,16 @@ describe("presentation projection and presenter progression", () => {
 
       const slide = await screen.findByRole("region", { name: "現在のスライド" });
       expect(within(slide).getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
+      const lockup = slide.querySelector("[class*='openingLockup']");
+      const emblem = slide.querySelector("[class*='examEmblem']");
+      const waitSlot = slide.querySelector("[class*='openingWaitSlot']");
+      expect(lockup).not.toBeNull();
+      expect(emblem).toHaveAttribute("aria-hidden", "true");
+      expect(waitSlot).not.toBeNull();
       if (state === "opening") {
-        const decorativeMark = slide.querySelector("[class*='openingMark'][aria-hidden='true']");
-        expect(decorativeMark).not.toBeNull();
-        expect(decorativeMark?.querySelector("[class*='openingSeal']")).not.toBeNull();
+        expect(waitSlot).toHaveAttribute("aria-hidden", "true");
       } else {
-        expect(slide.querySelector("[class*='openingSeal']")).toHaveAttribute(
-          "aria-hidden",
-          "true",
-        );
+        expect(waitSlot).not.toHaveAttribute("aria-hidden");
       }
       expect(within(slide).queryByText("PRESENTATION")).not.toBeInTheDocument();
       expect(

@@ -10,6 +10,7 @@ export default defineConfig({
   reporter: "html",
   use: {
     baseURL: "http://localhost:3001",
+    locale: "ja-JP",
     trace: "on-first-retry",
   },
 

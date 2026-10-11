@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -310,6 +311,94 @@ async function requestAdminAction(action: AdminAction, expectedSnapshotRevision:
 }
 
 const rankTitle: Record<string, string> = { third: "第3位", second: "第2位", first: "第1位" };
+
+function ExamEmblem({
+  className,
+  tier = "opening",
+}: {
+  className: string;
+  tier?: "opening" | "third" | "second" | "first";
+}) {
+  const rawId = useId();
+  const id = rawId.replaceAll(":", "");
+
+  return (
+    <span
+      className={`${styles.examEmblem} ${styles[`emblem${tier[0].toUpperCase()}${tier.slice(1)}`]} ${className}`}
+      data-tier={tier}
+      aria-hidden="true"
+    >
+      <svg
+        viewBox="0 0 200 200"
+        data-emblem-detail-level={tier === "first" ? 2 : tier === "second" ? 1 : 0}
+        focusable="false"
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id={`${id}-metal`} x1="0" y1="0" x2="0.8" y2="1">
+            <stop offset="0" stopColor="#fff8dd" />
+            <stop offset="0.18" stopColor="#d7bd78" />
+            <stop offset="0.48" stopColor="#f8e9b0" />
+            <stop offset="0.76" stopColor="#b2934f" />
+            <stop offset="1" stopColor="#f1dfa0" />
+          </linearGradient>
+          <linearGradient id={`${id}-face`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#fffdf5" />
+            <stop offset="0.5" stopColor="#f4ecd7" />
+            <stop offset="1" stopColor="#e4d3a6" />
+          </linearGradient>
+        </defs>
+        {/* Dark foundation, beveled metal rim, bright upper edge and shallow lower shadow. */}
+        <circle className={styles.emblemRim} data-emblem-part="rim" cx="100" cy="98" r="83" />
+        <circle className={styles.emblemMetal} cx="100" cy="96" r="80" fill={`url(#${id}-metal)`} />
+        <circle
+          className={styles.emblemHighlight}
+          data-emblem-part="highlight"
+          cx="100"
+          cy="94"
+          r="74"
+        />
+        <circle className={styles.emblemFace} cx="100" cy="96" r="68" fill={`url(#${id}-face)`} />
+        <circle className={styles.emblemInnerRim} cx="100" cy="96" r="59" />
+        <path
+          className={styles.emblemReflection}
+          data-emblem-part="reflection"
+          d="M47 62 A65 65 0 0 1 153 62"
+        />
+        {tier !== "opening" && tier !== "third" && (
+          <g className={styles.emblemTierDetail} data-emblem-detail="engraving">
+            <path d="M63 61 Q100 44 137 61" />
+            <path d="M66 132 Q100 148 134 132" />
+            <path d="M57 96 H66 M134 96 H143" />
+            <path d="m100 48 3 5-3 5-3-5z" />
+          </g>
+        )}
+        {tier === "first" && (
+          <g className={styles.emblemFirstDetail} data-emblem-detail="laurel-studs">
+            <path d="m48 69 3 3-3 3-3-3z m104 0 3 3-3 3-3-3z" />
+            <path d="m39 89 3 3-3 3-3-3z m122 0 3 3-3 3-3-3z" />
+            <path d="m43 112 3 3-3 3-3-3z m114 0 3 3-3 3-3-3z" />
+            <path d="M73 55 Q100 43 127 55 M73 137 Q100 149 127 137" />
+          </g>
+        )}
+        {/* Laurel branches: discrete leaves remain legible at projection scale. */}
+        <g className={styles.emblemLaurel}>
+          <path d="M48 137 C34 119 35 91 49 68 M152 137 C166 119 165 91 151 68" />
+          <path d="M43 119 Q31 116 29 105 Q41 105 46 113 M40 104 Q27 98 28 87 Q40 90 43 99 M43 89 Q34 80 39 69 Q49 76 47 85 M51 76 Q45 64 53 56 Q61 65 56 74 M157 119 Q169 116 171 105 Q159 105 154 113 M160 104 Q173 98 172 87 Q160 90 157 99 M157 89 Q166 80 161 69 Q151 76 153 85 M149 76 Q155 64 147 56 Q139 65 144 74" />
+          <path d="M45 140 Q100 162 155 140" />
+        </g>
+        {/* Open book and writing nib form a distinctive center mark. */}
+        <g className={styles.emblemBook}>
+          <path d="M61 83 Q79 78 99 89 Q119 78 139 83 L139 119 Q119 115 100 126 Q80 115 61 119 Z" />
+          <path d="M100 89 L100 125 M70 91 Q83 90 94 97 M70 101 Q83 100 94 107 M106 97 Q119 90 131 91 M106 107 Q119 100 131 101" />
+          <path d="M126 60 L137 71 L112 96 L105 99 L108 91 Z" />
+          <path d="M126 60 L137 71" />
+        </g>
+      </svg>
+    </span>
+  );
+}
+
 function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] }) {
   return (
     <ol className={styles.winnerQuestionResults} aria-label="設問別の回答">
@@ -1051,7 +1140,7 @@ export default function PresentationScreen({
       // The viewport has no padding or border; its rect is the canvas content box.
       const availableWidth = observedSize?.width ?? viewportRect.width;
       const availableHeight = observedSize?.height ?? viewportRect.height;
-      const naturalWidth = layer.offsetWidth;
+      const naturalWidth = Math.max(layer.offsetWidth, layer.scrollWidth);
       const naturalHeight = Math.max(layer.offsetHeight, layer.scrollHeight);
       if (availableWidth <= 0 || availableHeight <= 0 || naturalWidth <= 0 || naturalHeight <= 0)
         return;
@@ -1199,21 +1288,16 @@ export default function PresentationScreen({
 
                 {!loadingPresenterDeck && (!data || state === "not_started") && (
                   <section className={styles.opening} aria-labelledby="presentation-title">
-                    <div className={styles.openingTitle}>
-                      <h1 id="presentation-title">しゅんたま検定</h1>
+                    <div className={styles.openingLockup}>
+                      <ExamEmblem className={styles.openingEmblem} />
+                      <div className={styles.openingTitle}>
+                        <h1 id="presentation-title" aria-label="しゅんたま検定">
+                          <span>しゅんたま</span>
+                          <span>検定</span>
+                        </h1>
+                      </div>
                     </div>
-                    <div className={styles.openingMark}>
-                      <span className={styles.openingEmblem} aria-hidden="true">
-                        <svg viewBox="0 0 120 120" focusable="false">
-                          <path d="M60 5 72 25 95 18 92 42 113 52 97 70 108 91 84 94 76 117 58 101 38 114 34 90 10 84 24 64 8 46 31 38 32 14 53 26Z" />
-                          <circle cx="60" cy="60" r="31" />
-                          <circle cx="60" cy="60" r="24" />
-                          <path d="m60 39 5.5 14.5L81 54l-12 9 4.5 15L60 69l-13.5 9L51 63l-12-9 15.5-.5Z" />
-                        </svg>
-                      </span>
-                      <span className={styles.openingSeal} aria-hidden="true">
-                        検定
-                      </span>
+                    <div className={styles.openingWaitSlot}>
                       <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
                     </div>
                   </section>
@@ -1221,19 +1305,16 @@ export default function PresentationScreen({
 
                 {state === "opening" && (
                   <section className={styles.opening} aria-labelledby="opening-title">
-                    <div className={styles.openingTitle}>
-                      <h1 id="opening-title">しゅんたま検定</h1>
+                    <div className={styles.openingLockup}>
+                      <ExamEmblem className={styles.openingEmblem} />
+                      <div className={styles.openingTitle}>
+                        <h1 id="opening-title" aria-label="しゅんたま検定">
+                          <span>しゅんたま</span>
+                          <span>検定</span>
+                        </h1>
+                      </div>
                     </div>
-                    <div className={styles.openingMark} aria-hidden="true">
-                      <span className={styles.openingEmblem}>
-                        <svg viewBox="0 0 120 120" focusable="false">
-                          <path d="M60 5 72 25 95 18 92 42 113 52 97 70 108 91 84 94 76 117 58 101 38 114 34 90 10 84 24 64 8 46 31 38 32 14 53 26Z" />
-                          <circle cx="60" cy="60" r="31" />
-                          <circle cx="60" cy="60" r="24" />
-                          <path d="m60 39 5.5 14.5L81 54l-12 9 4.5 15L60 69l-13.5 9L51 63l-12-9 15.5-.5Z" />
-                        </svg>
-                      </span>
-                      <span className={styles.openingSeal}>検定</span>
+                    <div className={styles.openingWaitSlot} aria-hidden="true">
                       <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
                     </div>
                   </section>
@@ -1257,14 +1338,13 @@ export default function PresentationScreen({
                     className={styles.winners}
                     role="region"
                     aria-label={`${rankTitle[state]}の勝者一覧`}
+                    data-rank={state}
                     tabIndex={0}
                   >
-                    <span className={styles.certificateStamp} aria-hidden="true">
-                      しゅんたま
-                      <br />
-                      検定
-                    </span>
-                    <p className={styles.rank}>{rankTitle[state]}</p>
+                    <div className={styles.rankHeader}>
+                      <ExamEmblem className={styles.rankEmblem} tier={state} />
+                      <h1 className={styles.rank}>{rankTitle[state]}</h1>
+                    </div>
                     {winnerGroups.length ? (
                       winnerGroups.map(({ rank, winners }) => (
                         <div className={styles.winnerRankGroup} key={rank}>
