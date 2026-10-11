@@ -1109,8 +1109,8 @@ describe("QuizRunner batch answer sheet", () => {
       session({ kind: "ready" }, { access: { kind: "login" }, login }),
     );
     render(<RunnerPage />);
-    const name = screen.getByLabelText("お名前");
-    const pin = screen.getByLabelText("4桁PIN");
+    const name = screen.getByLabelText("受験者氏名");
+    const pin = screen.getByLabelText("受験コード");
     fireEvent.change(name, { target: { value: "田中" } });
     fireEvent.change(pin, { target: { value: "0a12345" } });
     expect(pin).toHaveValue("0123");
@@ -1147,8 +1147,8 @@ describe("QuizRunner batch answer sheet", () => {
       session({ kind: "ready" }, { access: { kind: "login" }, login }),
     );
     render(<RunnerPage />);
-    fireEvent.change(screen.getByLabelText("お名前"), { target: { value: "田中" } });
-    const pin = screen.getByLabelText("4桁PIN");
+    fireEvent.change(screen.getByLabelText("受験者氏名"), { target: { value: "田中" } });
+    const pin = screen.getByLabelText("受験コード");
     fireEvent.change(pin, { target: { value: "0123" } });
     fireEvent.click(screen.getByRole("button", { name: "はじめる" }));
 
@@ -1168,11 +1168,11 @@ describe("QuizRunner batch answer sheet", () => {
     );
     render(<RunnerPage />);
     expect(screen.getByRole("alert")).toHaveTextContent("参加状態を確認できませんでした。");
-    expect(screen.getByLabelText("お名前")).toHaveAttribute(
+    expect(screen.getByLabelText("受験者氏名")).toHaveAttribute(
       "aria-describedby",
       "participant-form-message",
     );
-    expect(screen.getByLabelText("4桁PIN")).toHaveAttribute(
+    expect(screen.getByLabelText("受験コード")).toHaveAttribute(
       "aria-describedby",
       "participant-pin-hint participant-form-message",
     );
@@ -1202,27 +1202,27 @@ describe("QuizRunner batch answer sheet", () => {
       session({ kind: "ready" }, { access: { kind: "login" }, login }),
     );
     render(<RunnerPage />);
-    fireEvent.change(screen.getByLabelText("お名前"), { target: { value: "田中" } });
-    fireEvent.change(screen.getByLabelText("4桁PIN"), { target: { value: "0123" } });
+    fireEvent.change(screen.getByLabelText("受験者氏名"), { target: { value: "田中" } });
+    fireEvent.change(screen.getByLabelText("受験コード"), { target: { value: "0123" } });
     fireEvent.click(screen.getByRole("button", { name: "はじめる" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("PINが正しくありません。");
     expect(screen.getByRole("alert")).not.toHaveTextContent("以降に再試行できます");
 
-    fireEvent.change(screen.getByLabelText("4桁PIN"), { target: { value: "9999" } });
+    fireEvent.change(screen.getByLabelText("受験コード"), { target: { value: "9999" } });
     fireEvent.click(screen.getByRole("button", { name: "はじめる" }));
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent("再試行時間を確認できません。"),
     );
     expect(screen.getByRole("alert")).not.toHaveTextContent("以降に再試行できます");
 
-    fireEvent.change(screen.getByLabelText("4桁PIN"), { target: { value: "0000" } });
+    fireEvent.change(screen.getByLabelText("受験コード"), { target: { value: "0000" } });
     fireEvent.click(screen.getByRole("button", { name: "はじめる" }));
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
         "参加できませんでした。入力内容をご確認ください。",
       ),
     );
-    expect(screen.getByLabelText("お名前")).toHaveValue("田中");
-    expect(screen.getByLabelText("4桁PIN")).toHaveValue("");
+    expect(screen.getByLabelText("受験者氏名")).toHaveValue("田中");
+    expect(screen.getByLabelText("受験コード")).toHaveValue("");
   });
 });

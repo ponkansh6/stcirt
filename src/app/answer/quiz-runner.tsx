@@ -287,12 +287,17 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">参加して検定を受ける</h1>
           <p className="mt-4 max-w-xl leading-relaxed text-muted">
-            回答を記録するため、お名前と主催者から案内された4桁PINを入力してください。
+            受験者氏名と主催者から案内された受験コードを入力してください。
           </p>
-          <ParticipantForm onLogin={login} message={access.message} />
+          <ParticipantForm
+            onLogin={login}
+            message={access.message}
+            nameLabel="受験者氏名"
+            pinLabel="受験コード"
+          />
         </ParticipantCard>
       </main>
     );
@@ -875,12 +880,16 @@ function ParticipantForm({
   initialName = "",
   message,
   submitLabel = "はじめる",
+  nameLabel = "お名前",
+  pinLabel = "4桁PIN",
 }: {
   onLogin: (name: string, pin: string) => Promise<number>;
   onSuccess?: (participantId: number, canHandoffFocus: boolean) => void;
   initialName?: string;
   message?: string;
   submitLabel?: string;
+  nameLabel?: string;
+  pinLabel?: string;
 }) {
   const formRef = useRef<HTMLFormElement | null>(null);
   const [name, setName] = useState(initialName);
@@ -935,7 +944,7 @@ function ParticipantForm({
     <form ref={formRef} onSubmit={handleSubmit} className="mt-7 space-y-5">
       <div className="space-y-2">
         <label htmlFor="participant-name" className="block text-sm font-semibold">
-          お名前
+          {nameLabel}
         </label>
         <input
           id="participant-name"
@@ -952,7 +961,7 @@ function ParticipantForm({
       </div>
       <div className="space-y-2">
         <label htmlFor="participant-pin" className="block text-sm font-semibold">
-          4桁PIN
+          {pinLabel}
         </label>
         <input
           id="participant-pin"
