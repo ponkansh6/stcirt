@@ -28,9 +28,49 @@ import type {
   PresentationState,
   AdminPresentationControls,
 } from "./presentation-repository.reads";
+import {
+  getRubricVersionForQuestionVersion,
+  isSupportedGraderVersionPair,
+  JEV_QUESTION_VERSION,
+  JEV_RUBRIC_VERSION,
+} from "@/lib/jev/adapter";
 
 export class PresentationConflictError extends Error {
   readonly status = 409;
+}
+
+function makeVersionMaps(questions: { id: number; key: string; questionVersion: string | null }[]) {
+  const questionVersions: Record<string, string> = {};
+  const rubricVersions: Record<string, string> = {};
+  for (const question of questions) {
+    if (!question.questionVersion) return null;
+    questionVersions[String(question.id)] = question.questionVersion;
+    if (question.key === "it-literacy-005") {
+      const rubricVersion = getRubricVersionForQuestionVersion(question.questionVersion);
+      if (
+        !rubricVersion ||
+        !isSupportedGraderVersionPair(question.questionVersion, rubricVersion) ||
+        question.questionVersion !== JEV_QUESTION_VERSION ||
+        rubricVersion !== JEV_RUBRIC_VERSION
+      ) {
+        return null;
+      }
+      rubricVersions[String(question.id)] = rubricVersion;
+    }
+  }
+  if (!questions.some((question) => question.key === "it-literacy-005")) return null;
+  return { questionVersions, rubricVersions };
+}
+
+function sameVersionMap(value: unknown, expected: Record<string, string>): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const map = value as Record<string, unknown>;
+  const keys = Object.keys(map).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return (
+    keys.length === expectedKeys.length &&
+    keys.every((key, index) => key === expectedKeys[index] && map[key] === expected[key])
+  );
 }
 
 const presentationActions = new Set<string>([
@@ -120,6 +160,17 @@ async function startPresentation(
   if (acquiredSession.snapshotRevision === 0) {
     throw new PresentationConflictError("Aggregate results before starting the presentation");
   }
+  const currentQuestions = await tx.select().from(examQuestions).orderBy(asc(examQuestions.id));
+  const currentVersions = makeVersionMaps(currentQuestions);
+  if (
+    !currentVersions ||
+    !sameVersionMap(acquiredSession.questionVersions, currentVersions.questionVersions) ||
+    !sameVersionMap(acquiredSession.rubricVersions, currentVersions.rubricVersions)
+  ) {
+    throw new PresentationConflictError(
+      "Presentation snapshot versions are missing or outdated; aggregate results again",
+    );
+  }
   const state: PresentationState = "opening";
   const version = acquiredSession.version + 1;
   const updated = await tx
@@ -144,6 +195,12 @@ async function ensurePresentationSnapshot(
 ): Promise<typeof presentationSessions.$inferSelect> {
   setOperationPhase?.("source_questions_read");
   const currentQuestions = await tx.select().from(examQuestions).orderBy(asc(examQuestions.id));
+  const versionMaps = makeVersionMaps(currentQuestions);
+  if (!versionMaps) {
+    throw new PresentationConflictError(
+      "Current questions include missing or unsupported versions; update the question and rubric version registry before aggregating",
+    );
+  }
   setOperationPhase?.("participants_read");
   const participants = await tx.select().from(examParticipants).orderBy(asc(examParticipants.id));
   setOperationPhase?.("submissions_read");
@@ -175,6 +232,7 @@ async function ensurePresentationSnapshot(
   const assessmentBySubmission = new Map(
     assessments.map((assessment) => [assessment.submissionId, assessment]),
   );
+
   const answersBySubmission = new Map<string, Map<number, (typeof savedAnswers)[number]>>();
   for (const answer of savedAnswers) {
     const answers =
@@ -182,6 +240,37 @@ async function ensurePresentationSnapshot(
       new Map<number, (typeof savedAnswers)[number]>();
     answers.set(answer.questionId, answer);
     answersBySubmission.set(answer.submissionId, answers);
+  }
+
+  const latestSubmissionByParticipant = new Map<number, (typeof submissions)[number]>();
+  for (const submission of submissions) {
+    if (!latestSubmissionByParticipant.has(submission.participantId)) {
+      latestSubmissionByParticipant.set(submission.participantId, submission);
+    }
+  }
+  for (const submission of latestSubmissionByParticipant.values()) {
+    if (!sameVersionMap(submission.questionVersions, versionMaps.questionVersions)) {
+      throw new PresentationConflictError(
+        `Submission ${submission.id} has missing or outdated question versions; audit or resubmit it before aggregating`,
+      );
+    }
+    const q5 = currentQuestions.find((question) => question.key === "it-literacy-005");
+    const q5Answer = q5 ? answersBySubmission.get(submission.id)?.get(q5.id) : undefined;
+    const assessment = assessmentBySubmission.get(submission.id);
+    if (
+      !q5 ||
+      q5Answer?.answerKind !== "freeText" ||
+      !assessment ||
+      assessment.revision !== submission.revision ||
+      assessment.state !== "graded" ||
+      assessment.questionVersion !== q5.questionVersion ||
+      assessment.rubricVersion !== versionMaps.rubricVersions[String(q5.id)] ||
+      !isSupportedGraderVersionPair(assessment.questionVersion, assessment.rubricVersion)
+    ) {
+      throw new PresentationConflictError(
+        `Submission ${submission.id} has a missing or incompatible Q5 answer/assessment version; audit and regrade it before aggregating`,
+      );
+    }
   }
 
   const firstSubmissionByParticipant = new Set<number>();
@@ -322,6 +411,8 @@ async function ensurePresentationSnapshot(
     .update(presentationSessions)
     .set({
       questionCount: currentQuestions.length,
+      questionVersions: versionMaps.questionVersions,
+      rubricVersions: versionMaps.rubricVersions,
       questionIndex,
       snapshotRevision: session.snapshotRevision + 1,
       version: session.version + 1,

@@ -46,6 +46,7 @@ describe("POST /api/answers route handler", () => {
     vi.mocked(getQuestionById).mockResolvedValueOnce({
       id: 1,
       key: "it-literacy-001",
+      questionVersion: null,
       question: "Q1?",
       choices: ["A", "B", "C", "D"],
       correctIndex: 1,
@@ -76,6 +77,7 @@ describe("POST /api/answers route handler", () => {
     vi.mocked(getQuestionById).mockResolvedValueOnce({
       id: 1,
       key: "it-literacy-001",
+      questionVersion: null,
       question: "Q1?",
       choices: ["A", "B", "C", "D"],
       correctIndex: 1,
@@ -106,6 +108,7 @@ describe("POST /api/answers route handler", () => {
     vi.mocked(getQuestionById).mockResolvedValueOnce({
       id: 5,
       key: "it-literacy-005",
+      questionVersion: null,
       question: "Explain your response",
       choices: [],
       correctIndex: 0,

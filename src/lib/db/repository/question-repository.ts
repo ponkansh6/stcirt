@@ -9,6 +9,7 @@ export async function getQuestionById(id: number): Promise<Question | null> {
   return {
     id: q.id,
     key: q.key,
+    questionVersion: q.questionVersion,
     question: q.question,
     choices: q.choices,
     correctIndex: q.correctIndex,

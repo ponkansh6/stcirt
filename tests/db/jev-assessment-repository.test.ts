@@ -6,6 +6,7 @@ import * as schema from "@/lib/db/schema";
 const dbRef = vi.hoisted(() => ({ db: null as TestDb["db"] | null }));
 const gradeMock = vi.hoisted(() => vi.fn());
 const rubricVersion = vi.hoisted(() => "test-rubric-v1");
+const questionVersion = vi.hoisted(() => "tamami-egg-v1");
 
 vi.mock("@/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/db")>();
@@ -19,6 +20,7 @@ vi.mock("@/lib/db", async (importOriginal) => {
 });
 vi.mock("@/lib/jev/adapter", () => ({
   gradeFreeResponse: gradeMock,
+  JEV_QUESTION_VERSION: questionVersion,
   JEV_RUBRIC_VERSION: rubricVersion,
 }));
 
@@ -61,6 +63,7 @@ describe("durable free-response assessment and restoration", () => {
       [1, 2, 3, 4, 5].map((id) => ({
         id,
         key: id === 5 ? "it-literacy-005" : `it-literacy-00${id}`,
+        questionVersion: id === 5 ? questionVersion : `nagano-00${id}-v1`,
         question: `Q${id}`,
         choices: id === 5 ? [] : ["A", "B", "C", "D"],
         correctIndex: 0,
@@ -109,10 +112,22 @@ describe("durable free-response assessment and restoration", () => {
     expect(assessment).toMatchObject({
       revision: 1,
       answerText: "上司に確認し、承認済み環境を使います。",
+      questionVersion,
       rubricVersion: JEV_RUBRIC_VERSION,
       state: "pending",
       attempts: 0,
     });
+    await expect(testDb.db.select().from(schema.examAnswerSubmissions)).resolves.toMatchObject([
+      {
+        questionVersions: {
+          "1": "nagano-001-v1",
+          "2": "nagano-002-v1",
+          "3": "nagano-003-v1",
+          "4": "nagano-004-v1",
+          "5": questionVersion,
+        },
+      },
+    ]);
     await expect(getAnswerSubmission(submissionId, participantId)).resolves.toMatchObject({
       answers: expect.arrayContaining([
         {
@@ -243,6 +258,11 @@ describe("durable free-response assessment and restoration", () => {
       failed: 0,
     });
     expect(gradeFreeResponse).toHaveBeenCalledTimes(1);
+    expect(gradeFreeResponse).toHaveBeenCalledWith(
+      validAnswers[4] && "freeText" in validAnswers[4] ? validAnswers[4].freeText.trim() : "",
+      questionVersion,
+      JEV_RUBRIC_VERSION,
+    );
     const assessments = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(assessments.filter(({ state }) => state === "processing")).toHaveLength(1);
     expect(assessments.filter(({ state }) => state === "graded")).toHaveLength(1);

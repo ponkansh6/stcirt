@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { gradeFreeResponse } from "@/lib/jev/adapter";
+import { gradeFreeResponse, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
+
+function gradeCurrentAnswer(answer: string) {
+  return gradeFreeResponse(answer, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION);
+}
 
 function envelope(overrides: Record<string, unknown> = {}) {
   return {
@@ -38,7 +42,7 @@ describe("JEV score adapter", () => {
     vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
     respond(envelope());
 
-    await expect(gradeFreeResponse("回答文")).resolves.toEqual({
+    await expect(gradeCurrentAnswer("回答文")).resolves.toEqual({
       score: 1.5,
       confidence: 0.98,
       model: "jev-latest",
@@ -52,7 +56,7 @@ describe("JEV score adapter", () => {
   it("fails closed when the provider API key is not configured", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    await expect(gradeFreeResponse("answer")).rejects.toThrow("jev_not_configured");
+    await expect(gradeCurrentAnswer("answer")).rejects.toThrow("jev_not_configured");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -126,7 +130,7 @@ describe("JEV score adapter", () => {
   ])("rejects %s", async (_name, override) => {
     vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
     respond(envelope(override));
-    await expect(gradeFreeResponse("answer")).rejects.toThrow("jev_invalid_response");
+    await expect(gradeCurrentAnswer("answer")).rejects.toThrow("jev_invalid_response");
   });
 
   it("classifies validation and malformed JSON errors without forwarding response text", async () => {
@@ -135,9 +139,9 @@ describe("JEV score adapter", () => {
       "fetch",
       vi.fn().mockResolvedValue(new Response("private provider detail", { status: 422 })),
     );
-    await expect(gradeFreeResponse("secret answer")).rejects.toThrow("jev_validation");
+    await expect(gradeCurrentAnswer("secret answer")).rejects.toThrow("jev_validation");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("not-json", { status: 200 })));
-    await expect(gradeFreeResponse("secret answer")).rejects.toThrow("jev_invalid_json");
+    await expect(gradeCurrentAnswer("secret answer")).rejects.toThrow("jev_invalid_json");
   });
 
   it("uses an abort timeout signal and leaves transport and timeout failures unclassified for durable retry", async () => {
@@ -147,13 +151,26 @@ describe("JEV score adapter", () => {
       return Promise.reject(new DOMException("timed out", "TimeoutError"));
     });
     vi.stubGlobal("fetch", fetchMock);
-    await expect(gradeFreeResponse("answer")).rejects.toMatchObject({ name: "TimeoutError" });
+    await expect(gradeCurrentAnswer("answer")).rejects.toMatchObject({ name: "TimeoutError" });
     expect(fetchMock).toHaveBeenCalledOnce();
 
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(new Response("private detail", { status: 503 })),
     );
-    await expect(gradeFreeResponse("answer")).rejects.toThrow("jev_http_error");
+    await expect(gradeCurrentAnswer("answer")).rejects.toThrow("jev_http_error");
+  });
+
+  it("rejects missing or mismatched question and rubric versions before provider access", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(gradeFreeResponse("answer", undefined, JEV_RUBRIC_VERSION)).rejects.toThrow(
+      "Unsupported question/rubric version pair",
+    );
+    await expect(
+      gradeFreeResponse("answer", JEV_QUESTION_VERSION, "old-rubric-v1"),
+    ).rejects.toThrow("Unsupported question/rubric version pair");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

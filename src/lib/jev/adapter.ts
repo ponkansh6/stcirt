@@ -1,9 +1,23 @@
 import "server-only";
 
-const QUESTION = "諏訪湖が全面結氷した後、氷が割れて筋状に盛り上がる現象を何といいますか？";
+const QUESTION = "2023年3月に珠美が物価高に耐えられず起こした行動は？";
 const EXPECTED_ANSWER =
-  "御神渡り（おみわたり）。冬に諏訪湖が全面結氷した後、氷が割れて筋状、山脈状に盛り上がる自然現象。諏訪大社上社の男神が下社の女神のもとへ渡った道筋だという伝承がある。";
-export const JEV_RUBRIC_VERSION = "omiwatari-v1";
+  "卵の値上がりが許せなかったため、春闘の賃上げが十分でないと卵を買わないと宣言し、実際に要求内容から一時金などが削られてしまったため、しばらく卵を買わなかった。";
+export const JEV_QUESTION_VERSION = "tamami-egg-v1";
+export const JEV_RUBRIC_VERSION = "tamami-egg-v1";
+
+export function isSupportedGraderVersionPair(
+  questionVersion: string | null | undefined,
+  rubricVersion: string | null | undefined,
+): boolean {
+  return questionVersion === JEV_QUESTION_VERSION && rubricVersion === JEV_RUBRIC_VERSION;
+}
+
+export function getRubricVersionForQuestionVersion(
+  questionVersion: string | null | undefined,
+): string | null {
+  return questionVersion === JEV_QUESTION_VERSION ? JEV_RUBRIC_VERSION : null;
+}
 
 export type JevScore = { score: number; confidence: number; model: string };
 
@@ -15,7 +29,14 @@ function strictKeys(value: Record<string, unknown>, keys: string[]) {
   return Object.keys(value).length === keys.length && keys.every((key) => key in value);
 }
 
-export async function gradeFreeResponse(answer: string): Promise<JevScore> {
+export async function gradeFreeResponse(
+  answer: string,
+  questionVersion: string | null | undefined,
+  rubricVersion: string | null | undefined,
+): Promise<JevScore> {
+  if (!isSupportedGraderVersionPair(questionVersion, rubricVersion)) {
+    throw new Error("Unsupported question/rubric version pair");
+  }
   const apiKey = process.env.TYPESAFE_API_KEY;
   if (!apiKey) throw new Error("jev_not_configured");
   const model = process.env.TYPESAFE_MODEL || "jev-latest";

@@ -338,22 +338,50 @@ describe("presentation repository", () => {
   async function addQuestions() {
     await testDb.db.insert(schema.examQuestions).values([
       {
-        id: 22,
-        key: "presentation-q22",
-        question: "Question 22",
-        choices: ["Correct 22", "Wrong 22"],
+        id: 5,
+        key: "it-literacy-005",
+        questionVersion: "tamami-egg-v1",
+        question: "Question 5",
+        choices: [],
         correctIndex: 0,
-        explanation: "Explanation 22",
+        explanation: "Explanation 5",
       },
       {
-        id: 11,
-        key: "presentation-q11",
-        question: "Question 11",
-        choices: ["Correct 11", "Wrong 11"],
+        id: 1,
+        key: "it-literacy-001",
+        questionVersion: "nagano-001-v1",
+        question: "Question 1",
+        choices: ["Correct 1", "Wrong 1"],
         correctIndex: 0,
-        explanation: "Explanation 11",
+        explanation: "Explanation 1",
       },
     ]);
+  }
+
+  async function addCurrentFiveQuestions() {
+    await testDb.db.insert(schema.examQuestions).values(
+      [1, 2, 3, 4, 5].map((id) => ({
+        id,
+        key: `it-literacy-00${id}`,
+        questionVersion: id === 5 ? "tamami-egg-v1" : `nagano-00${id}-v1`,
+        question: `Current question ${id}`,
+        choices: id === 5 ? [] : [`Correct ${id}`, `Wrong ${id}`],
+        correctIndex: 0,
+        explanation: `Current explanation ${id}`,
+      })),
+    );
+  }
+
+  async function addQ5OnlyQuestion() {
+    await testDb.db.insert(schema.examQuestions).values({
+      id: 5,
+      key: "it-literacy-005",
+      questionVersion: "tamami-egg-v1",
+      question: "Question 5",
+      choices: [],
+      correctIndex: 0,
+      explanation: "Explanation 5",
+    });
   }
 
   async function addParticipant(name: string) {
@@ -374,16 +402,25 @@ describe("presentation repository", () => {
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id,
       participantId,
-      questionIds: [11, 22],
+      questionIds: [1, 5],
+      questionVersions: { "1": "nagano-001-v1", "5": "tamami-egg-v1" },
       revision,
     });
-    await testDb.db.insert(schema.examSubmissionAnswers).values(
-      [11, 22].map((questionId, index) => ({
-        submissionId: id,
-        questionId,
-        selectedIndex: selectedIndices[index]!,
-      })),
-    );
+    await testDb.db.insert(schema.examSubmissionAnswers).values([
+      { submissionId: id, questionId: 1, selectedIndex: selectedIndices[0]! },
+      { submissionId: id, questionId: 5, answerKind: "freeText", freeText: `Q5 ${suffix}` },
+    ]);
+    await testDb.db.insert(schema.examAnswerAssessments).values({
+      submissionId: id,
+      questionId: 5,
+      revision,
+      answerText: `Q5 ${suffix}`,
+      questionVersion: "tamami-egg-v1",
+      state: "graded",
+      rawScore: selectedIndices[1] === 0 ? 2 : 0,
+      normalizedScore: selectedIndices[1] === 0 ? 1 : 0,
+      rubricVersion: "tamami-egg-v1",
+    });
   }
 
   async function addRankFixture() {
@@ -528,7 +565,7 @@ describe("presentation repository", () => {
     });
   });
 
-  it("starts and resets at opening, with reversible question and empty-deck boundaries", async () => {
+  it("starts and resets at opening, with reversible question and Q5-only boundaries", async () => {
     await addQuestions();
     await op("aggregate", "opening-contract-aggregate");
     await setParticipantResultsVisible(true);
@@ -561,16 +598,18 @@ describe("presentation repository", () => {
     });
 
     await testDb.db.delete(schema.examQuestions);
-    await op("aggregate", "opening-contract-empty-aggregate");
-    await expect(op("reset", "opening-contract-empty-reset")).resolves.toMatchObject({
+    await addQ5OnlyQuestion();
+    await op("aggregate", "opening-contract-q5-only-aggregate");
+    await expect(op("reset", "opening-contract-q5-only-reset")).resolves.toMatchObject({
       state: "opening",
       questionIndex: 0,
+      questionCount: 1,
     });
-    await expect(op("advance", "opening-contract-empty-next")).resolves.toMatchObject({
-      state: "podium_preview",
+    await expect(op("advance", "opening-contract-q5-next")).resolves.toMatchObject({
+      state: "question",
       questionIndex: 0,
     });
-    await expect(op("previous", "opening-contract-empty-back")).resolves.toMatchObject({
+    await expect(op("previous", "opening-contract-q5-back")).resolves.toMatchObject({
       state: "opening",
       questionIndex: 0,
     });
@@ -633,6 +672,7 @@ describe("presentation repository", () => {
   });
 
   it("rejects reset before the presentation has started", async () => {
+    await addQ5OnlyQuestion();
     await op("aggregate", "reset-before-start-aggregate");
 
     await expect(op("reset", "reset-before-start")).rejects.toBeInstanceOf(
@@ -648,7 +688,7 @@ describe("presentation repository", () => {
     const participants = await addRankFixture();
 
     const started = await startWithAggregate("start");
-    expect(started.questions.map(({ id }) => id)).toEqual([11, 22]);
+    expect(started.questions.map(({ id }) => id)).toEqual([1, 5]);
     expect(started.entries).toMatchObject([
       { displayName: "First", score: 2, rank: 1 },
       { displayName: "Tied", score: 2, rank: 1 },
@@ -659,12 +699,15 @@ describe("presentation repository", () => {
     await testDb.db
       .update(schema.examQuestions)
       .set({ question: "Edited after start", explanation: "Changed explanation" })
-      .where(eq(schema.examQuestions.id, 11));
+      .where(eq(schema.examQuestions.id, 1));
     await testDb.db
       .update(schema.examSubmissionAnswers)
       .set({ selectedIndex: 1 })
       .where(
-        eq(schema.examSubmissionAnswers.submissionId, `submission-${participants.first}-latest`),
+        and(
+          eq(schema.examSubmissionAnswers.submissionId, `submission-${participants.first}-latest`),
+          eq(schema.examSubmissionAnswers.questionId, 1),
+        ),
       );
     await testDb.db
       .update(schema.examParticipants)
@@ -673,9 +716,9 @@ describe("presentation repository", () => {
 
     const restored = await getAdminPresentation();
     expect(restored.questions[0]).toMatchObject({
-      id: 11,
-      question: "Question 11",
-      explanation: "Explanation 11",
+      id: 1,
+      question: "Question 1",
+      explanation: "Explanation 1",
     });
     expect(restored.entries[0]).toMatchObject({ displayName: "First", score: 2, rank: 1 });
   });
@@ -688,11 +731,11 @@ describe("presentation repository", () => {
     expect(question).toEqual({
       state: "question",
       question: {
-        id: 11,
+        id: 1,
         ordinal: 1,
         total: 2,
-        question: "Question 11",
-        choices: ["Correct 11", "Wrong 11"],
+        question: "Question 1",
+        choices: ["Correct 1", "Wrong 1"],
         answerType: "selected",
       },
     });
@@ -702,7 +745,7 @@ describe("presentation repository", () => {
     await op("advance", "a1");
     await expect(getPublicPresentation()).resolves.toMatchObject({
       state: "answer",
-      question: { correctAnswer: "Correct 11", correctIndex: 0, explanation: "Explanation 11" },
+      question: { correctAnswer: "Correct 1", correctIndex: 0, explanation: "Explanation 1" },
     });
     await op("advance", "a2");
     await op("advance", "a3");
@@ -720,15 +763,15 @@ describe("presentation repository", () => {
           questionResults: [
             {
               position: 0,
-              question: "Question 11",
-              answer: { kind: "selected", value: "Correct 11" },
+              question: "Question 1",
+              answer: { kind: "selected", value: "Correct 1" },
               correctness: "correct",
             },
             {
               position: 1,
-              question: "Question 22",
-              answer: { kind: "selected", value: "Wrong 22" },
-              correctness: "incorrect",
+              question: "Question 5",
+              answer: { kind: "freeText", value: "Q5 latest" },
+              normalizedScore: 0,
             },
           ],
         },
@@ -786,7 +829,7 @@ describe("presentation repository", () => {
     const secondAnswer = await countTableSelectCalls(getPublicPresentation);
     expect(secondAnswer.value).toMatchObject({
       state: "answer",
-      question: { id: 22, ordinal: 2, question: "Question 22" },
+      question: { id: 5, ordinal: 2, question: "Question 5" },
     });
     expect(secondAnswer.selectCalls.get(schema.presentationQuestions)).toBe(1);
     expect(secondAnswer.selectCalls.get(schema.presentationEntries) ?? 0).toBe(0);
@@ -892,12 +935,12 @@ describe("presentation repository", () => {
     ]);
     expect(deck.slides[1]?.projection).toMatchObject({
       state: "question",
-      question: { question: "Question 11" },
+      question: { question: "Question 1" },
     });
     expect(deck.slides[1]?.projection).not.toHaveProperty("question.correctAnswer");
     expect(deck.slides[2]?.projection).toMatchObject({
       state: "answer",
-      question: { correctAnswer: "Correct 11", explanation: "Explanation 11" },
+      question: { correctAnswer: "Correct 1", explanation: "Explanation 1" },
     });
     expect(deck.slides.find(({ state }) => state === "third")?.projection).toMatchObject({
       state: "third",
@@ -906,8 +949,8 @@ describe("presentation repository", () => {
           displayName: "Third",
           rank: 3,
           questionResults: [
-            { position: 0, answer: { kind: "selected", value: "Correct 11" } },
-            { position: 1, answer: { kind: "selected", value: "Wrong 22" } },
+            { position: 0, answer: { kind: "selected", value: "Correct 1" } },
+            { position: 1, answer: { kind: "freeText", value: "Q5 latest" } },
           ],
         },
       ],
@@ -958,12 +1001,12 @@ describe("presentation repository", () => {
     ]);
     expect(projection.winners[0]?.questionResults.map((result) => result.position)).toEqual([0, 1]);
     expect(projection.winners[0]?.questionResults).toMatchObject([
-      { answer: { kind: "selected", value: "Correct 11" }, correctness: "correct" },
-      { answer: { kind: "selected", value: "Wrong 22" }, correctness: "incorrect" },
+      { answer: { kind: "selected", value: "Correct 1" }, correctness: "correct" },
+      { answer: { kind: "freeText", value: "Q5 latest" }, normalizedScore: 0 },
     ]);
     expect(projection.winners[1]?.questionResults).toMatchObject([
-      { answer: { kind: "selected", value: "Wrong 11" }, correctness: "incorrect" },
-      { answer: { kind: "selected", value: "Correct 22" }, correctness: "correct" },
+      { answer: { kind: "selected", value: "Wrong 1" }, correctness: "incorrect" },
+      { answer: { kind: "freeText", value: "Q5 latest" }, normalizedScore: 1 },
     ]);
   });
 
@@ -1041,10 +1084,10 @@ describe("presentation repository", () => {
     expect(answer).toMatchObject({
       state: "answer",
       question: {
-        choices: ["Correct 11", "Wrong 11"],
-        correctAnswer: "Correct 11",
+        choices: ["Correct 1", "Wrong 1"],
+        correctAnswer: "Correct 1",
         correctIndex: 0,
-        explanation: "Explanation 11",
+        explanation: "Explanation 1",
       },
     });
   });
@@ -1055,11 +1098,11 @@ describe("presentation repository", () => {
     await testDb.db
       .update(schema.presentationQuestions)
       .set({ explanation: "   " })
-      .where(eq(schema.presentationQuestions.sourceQuestionId, 11));
+      .where(eq(schema.presentationQuestions.sourceQuestionId, 1));
     await testDb.db
       .update(schema.examQuestions)
       .set({ explanation: "Current master explanation" })
-      .where(eq(schema.examQuestions.id, 11));
+      .where(eq(schema.examQuestions.id, 1));
 
     const question = await getPublicPresentation();
     expect(question).toMatchObject({ state: "question" });
@@ -1177,28 +1220,55 @@ describe("presentation repository", () => {
       {
         id: "partial-question-set",
         participantId: partialQuestionsParticipant,
-        questionIds: [11],
+        questionIds: [1],
+        questionVersions: { "1": "nagano-001-v1", "5": "tamami-egg-v1" },
         revision: 1,
       },
       {
         id: "partial-answer-set",
         participantId: partialAnswersParticipant,
-        questionIds: [11, 22],
+        questionIds: [1, 5],
+        questionVersions: { "1": "nagano-001-v1", "5": "tamami-egg-v1" },
         revision: 1,
       },
     ]);
     await testDb.db.insert(schema.examSubmissionAnswers).values([
       {
         submissionId: "partial-question-set",
-        questionId: 11,
+        questionId: 1,
         selectedIndex: 0,
       },
       {
         submissionId: "partial-answer-set",
-        questionId: 11,
+        questionId: 1,
         selectedIndex: 0,
       },
+      {
+        submissionId: "partial-question-set",
+        questionId: 5,
+        answerKind: "freeText",
+        freeText: "Q5 partial",
+      },
+      {
+        submissionId: "partial-answer-set",
+        questionId: 5,
+        answerKind: "freeText",
+        freeText: "Q5 partial",
+      },
     ]);
+    await testDb.db.insert(schema.examAnswerAssessments).values(
+      ["partial-question-set", "partial-answer-set"].map((submissionId) => ({
+        submissionId,
+        questionId: 5,
+        revision: 1,
+        answerText: "Q5 partial",
+        questionVersion: "tamami-egg-v1",
+        state: "graded" as const,
+        rawScore: 0,
+        normalizedScore: 0,
+        rubricVersion: "tamami-egg-v1",
+      })),
+    );
 
     await startWithAggregate("partial-submissions-start");
 
@@ -1210,16 +1280,16 @@ describe("presentation repository", () => {
           participantId: partialQuestionsParticipant,
           score: 0,
           answers: [
-            expect.objectContaining({ questionId: 11, answerKind: "unanswered" }),
-            expect.objectContaining({ questionId: 22, answerKind: "unanswered" }),
+            expect.objectContaining({ questionId: 1, answerKind: "unanswered" }),
+            expect.objectContaining({ questionId: 5, answerKind: "unanswered" }),
           ],
         }),
         expect.objectContaining({
           participantId: partialAnswersParticipant,
-          score: 0,
+          score: 1,
           answers: [
-            expect.objectContaining({ questionId: 11, answerKind: "unanswered" }),
-            expect.objectContaining({ questionId: 22, answerKind: "unanswered" }),
+            expect.objectContaining({ questionId: 1, answerKind: "selected" }),
+            expect.objectContaining({ questionId: 5, answerKind: "freeText" }),
           ],
         }),
       ]),
@@ -1279,6 +1349,145 @@ describe("presentation repository", () => {
       state: "opening",
     });
     expect(await testDb.db.select().from(schema.presentationOperations)).toHaveLength(4);
+  });
+
+  it.each(["missing-current-question-version", "outdated-submission-version"] as const)(
+    "fails aggregation closed for %s",
+    async (caseName) => {
+      await addQuestions();
+      const participant = await addParticipant(`Version guard ${caseName}`);
+      await addSubmission(participant, [0, 0]);
+
+      if (caseName === "missing-current-question-version") {
+        await testDb.db
+          .update(schema.examQuestions)
+          .set({ questionVersion: null })
+          .where(eq(schema.examQuestions.id, 5));
+      } else {
+        await testDb.db
+          .update(schema.examAnswerSubmissions)
+          .set({ questionVersions: { "1": "nagano-001-v1", "5": "omiwatari-v1" } })
+          .where(eq(schema.examAnswerSubmissions.id, `submission-${participant}-latest`));
+      }
+
+      await expect(op("aggregate", `version-guard-${caseName}`)).rejects.toBeInstanceOf(
+        PresentationConflictError,
+      );
+      await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
+      await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+    },
+  );
+
+  it("aggregates the complete current Q1–Q5 set with matching submitted and assessed versions", async () => {
+    await addCurrentFiveQuestions();
+    const participant = await addParticipant("Current five-question participant");
+    const submissionId = "current-five-question-submission";
+    const questionVersions = {
+      "1": "nagano-001-v1",
+      "2": "nagano-002-v1",
+      "3": "nagano-003-v1",
+      "4": "nagano-004-v1",
+      "5": "tamami-egg-v1",
+    };
+    await testDb.db.insert(schema.examAnswerSubmissions).values({
+      id: submissionId,
+      participantId: participant,
+      questionIds: [1, 2, 3, 4, 5],
+      questionVersions,
+      revision: 1,
+    });
+    await testDb.db.insert(schema.examSubmissionAnswers).values([
+      ...[1, 2, 3, 4].map((questionId) => ({
+        submissionId,
+        questionId,
+        selectedIndex: 0,
+      })),
+      { submissionId, questionId: 5, answerKind: "freeText", freeText: "Q5 current answer" },
+    ]);
+    await testDb.db.insert(schema.examAnswerAssessments).values({
+      submissionId,
+      questionId: 5,
+      revision: 1,
+      answerText: "Q5 current answer",
+      questionVersion: "tamami-egg-v1",
+      state: "graded",
+      rawScore: 1,
+      normalizedScore: 0.5,
+      rubricVersion: "tamami-egg-v1",
+    });
+
+    await op("aggregate", "current-five-question-aggregate");
+
+    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toMatchObject(
+      [1, 2, 3, 4, 5].map((id) => ({ sourceQuestionId: id })),
+    );
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
+      { participantId: participant, score: 4.5 },
+    ]);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+      { questionVersions, rubricVersions: { "5": "tamami-egg-v1" } },
+    ]);
+  });
+
+  it.each([
+    { name: "an older rubric version", rubricVersions: { "5": "omiwatari-v1" } },
+    { name: "a missing rubric version", rubricVersions: {} as Record<string, string> },
+  ])("blocks presentation start when the Q5 snapshot has $name", async ({ rubricVersions }) => {
+    await addCurrentFiveQuestions();
+    const participant = await addParticipant("Stale snapshot participant");
+    const submissionId = "stale-snapshot-submission";
+    const questionVersions = {
+      "1": "nagano-001-v1",
+      "2": "nagano-002-v1",
+      "3": "nagano-003-v1",
+      "4": "nagano-004-v1",
+      "5": "tamami-egg-v1",
+    };
+    await testDb.db.insert(schema.examAnswerSubmissions).values({
+      id: submissionId,
+      participantId: participant,
+      questionIds: [1, 2, 3, 4, 5],
+      questionVersions,
+      revision: 1,
+    });
+    await testDb.db.insert(schema.examSubmissionAnswers).values([
+      ...[1, 2, 3, 4].map((questionId) => ({
+        submissionId,
+        questionId,
+        selectedIndex: 0,
+      })),
+      { submissionId, questionId: 5, answerKind: "freeText", freeText: "Q5 current answer" },
+    ]);
+    await testDb.db.insert(schema.examAnswerAssessments).values({
+      submissionId,
+      questionId: 5,
+      revision: 1,
+      answerText: "Q5 current answer",
+      questionVersion: "tamami-egg-v1",
+      state: "graded",
+      rawScore: 1,
+      normalizedScore: 0.5,
+      rubricVersion: "tamami-egg-v1",
+    });
+
+    await op("aggregate", "stale-q5-snapshot-aggregate");
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ rubricVersions })
+      .where(eq(schema.presentationSessions.id, 1));
+
+    await expect(op("start", "stale-q5-snapshot-start")).rejects.toMatchObject({
+      status: 409,
+    });
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+      { state: "not_started", rubricVersions },
+    ]);
+    await expect(
+      testDb.db
+        .select()
+        .from(schema.presentationOperations)
+        .where(eq(schema.presentationOperations.operationId, "operation-stale-q5-snapshot-start")),
+    ).resolves.toHaveLength(0);
   });
 
   it("fails closed when previous encounters an unsupported persisted state", async () => {
@@ -1368,11 +1577,16 @@ describe("presentation repository", () => {
     await testDb.db
       .update(schema.examQuestions)
       .set({ question: "Edited after publication" })
-      .where(eq(schema.examQuestions.id, 11));
+      .where(eq(schema.examQuestions.id, 1));
     await testDb.db
       .update(schema.examSubmissionAnswers)
       .set({ selectedIndex: 1 })
-      .where(eq(schema.examSubmissionAnswers.submissionId, `submission-${participant}-latest`));
+      .where(
+        and(
+          eq(schema.examSubmissionAnswers.submissionId, `submission-${participant}-latest`),
+          eq(schema.examSubmissionAnswers.questionId, 1),
+        ),
+      );
     await setParticipantResultsVisible(true);
     const repeatedPublish = await getAdminPresentation();
     expect(repeatedPublish.questions).toEqual(published.questions);
@@ -1390,9 +1604,9 @@ describe("presentation repository", () => {
 
     await setParticipantResultsVisible(false);
     await testDb.db
-      .update(schema.examSubmissionAnswers)
-      .set({ selectedIndex: 1 })
-      .where(eq(schema.examSubmissionAnswers.questionId, 22));
+      .update(schema.examAnswerAssessments)
+      .set({ rawScore: 0, normalizedScore: 0 })
+      .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
     await op("aggregate", "results-edited-aggregate");
     const hiddenState = await getAdminPresentation();
     await expect(testDb.db.select().from(schema.participantResultSettings)).resolves.toMatchObject([
@@ -1412,7 +1626,7 @@ describe("presentation repository", () => {
       participantResultsVisible: true,
     });
     expect(republished.questions[0]).toMatchObject({
-      id: 11,
+      id: 1,
       question: "Edited after publication",
     });
     expect(republished.entries).toMatchObject([{ displayName: "Participant", score: 0, rank: 1 }]);
@@ -1426,12 +1640,12 @@ describe("presentation repository", () => {
         {
           position: 0,
           question: "Edited after publication",
-          answer: { kind: "selected", value: "Wrong 11", correctness: "incorrect" },
+          answer: { kind: "selected", value: "Wrong 1", correctness: "incorrect" },
         },
         {
           position: 1,
-          question: "Question 22",
-          answer: { kind: "selected", value: "Wrong 22", correctness: "incorrect" },
+          question: "Question 5",
+          answer: { kind: "freeText", value: "Q5 latest", score: 0 },
         },
       ],
     });
@@ -1445,22 +1659,15 @@ describe("presentation repository", () => {
     await setParticipantResultsVisible(true);
     const original = await getAdminPresentation();
     await setParticipantResultsVisible(false);
-    await testDb.db
-      .update(schema.examQuestions)
-      .set({ key: "it-literacy-005", choices: [] })
-      .where(eq(schema.examQuestions.id, 22));
+    await testDb.db;
     await testDb.db
       .update(schema.examSubmissionAnswers)
       .set({ answerKind: "freeText", selectedIndex: null, freeText: "pending response" })
-      .where(eq(schema.examSubmissionAnswers.questionId, 22));
-    await testDb.db.insert(schema.examAnswerAssessments).values({
-      submissionId: `submission-${participant}-latest`,
-      questionId: 22,
-      revision: 1,
-      answerText: "pending response",
-      state: "pending",
-      rubricVersion: "test-rubric",
-    });
+      .where(eq(schema.examSubmissionAnswers.questionId, 5));
+    await testDb.db
+      .update(schema.examAnswerAssessments)
+      .set({ answerText: "pending response", state: "pending" })
+      .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
 
     await expect(op("aggregate", "failed-reaggregate")).rejects.toBeInstanceOf(
       PresentationConflictError,
@@ -1588,6 +1795,7 @@ describe("presentation repository", () => {
   });
 
   it("resets the diagnostic phase before every retry attempt", async () => {
+    await addQ5OnlyQuestion();
     const database = dbRef.db!;
     const originalTransaction = database.transaction.bind(database);
     let attempts = 0;
@@ -1638,7 +1846,7 @@ describe("presentation repository", () => {
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
   });
 
-  it("requires an explicit aggregate before starting or publishing, including an empty snapshot", async () => {
+  it("requires an explicit aggregate before starting or publishing with no participants", async () => {
     await expect(setParticipantResultsVisible(true)).rejects.toMatchObject({
       message: "Results are not ready",
       status: 409,
@@ -1647,32 +1855,34 @@ describe("presentation repository", () => {
     await expect(operatePresentation("empty-start", "start")).rejects.toMatchObject({
       status: 409,
     });
+    await addQ5OnlyQuestion();
     const aggregated = await operatePresentation("empty-aggregate", "aggregate");
     expect(aggregated).toMatchObject({ snapshotRevision: 1, version: 1, state: "not_started" });
     const started = await operatePresentation("empty-start", "start");
     expect(started).toMatchObject({
       state: "opening",
       version: 2,
-      questionCount: 0,
+      questionCount: 1,
       participantResultsReady: true,
     });
-    expect(started.questions).toEqual([]);
+    expect(started.questions).toMatchObject([{ id: 5 }]);
     expect(started.entries).toEqual([]);
     await expect(op("reset", "empty-reset")).resolves.toMatchObject({
       state: "opening",
       version: 3,
-      questionCount: 0,
+      questionCount: 1,
     });
     await expect(getAdminPresentationDeck()).resolves.toMatchObject({
-      questionCount: 0,
+      questionCount: 1,
       slides: [
         { state: "opening", projection: { state: "opening" } },
+        { state: "question", projection: { state: "question" } },
+        { state: "answer", projection: { state: "answer" } },
         { state: "podium_preview", projection: { state: "podium_preview" } },
         { state: "finished", projection: { state: "finished" } },
       ],
     });
 
-    await addQuestions();
     await testDb.db.insert(schema.participantResultSettings).values({
       id: 1,
       visible: false,
@@ -1682,10 +1892,10 @@ describe("presentation repository", () => {
     await expect(getAdminPresentation()).resolves.toMatchObject({
       state: "opening",
       version: 3,
-      questionCount: 0,
+      questionCount: 1,
       participantResultsVisible: true,
       participantResultsReady: true,
-      questions: [],
+      questions: [{ id: 5 }],
       entries: [],
     });
   });
@@ -1720,7 +1930,19 @@ describe("presentation repository", () => {
     await operatePresentation("cursor-answer-2", "advance");
 
     await setParticipantResultsVisible(false);
-    await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 22));
+    await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 1));
+    await testDb.db
+      .update(schema.examAnswerSubmissions)
+      .set({ questionIds: [5], questionVersions: { "5": "tamami-egg-v1" } })
+      .where(eq(schema.examAnswerSubmissions.id, `submission-${participant}-latest`));
+    await testDb.db
+      .delete(schema.examSubmissionAnswers)
+      .where(
+        and(
+          eq(schema.examSubmissionAnswers.submissionId, `submission-${participant}-latest`),
+          eq(schema.examSubmissionAnswers.questionId, 1),
+        ),
+      );
     await op("aggregate", "cursor-one-question-aggregate");
     await setParticipantResultsVisible(true);
     const oneQuestion = await getAdminPresentation();
@@ -1733,16 +1955,18 @@ describe("presentation repository", () => {
     });
 
     await setParticipantResultsVisible(false);
-    await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 11));
-    await op("aggregate", "cursor-no-questions-aggregate");
+    await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 5));
+    await expect(op("aggregate", "cursor-no-questions-aggregate")).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
     await setParticipantResultsVisible(true);
     const noQuestions = await getAdminPresentation();
     expect(noQuestions).toMatchObject({
-      state: "podium_preview",
+      state: "question",
       questionIndex: 0,
-      questionCount: 0,
-      version: 7,
-      snapshotRevision: 3,
+      questionCount: 1,
+      version: 6,
+      snapshotRevision: 2,
     });
   });
 
@@ -1753,19 +1977,20 @@ describe("presentation repository", () => {
     await testDb.db
       .update(schema.examQuestions)
       .set({ key: "it-literacy-005", choices: [] })
-      .where(eq(schema.examQuestions.id, 22));
+      .where(eq(schema.examQuestions.id, 5));
     await testDb.db
       .update(schema.examSubmissionAnswers)
       .set({ answerKind: "freeText", selectedIndex: null, freeText: "pending response" })
-      .where(eq(schema.examSubmissionAnswers.questionId, 22));
-    await testDb.db.insert(schema.examAnswerAssessments).values({
-      submissionId: `submission-${participant}-latest`,
-      questionId: 22,
-      revision: 1,
-      answerText: "pending response",
-      state: "pending",
-      rubricVersion: "test-rubric",
-    });
+      .where(eq(schema.examSubmissionAnswers.questionId, 5));
+    await testDb.db
+      .update(schema.examAnswerAssessments)
+      .set({
+        answerText: "pending response",
+        state: "pending",
+        questionVersion: "tamami-egg-v1",
+        rubricVersion: "tamami-egg-v1",
+      })
+      .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
 
     await expect(op("aggregate", "pending-response-aggregate")).rejects.toBeInstanceOf(
       PresentationConflictError,
@@ -1779,23 +2004,19 @@ describe("presentation repository", () => {
     });
   });
 
-  it("accepts legacy and same-revision graded Q5 answers in the aggregate", async () => {
+  it("rejects a legacy Q5 answer even when its sibling submission has a matching assessment", async () => {
     await addQuestions();
-    await testDb.db
-      .update(schema.examQuestions)
-      .set({ key: "it-literacy-005", choices: [] })
-      .where(eq(schema.examQuestions.id, 22));
     const legacyParticipant = await addParticipant("Legacy Q5");
     const gradedParticipant = await addParticipant("Graded Q5");
     await addSubmission(legacyParticipant, [0, 0], 1, "legacy");
     await addSubmission(gradedParticipant, [0, 0], 1, "graded");
     await testDb.db
       .update(schema.examSubmissionAnswers)
-      .set({ answerKind: "legacy" })
+      .set({ answerKind: "legacy", selectedIndex: 0, freeText: null })
       .where(
         and(
           eq(schema.examSubmissionAnswers.submissionId, `submission-${legacyParticipant}-legacy`),
-          eq(schema.examSubmissionAnswers.questionId, 22),
+          eq(schema.examSubmissionAnswers.questionId, 5),
         ),
       );
     await testDb.db
@@ -1804,45 +2025,20 @@ describe("presentation repository", () => {
       .where(
         and(
           eq(schema.examSubmissionAnswers.submissionId, `submission-${gradedParticipant}-graded`),
-          eq(schema.examSubmissionAnswers.questionId, 22),
+          eq(schema.examSubmissionAnswers.questionId, 5),
         ),
       );
-    await testDb.db.insert(schema.examAnswerAssessments).values({
-      submissionId: `submission-${gradedParticipant}-graded`,
-      questionId: 22,
-      revision: 1,
-      answerText: "graded response",
-      state: "graded",
-      rawScore: 1,
-      normalizedScore: 0.75,
-      rubricVersion: "test-rubric",
-    });
+    await testDb.db
+      .update(schema.examAnswerAssessments)
+      .set({ answerText: "graded response", rawScore: 1, normalizedScore: 0.75 })
+      .where(
+        eq(schema.examAnswerAssessments.submissionId, `submission-${gradedParticipant}-graded`),
+      );
 
-    await op("aggregate", "q5-eligibility");
-
-    const entries = await testDb.db.select().from(schema.presentationEntries);
-    expect(entries).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          participantId: legacyParticipant,
-          score: 1,
-          answers: expect.arrayContaining([
-            expect.objectContaining({ questionId: 22, answerKind: "legacy" }),
-          ]),
-        }),
-        expect.objectContaining({
-          participantId: gradedParticipant,
-          score: 1.75,
-          answers: expect.arrayContaining([
-            expect.objectContaining({
-              questionId: 22,
-              answerKind: "freeText",
-              normalizedScore: 0.75,
-            }),
-          ]),
-        }),
-      ]),
+    await expect(op("aggregate", "q5-eligibility")).rejects.toBeInstanceOf(
+      PresentationConflictError,
     );
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
   });
 
   it("returns the cookie owner's answers and correctness and fails closed on malformed snapshots", async () => {
@@ -1859,7 +2055,7 @@ describe("presentation repository", () => {
     await testDb.db
       .update(schema.examQuestions)
       .set({ question: "Changed after presentation" })
-      .where(eq(schema.examQuestions.id, 11));
+      .where(eq(schema.examQuestions.id, 1));
     await expect(getParticipantResult(first)).resolves.toEqual({
       state: "visible",
       rank: 1,
@@ -1867,13 +2063,13 @@ describe("presentation repository", () => {
       questions: [
         {
           position: 0,
-          question: "Question 11",
-          answer: { kind: "selected", value: "Correct 11", correctness: "correct" },
+          question: "Question 1",
+          answer: { kind: "selected", value: "Correct 1", correctness: "correct" },
         },
         {
           position: 1,
-          question: "Question 22",
-          answer: { kind: "selected", value: "Correct 22", correctness: "correct" },
+          question: "Question 5",
+          answer: { kind: "freeText", value: "Q5 latest", score: 1 },
         },
       ],
     });
@@ -1884,13 +2080,13 @@ describe("presentation repository", () => {
       questions: [
         {
           position: 0,
-          question: "Question 11",
-          answer: { kind: "selected", value: "Correct 11", correctness: "correct" },
+          question: "Question 1",
+          answer: { kind: "selected", value: "Correct 1", correctness: "correct" },
         },
         {
           position: 1,
-          question: "Question 22",
-          answer: { kind: "selected", value: "Wrong 22", correctness: "incorrect" },
+          question: "Question 5",
+          answer: { kind: "freeText", value: "Q5 latest", score: 0 },
         },
       ],
     });
@@ -1899,7 +2095,7 @@ describe("presentation repository", () => {
       .from(schema.presentationEntries)
       .where(eq(schema.presentationEntries.participantId, first));
     const invalidIndexSnapshot = firstEntry!.answers.map((answer) =>
-      answer.questionId === 11 ? { ...answer, selectedIndex: -1 } : answer,
+      answer.questionId === 1 ? { ...answer, selectedIndex: -1 } : answer,
     );
     await testDb.db
       .update(schema.presentationEntries)
@@ -1914,7 +2110,7 @@ describe("presentation repository", () => {
         },
         {
           position: 1,
-          answer: { kind: "selected", value: "Correct 22", correctness: "correct" },
+          answer: { kind: "freeText", value: "Q5 latest" },
         },
       ],
     });
@@ -1935,7 +2131,7 @@ describe("presentation repository", () => {
         },
         {
           position: 1,
-          answer: { kind: "selected", value: "Correct 22", correctness: "correct" },
+          answer: { kind: "freeText", value: "Q5 latest" },
         },
       ],
     });
@@ -1948,7 +2144,7 @@ describe("presentation repository", () => {
       .set({ choices: [] })
       .where(eq(schema.presentationQuestions.position, 1));
     const legacyAndUnansweredSnapshot = firstEntry!.answers.map((answer) =>
-      answer.questionId === 11
+      answer.questionId === 1
         ? { ...answer, answerKind: "unanswered" as const, selectedIndex: null }
         : {
             ...answer,
@@ -1968,16 +2164,16 @@ describe("presentation repository", () => {
       rank: 1,
       score: 2,
       questions: [
-        { position: 0, question: "Question 11", answer: { kind: "unanswered" } },
-        { position: 1, question: "Question 22", answer: { kind: "legacy" } },
+        { position: 0, question: "Question 1", answer: { kind: "unanswered" } },
+        { position: 1, question: "Question 5", answer: { kind: "legacy" } },
       ],
     });
     await testDb.db
       .update(schema.presentationQuestions)
-      .set({ choices: ["Correct 22", "Wrong 22"] })
+      .set({ choices: ["Correct 5", "Wrong 5"] })
       .where(eq(schema.presentationQuestions.position, 1));
     const legacyOnChoiceQuestion = firstEntry!.answers.map((answer) =>
-      answer.questionId === 11
+      answer.questionId === 1
         ? { ...answer, answerKind: "legacy" as const, selectedIndex: 0 }
         : answer,
     );
@@ -2010,7 +2206,7 @@ describe("presentation repository", () => {
       .from(schema.presentationEntries)
       .where(eq(schema.presentationEntries.participantId, second));
     const freeTextSnapshot = secondEntry!.answers.map((answer) =>
-      answer.questionId === 22
+      answer.questionId === 5
         ? {
             ...answer,
             answerKind: "freeText" as const,
@@ -2042,12 +2238,12 @@ describe("presentation repository", () => {
       questions: [
         {
           position: 0,
-          question: "Question 11",
-          answer: { kind: "selected", value: "Correct 11", correctness: "correct" },
+          question: "Question 1",
+          answer: { kind: "selected", value: "Correct 1", correctness: "correct" },
         },
         {
           position: 1,
-          question: "Question 22",
+          question: "Question 5",
           answer: { kind: "freeText", value: "saved free response", score: 0.75 },
         },
       ],
@@ -2069,7 +2265,7 @@ describe("presentation repository", () => {
       .set({ score: 1 })
       .where(eq(schema.presentationEntries.participantId, second));
     const outOfRangeScoreSnapshot = freeTextSnapshot.map((answer) =>
-      answer.questionId === 22 ? { ...answer, normalizedScore: 1.2 } : answer,
+      answer.questionId === 5 ? { ...answer, normalizedScore: 1.2 } : answer,
     );
     await testDb.db
       .update(schema.presentationEntries)
@@ -2077,7 +2273,7 @@ describe("presentation repository", () => {
       .where(eq(schema.presentationEntries.participantId, second));
     await expect(getParticipantResult(second)).resolves.toEqual({ state: "unavailable" });
     const malformedSnapshot = freeTextSnapshot.map((answer) =>
-      answer.questionId === 22 ? { ...answer, answerKind: "unrecognized" } : answer,
+      answer.questionId === 5 ? { ...answer, answerKind: "unrecognized" } : answer,
     ) as unknown as typeof freeTextSnapshot;
     await testDb.db
       .update(schema.presentationEntries)
@@ -2241,7 +2437,7 @@ describe("presentation repository", () => {
     ]);
   });
 
-  it("falls back to an older complete submission when the newest is incomplete", async () => {
+  it("rejects aggregation when the newest submission has an incomplete Q5 answer", async () => {
     await addQuestions();
     const participant = await addParticipant("Older complete submission");
     await addSubmission(participant, [0, 0], 1, "older-complete");
@@ -2254,22 +2450,14 @@ describe("presentation repository", () => {
             schema.examSubmissionAnswers.submissionId,
             `submission-${participant}-newer-incomplete`,
           ),
-          eq(schema.examSubmissionAnswers.questionId, 22),
+          eq(schema.examSubmissionAnswers.questionId, 5),
         ),
       );
 
-    await op("aggregate", "fallback-older-complete");
-
-    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
-      {
-        participantId: participant,
-        score: 2,
-        answers: [
-          expect.objectContaining({ questionId: 11, selectedIndex: 0, answerKind: "selected" }),
-          expect.objectContaining({ questionId: 22, selectedIndex: 0, answerKind: "selected" }),
-        ],
-      },
-    ]);
+    await expect(op("aggregate", "fallback-older-complete")).rejects.toBeInstanceOf(
+      PresentationConflictError,
+    );
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
   });
 
   it("rejects deprecated mode actions and advancing with invalid state", async () => {
@@ -2290,7 +2478,7 @@ describe("presentation repository", () => {
   });
 
   it("reports an unavailable session when snapshot persistence cannot reread it", async () => {
-    await addQuestions();
+    await addQ5OnlyQuestion();
 
     await expect(
       returnNoSelectedRows(
@@ -2350,8 +2538,11 @@ describe("presentation repository", () => {
     });
   });
 
-  it("returns from an empty finished presentation to its preview", async () => {
+  it("returns from a Q5-only presentation with no participants from finished to preview", async () => {
+    await addQ5OnlyQuestion();
     await startWithAggregate("empty-finished-start");
+    await operatePresentation("empty-finished-answer", "advance");
+    await operatePresentation("empty-finished-preview", "advance");
     await expect(operatePresentation("empty-finished-end", "advance")).resolves.toMatchObject({
       state: "finished",
     });
@@ -2424,7 +2615,7 @@ describe("presentation repository", () => {
     await testDb.db
       .update(schema.examQuestions)
       .set({ question: "Changed before failed aggregate" })
-      .where(eq(schema.examQuestions.id, 11));
+      .where(eq(schema.examQuestions.id, 1));
 
     await expect(
       returnNoUpdatedRows(schema.presentationSessions, () => op("aggregate", "aggregate-cas-miss")),
@@ -2433,8 +2624,8 @@ describe("presentation repository", () => {
       version: 1,
       snapshotRevision: 1,
       questions: [
-        expect.objectContaining({ id: 11, question: "Question 11" }),
-        expect.objectContaining({ id: 22, question: "Question 22" }),
+        expect.objectContaining({ id: 1, question: "Question 1" }),
+        expect.objectContaining({ id: 5, question: "Question 5" }),
       ],
     });
   });

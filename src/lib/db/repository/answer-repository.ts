@@ -9,7 +9,7 @@ import {
   examSubmissionOperations,
 } from "../schema";
 import { jstDayStart } from "../../date";
-import { gradeFreeResponse, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
+import { gradeFreeResponse, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
 import { randomUUID } from "node:crypto";
 
 export type BatchAnswer =
@@ -182,7 +182,12 @@ export async function saveAnswerSubmission(input: {
       }
 
       const examSet = await tx
-        .select({ id: examQuestions.id, key: examQuestions.key, choices: examQuestions.choices })
+        .select({
+          id: examQuestions.id,
+          key: examQuestions.key,
+          choices: examQuestions.choices,
+          questionVersion: examQuestions.questionVersion,
+        })
         .from(examQuestions)
         .orderBy(asc(examQuestions.id))
         .limit(5);
@@ -201,6 +206,7 @@ export async function saveAnswerSubmission(input: {
               id: examQuestions.id,
               key: examQuestions.key,
               choices: examQuestions.choices,
+              questionVersion: examQuestions.questionVersion,
             })
             .from(examQuestions)
             .where(inArray(examQuestions.id, expectedQuestionIds))
@@ -226,11 +232,18 @@ export async function saveAnswerSubmission(input: {
         throw new BatchSubmissionError("Answer type does not match its question", 400);
 
       const revision = submission ? submission.revision + 1 : 1;
+      const questionVersions = Object.fromEntries(
+        questions.flatMap((question) =>
+          question.questionVersion
+            ? ([[String(question.id), question.questionVersion]] as const)
+            : [],
+        ),
+      );
 
       if (submission) {
         const updated = await tx
           .update(examAnswerSubmissions)
-          .set({ revision, updatedAt: new Date() })
+          .set({ revision, updatedAt: new Date(), questionVersions })
           .where(
             and(
               eq(examAnswerSubmissions.id, input.submissionId),
@@ -254,6 +267,7 @@ export async function saveAnswerSubmission(input: {
           id: input.submissionId,
           participantId: input.participantId,
           questionIds: expectedQuestionIds,
+          questionVersions,
           revision,
         });
       }
@@ -276,8 +290,12 @@ export async function saveAnswerSubmission(input: {
             questionId: freeResponse.questionId,
             revision,
             answerText: freeResponse.freeText.trim(),
+            questionVersion: questionById.get(freeResponse.questionId)?.questionVersion ?? null,
             state: "pending",
-            rubricVersion: JEV_RUBRIC_VERSION,
+            rubricVersion:
+              questionById.get(freeResponse.questionId)?.questionVersion === JEV_QUESTION_VERSION
+                ? JEV_RUBRIC_VERSION
+                : "unversioned",
             attempts: 0,
             nextAttemptAt: new Date(0),
           })
@@ -286,6 +304,7 @@ export async function saveAnswerSubmission(input: {
             set: {
               revision,
               answerText: freeResponse.freeText.trim(),
+              questionVersion: questionById.get(freeResponse.questionId)?.questionVersion ?? null,
               state: "pending",
               rawScore: null,
               normalizedScore: null,
@@ -296,7 +315,10 @@ export async function saveAnswerSubmission(input: {
               gradedAt: null,
               errorCode: null,
               claimToken: null,
-              rubricVersion: JEV_RUBRIC_VERSION,
+              rubricVersion:
+                questionById.get(freeResponse.questionId)?.questionVersion === JEV_QUESTION_VERSION
+                  ? JEV_RUBRIC_VERSION
+                  : "unversioned",
             },
           });
       }
@@ -515,7 +537,11 @@ export async function processDueAssessments(
       .returning({ submissionId: examAnswerAssessments.submissionId });
     if (!claim.length) continue;
     try {
-      const result = await gradeFreeResponse(job.answerText);
+      const result = await gradeFreeResponse(
+        job.answerText,
+        job.questionVersion,
+        job.rubricVersion,
+      );
       const current = await db
         .select({ revision: examAnswerSubmissions.revision })
         .from(examAnswerSubmissions)
@@ -552,12 +578,15 @@ export async function processDueAssessments(
       const code =
         error instanceof Error && error.message.startsWith("jev_")
           ? error.message
-          : "jev_transport_error";
+          : error instanceof Error && error.message === "Unsupported question/rubric version pair"
+            ? "jev_unknown_version_pair"
+            : "jev_transport_error";
       const permanent = [
         "jev_validation",
         "jev_invalid_json",
         "jev_invalid_response",
         "jev_not_configured",
+        "jev_unknown_version_pair",
       ].includes(code);
       const terminal = permanent || attempts >= 8;
       const nextAttemptAt = terminal

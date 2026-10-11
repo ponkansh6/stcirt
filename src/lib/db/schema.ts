@@ -57,6 +57,7 @@ export const examQuestions = sqliteTable("exam_questions", {
   choices: text("choices", { mode: "json" }).notNull().$type<string[]>(),
   correctIndex: integer("correct_index").notNull(),
   explanation: text("explanation"),
+  questionVersion: text("question_version"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -128,6 +129,10 @@ export const examAnswerSubmissions = sqliteTable("exam_answer_submissions", {
     .notNull()
     .references(() => examParticipants.id, { onDelete: "cascade" }),
   questionIds: text("question_ids", { mode: "json" }).notNull().$type<number[]>(),
+  questionVersions: text("question_versions", { mode: "json" }).$type<Record<
+    string,
+    string
+  > | null>(),
   revision: integer("revision").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -168,6 +173,7 @@ export const examAnswerAssessments = sqliteTable(
       .references(() => examQuestions.id, { onDelete: "cascade" }),
     revision: integer("revision").notNull(),
     answerText: text("answer_text").notNull(),
+    questionVersion: text("question_version"),
     state: text("state").notNull(),
     claimToken: text("claim_token"),
     rawScore: real("raw_score"),
@@ -205,6 +211,11 @@ export const presentationSessions = sqliteTable("presentation_sessions", {
   questionIndex: integer("question_index").notNull(),
   questionCount: integer("question_count").notNull(),
   snapshotRevision: integer("snapshot_revision").notNull().default(0),
+  questionVersions: text("question_versions", { mode: "json" }).$type<Record<
+    string,
+    string
+  > | null>(),
+  rubricVersions: text("rubric_versions", { mode: "json" }).$type<Record<string, string> | null>(),
   projectionHidden: integer("projection_hidden", { mode: "boolean" }).notNull().default(false),
   presentationMode: text("presentation_mode").notNull().default("full"),
   createdAt: integer("created_at", { mode: "timestamp" })

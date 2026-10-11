@@ -44,6 +44,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       [1, 2, 3, 4, 5].map((id) => ({
         id,
         key: `it-literacy-00${id}`,
+        questionVersion: id === 5 ? "tamami-egg-v1" : `nagano-00${id}-v1`,
         question: `Question ${id}`,
         choices: id === 5 ? [] : ["correct", "incorrect"],
         correctIndex: 0,
@@ -283,7 +284,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     },
   );
 
-  it("snapshots explicit legacy separately from unanswered without inventing a legacy answer", async () => {
+  it("rejects aggregation when a submission has a legacy Q5 answer", async () => {
     const legacyId = await addParticipant("Legacy");
     await addParticipant("Unanswered");
     const submissionId = `legacy-${legacyId}`;
@@ -291,6 +292,13 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       id: submissionId,
       participantId: legacyId,
       questionIds: [1, 2, 3, 4, 5],
+      questionVersions: {
+        "1": "nagano-001-v1",
+        "2": "nagano-002-v1",
+        "3": "nagano-003-v1",
+        "4": "nagano-004-v1",
+        "5": "tamami-egg-v1",
+      },
       revision: 1,
     });
     await testDb.db.insert(schema.examSubmissionAnswers).values([
@@ -302,47 +310,10 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       })),
       { submissionId, questionId: 5, answerKind: "legacy", selectedIndex: 1 },
     ]);
-    const started = await startWithAggregate("legacy-snapshot-start");
-    expect(started.entries.find(({ displayName }) => displayName === "Legacy")).toMatchObject({
-      score: 4,
-    });
-    expect(
-      started.entries.find(({ displayName }) => displayName === "Legacy")?.answers,
-    ).toContainEqual(
-      expect.objectContaining({
-        questionId: 5,
-        answerKind: "legacy",
-        selectedIndex: 1,
-        rawScore: null,
-      }),
+    await expect(operatePresentation("legacy-q5-aggregate", "aggregate")).rejects.toBeInstanceOf(
+      PresentationConflictError,
     );
-    expect(
-      started.entries.find(({ displayName }) => displayName === "Unanswered")?.answers,
-    ).toContainEqual(
-      expect.objectContaining({ questionId: 5, answerKind: "unanswered", selectedIndex: null }),
-    );
-
-    const examQuestionStage = await getPublicPresentation();
-    expect(examQuestionStage).toMatchObject({ state: "opening" });
-    expect(JSON.stringify(examQuestionStage)).not.toMatch(
-      /score|confidence|rubric|assessment|answer_match|probabilities/i,
-    );
-    for (let index = 0; index < 9; index += 1)
-      await operatePresentation(`legacy-next-${index}`, "advance");
-    const fifthQuestionStage = await getPublicPresentation();
-    expect(fifthQuestionStage).toMatchObject({ state: "question", question: { ordinal: 5 } });
-    expect(JSON.stringify(fifthQuestionStage)).not.toMatch(
-      /score|confidence|rubric|assessment|answer_match|probabilities/i,
-    );
-    await operatePresentation("legacy-next-answer", "advance");
-    const answer = await getPublicPresentation();
-    expect(answer).toMatchObject({
-      state: "answer",
-      question: { answerType: "freeText", expectedAnswer: "Fifth model answer" },
-    });
-    expect(answer.question).not.toHaveProperty("responses");
-    expect(JSON.stringify(answer)).not.toMatch(
-      /confidence|rubric|assessment|answer_match|probabilities|usage/i,
-    );
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
   });
 });
