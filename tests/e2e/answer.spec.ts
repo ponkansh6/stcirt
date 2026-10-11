@@ -143,8 +143,8 @@ async function mockQuestions(page: Page, requests: string[] = []) {
 }
 
 async function signIn(page: Page, name = "Test Participant", pin = "0123") {
-  await page.getByLabel("お名前").fill(name);
-  await page.getByLabel("4桁PIN").fill(pin);
+  await page.getByLabel("受験者氏名").fill(name);
+  await page.getByLabel("受験コード").fill(pin);
   await page.getByRole("button", { name: "はじめる" }).click();
   await expect(
     page.getByRole("heading", {
@@ -182,8 +182,8 @@ test("direct answer access requires name and four digit PIN before loading the q
   await expect(page.getByRole("heading", { name: "参加して検定を受ける" })).toBeVisible();
   const sharedHeader = page.locator("body > header");
   await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
-  await expect(page.getByLabel("4桁PIN")).toHaveAttribute("inputmode", "numeric");
-  await expect(page.getByLabel("4桁PIN")).toHaveAttribute("pattern", "[0-9]{4}");
+  await expect(page.getByLabel("受験コード")).toHaveAttribute("inputmode", "numeric");
+  await expect(page.getByLabel("受験コード")).toHaveAttribute("pattern", "[0-9]{4}");
   await signIn(page, "Aki", "0123");
 
   expect(loginRequests).toEqual([{ name: "Aki", pin: "0123" }]);
@@ -211,8 +211,8 @@ test("keeps DOM focus unchanged while checking whether a submission exists", asy
   });
 
   await page.goto("/answer");
-  await page.getByLabel("お名前").fill("Aki");
-  await page.getByLabel("4桁PIN").fill("0123");
+  await page.getByLabel("受験者氏名").fill("Aki");
+  await page.getByLabel("受験コード").fill("0123");
   await page.getByRole("button", { name: "はじめる" }).click();
 
   const checkingStatus = page.getByRole("status");
