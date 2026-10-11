@@ -686,21 +686,45 @@ test("admin opens or reuses a named presenter tab after start without fullscreen
   expect(await page.evaluate(() => document.fullscreenElement)).toBeNull();
 });
 
-test("existing projection hide and show operations stay on the admin page", async ({ page }) => {
+test("projection hide and show API remains available without admin toggle buttons", async ({
+  page,
+}) => {
   const mock = await installAdminApiMock(page);
   await signIn(page);
   await startPresentation(page);
   const stateBeforeHide = mock.getPresentationState();
-  await page.getByRole("button", { name: "投影を一時非表示" }).click();
-  await expect(page.getByRole("button", { name: "投影を表示" })).toBeVisible();
+
+  await expect(page.getByRole("button", { name: "投影を一時非表示" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "投影を表示" })).toHaveCount(0);
+  const hiddenControls = await page.evaluate(async () => {
+    const response = await fetch("/api/admin/presentation", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operationId: crypto.randomUUID(), action: "hide" }),
+    });
+    return response.json();
+  });
+  expect(hiddenControls.projectionHidden).toBe(true);
   expect(mock.getPresentationState().state).toBe(stateBeforeHide.state);
-  await openPresenter(page);
-  await expect(page.getByText("ただいま休憩中です")).toBeVisible();
-  await page.goto("/admin/presentation");
-  await expect(page.getByRole("button", { name: "投影を表示" })).toBeVisible();
-  await page.getByRole("button", { name: "投影を表示" }).click();
-  await expect(page.getByRole("button", { name: "投影を一時非表示" })).toBeVisible();
+  const hiddenProjection = await page.evaluate(async () =>
+    (await fetch("/api/presentation")).json(),
+  );
+  expect(hiddenProjection.state).toBe("standby");
+
+  const shownControls = await page.evaluate(async () => {
+    const response = await fetch("/api/admin/presentation", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operationId: crypto.randomUUID(), action: "show" }),
+    });
+    return response.json();
+  });
+  expect(shownControls.projectionHidden).toBe(false);
   expect(mock.getPresentationState().state).toBe(stateBeforeHide.state);
+  const shownProjection = await page.evaluate(async () =>
+    (await fetch("/api/presentation")).json(),
+  );
+  expect(shownProjection.state).toBe(stateBeforeHide.state);
 });
 
 test("keyboard and horizontal swipe progress once and honor stage boundaries", async ({ page }) => {
@@ -1899,14 +1923,19 @@ test("unauthorized progression clears presenter controls and 409 refreshes the p
   await startPresentation(page);
   await openPresenter(page);
   mock.conflictNextMutation();
+  const conflictingMutation = nextAdminMutation(page);
+  const controlsRefresh = nextAdminRefresh(page);
   await page.locator("main").press("ArrowRight");
   await expect(page.getByText("正解", { exact: true }).first()).toBeVisible();
+  expect((await conflictingMutation).status()).toBe(409);
+  await (await controlsRefresh).finished();
   expect(mock.getPresentationState().state).toBe("answer");
 
-  await page.goto("/admin/presentation");
   mock.failNextMutationAsUnauthorized();
-  await page.getByRole("button", { name: "投影を一時非表示" }).click();
-  await expect(page.getByLabel("管理者 PIN")).toBeVisible();
+  const unauthorizedMutation = nextAdminMutation(page);
+  await page.keyboard.press("ArrowRight");
+  expect((await unauthorizedMutation).status()).toBe(401);
+  await expect(page.getByRole("heading", { name: "ただいま休憩中です" })).toBeVisible();
 });
 
 test("finished results are published only from admin and publication does not advance the stage", async ({

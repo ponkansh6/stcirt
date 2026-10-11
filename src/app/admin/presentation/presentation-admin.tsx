@@ -8,7 +8,6 @@ type AdminState = {
   snapshotRevision: number;
   questionIndex: number;
   questionCount: number;
-  projectionHidden: boolean;
   participantResultsVisible: boolean;
   participantResultsReady: boolean;
 };
@@ -63,7 +62,6 @@ async function getAdminState(signal: AbortSignal): Promise<AdminState> {
     typeof data.questionCount !== "number" ||
     !Number.isInteger(data.questionCount) ||
     data.questionCount < 0 ||
-    typeof data.projectionHidden !== "boolean" ||
     typeof data.participantResultsVisible !== "boolean" ||
     typeof data.participantResultsReady !== "boolean"
   )
@@ -73,13 +71,12 @@ async function getAdminState(signal: AbortSignal): Promise<AdminState> {
     snapshotRevision: data.snapshotRevision,
     questionIndex: data.questionIndex,
     questionCount: data.questionCount,
-    projectionHidden: data.projectionHidden === true,
     participantResultsVisible: data.participantResultsVisible === true,
     participantResultsReady: data.participantResultsReady === true,
   };
 }
 
-async function postAction(action: "start" | "hide" | "show" | "aggregate" | "reset") {
+async function postAction(action: "start" | "aggregate" | "reset") {
   const response = await fetch("/api/admin/presentation", {
     method: "POST",
     cache: "no-store",
@@ -302,9 +299,7 @@ export default function PresentationAdmin() {
     }
   }
 
-  async function runAction(
-    action: "start" | "hide" | "show" | "publish" | "hideResults" | "aggregate" | "reset",
-  ) {
+  async function runAction(action: "start" | "publish" | "hideResults" | "aggregate" | "reset") {
     externalOperationInFlight.current = true;
     setBusy(true);
     setBusyAction(action);
@@ -440,16 +435,6 @@ export default function PresentationAdmin() {
                 onClick={() => void runAction("publish")}
               >
                 {busyAction === "publish" ? "公開しています…" : "参加者結果を公開"}
-              </button>
-            )}
-            {adminState.state !== "not_started" && (
-              <button
-                className={styles.secondaryButton}
-                type="button"
-                disabled={busy}
-                onClick={() => void runAction(adminState.projectionHidden ? "show" : "hide")}
-              >
-                {adminState.projectionHidden ? "投影を表示" : "投影を一時非表示"}
               </button>
             )}
           </div>

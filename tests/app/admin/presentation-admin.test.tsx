@@ -486,7 +486,7 @@ describe("presentation admin console", () => {
     render(<PresentationAdmin />);
 
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "投影を一時非表示" }));
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
     await waitFor(() => expect(finishAction).toBeDefined());
     act(() => document.dispatchEvent(new Event("visibilitychange")));
     await waitFor(() => expect(stateReads).toBe(2));
@@ -597,6 +597,8 @@ describe("presentation admin console", () => {
     const view = render(<PresentationAdmin />);
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
     expect(screen.getByText("問題 2 / 5")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "投影を一時非表示" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "投影を表示" })).not.toBeInTheDocument();
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: "投影画面を開く / 投影タブへ戻る" }));
@@ -617,7 +619,8 @@ describe("presentation admin console", () => {
     render(<PresentationAdmin />);
     expect(await screen.findByText("現在の状態：終了")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "参加者結果を公開" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "投影を表示" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "投影を一時非表示" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "投影を表示" })).not.toBeInTheDocument();
   });
 
   it("keeps the retry state for malformed admin controls values", async () => {
@@ -1077,7 +1080,7 @@ describe("presentation admin console", () => {
     render(<PresentationAdmin />);
 
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "投影を一時非表示" }));
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
     expect(await screen.findByLabelText("管理者 PIN")).toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("セッションの有効期限が切れました");
   });
@@ -1431,7 +1434,7 @@ describe("presentation admin console", () => {
     await waitFor(() => expect(poll).toBeDefined());
     act(() => poll?.());
     await waitFor(() => expect(presentationReads).toBe(2));
-    fireEvent.click(screen.getByRole("button", { name: "投影を一時非表示" }));
+    fireEvent.click(screen.getByRole("button", { name: "最初に戻る" }));
     expect(mutationReads).toBe(0);
 
     await act(async () => {
@@ -1491,7 +1494,7 @@ describe("presentation admin console", () => {
     render(<PresentationAdmin />);
 
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "投影を一時非表示" }));
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
     await waitFor(() => expect(mutationReads).toBe(1));
     expect(poll).toBeDefined();
 
@@ -1732,7 +1735,7 @@ describe("presentation admin console", () => {
     await waitFor(() => expect(poll).toBeDefined());
     act(() => poll?.());
     await waitFor(() => expect(stateReads).toBe(2));
-    await user.click(screen.getByRole("button", { name: "投影を一時非表示" }));
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
     expect(actionPosts).toBe(0);
 
     await act(async () => finishPoll?.(response(401, {})));
@@ -1815,13 +1818,13 @@ describe("presentation admin console", () => {
     render(<PresentationAdmin />);
 
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "投影を一時非表示" }));
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("自動で再試行しています");
     expect(screen.getByText("現在の状態：進行中：問題")).toBeInTheDocument();
   });
 
-  it("offers the show action when projection is hidden", async () => {
-    const api = apiFetch({
+  it("does not show projection visibility controls when projection is hidden", async () => {
+    apiFetch({
       state: {
         state: "answer",
         questionIndex: 0,
@@ -1831,16 +1834,11 @@ describe("presentation admin console", () => {
         participantResultsReady: true,
       },
     });
-    const user = userEvent.setup();
     render(<PresentationAdmin />);
 
-    await user.click(await screen.findByRole("button", { name: "投影を表示" }));
-    await waitFor(() =>
-      expect(api.actions).toContainEqual({
-        path: "/api/admin/presentation",
-        body: expect.objectContaining({ action: "show" }),
-      }),
-    );
+    expect(await screen.findByText("現在の状態：進行中：解答")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "投影を一時非表示" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "投影を表示" })).not.toBeInTheDocument();
   });
 
   it("shows refresh errors in the authenticated loading console", async () => {
@@ -1935,7 +1933,7 @@ describe("presentation admin console", () => {
     render(<PresentationAdmin />);
 
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "投影を一時非表示" }));
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "操作を反映できませんでした。状態を再確認してから再試行してください。",
     );
