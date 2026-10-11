@@ -590,7 +590,8 @@ describe("PresentationScreen", () => {
     installApi({ projection: { state: "question", question } });
     render(<PresentationScreen />);
     expect(await screen.findByRole("heading", { name: question.question })).toBeInTheDocument();
-    expect(screen.getByText(/QUESTION/).parentElement).toHaveTextContent("1 / 2");
+    expect(screen.getByText("問").parentElement).toHaveTextContent("問 1");
+    expect(screen.queryByText(/QUESTION|\/ 2/)).not.toBeInTheDocument();
     expect(screen.getByRole("list")).toHaveTextContent("A海B山");
   });
 
@@ -608,6 +609,9 @@ describe("PresentationScreen", () => {
     });
     render(<PresentationScreen />);
     expect(await screen.findByText("家族旅行で訪れました。")).toBeInTheDocument();
+    expect(screen.getByText("問").parentElement).toHaveTextContent("問 1");
+    expect(screen.queryByText(/QUESTION|\/ 2/)).not.toBeInTheDocument();
+    expect(screen.queryByText("THE STORY BEHIND IT")).not.toBeInTheDocument();
     expect(screen.getAllByText("正解")).toHaveLength(1);
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
     expect(screen.getByText("山")).toBeInTheDocument();
@@ -644,6 +648,8 @@ describe("PresentationScreen", () => {
     });
     const view = render(<PresentationScreen />);
     expect(await screen.findByText("葵：旧選択式回答（再採点なし）")).toBeInTheDocument();
+    expect(screen.getByText("問").parentElement).toHaveTextContent("問 1");
+    expect(screen.queryByText(/QUESTION|\/ 2|THE STORY BEHIND IT/)).not.toBeInTheDocument();
     expect(screen.getByText("凛：未回答")).toBeInTheDocument();
     expect(screen.getByText("悠：海辺 — 類似度 0.80 / 得点 1.00")).toBeInTheDocument();
     expect(screen.getByText("蓮： — 類似度 — / 得点 —")).toBeInTheDocument();
@@ -1782,7 +1788,8 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(main, { key: "ArrowRight" });
 
     await waitFor(() => expect(api.actions).toHaveLength(1));
-    expect(await screen.findByText("THE STORY BEHIND IT")).toBeInTheDocument();
+    expect(await screen.findByText("問")).toBeInTheDocument();
+    expect(screen.queryByText("THE STORY BEHIND IT")).not.toBeInTheDocument();
     expect(
       api.fetchMock.mock.calls.filter(
         ([path]) => String(path) === "/api/admin/presentation?view=controls",
@@ -1927,7 +1934,8 @@ describe("PresentationScreen", () => {
     expect(
       api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/admin/presentation/deck"),
     ).toHaveLength(deckReadsBeforeAction + 1);
-    expect(await screen.findByText("THE STORY BEHIND IT")).toBeInTheDocument();
+    expect(await screen.findByText("問")).toBeInTheDocument();
+    expect(screen.queryByText("THE STORY BEHIND IT")).not.toBeInTheDocument();
 
     fireEvent.keyDown(main, { key: "ArrowLeft" });
     await waitFor(() => expect(api.actions).toHaveLength(2));
@@ -1993,7 +2001,8 @@ describe("PresentationScreen", () => {
     await flush();
     expect(api.actions).toHaveLength(1);
 
-    expect(screen.getByText("THE STORY BEHIND IT")).toBeInTheDocument();
+    expect(screen.getByText("問")).toBeInTheDocument();
+    expect(screen.queryByText("THE STORY BEHIND IT")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
   });
 

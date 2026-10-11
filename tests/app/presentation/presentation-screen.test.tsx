@@ -280,7 +280,7 @@ describe("presentation projection and presenter progression", () => {
       { state: "not_started" },
       ["しゅんたま検定", "発表が始まるまで、少々お待ちください"],
     ],
-    ["opening", { state: "opening" }, ["しゅんたま検定", "これまでの思い出を振り返りましょう"]],
+    ["opening", { state: "opening" }, ["しゅんたま検定", "検定"]],
     [
       "question",
       {
@@ -293,7 +293,7 @@ describe("presentation projection and presenter progression", () => {
           choices: ["作品A", "作品B", "作品C"],
         },
       },
-      ["QUESTION 2", "/ 5", "一緒に見た最初の映画は？", "作品A", "作品B", "作品C"],
+      ["問 2", "一緒に見た最初の映画は？", "作品A", "作品B", "作品C"],
     ],
     [
       "answer",
@@ -310,7 +310,7 @@ describe("presentation projection and presenter progression", () => {
         },
       },
       [
-        "QUESTION 2",
+        "問 2",
         "一緒に見た最初の映画は？",
         "作品A",
         "作品B",
@@ -385,6 +385,34 @@ describe("presentation projection and presenter progression", () => {
         expect(name?.textContent).toContain(projection.winners[0]!.displayName);
         expect(name?.textContent).toContain("さん");
         expect(name!.compareDocumentPosition(score!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      }
+    },
+  );
+
+  it.each(["not_started", "opening"] as const)(
+    "renders the exam cover without English labels in %s",
+    async (state) => {
+      setup({ projection: { state } });
+      render(<PresentationScreen />);
+
+      const slide = await screen.findByRole("region", { name: "現在のスライド" });
+      expect(within(slide).getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
+      if (state === "opening") {
+        const decorativeMark = slide.querySelector("[class*='openingMark'][aria-hidden='true']");
+        expect(decorativeMark).not.toBeNull();
+        expect(decorativeMark?.querySelector("[class*='openingSeal']")).not.toBeNull();
+      } else {
+        expect(slide.querySelector("[class*='openingSeal']")).toHaveAttribute(
+          "aria-hidden",
+          "true",
+        );
+      }
+      expect(within(slide).queryByText("PRESENTATION")).not.toBeInTheDocument();
+      expect(
+        within(slide).queryByText("これまでの思い出を振り返りましょう"),
+      ).not.toBeInTheDocument();
+      if (state === "not_started") {
+        expect(within(slide).getByText("発表が始まるまで、少々お待ちください")).toBeInTheDocument();
       }
     },
   );

@@ -162,18 +162,80 @@
   justify-self: center;
 }
 
-.openingTitle .kicker {
-  text-align: left;
-}
-
 .openingTitle h1 {
   text-align: left;
 }
 
-.opening > .subtitle {
+.openingMark {
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: clamp(8px, 1.3cqh, 18px);
+}
+
+.openingEmblem {
+  display: grid;
+  width: clamp(104px, 12cqw, 164px);
+  aspect-ratio: 1;
+  place-items: center;
+  grid-area: 1 / 1;
+}
+
+.openingMark > .openingEmblem {
+  grid-row: 1;
+}
+
+.openingEmblem svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.openingEmblem svg path:first-child {
+  fill: #f4eddb;
+  stroke: #8d774d;
+  stroke-width: 2.5;
+}
+
+.openingEmblem svg circle {
+  fill: none;
+  stroke: #a58b58;
+  stroke-width: 2;
+}
+
+.openingEmblem svg path:last-child {
+  fill: #a58b58;
+}
+
+.openingSeal {
+  display: grid;
+  width: clamp(58px, 6cqw, 78px);
+  aspect-ratio: 1;
+  align-items: center;
+  justify-items: center;
+  grid-area: 1 / 1;
+  border: 2px solid #a58b58;
+  border-radius: 50%;
+  background: #fffdf8;
+  color: #704d2c;
+  font-size: clamp(1.2rem, 2.2cqw, 1.8rem);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.openingWait {
   max-width: 100%;
   margin: 0;
-  text-align: left;
+  color: #46515b;
+  font-size: clamp(var(--presentation-min-readable-size), 1.7cqw, 1.8rem);
+  font-weight: 650;
+  line-height: 1.5;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .opening::after {
@@ -235,7 +297,6 @@
   justify-content: flex-start;
 }
 
-.answerReview > .kicker,
 .answerReview > .ordinal {
   flex: 0 0 auto;
 }
@@ -270,12 +331,6 @@
   overflow-wrap: anywhere;
 }
 
-.question .kicker {
-  align-self: flex-start;
-  margin: 0 0 clamp(8px, 1.3cqh, 20px);
-  text-align: left;
-}
-
 .ordinal {
   margin: 0 0 clamp(6px, 1cqh, 16px);
   color: #4b5560;
@@ -287,11 +342,6 @@
 .ordinal strong {
   margin-left: 7px;
   font-size: 1.35em;
-}
-
-.ordinal span {
-  color: #66717b;
-  letter-spacing: 0.05em;
 }
 
 .question h1 {
@@ -684,9 +734,7 @@
     text-align: center;
   }
 
-  .openingTitle .kicker,
-  .openingTitle h1,
-  .opening > .subtitle {
+  .openingTitle h1 {
     text-align: center;
   }
 

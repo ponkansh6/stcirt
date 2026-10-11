@@ -1167,7 +1167,7 @@ test("reference-size long presentation content stays readable after fitting", as
       );
       const scale = Number(fitLayer?.style.getPropertyValue("--presentation-fit-scale"));
       const selectors: Partial<Record<PresentationState, string>> = {
-        opening: "[class*='openingTitle'] h1, [class*='opening'] > [class*='subtitle']",
+        opening: "[class*='openingTitle'] h1, [class*='openingSeal']",
         question:
           "[class*='question']:not([class*='answerReview']) h1, [class*='question']:not([class*='answerReview']) [class*='choiceText']",
         answer:
@@ -1219,10 +1219,15 @@ test("reference-size long presentation content stays readable after fitting", as
   const opening = page.getByRole("heading", { name: "しゅんたま検定" }).locator("..").locator("..");
   const openingColumns = await opening.evaluate((section) => {
     const title = section.querySelector("[class*='openingTitle']")!.getBoundingClientRect();
-    const subtitle = section.querySelector(":scope > [class*='subtitle']")!.getBoundingClientRect();
-    return { titleRight: title.right, subtitleLeft: subtitle.left };
+    const mark = section.querySelector(":scope > [class*='openingMark']")!.getBoundingClientRect();
+    return { titleRight: title.right, markLeft: mark.left };
   });
-  expect(openingColumns.titleRight).toBeLessThan(openingColumns.subtitleLeft);
+  expect(openingColumns.titleRight).toBeLessThan(openingColumns.markLeft);
+  await expect(page.getByText("検定", { exact: true })).toBeVisible();
+  await expect(page.getByText("PRESENTATION", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("これまでの思い出を振り返りましょう", { exact: true })).toHaveCount(
+    0,
+  );
   await expectMainContentAt20pt("opening");
   await testInfo.attach("opening-1920x1080", {
     body: await page.screenshot({ animations: "disabled" }),
@@ -1243,10 +1248,15 @@ test("reference-size long presentation content stays readable after fitting", as
   };
   await next("question");
   await expect(page.getByRole("heading", { name: longQuestion })).toBeVisible();
+  await expect(page.locator("[class*='ordinal']")).toHaveText("問 1");
+  await expect(page.getByText(/QUESTION|LET’S LOOK BACK/)).toHaveCount(0);
   for (const choice of longChoices)
     await expect(page.getByText(choice, { exact: true })).toBeVisible();
   await next("answer");
   await expect(page.getByText(longExplanation, { exact: true })).toBeVisible();
+  await expect(page.locator("[class*='ordinal']")).toHaveText("問 1");
+  await expect(page.getByText("THE STORY BEHIND IT", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/QUESTION/)).toHaveCount(0);
   const answerRowContrast = await page
     .getByTestId("presentation-fit-viewport")
     .evaluate((viewport) => {

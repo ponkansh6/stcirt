@@ -368,10 +368,8 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
 function QuestionPrompt({ question }: { question: PublicQuestion }) {
   return (
     <section className={styles.question} aria-labelledby="question-heading">
-      <p className={styles.kicker}>LET’S LOOK BACK</p>
       <p className={styles.ordinal}>
-        QUESTION <strong>{question.ordinal}</strong>
-        <span> / {question.total}</span>
+        問 <strong>{question.ordinal}</strong>
       </p>
       <h1 id="question-heading">{question.question}</h1>
       <ol className={styles.choices}>
@@ -394,10 +392,8 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
         className={`${styles.question} ${styles.answerReview}`}
         aria-labelledby="question-heading"
       >
-        <p className={styles.kicker}>THE STORY BEHIND IT</p>
         <p className={styles.ordinal}>
-          QUESTION <strong>{question.ordinal}</strong>
-          <span> / {question.total}</span>
+          問 <strong>{question.ordinal}</strong>
         </p>
         <div className={styles.answerContent}>
           <h1 id="question-heading">{question.question}</h1>
@@ -429,10 +425,8 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
       className={`${styles.question} ${styles.answerReview}`}
       aria-labelledby="question-heading"
     >
-      <p className={styles.kicker}>THE STORY BEHIND IT</p>
       <p className={styles.ordinal}>
-        QUESTION <strong>{question.ordinal}</strong>
-        <span> / {question.total}</span>
+        問 <strong>{question.ordinal}</strong>
       </p>
       <div className={styles.answerContent}>
         <h1 id="question-heading">{question.question}</h1>
@@ -1205,20 +1199,41 @@ export default function PresentationScreen({
                 {!loadingPresenterDeck && (!data || state === "not_started") && (
                   <section className={styles.opening} aria-labelledby="presentation-title">
                     <div className={styles.openingTitle}>
-                      <p className={styles.kicker}>PRESENTATION</p>
                       <h1 id="presentation-title">しゅんたま検定</h1>
                     </div>
-                    <p className={styles.subtitle}>発表が始まるまで、少々お待ちください</p>
+                    <div className={styles.openingMark}>
+                      <span className={styles.openingEmblem} aria-hidden="true">
+                        <svg viewBox="0 0 120 120" focusable="false">
+                          <path d="M60 5 72 25 95 18 92 42 113 52 97 70 108 91 84 94 76 117 58 101 38 114 34 90 10 84 24 64 8 46 31 38 32 14 53 26Z" />
+                          <circle cx="60" cy="60" r="31" />
+                          <circle cx="60" cy="60" r="24" />
+                          <path d="m60 39 5.5 14.5L81 54l-12 9 4.5 15L60 69l-13.5 9L51 63l-12-9 15.5-.5Z" />
+                        </svg>
+                      </span>
+                      <span className={styles.openingSeal} aria-hidden="true">
+                        検定
+                      </span>
+                      <p className={styles.openingWait}>発表が始まるまで、少々お待ちください</p>
+                    </div>
                   </section>
                 )}
 
                 {state === "opening" && (
                   <section className={styles.opening} aria-labelledby="opening-title">
                     <div className={styles.openingTitle}>
-                      <p className={styles.kicker}>PRESENTATION</p>
                       <h1 id="opening-title">しゅんたま検定</h1>
                     </div>
-                    <p className={styles.subtitle}>これまでの思い出を振り返りましょう</p>
+                    <div className={styles.openingMark} aria-hidden="true">
+                      <span className={styles.openingEmblem}>
+                        <svg viewBox="0 0 120 120" focusable="false">
+                          <path d="M60 5 72 25 95 18 92 42 113 52 97 70 108 91 84 94 76 117 58 101 38 114 34 90 10 84 24 64 8 46 31 38 32 14 53 26Z" />
+                          <circle cx="60" cy="60" r="31" />
+                          <circle cx="60" cy="60" r="24" />
+                          <path d="m60 39 5.5 14.5L81 54l-12 9 4.5 15L60 69l-13.5 9L51 63l-12-9 15.5-.5Z" />
+                        </svg>
+                      </span>
+                      <span className={styles.openingSeal}>検定</span>
+                    </div>
                   </section>
                 )}
 
