@@ -614,6 +614,171 @@ test("start and reset use the opening slide with reversible first-question bound
   expect(mock.getPresentationState().state).toBe("opening");
 });
 
+test("opening cover geometry matches before and after presentation start", async ({ page }) => {
+  await installAdminApiMock(page);
+  const viewports = [
+    { width: 1920, height: 1080 },
+    { width: 1440, height: 1080 },
+    { width: 480, height: 900 },
+  ];
+  const inspectOpening = async (targetPage: import("@playwright/test").Page) => {
+    await targetPage.evaluate(() => document.fonts.ready);
+    await waitForRenderFrames(targetPage);
+    const heading = targetPage.getByRole("heading", { name: "しゅんたま検定" });
+    return heading.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const headingStyle = getComputedStyle(element);
+      const fontSize = Number.parseFloat(headingStyle.fontSize);
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const lineTops = Array.from(range.getClientRects())
+        .map((lineRect) => lineRect.top)
+        .sort((left, right) => left - right)
+        .filter((top, index, tops) => index === 0 || Math.abs(top - tops[index - 1]!) > 1);
+      const section = element.closest("section");
+      const titleColumn = section?.querySelector<HTMLElement>("[class*='openingTitle']");
+      const markColumn = section?.querySelector<HTMLElement>("[class*='openingMark']");
+      const emblem = markColumn?.querySelector<HTMLElement>("[class*='openingEmblem']");
+      const seal = markColumn?.querySelector<HTMLElement>("[class*='openingSeal']");
+      const waitingCopy = markColumn?.querySelector<HTMLElement>("[class*='openingWait']");
+      const canvas = document.querySelector<HTMLElement>("[data-testid='presentation-canvas']");
+      const fitViewport = document.querySelector<HTMLElement>(
+        "[data-testid='presentation-fit-viewport']",
+      );
+      if (!section || !titleColumn || !markColumn || !emblem || !seal || !canvas || !fitViewport) {
+        throw new Error("Presentation opening geometry is missing");
+      }
+      const canvasRect = canvas.getBoundingClientRect();
+      const viewportRect = fitViewport.getBoundingClientRect();
+      const bounds = (node: Element) => {
+        const nodeRect = node.getBoundingClientRect();
+        return {
+          x: nodeRect.x,
+          y: nodeRect.y,
+          width: nodeRect.width,
+          height: nodeRect.height,
+        };
+      };
+      const outOfBounds = Array.from(fitViewport.querySelectorAll("*"))
+        .map((node) => node.getBoundingClientRect())
+        .filter((bounds) => bounds.width > 0 && bounds.height > 0)
+        .filter(
+          (bounds) =>
+            bounds.left < viewportRect.left - 1 ||
+            bounds.right > viewportRect.right + 1 ||
+            bounds.top < viewportRect.top - 1 ||
+            bounds.bottom > viewportRect.bottom + 1,
+        ).length;
+      return {
+        heading: {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          fontSize,
+          lineCount: lineTops.length,
+        },
+        titleColumn: bounds(titleColumn),
+        markColumn: bounds(markColumn),
+        emblem: bounds(emblem),
+        seal: bounds(seal),
+        waitingCopy: waitingCopy?.textContent?.trim() ?? null,
+        waitingCopyVisibility: waitingCopy ? getComputedStyle(waitingCopy).visibility : null,
+        canvas: {
+          width: canvasRect.width,
+          height: canvasRect.height,
+          aspectRatio: canvasRect.width / canvasRect.height,
+          insideViewport:
+            canvasRect.left >= 0 &&
+            canvasRect.top >= 0 &&
+            canvasRect.right <= innerWidth &&
+            canvasRect.bottom <= innerHeight,
+        },
+        outOfBounds,
+        pageCanScroll:
+          document.documentElement.scrollWidth > innerWidth ||
+          document.documentElement.scrollHeight > innerHeight,
+      };
+    });
+  };
+
+  await page.setViewportSize(viewports[0]!);
+  await page.goto("/presentation");
+  await expect(page.locator("#presentation-title")).toBeVisible();
+  const notStarted: Awaited<ReturnType<typeof inspectOpening>>[] = [];
+  const expectSameBounds = (
+    actual: Awaited<ReturnType<typeof inspectOpening>>["titleColumn"],
+    expected: Awaited<ReturnType<typeof inspectOpening>>["titleColumn"],
+  ) => {
+    expect(actual.x).toBeCloseTo(expected.x, 1);
+    expect(actual.y).toBeCloseTo(expected.y, 1);
+    expect(actual.width).toBeCloseTo(expected.width, 1);
+    expect(actual.height).toBeCloseTo(expected.height, 1);
+  };
+  for (const viewport of viewports) {
+    await page.setViewportSize(viewport);
+    const geometry = await inspectOpening(page);
+    expect(geometry.heading.lineCount).toBe(1);
+    expect(geometry.waitingCopy).toBe("発表が始まるまで、少々お待ちください");
+    expect(geometry.canvas.aspectRatio).toBeCloseTo(16 / 9, 2);
+    expect(geometry.canvas.insideViewport).toBe(true);
+    expect(geometry.outOfBounds).toBe(0);
+    expect(geometry.pageCanScroll).toBe(false);
+    notStarted.push(geometry);
+  }
+
+  const adminPage = await page.context().newPage();
+  await signIn(adminPage);
+  await adminPage.evaluate(async () => {
+    for (const action of ["aggregate", "start"] as const) {
+      const response = await fetch("/api/admin/presentation", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operationId: crypto.randomUUID(), action }),
+      });
+      if (!response.ok) throw new Error(`Presentation ${action} failed: ${response.status}`);
+    }
+  });
+  await expect
+    .poll(() =>
+      adminPage.evaluate(async () => {
+        const response = await fetch("/api/admin/presentation?view=controls");
+        return ((await response.json()) as { state: PresentationState }).state;
+      }),
+    )
+    .toBe("opening");
+  await expect(page.locator("#opening-title")).toBeVisible();
+  await waitForRenderFrames(page);
+
+  for (let index = 0; index < viewports.length; index += 1) {
+    await page.setViewportSize(viewports[index]!);
+    const geometry = await inspectOpening(page);
+    const beforeStart = notStarted[index]!;
+    expect(geometry.heading.lineCount).toBe(1);
+    expect(geometry.heading.x).toBeCloseTo(beforeStart.heading.x, 1);
+    expect(geometry.heading.y).toBeCloseTo(beforeStart.heading.y, 1);
+    expect(geometry.heading.width).toBeCloseTo(beforeStart.heading.width, 1);
+    expect(geometry.heading.height).toBeCloseTo(beforeStart.heading.height, 1);
+    expect(geometry.heading.fontSize).toBeCloseTo(beforeStart.heading.fontSize, 1);
+    expectSameBounds(geometry.titleColumn, beforeStart.titleColumn);
+    expectSameBounds(geometry.markColumn, beforeStart.markColumn);
+    expectSameBounds(geometry.emblem, beforeStart.emblem);
+    expectSameBounds(geometry.seal, beforeStart.seal);
+    if (viewports[index]!.width > 640) {
+      expect(geometry.markColumn.x).toBeGreaterThan(geometry.titleColumn.x);
+    } else {
+      expect(geometry.markColumn.y).toBeGreaterThan(geometry.titleColumn.y);
+    }
+    expect(geometry.waitingCopy).toBe("発表が始まるまで、少々お待ちください");
+    expect(geometry.waitingCopyVisibility).toBe("hidden");
+    expect(geometry.canvas.aspectRatio).toBeCloseTo(16 / 9, 2);
+    expect(geometry.canvas.insideViewport).toBe(true);
+    expect(geometry.outOfBounds).toBe(0);
+    expect(geometry.pageCanScroll).toBe(false);
+  }
+  await adminPage.close();
+});
+
 test("an empty presentation moves between opening and podium preview", async ({ page }) => {
   await installAdminApiMock(page, { questionCount: 0 });
   await signIn(page);
@@ -875,8 +1040,8 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   await expect(winners).toBeVisible();
   await expect(winners.locator("[class*='rank']")).toHaveCount(1);
   await expect(winners.locator("[class*='rank']")).toHaveText("第3位");
-  const stamp = winners.getByLabel("しゅんたま検定");
-  await expect(stamp).toHaveAttribute("aria-label", "しゅんたま検定");
+  const stamp = winners.locator("[class*='certificateStamp']");
+  await expect(stamp).toHaveAttribute("aria-hidden", "true");
   await expect(stamp).toContainText("しゅんたま");
   await expect(stamp).toContainText("検定");
   await expect
@@ -890,7 +1055,7 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   await expect
     .poll(() =>
       winners.evaluate((region) => {
-        const stamp = region.querySelector("[aria-label='しゅんたま検定']");
+        const stamp = region.querySelector("[class*='certificateStamp']");
         if (!(stamp instanceof HTMLElement)) return false;
         const stampRect = stamp.getBoundingClientRect();
         const contentRects = Array.from(region.children)

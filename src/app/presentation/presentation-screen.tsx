@@ -138,6 +138,7 @@ type WakeLockNavigator = Navigator & {
   wakeLock?: { request: (type: "screen") => Promise<ScreenLock> };
 };
 const POLL_TIMEOUT_MS = 8_000;
+const OPENING_WAIT_MESSAGE = "発表が始まるまで、少々お待ちください";
 
 function isInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
@@ -1213,7 +1214,7 @@ export default function PresentationScreen({
                       <span className={styles.openingSeal} aria-hidden="true">
                         検定
                       </span>
-                      <p className={styles.openingWait}>発表が始まるまで、少々お待ちください</p>
+                      <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
                     </div>
                   </section>
                 )}
@@ -1233,6 +1234,7 @@ export default function PresentationScreen({
                         </svg>
                       </span>
                       <span className={styles.openingSeal}>検定</span>
+                      <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
                     </div>
                   </section>
                 )}
@@ -1257,7 +1259,7 @@ export default function PresentationScreen({
                     aria-label={`${rankTitle[state]}の勝者一覧`}
                     tabIndex={0}
                   >
-                    <span className={styles.certificateStamp} aria-label="しゅんたま検定">
+                    <span className={styles.certificateStamp} aria-hidden="true">
                       しゅんたま
                       <br />
                       検定

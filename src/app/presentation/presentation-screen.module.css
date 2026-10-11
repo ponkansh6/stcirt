@@ -151,10 +151,11 @@
   box-sizing: border-box;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
-  gap: clamp(20px, 5cqw, 76px);
+  gap: clamp(28px, 5.5cqw, 84px);
   min-height: clamp(340px, 64cqh, 680px);
-  padding: clamp(24px, 5cqh, 60px) clamp(20px, 5cqw, 72px);
-  border: 4px double #8d774d;
+  padding: clamp(32px, 5.5cqh, 68px) clamp(28px, 5.5cqw, 84px);
+  border: 4px double #88744f;
+  background: linear-gradient(135deg, rgb(250 247 239 / 26%), transparent 38%);
 }
 
 .openingTitle {
@@ -163,7 +164,12 @@
 }
 
 .openingTitle h1 {
+  width: fit-content;
+  max-width: 100%;
+  padding-bottom: 0.24em;
+  border-bottom: 1px solid #b19a69;
   text-align: left;
+  white-space: nowrap;
 }
 
 .openingMark {
@@ -228,14 +234,18 @@
 }
 
 .openingWait {
-  max-width: 100%;
+  max-width: 88%;
   margin: 0;
-  color: #46515b;
+  color: #56616a;
   font-size: clamp(var(--presentation-min-readable-size), 1.7cqw, 1.8rem);
   font-weight: 650;
   line-height: 1.5;
   text-align: center;
   overflow-wrap: anywhere;
+}
+
+.openingMark[aria-hidden="true"] > .openingWait {
+  visibility: hidden;
 }
 
 .opening::after {
@@ -270,6 +280,7 @@
 
 .opening h1 {
   color: #283845;
+  font-size: clamp(var(--presentation-min-readable-size), 4.6cqw, 5rem);
   font-weight: 750;
   letter-spacing: 0.12em;
 }
@@ -451,8 +462,9 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: clamp(95px, 13cqh, 145px) clamp(24px, 4cqw, 64px) clamp(18px, 3cqh, 36px);
-  border: 4px double #8d774d;
+  padding: clamp(100px, 13cqh, 148px) clamp(28px, 4.5cqw, 72px) clamp(24px, 3cqh, 40px);
+  border: 4px double #88744f;
+  background: linear-gradient(145deg, rgb(250 247 239 / 24%), transparent 34%);
   text-align: center;
 }
 
@@ -473,8 +485,8 @@
   width: clamp(58px, 7cqw, 100px);
   aspect-ratio: 1;
   align-content: center;
-  border: 3px double #b33b32;
-  color: #b33b32;
+  border: 3px double #a83b33;
+  color: #a83b33;
   font-size: clamp(0.65rem, 0.95cqw, 1rem);
   font-weight: 800;
   line-height: 1.2;
@@ -498,10 +510,10 @@
   box-sizing: border-box;
   max-width: 100%;
   width: fit-content;
-  margin: 0 auto clamp(8px, 1.2cqh, 14px);
-  padding: 0.12em 0.9em;
-  border: 3px double #9b824e;
-  background: #fbf7e9;
+  margin: 0 auto clamp(12px, 1.5cqh, 18px);
+  padding: 0.18em 1.05em;
+  border: 2px solid #9b824e;
+  background: linear-gradient(180deg, #fffdf8, #fbf7e9);
   box-shadow: inset 0 0 0 1px #d7c79e;
   color: #30291f;
   font-family: "Yu Mincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", serif;
@@ -526,7 +538,7 @@
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
   align-items: start;
   justify-items: center;
-  gap: clamp(4px, 1cqh, 12px) clamp(8px, 1.25cqw, 18px);
+  gap: clamp(10px, 1.5cqh, 18px) clamp(14px, 1.7cqw, 26px);
 }
 
 .additionalWinners {
@@ -546,11 +558,12 @@
   min-width: 0;
   width: 100%;
   max-width: 100%;
-  padding: 0 8px;
+  padding: clamp(8px, 1cqh, 12px) 8px;
 }
 
 .winnerIdentity {
   min-width: 0;
+  padding: 0.3em 0;
   text-align: center;
 }
 
@@ -569,6 +582,7 @@
 }
 
 .singleWinner .winner h1 {
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", serif;
   font-size: clamp(var(--presentation-min-readable-size), 7.5cqw, 7.5rem);
   line-height: 1.16;
 }
