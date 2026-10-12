@@ -268,6 +268,15 @@ export const presentationOperations = sqliteTable("presentation_operations", {
   action: text("action").notNull(),
   mode: text("mode"),
   version: integer("version").notNull(),
+  aggregationSummary: text("aggregation_summary", { mode: "json" }).$type<{
+    snapshotUpdated: boolean;
+    includedSubmissionCount: number;
+    excludedSubmissionCount: number;
+    excludedReasonCounts: {
+      questionVersionMismatch: number;
+      q5AssessmentVersionMismatch: number;
+    };
+  } | null>(),
 });
 
 // Participant-facing result visibility is independent from the presentation

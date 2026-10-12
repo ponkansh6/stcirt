@@ -1,0 +1,1 @@
+ALTER TABLE `presentation_operations` ADD `aggregation_summary` text;

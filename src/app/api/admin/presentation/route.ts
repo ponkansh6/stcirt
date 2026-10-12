@@ -96,6 +96,9 @@ export async function POST(request: Request) {
         questionIndex: result.questionIndex,
         questionCount: result.questionCount,
         projectionHidden: result.projectionHidden,
+        ...(value.action === "aggregate" && result.aggregationSummary
+          ? { aggregationSummary: result.aggregationSummary }
+          : {}),
       },
       {
         headers: noStore,

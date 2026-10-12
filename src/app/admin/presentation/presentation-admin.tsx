@@ -12,7 +12,20 @@ type AdminState = {
   participantResultsReady: boolean;
 };
 type ApiError = Error & { status?: number };
+type AggregationSummary = {
+  snapshotUpdated: boolean;
+  includedSubmissionCount: number;
+  excludedSubmissionCount: number;
+  excludedReasonCounts: {
+    questionVersionMismatch: number;
+    q5AssessmentVersionMismatch: number;
+  };
+};
 const POLL_TIMEOUT_MS = 8_000;
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
 
 async function requestSession(
   method: "GET" | "POST",
@@ -89,6 +102,41 @@ async function postAction(action: "start" | "aggregate" | "reset") {
     error.status = response.status;
     throw error;
   }
+  if (action !== "aggregate") return null;
+
+  const payload = (await response.json().catch(() => null)) as {
+    aggregationSummary?: {
+      snapshotUpdated?: unknown;
+      includedSubmissionCount?: unknown;
+      excludedSubmissionCount?: unknown;
+      excludedReasonCounts?: {
+        questionVersionMismatch?: unknown;
+        q5AssessmentVersionMismatch?: unknown;
+      };
+    };
+  } | null;
+  const summary = payload?.aggregationSummary;
+  const reasonCounts = summary?.excludedReasonCounts;
+  if (
+    !summary ||
+    !reasonCounts ||
+    typeof summary.snapshotUpdated !== "boolean" ||
+    !isCount(summary.includedSubmissionCount) ||
+    !isCount(summary.excludedSubmissionCount) ||
+    !isCount(reasonCounts.questionVersionMismatch) ||
+    !isCount(reasonCounts.q5AssessmentVersionMismatch)
+  )
+    return null;
+
+  return {
+    snapshotUpdated: summary.snapshotUpdated,
+    includedSubmissionCount: summary.includedSubmissionCount,
+    excludedSubmissionCount: summary.excludedSubmissionCount,
+    excludedReasonCounts: {
+      questionVersionMismatch: reasonCounts.questionVersionMismatch,
+      q5AssessmentVersionMismatch: reasonCounts.q5AssessmentVersionMismatch,
+    },
+  } satisfies AggregationSummary;
 }
 
 async function setResultsVisibility(visible: boolean) {
@@ -124,6 +172,9 @@ export default function PresentationAdmin() {
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [aggregationResult, setAggregationResult] = useState<
+    AggregationSummary | "unavailable" | null
+  >(null);
   const [authenticated, setAuthenticated] = useState(false);
   const authenticatedRef = useRef(false);
   const [adminState, setAdminState] = useState<AdminState | null>(null);
@@ -304,12 +355,16 @@ export default function PresentationAdmin() {
     setBusy(true);
     setBusyAction(action);
     setMessage(null);
+    setAggregationResult(null);
     try {
       await refreshFlight.current;
       if (!authenticatedRef.current) return;
       if (action === "publish") await setResultsVisibility(true);
       else if (action === "hideResults") await setResultsVisibility(false);
-      else await postAction(action);
+      else {
+        const summary = await postAction(action);
+        if (action === "aggregate") setAggregationResult(summary ?? "unavailable");
+      }
       await refresh();
     } catch (error) {
       if ((error as ApiError).status === 401) {
@@ -359,6 +414,13 @@ export default function PresentationAdmin() {
 
   if (authenticated && adminState) {
     const label = stateLabels[adminState.state] ?? "状態を確認中";
+    const aggregationWasNotUpdated =
+      aggregationResult !== null &&
+      aggregationResult !== "unavailable" &&
+      (!aggregationResult.snapshotUpdated || aggregationResult.includedSubmissionCount === 0);
+    const aggregationSummaryClassName = aggregationWasNotUpdated
+      ? `${styles.aggregateSummary} ${styles.aggregateNotUpdated}`
+      : styles.aggregateSummary;
     return (
       <main className={styles.shell}>
         <section className={styles.console} aria-labelledby="admin-title">
@@ -442,6 +504,41 @@ export default function PresentationAdmin() {
             <p className={styles.error} role="alert">
               {message}
             </p>
+          )}
+          {aggregationResult && (
+            <div className={aggregationSummaryClassName} role="status" aria-live="polite">
+              {aggregationResult === "unavailable" ? (
+                <p>件数内訳を取得できませんでした。操作状態を再読み込みして確認してください。</p>
+              ) : (
+                <>
+                  {aggregationResult.snapshotUpdated &&
+                  aggregationResult.includedSubmissionCount > 0 ? (
+                    <p className={styles.aggregateOutcome}>集計スナップショットを更新しました。</p>
+                  ) : (
+                    <p className={styles.aggregateOutcome}>
+                      集計対象となる回答が見つからなかったため、スナップショットは更新していません。既存のスナップショットを保持しています。
+                    </p>
+                  )}
+                  <p className={styles.aggregateCounts}>
+                    集計対象 {aggregationResult.includedSubmissionCount.toLocaleString("ja-JP")} 件
+                    <span aria-hidden="true"> · </span>
+                    除外 {aggregationResult.excludedSubmissionCount.toLocaleString("ja-JP")} 件
+                  </p>
+                  <p>
+                    除外理由別（重複あり）：質問バージョン不一致{" "}
+                    {aggregationResult.excludedReasonCounts.questionVersionMismatch.toLocaleString(
+                      "ja-JP",
+                    )}{" "}
+                    件、 Q5 評価バージョン不一致{" "}
+                    {aggregationResult.excludedReasonCounts.q5AssessmentVersionMismatch.toLocaleString(
+                      "ja-JP",
+                    )}{" "}
+                    件
+                  </p>
+                  <p>除外された回答は今回の集計スナップショットに含まれていません。</p>
+                </>
+              )}
+            </div>
           )}
           <p className={styles.loginFoot}>
             投影画面は別タブで開きます。開始・公開操作はこの画面で行います。

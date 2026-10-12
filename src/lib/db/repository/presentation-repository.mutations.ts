@@ -39,6 +39,16 @@ export class PresentationConflictError extends Error {
   readonly status = 409;
 }
 
+export type PresentationAggregationSummary = {
+  snapshotUpdated: boolean;
+  includedSubmissionCount: number;
+  excludedSubmissionCount: number;
+  excludedReasonCounts: {
+    questionVersionMismatch: number;
+    q5AssessmentVersionMismatch: number;
+  };
+};
+
 function makeVersionMaps(questions: { id: number; key: string; questionVersion: string | null }[]) {
   const questionVersions: Record<string, string> = {};
   const rubricVersions: Record<string, string> = {};
@@ -192,7 +202,10 @@ async function ensurePresentationSnapshot(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   session: typeof presentationSessions.$inferSelect,
   setOperationPhase?: (phase: PresentationOperationPhase) => void,
-): Promise<typeof presentationSessions.$inferSelect> {
+): Promise<{
+  session: typeof presentationSessions.$inferSelect;
+  aggregationSummary: PresentationAggregationSummary;
+}> {
   setOperationPhase?.("source_questions_read");
   const currentQuestions = await tx.select().from(examQuestions).orderBy(asc(examQuestions.id));
   const versionMaps = makeVersionMaps(currentQuestions);
@@ -238,6 +251,11 @@ async function ensurePresentationSnapshot(
     q5Score: number;
   };
   const validatedLatestSubmissionByParticipant = new Map<number, ValidatedLatestSubmission>();
+  const excludedSubmissionIds = new Set<string>();
+  const excludedReasonCounts = {
+    questionVersionMismatch: 0,
+    q5AssessmentVersionMismatch: 0,
+  };
 
   const answersBySubmission = new Map<string, Map<number, (typeof savedAnswers)[number]>>();
   for (const answer of savedAnswers) {
@@ -273,6 +291,22 @@ async function ensurePresentationSnapshot(
     if (!hasCurrentQuestionSet || !hasCompleteValidAnswers) continue;
 
     const assessment = assessmentBySubmission.get(submission.id);
+    const questionVersionMismatch = !sameVersionMap(
+      submission.questionVersions,
+      versionMaps.questionVersions,
+    );
+    const q5AssessmentVersionMismatch =
+      assessment !== undefined &&
+      (assessment.questionVersion !== q5.questionVersion ||
+        assessment.rubricVersion !== versionMaps.rubricVersions[String(q5Id)] ||
+        !isSupportedGraderVersionPair(assessment.questionVersion, assessment.rubricVersion));
+    if (questionVersionMismatch) excludedReasonCounts.questionVersionMismatch += 1;
+    if (q5AssessmentVersionMismatch) excludedReasonCounts.q5AssessmentVersionMismatch += 1;
+    if (questionVersionMismatch || q5AssessmentVersionMismatch) {
+      excludedSubmissionIds.add(submission.id);
+      continue;
+    }
+
     if (q5Answer?.answerKind === "freeText") {
       if (
         !assessment ||
@@ -289,26 +323,23 @@ async function ensurePresentationSnapshot(
       );
     }
 
-    if (!sameVersionMap(submission.questionVersions, versionMaps.questionVersions)) {
-      throw new PresentationConflictError(
-        `Submission ${submission.id} has missing or outdated question versions; audit or resubmit it before aggregating`,
-      );
-    }
-    if (
-      assessment.questionVersion !== q5.questionVersion ||
-      assessment.rubricVersion !== versionMaps.rubricVersions[String(q5Id)] ||
-      !isSupportedGraderVersionPair(assessment.questionVersion, assessment.rubricVersion)
-    ) {
-      throw new PresentationConflictError(
-        `Submission ${submission.id} has a missing or incompatible Q5 answer/assessment version; audit and regrade it before aggregating`,
-      );
-    }
-
     validatedLatestSubmissionByParticipant.set(submission.participantId, {
       submission,
       assessment,
       q5Score: Number(assessment.normalizedScore),
     });
+  }
+
+  if (validatedLatestSubmissionByParticipant.size === 0 && excludedSubmissionIds.size > 0) {
+    return {
+      session,
+      aggregationSummary: {
+        snapshotUpdated: false,
+        includedSubmissionCount: 0,
+        excludedSubmissionCount: excludedSubmissionIds.size,
+        excludedReasonCounts,
+      },
+    };
   }
 
   const scored = participants.map((participant) => {
@@ -415,7 +446,15 @@ async function ensurePresentationSnapshot(
     .where(eq(presentationSessions.id, 1));
   if (!snapshottedSession)
     throw new PresentationConflictError("Presentation session is unavailable");
-  return snapshottedSession;
+  return {
+    session: snapshottedSession,
+    aggregationSummary: {
+      snapshotUpdated: true,
+      includedSubmissionCount: validatedLatestSubmissionByParticipant.size,
+      excludedSubmissionCount: excludedSubmissionIds.size,
+      excludedReasonCounts,
+    },
+  };
 }
 
 async function nextNonemptyRank(
@@ -523,7 +562,7 @@ export async function operatePresentationControls(
   operationId: string,
   action: PresentationAction,
   expectedSnapshotRevision?: number,
-): Promise<AdminPresentationControls> {
+): Promise<AdminPresentationControls & { aggregationSummary?: PresentationAggregationSummary }> {
   return operatePresentationWithResponse(
     operationId,
     action,
@@ -537,7 +576,7 @@ async function operatePresentationWithResponse<T>(
   action: PresentationAction,
   readResponse: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>,
   expectedSnapshotRevision?: number,
-): Promise<T> {
+): Promise<T & { aggregationSummary?: PresentationAggregationSummary }> {
   if (!presentationActions.has(action))
     throw new PresentationConflictError("Unsupported presentation action");
   let phase: PresentationOperationPhase = "transaction_begin";
@@ -554,7 +593,12 @@ async function operatePresentationWithResponse<T>(
         if (operation) {
           if (operation.action !== action)
             throw new PresentationConflictError("Operation ID conflict");
-          return readResponse(tx);
+          return {
+            ...(await readResponse(tx)),
+            ...(action === "aggregate" && operation.aggregationSummary
+              ? { aggregationSummary: operation.aggregationSummary }
+              : {}),
+          } as T & { aggregationSummary?: PresentationAggregationSummary };
         }
         if (
           expectedSnapshotRevision !== undefined &&
@@ -568,17 +612,26 @@ async function operatePresentationWithResponse<T>(
             throw new PresentationConflictError("Presentation has already started");
           const version = await startPresentation(tx, session);
           await tx.insert(presentationOperations).values({ operationId, action, version });
-          return readResponse(tx);
+          return (await readResponse(tx)) as T & {
+            aggregationSummary?: PresentationAggregationSummary;
+          };
         }
         if (action === "aggregate") {
-          const aggregated = await ensurePresentationSnapshot(tx, session, (nextPhase) => {
-            phase = nextPhase;
-          });
+          const { session: aggregated, aggregationSummary } = await ensurePresentationSnapshot(
+            tx,
+            session,
+            (nextPhase) => {
+              phase = nextPhase;
+            },
+          );
           phase = "transaction_commit";
           await tx
             .insert(presentationOperations)
-            .values({ operationId, action, version: aggregated.version });
-          return readResponse(tx);
+            .values({ operationId, action, version: aggregated.version, aggregationSummary });
+          return {
+            ...(await readResponse(tx)),
+            aggregationSummary,
+          } as T & { aggregationSummary?: PresentationAggregationSummary };
         }
         if (action === "reset") {
           if (session.state === "not_started")
@@ -598,7 +651,9 @@ async function operatePresentationWithResponse<T>(
           if (!changed.length)
             throw new PresentationConflictError("Presentation state changed concurrently");
           await tx.insert(presentationOperations).values({ operationId, action, version });
-          return readResponse(tx);
+          return (await readResponse(tx)) as T & {
+            aggregationSummary?: PresentationAggregationSummary;
+          };
         }
         if (action === "hide" || action === "show") {
           const projectionHidden = action === "hide";
@@ -616,7 +671,9 @@ async function operatePresentationWithResponse<T>(
           if (!changed.length)
             throw new PresentationConflictError("Presentation state changed concurrently");
           await tx.insert(presentationOperations).values({ operationId, action, version });
-          return readResponse(tx);
+          return (await readResponse(tx)) as T & {
+            aggregationSummary?: PresentationAggregationSummary;
+          };
         }
         if (session.state === "not_started")
           throw new PresentationConflictError("Presentation has not started");
@@ -641,7 +698,9 @@ async function operatePresentationWithResponse<T>(
         await tx
           .insert(presentationOperations)
           .values({ operationId, action, version: session.version + 1 });
-        return readResponse(tx);
+        return (await readResponse(tx)) as T & {
+          aggregationSummary?: PresentationAggregationSummary;
+        };
       });
     });
   } catch (error) {
@@ -664,7 +723,12 @@ async function operatePresentationWithResponse<T>(
       if (operation) {
         if (operation.action !== action)
           throw new PresentationConflictError("Operation ID conflict");
-        return readResponse(tx);
+        return {
+          ...(await readResponse(tx)),
+          ...(action === "aggregate" && operation.aggregationSummary
+            ? { aggregationSummary: operation.aggregationSummary }
+            : {}),
+        } as T & { aggregationSummary?: PresentationAggregationSummary };
       }
       throw new PresentationConflictError("Presentation state changed concurrently");
     });

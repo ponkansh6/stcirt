@@ -399,27 +399,45 @@ describe("presentation repository", () => {
     suffix = "latest",
   ) {
     const id = `submission-${participantId}-${suffix}`;
+    const questions = await testDb.db.select().from(schema.examQuestions);
+    const orderedQuestions = [...questions].sort((left, right) => left.id - right.id);
+    const q5 = orderedQuestions.find((question) => question.id === 5)!;
+    const questionVersions = Object.fromEntries(
+      orderedQuestions.map((question) => [String(question.id), question.questionVersion!]),
+    );
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id,
       participantId,
-      questionIds: [1, 5],
-      questionVersions: { "1": "nagano-001-v1", "5": "tamami-egg-v1" },
+      questionIds: orderedQuestions.map(({ id: questionId }) => questionId),
+      questionVersions,
       revision,
     });
-    await testDb.db.insert(schema.examSubmissionAnswers).values([
-      { submissionId: id, questionId: 1, selectedIndex: selectedIndices[0]! },
-      { submissionId: id, questionId: 5, answerKind: "freeText", freeText: `Q5 ${suffix}` },
-    ]);
+    await testDb.db.insert(schema.examSubmissionAnswers).values(
+      orderedQuestions.map((question) =>
+        question.id === 5
+          ? {
+              submissionId: id,
+              questionId: question.id,
+              answerKind: "freeText" as const,
+              freeText: `Q5 ${suffix}`,
+            }
+          : {
+              submissionId: id,
+              questionId: question.id,
+              selectedIndex: question.id === 1 ? selectedIndices[0]! : 0,
+            },
+      ),
+    );
     await testDb.db.insert(schema.examAnswerAssessments).values({
       submissionId: id,
       questionId: 5,
       revision,
       answerText: `Q5 ${suffix}`,
-      questionVersion: "tamami-egg-v1",
+      questionVersion: q5.questionVersion!,
       state: "graded",
       rawScore: selectedIndices[1] === 0 ? 2 : 0,
       normalizedScore: selectedIndices[1] === 0 ? 1 : 0,
-      rubricVersion: "tamami-egg-v1",
+      rubricVersion: q5.questionVersion!,
     });
   }
 
@@ -526,22 +544,31 @@ describe("presentation repository", () => {
     ["null", null],
     ["array", []],
     ["scalar", "invalid"],
-  ] as const)(
-    "rejects aggregating a submission with a %s question-version map",
-    async (_label, value) => {
-      await addQuestions();
-      const participantId = await addParticipant("Invalid version map");
-      await addSubmission(participantId, [0, 0]);
-      await testDb.db
-        .update(schema.examAnswerSubmissions)
-        .set({ questionVersions: value as never })
-        .where(eq(schema.examAnswerSubmissions.id, `submission-${participantId}-latest`));
+  ] as const)("excludes a submission with a %s question-version map", async (_label, value) => {
+    await addQuestions();
+    const participantId = await addParticipant("Invalid version map");
+    await addSubmission(participantId, [0, 0]);
+    await testDb.db
+      .update(schema.examAnswerSubmissions)
+      .set({ questionVersions: value as never })
+      .where(eq(schema.examAnswerSubmissions.id, `submission-${participantId}-latest`));
 
-      await expect(
-        op("aggregate", `invalid-submission-version-map-${_label}`),
-      ).rejects.toMatchObject({ status: 409 });
-    },
-  );
+    const result = await op("aggregate", `invalid-submission-version-map-${_label}`);
+    expect(result.aggregationSummary).toEqual({
+      snapshotUpdated: false,
+      includedSubmissionCount: 0,
+      excludedSubmissionCount: 1,
+      excludedReasonCounts: {
+        questionVersionMismatch: 1,
+        q5AssessmentVersionMismatch: 0,
+      },
+    });
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+      { state: "not_started", version: 0, snapshotRevision: 0, questionCount: 0 },
+    ]);
+    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+  });
 
   it("snapshots a participant without a submission with a zero score", async () => {
     await addQuestions();
@@ -1476,7 +1503,7 @@ describe("presentation repository", () => {
   });
 
   it.each(["missing-current-question-version", "outdated-submission-version"] as const)(
-    "fails aggregation closed for %s",
+    "handles version guard for %s",
     async (caseName) => {
       await addQuestions();
       const participant = await addParticipant(`Version guard ${caseName}`);
@@ -1494,11 +1521,31 @@ describe("presentation repository", () => {
           .where(eq(schema.examAnswerSubmissions.id, `submission-${participant}-latest`));
       }
 
-      await expect(op("aggregate", `version-guard-${caseName}`)).rejects.toBeInstanceOf(
-        PresentationConflictError,
-      );
-      await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
-      await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+      if (caseName === "missing-current-question-version") {
+        await expect(op("aggregate", `version-guard-${caseName}`)).rejects.toBeInstanceOf(
+          PresentationConflictError,
+        );
+        await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
+        await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+      } else {
+        const result = await op("aggregate", `version-guard-${caseName}`);
+        expect(result.aggregationSummary).toEqual({
+          snapshotUpdated: false,
+          includedSubmissionCount: 0,
+          excludedSubmissionCount: 1,
+          excludedReasonCounts: {
+            questionVersionMismatch: 1,
+            q5AssessmentVersionMismatch: 0,
+          },
+        });
+        await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+          { state: "not_started", version: 0, snapshotRevision: 0, questionCount: 0 },
+        ]);
+        await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(
+          0,
+        );
+        await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+      }
     },
   );
 
@@ -1581,7 +1628,7 @@ describe("presentation repository", () => {
       rubricVersion: "omiwatari-v1",
     },
   ])(
-    "fails aggregation closed for a mismatched $name",
+    "excludes a submission with a mismatched $name",
     async ({ name, questionVersion, rubricVersion }) => {
       await addCurrentFiveQuestions();
       const participant = await addParticipant(`Mismatched ${questionVersion}-${rubricVersion}`);
@@ -1618,9 +1665,20 @@ describe("presentation repository", () => {
         rubricVersion,
       });
 
-      await expect(
-        op("aggregate", `mismatched-q5-${name.replaceAll(" ", "-")}`),
-      ).rejects.toBeInstanceOf(PresentationConflictError);
+      const result = await op("aggregate", `mismatched-q5-${name.replaceAll(" ", "-")}`);
+      expect(result.aggregationSummary).toEqual({
+        snapshotUpdated: false,
+        includedSubmissionCount: 0,
+        excludedSubmissionCount: 1,
+        excludedReasonCounts: {
+          questionVersionMismatch: 0,
+          q5AssessmentVersionMismatch: 1,
+        },
+      });
+      await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+        { state: "not_started", version: 0, snapshotRevision: 0, questionCount: 0 },
+      ]);
+      await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(0);
       await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
     },
   );

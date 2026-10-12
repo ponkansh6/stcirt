@@ -161,6 +161,40 @@
   font-weight: 800;
 }
 
+.aggregateSummary {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid #c9d8cb;
+  border-radius: 8px;
+  background: #f1f6f0;
+  color: #30483a;
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.aggregateSummary p {
+  margin: 0;
+}
+
+.aggregateSummary p + p {
+  margin-top: 4px;
+}
+
+.aggregateOutcome {
+  font-weight: 800;
+}
+
+.aggregateNotUpdated {
+  border-color: #dfcc9c;
+  background: #faf5e8;
+  color: #5c4b27;
+}
+
+.aggregateCounts {
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
 .error {
   margin: 14px 0 0;
   color: #9b4237;
