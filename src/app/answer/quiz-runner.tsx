@@ -169,27 +169,21 @@ function deriveAnswerUi({
       primaryAction: null,
     };
   }
-  if (surface === "submission-error") {
+  if (surface === "submission-error" && phase.kind === "submission-error") {
     return {
       surface,
       status: "回答状況を確認できませんでした",
-      message:
-        phase.kind === "submission-error"
-          ? phase.message
-          : "通信状態を確認して再試行してください。",
+      message: phase.message,
       statusRole: "alert",
       busy: false,
       primaryAction: "retry-submission-check",
     };
   }
-  if (surface === "owner-return-error") {
+  if (surface === "owner-return-error" && phase.kind === "owner-return-error") {
     return {
       surface,
       status: "代理回答を保存しました",
-      message:
-        phase.kind === "owner-return-error"
-          ? phase.message
-          : "自分の回答状況を確認できませんでした。",
+      message: phase.message,
       statusRole: "alert",
       busy: false,
       primaryAction: "retry-owner-return",
@@ -216,12 +210,11 @@ function deriveAnswerUi({
       primaryAction: null,
     };
   }
-  if (surface === "load-error") {
+  if (surface === "load-error" && phase.kind === "load-error") {
     return {
       surface,
       status: "問題を読み込めませんでした",
-      message:
-        phase.kind === "load-error" ? phase.message : "通信状態を確認して再試行してください。",
+      message: phase.message,
       statusRole: "alert",
       busy: false,
       primaryAction: "retry-load",
@@ -624,7 +617,7 @@ export default function QuizRunner() {
     );
   }
 
-  if (ui.surface === "login") {
+  if (ui.surface === "login" && access.kind === "login") {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
@@ -633,7 +626,7 @@ export default function QuizRunner() {
           <p className="mt-4 max-w-xl leading-relaxed text-muted">{ui.message}</p>
           <ParticipantForm
             onLogin={login}
-            message={access.kind === "login" ? access.message : undefined}
+            message={access.message}
             nameLabel="受験者氏名"
             pinLabel="受験コード"
           />
@@ -690,11 +683,7 @@ export default function QuizRunner() {
           <p className="mt-4 text-muted" role={ui.statusRole}>
             {ui.message}
           </p>
-          <Button
-            onClick={retrySubmissionCheck}
-            className="mt-8"
-            variant={ui.primaryAction === "retry-submission-check" ? "primary" : "outline"}
-          >
+          <Button onClick={retrySubmissionCheck} className="mt-8" variant="primary">
             もう一度確認する
           </Button>
         </ParticipantCard>

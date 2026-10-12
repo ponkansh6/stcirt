@@ -346,6 +346,20 @@ describe("QuizRunner remaining coverage states", () => {
     ).toBeDisabled();
   });
 
+  it("shows generic reauthentication guidance while refreshing", () => {
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "refreshing" },
+        { access: { kind: "reauthentication", participant: { id: 7, name: "参加者" } } },
+      ),
+    );
+    render(<QuizRunner />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "再ログイン後、現在の状態を確認してから次の操作を行ってください。回答は自動送信されません。",
+    );
+  });
+
   it.each([
     ["submitting", { kind: "submitting" }],
     ["refreshing", { kind: "refreshing" }],
