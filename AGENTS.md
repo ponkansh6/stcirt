@@ -7,6 +7,7 @@
     pre-push 検証で上記操作を行う場合、最初の実行から対象コマンドだけを `sandbox_permissions=require_escalated` で実行する。push が依頼に含まれる場合は、通常の `git push` 自体も最初から `sandbox_permissions=require_escalated` で実行し、通常権限での失敗を試さない。`--force` / `--force-with-lease` / ref deletion など履歴を破壊する push はこの許可に含まず、個別の明示指示が必要。昇格は上記操作に限り、`0.0.0.0` listen、任意の外部通信、不要な権限拡大を許可しない。また、永続的な sandbox / 承認設定の変更を意味しない。
 - **`git --no-verify` / `git commit -n` の使用禁止**: pre-commit/pre-push hooks を強制実行。
 - **`HUSKY=0` の使用禁止**: husky hook runner 無効化を禁止。
+- 一時 worktree は指定された検証スクリプトのみが作成する。エージェントは直接作成せず、そこから push しない。
 
 ## リソース制約
 
