@@ -21,7 +21,6 @@ export default function ResultsPanel({
       : (parseParticipantResult(initial) ?? { state: "unavailable" }),
   );
   const [authorized, setAuthorized] = useState(initial.state !== "unauthenticated");
-  const [refreshError, setRefreshError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const refreshRef = useRef<(() => void) | null>(null);
 
@@ -61,11 +60,9 @@ export default function ResultsPanel({
         if (response.status === 401) {
           setAuthorized(false);
           setResult({ state: "waiting" });
-          setRefreshError(false);
           return;
         }
         if (!response.ok) {
-          setRefreshError(true);
           return;
         }
         let payload: unknown;
@@ -73,20 +70,15 @@ export default function ResultsPanel({
           payload = await response.json();
         } catch {
           if (!active || currentRevision !== requestRevision) return;
-          setRefreshError(true);
           return;
         }
         if (!active || currentRevision !== requestRevision) return;
         const parsed = parseParticipantResult(payload);
-        if (!parsed) {
-          setRefreshError(true);
-          return;
-        }
+        if (!parsed) return;
         setAuthorized(true);
         setResult(parsed);
-        setRefreshError(false);
       } catch {
-        if (active && currentRevision === requestRevision) setRefreshError(true);
+        // Keep the last confirmed result view when a refresh fails.
       } finally {
         pending = false;
         if (active) setRefreshing(false);
@@ -214,23 +206,10 @@ export default function ResultsPanel({
               回答画面へ戻る
             </Link>
           </>
-        ) : result.state === "unavailable" ? (
-          <>
-            <h1 className="text-3xl font-bold tracking-tight">結果を確認できません</h1>
-            <p className="mt-4 text-muted">あなたの結果はまだ準備されていません。</p>
-          </>
         ) : (
           <div role="status" aria-live="polite">
-            <h1 className="text-3xl font-bold tracking-tight">結果公開待ち</h1>
-            <p className="mt-4 text-muted">
-              回答は受け付けました。主催者が結果を公開するまでお待ちください。
-            </p>
+            <h1 className="text-3xl font-bold tracking-tight">回答済み</h1>
           </div>
-        )}
-        {authorized && refreshError && (
-          <p className="mt-6 text-sm text-error" role="alert">
-            最新の結果を確認できませんでした。表示中の内容は保持しています。
-          </p>
         )}
         <Button
           variant="outline"
@@ -238,7 +217,7 @@ export default function ResultsPanel({
           disabled={refreshing}
           className="mt-6 self-start"
         >
-          {refreshing ? "結果を確認しています…" : "結果を再読み込み"}
+          結果を再読み込み
         </Button>
       </section>
     </main>

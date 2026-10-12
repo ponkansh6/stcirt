@@ -273,7 +273,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    const completionHeading = screen.getByRole("heading", { name: "回答完了" });
+    const completionHeading = screen.getByRole("heading", { name: "回答済み" });
     await waitFor(() => expect(document.activeElement).toBe(completionHeading));
     saveRequest.resolve();
   });
@@ -302,7 +302,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    const completionHeading = screen.getByRole("heading", { name: "回答完了" });
+    const completionHeading = screen.getByRole("heading", { name: "回答済み" });
     await waitFor(() => expect(document.activeElement).toBe(completionHeading));
   });
 
@@ -335,7 +335,7 @@ describe("QuizRunner batch answer sheet", () => {
 
       currentPhase = { kind: "complete" };
       rerender(<RunnerPage />);
-      expect(screen.getByRole("heading", { name: "回答完了" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
       expect(document.activeElement).toBe(externalControl);
     } finally {
       externalControl.remove();
@@ -345,7 +345,7 @@ describe("QuizRunner batch answer sheet", () => {
   it("does not move focus to completion when the initial phase is already complete", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
     render(<RunnerPage />);
-    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答完了" }));
+    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答済み" }));
   });
 
   it("does not move focus when submission starts while a question navigation link is focused", () => {
@@ -370,7 +370,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答完了" }));
+    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答済み" }));
   });
 
   it("keeps the completion handoff canceled after focus returns to final confirmation", async () => {
@@ -399,7 +399,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答完了" }));
+    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答済み" }));
   });
 
   it("does not reuse a failed submission focus handoff on an unfocused retry", async () => {
@@ -435,7 +435,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答完了" }));
+    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答済み" }));
   });
 
   it("moves focus to a question from the progress and unanswered links", () => {
@@ -917,7 +917,7 @@ describe("QuizRunner batch answer sheet", () => {
       session({ kind: "complete" }, { editAnswers, openAssistedLogin }),
     );
     render(<RunnerPage />);
-    expect(screen.getByRole("heading", { name: "回答完了" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "ホームへ" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "代理回答を行う" })).toBeInTheDocument();
@@ -950,7 +950,7 @@ describe("QuizRunner batch answer sheet", () => {
     );
     render(<RunnerPage />);
 
-    expect(screen.getByRole("heading", { name: "回答完了" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
     const reauthentication = screen.getByRole("region", {
       name: "参加状態の確認が必要です",
     });
@@ -1059,11 +1059,8 @@ describe("QuizRunner batch answer sheet", () => {
     );
     render(<RunnerPage />);
 
-    expect(screen.getByRole("heading", { name: "回答完了" })).toBeInTheDocument();
-    const completionStatus = screen
-      .getAllByRole("status")
-      .find((status) => /回答は完了しています。結果/.test(status.textContent ?? ""));
-    expect(completionStatus).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(screen.queryByText(/回答は完了しています。結果/)).not.toBeInTheDocument();
     const nameTerm = screen.getByRole("term");
     expect(nameTerm).toHaveTextContent("氏名");
     const nameField = nameTerm.closest("dl");

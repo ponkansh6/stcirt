@@ -73,9 +73,9 @@ function triggerVisibleTabRefresh() {
   }
 }
 
-function expectResultStateNotice(role: "alert" | "status", message: string) {
-  const notices = screen.getAllByRole(role).filter((notice) => notice.textContent === message);
-  expect(notices.length).toBeGreaterThan(0);
+function expectCompletionStatus() {
+  expect(screen.getByRole("heading", { level: 1, name: "回答済み" })).toBeInTheDocument();
+  expect(screen.queryByText(/結果.*(確認|公開|待ち)/)).not.toBeInTheDocument();
 }
 
 function getAnswererNameField(container: HTMLElement) {
@@ -134,7 +134,7 @@ describe("QuizRunner remaining coverage states", () => {
       document.dispatchEvent(new Event("visibilitychange"));
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
       expect(resultsLink).toBeInTheDocument();
-      expectResultStateNotice("alert", "結果の公開状態は現在確認できません。");
+      expectCompletionStatus();
     } finally {
       if (originalVisibilityDescriptor) {
         Object.defineProperty(document, "visibilityState", originalVisibilityDescriptor);
@@ -458,7 +458,7 @@ describe("QuizRunner remaining coverage states", () => {
       document.dispatchEvent(new Event("visibilitychange"));
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
       expect(resultsLink).toBeInTheDocument();
-      expectResultStateNotice("alert", "結果の公開状態は現在確認できません。");
+      expectCompletionStatus();
     } finally {
       if (originalVisibilityDescriptor) {
         Object.defineProperty(document, "visibilityState", originalVisibilityDescriptor);
@@ -479,7 +479,7 @@ describe("QuizRunner remaining coverage states", () => {
     triggerVisibleTabRefresh();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     expect(resultsLink).toBeInTheDocument();
-    expectResultStateNotice("alert", "結果の公開状態は現在確認できません。");
+    expectCompletionStatus();
   });
 
   it("refreshes publication on return to the tab and clears the CTA after a confirmed waiting response", async () => {
@@ -494,13 +494,10 @@ describe("QuizRunner remaining coverage states", () => {
     triggerVisibleTabRefresh();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(resultsLink).not.toBeInTheDocument());
-    expectResultStateNotice(
-      "status",
-      "回答は完了しています。結果は主催者が公開するまで表示されません。",
-    );
+    expectCompletionStatus();
   });
 
-  it("removes the results CTA and shows the confirmed unavailable state", async () => {
+  it("removes the results CTA and keeps the completion copy when results are unavailable", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce({ ok: true, json: async () => visibleResultsPayload } as Response)
       .mockResolvedValueOnce({
@@ -514,10 +511,10 @@ describe("QuizRunner remaining coverage states", () => {
     triggerVisibleTabRefresh();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
-    expectResultStateNotice("status", "結果は現在確認できません。主催者にお問い合わせください。");
+    expectCompletionStatus();
   });
 
-  it("clears the results CTA and reports session expiry after a 401", async () => {
+  it("clears the results CTA and offers reauthentication after a 401 while keeping completion copy", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce({ ok: true, json: async () => visibleResultsPayload } as Response)
       .mockResolvedValueOnce({ ok: false, status: 401 } as Response);
@@ -528,7 +525,10 @@ describe("QuizRunner remaining coverage states", () => {
     triggerVisibleTabRefresh();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
-    expectResultStateNotice("alert", "結果の確認には再度参加状態の確認が必要です。");
+    expectCompletionStatus();
+    expect(screen.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeInTheDocument();
+    expect(screen.getByLabelText("4桁PIN")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "再ログインする" })).toBeInTheDocument();
   });
 
   it("does not offer another assisted participant when the owner is ineligible", () => {
@@ -681,7 +681,7 @@ describe("QuizRunner remaining coverage states", () => {
     );
     render(<QuizRunner />);
 
-    expect(screen.getByRole("heading", { name: "回答完了" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
     const { definition, field: answererField } = getAnswererNameField(screen.getByRole("main"));
     expect(definition).toHaveTextContent("ほかの人");
     expect(within(answererField).getByText("代理回答", { exact: true })).toBeInTheDocument();
@@ -723,10 +723,10 @@ describe("QuizRunner remaining coverage states", () => {
     );
     render(<QuizRunner />);
 
-    const completionRegion = screen.getByRole("region", { name: "回答完了" });
-    expect(screen.getByRole("heading", { level: 1, name: "回答完了" })).toBeInTheDocument();
+    const completionRegion = screen.getByRole("region", { name: "回答済み" });
+    expect(screen.getByRole("heading", { level: 1, name: "回答済み" })).toBeInTheDocument();
     expect(
-      within(completionRegion).getByRole("heading", { level: 2, name: "回答完了" }),
+      within(completionRegion).getByRole("heading", { level: 2, name: "回答済み" }),
     ).toBeInTheDocument();
     expect(within(completionRegion).getByText(/再ログインしてください/)).toBeInTheDocument();
     expect(within(completionRegion).getByText(/回答は自動送信されません/)).toBeInTheDocument();

@@ -56,22 +56,12 @@ function deriveAnswerUi({
   phase,
   unansweredCount,
   restoreError,
-  participantResultsAuthExpired,
-  participantResultsRefreshError,
-  participantResultsUnavailable,
-  participantResultsWaiting,
-  participantResultsVisible,
 }: {
   access: AccessState;
   assistedScreen: "closed" | "login" | "active";
   phase: Phase;
   unansweredCount: number;
   restoreError: string | null;
-  participantResultsAuthExpired: boolean;
-  participantResultsRefreshError: boolean;
-  participantResultsUnavailable: boolean;
-  participantResultsWaiting: boolean | null;
-  participantResultsVisible: boolean;
 }): AnswerUiModel {
   let surface: AnswerUiSurface;
   if (access.kind === "checking") surface = "access-checking";
@@ -101,7 +91,7 @@ function deriveAnswerUi({
   if (access.kind === "reauthentication") {
     const isComplete = phase.kind === "complete";
     const message = isComplete
-      ? "全5問の回答は記録されています。結果の確認や回答の修正を行うには再ログインしてください。回答は自動送信されません。"
+      ? "全5問の回答は記録されています。回答の修正や代理回答を続けるには再ログインしてください。回答は自動送信されません。"
       : phase.kind === "answering"
         ? `${phase.message ? `${phase.message} ` : ""}回答案は保持しています。再ログイン後に内容を確認してから、必要な操作を改めて確定してください。`
         : phase.kind === "owner-return-error"
@@ -111,7 +101,7 @@ function deriveAnswerUi({
             : "再ログイン後、現在の状態を確認してから次の操作を行ってください。回答は自動送信されません。";
     return {
       surface,
-      status: isComplete ? "回答完了" : "参加状態の確認が必要です",
+      status: isComplete ? "回答済み" : "参加状態の確認が必要です",
       message,
       statusRole: "alert",
       busy: false,
@@ -221,33 +211,11 @@ function deriveAnswerUi({
     };
   }
   if (surface === "complete") {
-    const resultStatus = participantResultsAuthExpired
-      ? "結果の確認には再度参加状態の確認が必要です。"
-      : participantResultsRefreshError
-        ? "結果の公開状態は現在確認できません。"
-        : participantResultsUnavailable
-          ? "結果は現在確認できません。主催者にお問い合わせください。"
-          : participantResultsWaiting
-            ? "回答は完了しています。結果は主催者が公開するまで表示されません。"
-            : participantResultsVisible
-              ? "結果を確認できます。"
-              : "回答は完了しています。結果の公開状態を確認しています。";
     return {
       surface,
-      status: participantResultsAuthExpired
-        ? "結果の確認に参加状態の確認が必要です"
-        : participantResultsRefreshError
-          ? "結果の公開状態を確認できません"
-          : participantResultsUnavailable
-            ? "結果を確認できません"
-            : participantResultsWaiting
-              ? "結果の公開待ち"
-              : participantResultsVisible
-                ? "結果公開済み"
-                : "回答完了",
-      message: resultStatus,
-      statusRole:
-        participantResultsAuthExpired || participantResultsRefreshError ? "alert" : "status",
+      status: "回答済み",
+      message: "",
+      statusRole: "status",
       busy: false,
       primaryAction: restoreError ? null : "edit-answers",
     };
@@ -357,17 +325,11 @@ export default function QuizRunner() {
   const checkedSubmissionAfterReauthentication = useRef(false);
   const [reauthenticationSuccessCount, setReauthenticationSuccessCount] = useState(0);
   const [participantResultsVisible, setParticipantResultsVisible] = useState(false);
-  const [participantResultsWaiting, setParticipantResultsWaiting] = useState<boolean | null>(null);
-  const [participantResultsUnavailable, setParticipantResultsUnavailable] = useState(false);
-  const [participantResultsRefreshError, setParticipantResultsRefreshError] = useState(false);
   const [participantResultsAuthExpired, setParticipantResultsAuthExpired] = useState(false);
   const retryRequired = phase.kind === "answering" && phase.retryRequired;
   useEffect(() => {
     if (phase.kind !== "complete" || access.kind !== "ready") {
       setParticipantResultsVisible(false);
-      setParticipantResultsWaiting(null);
-      setParticipantResultsUnavailable(false);
-      setParticipantResultsRefreshError(false);
       setParticipantResultsAuthExpired(false);
       return;
     }
@@ -395,30 +357,18 @@ export default function QuizRunner() {
         if (!active || currentRevision !== requestRevision) return;
         if (response.status === 401) {
           setParticipantResultsVisible(false);
-          setParticipantResultsWaiting(null);
-          setParticipantResultsUnavailable(false);
           setParticipantResultsAuthExpired(true);
-          setParticipantResultsRefreshError(false);
           return;
         }
-        if (!response.ok) {
-          setParticipantResultsRefreshError(true);
-          return;
-        }
+        if (!response.ok) return;
         const result = parseParticipantResult(await response.json());
         if (active && currentRevision === requestRevision) {
-          if (!result) {
-            setParticipantResultsRefreshError(true);
-            return;
-          }
+          if (!result) return;
           setParticipantResultsVisible(result.state === "visible");
-          setParticipantResultsWaiting(result.state === "waiting");
-          setParticipantResultsUnavailable(result.state === "unavailable");
           setParticipantResultsAuthExpired(false);
-          setParticipantResultsRefreshError(false);
         }
       } catch {
-        if (active && currentRevision === requestRevision) setParticipantResultsRefreshError(true);
+        // Keep the last confirmed CTA state when a refresh fails.
       } finally {
         pending = false;
         if (active && refreshQueued) {
@@ -534,11 +484,6 @@ export default function QuizRunner() {
     phase,
     unansweredCount: unanswered.length,
     restoreError,
-    participantResultsAuthExpired,
-    participantResultsRefreshError,
-    participantResultsUnavailable,
-    participantResultsWaiting,
-    participantResultsVisible,
   });
   const ownerName =
     access.kind === "ready" || access.kind === "reauthentication"
@@ -797,9 +742,11 @@ export default function QuizRunner() {
           >
             {ui.status}
           </h1>
-          <p className="mt-4 text-muted" role={ui.statusRole} aria-live="polite">
-            {access.kind === "reauthentication" ? "全5問の回答を記録しました。" : ui.message}
-          </p>
+          {ui.message && (
+            <p className="mt-4 text-muted" role={ui.statusRole} aria-live="polite">
+              {ui.message}
+            </p>
+          )}
           <AnswererNameField
             answerMode={answerMode}
             ownerName={ownerName}
@@ -814,7 +761,7 @@ export default function QuizRunner() {
               {restoreError}
             </p>
           )}
-          {access.kind === "reauthentication" && (
+          {(access.kind === "reauthentication" || participantResultsAuthExpired) && (
             <section
               className="mt-6 rounded-xl border border-border bg-surface-2 p-5"
               aria-labelledby="complete-reauth-title"
@@ -822,15 +769,22 @@ export default function QuizRunner() {
               <h2 id="complete-reauth-title" className="text-lg font-bold">
                 参加状態の確認が必要です
               </h2>
-              <p className="mt-2 text-sm leading-relaxed text-muted" role={ui.statusRole}>
-                {ui.message}
-              </p>
+              {ui.message && (
+                <p className="mt-2 text-sm leading-relaxed text-muted" role={ui.statusRole}>
+                  {ui.message}
+                </p>
+              )}
               <p className="mt-2 text-sm leading-relaxed text-muted">
                 再ログイン後、回答の修正やほかの人の回答を続けられます。
               </p>
               <ParticipantForm
                 onLogin={login}
-                initialName={access.participant.name}
+                initialName={
+                  access.kind === "ready" || access.kind === "reauthentication"
+                    ? access.participant.name
+                    : ownerName
+                }
+                onSuccess={() => setParticipantResultsAuthExpired(false)}
                 submitLabel="再ログインする"
               />
             </section>
@@ -876,17 +830,6 @@ export default function QuizRunner() {
               )}
             </div>
           )}
-          <div className="mt-4">
-            <p
-              className={`mb-2 text-sm ${ui.statusRole === "alert" ? "text-error" : "text-muted"}`}
-              role={ui.statusRole}
-              aria-live="polite"
-            >
-              {participantResultsAuthExpired
-                ? "結果の確認には再度参加状態の確認が必要です。"
-                : ui.message}
-            </p>
-          </div>
           {participantResultsVisible && (
             <Link
               href={answeringForAssisted ? "/results?scope=assisted" : "/results"}
