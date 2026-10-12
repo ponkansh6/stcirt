@@ -169,9 +169,7 @@ async function startQuiz(page: Page) {
 }
 
 async function expectResultsWaiting(page: Page) {
-  const status = page.getByRole("status").last();
-  await expect(status).toBeVisible();
-  await expect(status).toContainText("結果は主催者が公開するまで表示されません");
+  await expect(page.getByRole("heading", { name: "回答済み" })).toBeVisible();
 }
 
 async function selectRadio(page: Page, name: RegExp) {
