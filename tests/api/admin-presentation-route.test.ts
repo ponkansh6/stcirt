@@ -222,6 +222,16 @@ describe("/api/admin/presentation route", () => {
     },
   );
 
+  it("omits an aggregation summary when the aggregate result has none", async () => {
+    vi.mocked(operatePresentationControls).mockResolvedValueOnce(controlsPayload);
+
+    const response = await POST(request("POST", { body: { operationId, action: "aggregate" } }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(controlsPayload);
+    expect(operatePresentationControls).toHaveBeenCalledWith(operationId, "aggregate");
+  });
+
   it("forwards the expected snapshot revision for presenter actions", async () => {
     const response = await POST(
       request("POST", {

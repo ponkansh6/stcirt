@@ -2964,6 +2964,13 @@ describe("presentation repository", () => {
       .set({ aggregationSummary: null })
       .where(eq(schema.presentationOperations.operationId, operationId));
 
+    await expect(
+      testDb.db
+        .select({ aggregationSummary: schema.presentationOperations.aggregationSummary })
+        .from(schema.presentationOperations)
+        .where(eq(schema.presentationOperations.operationId, operationId)),
+    ).resolves.toEqual([{ aggregationSummary: null }]);
+
     const replay = await operatePresentation(operationId, "aggregate");
 
     expect(replay).not.toHaveProperty("aggregationSummary");
@@ -2979,5 +2986,11 @@ describe("presentation repository", () => {
     );
 
     expect(recovered).not.toHaveProperty("aggregationSummary");
+    await expect(
+      testDb.db
+        .select({ action: schema.presentationOperations.action })
+        .from(schema.presentationOperations)
+        .where(eq(schema.presentationOperations.operationId, operationId)),
+    ).resolves.toEqual([{ action: "advance" }]);
   });
 });

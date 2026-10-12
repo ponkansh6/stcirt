@@ -228,6 +228,65 @@ describe("QuizRunner remaining coverage states", () => {
     expect(unansweredFocus).toHaveBeenCalledWith({ preventScroll: true });
   });
 
+  it("falls back to the question heading when its answer controls are unavailable", () => {
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, answeredCount: 5 },
+      ),
+    );
+    render(<QuizRunner />);
+
+    const firstQuestion = document.getElementById("question-1");
+    const heading = firstQuestion?.querySelector<HTMLElement>("h2");
+    expect(firstQuestion).not.toBeNull();
+    expect(heading).not.toBeNull();
+    firstQuestion!.querySelectorAll("input[type=radio]").forEach((input) => input.remove());
+    (heading as HTMLElement).scrollIntoView = vi.fn();
+    const headingFocus = vi.spyOn(heading as HTMLElement, "focus");
+
+    fireEvent.click(screen.getByRole("button", { name: "第1問「設問1」を編集" }));
+
+    expect(headingFocus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("uses fallback recovery guidance when an answering phase has no message", () => {
+    mockUseQuizSession.mockReturnValue(session({ kind: "answering", refreshRequired: true }));
+    const { rerender } = render(<QuizRunner />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "保存済み回答が更新されています。回答案は保持しています。再確認後に送信できます。",
+    );
+
+    mockUseQuizSession.mockReturnValue(session({ kind: "answering", retryRequired: true }));
+    rerender(<QuizRunner />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "回答は保存できませんでした。回答案は保持しています。同じ内容を再送してください。",
+    );
+    expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
+  });
+
+  it("does not submit an incomplete answer sheet even if the disabled button is clicked", () => {
+    const saveAnswers = vi.fn();
+    mockUseQuizSession.mockReturnValue(session({ kind: "answering" }, { saveAnswers }));
+    render(<QuizRunner />);
+
+    const submit = screen.getByRole("button", { name: "未回答の設問に回答してください" });
+    submit.removeAttribute("disabled");
+    fireEvent.click(submit);
+
+    expect(saveAnswers).not.toHaveBeenCalled();
+  });
+
+  it("keeps incomplete answer recovery without offering submit after an error message", () => {
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "answering", message: "保存状態を確認してください。" }),
+    );
+    render(<QuizRunner />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("回答内容を確認してください");
+    expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
+  });
+
   it("shows a long free response preview and its full text, including unanswered free text", () => {
     const quizzes = selectedQuizzes.map((quiz, index) =>
       index >= 3
