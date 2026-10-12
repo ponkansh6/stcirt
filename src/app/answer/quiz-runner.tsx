@@ -547,6 +547,10 @@ export default function QuizRunner() {
     participantResultsWaiting,
     participantResultsVisible,
   });
+  const ownerName =
+    access.kind === "ready" || access.kind === "reauthentication"
+      ? access.participant.name || "本人"
+      : "本人";
 
   function jumpToQuestion(questionId: number, focusAnswer = false) {
     const heading = questionRefs.current[questionId];
@@ -776,10 +780,7 @@ export default function QuizRunner() {
             </p>
           )}
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <Button
-              onClick={retryLoad}
-              variant={ui.primaryAction === "retry-load" ? "primary" : "outline"}
-            >
+            <Button onClick={retryLoad} variant="primary">
               {hasLoadedQuestions ? "不足分を再読み込み" : "もう一度読み込む"}
             </Button>
           </div>
@@ -808,17 +809,11 @@ export default function QuizRunner() {
             {ui.status}
           </h1>
           <p className="mt-4 text-muted" role={ui.statusRole} aria-live="polite">
-            {access.kind === "reauthentication"
-              ? "全5問の回答を記録しました。"
-              : ui.message || "全5問の回答を記録しました。"}
+            {access.kind === "reauthentication" ? "全5問の回答を記録しました。" : ui.message}
           </p>
           <AnswererNameField
             answerMode={answerMode}
-            ownerName={
-              access.kind === "ready" || access.kind === "reauthentication"
-                ? access.participant.name
-                : "本人"
-            }
+            ownerName={ownerName}
             assistedName={assistedParticipant?.participant?.name}
             className="mt-3"
           />
@@ -923,10 +918,6 @@ export default function QuizRunner() {
   const hasSavedAnswers =
     Object.keys(savedSelections).length ===
     quizzes.filter(({ question }) => question.answerType === "selected").length;
-  const ownerName =
-    access.kind === "ready" || access.kind === "reauthentication"
-      ? access.participant.name
-      : "本人";
   const answerer = resolveAnswererDisplay(
     answerMode,
     ownerName,

@@ -644,6 +644,20 @@ describe("QuizRunner remaining coverage states", () => {
     expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
   });
 
+  it("uses a generic owner name when the registered name is empty", () => {
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        { access: { kind: "ready", participant: { id: 7, name: "" } } },
+      ),
+    );
+    render(<QuizRunner />);
+
+    const { definition, field: answererField } = getAnswererNameField(screen.getByRole("main"));
+    expect(definition).toHaveTextContent("本人");
+    expect(within(answererField).queryByText("本人の回答")).not.toBeInTheDocument();
+  });
+
   it.each([
     ["status missing", null],
     ["participant missing", { participant: null, hasSubmission: false, eligible: false }],
