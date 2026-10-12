@@ -494,6 +494,215 @@ describe("useQuizSession hook", () => {
     });
   });
 
+  it("preserves mixed local drafts when reauthentication rechecks a changed saved revision", async () => {
+    const posts: Record<string, unknown>[] = [];
+    let canonicalAnswers: {
+      questionId: number;
+      answerKind: "selected" | "freeText";
+      selectedIndex: number | null;
+      freeText: string | null;
+    }[] = [];
+    const canonicalRevision = 7;
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce(null).mockResolvedValueOnce({
+      submissionId,
+      revision: canonicalRevision,
+      answers: [],
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && init?.method === "POST")
+        return {
+          ok: true,
+          json: async () => ({ participant, expiresAt: "2030-01-01T00:00:00.000Z" }),
+        };
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/questions/batch")
+        return { ok: true, json: async () => ({ questions: batchQuestions(true) }) };
+      if (url === "/api/answers/batch" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        posts.push(body);
+        return posts.length === 1
+          ? { ok: false, status: 401, json: async () => ({ message: "expired" }) }
+          : { ok: true, json: async () => ({ submissionId, revision: canonicalRevision + 1 }) };
+      }
+      if (url.startsWith("/api/answers/batch?"))
+        return {
+          ok: true,
+          json: async () => ({
+            submissionId,
+            revision: canonicalRevision,
+            answers: canonicalAnswers,
+          }),
+        };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = await start();
+    const localSelections: Record<number, number> = {};
+    canonicalAnswers = result.current.quizzes
+      .filter(({ question: item }) => item.answerType === "selected")
+      .map(({ question: item, shuffled }) => {
+        const localIndex = item.id % 4;
+        localSelections[item.id] = localIndex;
+        return {
+          questionId: item.id,
+          answerKind: "selected" as const,
+          selectedIndex: shuffled.choiceIndices[(localIndex + 1) % 4]!,
+          freeText: null,
+        };
+      });
+    canonicalAnswers.push({
+      questionId: 5,
+      answerKind: "freeText",
+      selectedIndex: null,
+      freeText: "別タブで保存された回答",
+    });
+    for (const quiz of result.current.quizzes.filter(
+      ({ question: item }) => item.answerType === "selected",
+    )) {
+      act(() => result.current.select(quiz.question.id, localSelections[quiz.question.id]!));
+    }
+    const localFreeResponse = "この端末で編集中の回答";
+    act(() => result.current.setFreeResponse(5, localFreeResponse));
+
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.access.kind).toBe("reauthentication");
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() =>
+      expect(result.current.phase).toMatchObject({
+        kind: "answering",
+        refreshRequired: true,
+      }),
+    );
+    expect(result.current.revision).toBe(canonicalRevision);
+
+    await act(async () => result.current.refreshSavedAnswers());
+    expect(result.current.selections).toEqual(localSelections);
+    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(result.current.savedSelections).toEqual(
+      Object.fromEntries(
+        result.current.quizzes
+          .filter(({ question: item }) => item.answerType === "selected")
+          .map(({ question: item, shuffled }) => [
+            item.id,
+            shuffled.choiceIndices.indexOf(
+              canonicalAnswers.find((answer) => answer.questionId === item.id)!.selectedIndex!,
+            ),
+          ]),
+      ),
+    );
+    expect(result.current.answeredCount).toBe(5);
+    expect(posts).toHaveLength(1);
+
+    await act(async () => result.current.saveAnswers());
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).toMatchObject({ expectedRevision: canonicalRevision });
+    expect(posts[1]?.answers).toContainEqual({ questionId: 5, freeText: localFreeResponse });
+    expect(result.current.phase.kind).toBe("complete");
+  });
+
+  it("clears reauthentication draft preservation when the saved submission changes", async () => {
+    const changedSubmissionId = "00000000-0000-4000-8000-000000000002";
+    const canonicalAnswers: {
+      questionId: number;
+      answerKind: "selected" | "freeText";
+      selectedIndex: number | null;
+      freeText: string | null;
+    }[] = [];
+    let latestAfterIdChange: Awaited<ReturnType<typeof fetchLatestAnswerSubmission>> = null;
+    const posts: Record<string, unknown>[] = [];
+    let savedAnswerRead = 0;
+    vi.mocked(fetchLatestAnswerSubmission)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ submissionId, revision: 2, answers: [] })
+      .mockImplementationOnce(async () => latestAfterIdChange);
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && init?.method === "POST")
+        return {
+          ok: true,
+          json: async () => ({ participant, expiresAt: "2030-01-01T00:00:00.000Z" }),
+        };
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/questions/batch")
+        return { ok: true, json: async () => ({ questions: batchQuestions(true) }) };
+      if (url === "/api/answers/batch" && init?.method === "POST") {
+        posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        if (posts.length === 1)
+          return { ok: false, status: 401, json: async () => ({ message: "expired" }) };
+        return { ok: false, status: 409, json: async () => ({ message: "conflict" }) };
+      }
+      if (url.startsWith("/api/answers/batch?")) {
+        savedAnswerRead += 1;
+        if (savedAnswerRead === 1)
+          return { ok: false, status: 401, json: async () => ({ message: "expired" }) };
+        if (savedAnswerRead === 2)
+          return { ok: false, status: 503, json: async () => ({ message: "temporary failure" }) };
+        return {
+          ok: true,
+          json: async () => ({
+            submissionId: changedSubmissionId,
+            revision: 4,
+            answers: canonicalAnswers.map((answer) =>
+              answer.questionId === 5 ? { ...answer, freeText: "最新の保存済み回答" } : answer,
+            ),
+          }),
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = await start();
+    canonicalAnswers.push(
+      ...result.current.quizzes.map(({ question: item, shuffled }) =>
+        item.answerType === "freeText"
+          ? {
+              questionId: item.id,
+              answerKind: "freeText" as const,
+              selectedIndex: null,
+              freeText: "回答を保存しました",
+            }
+          : {
+              questionId: item.id,
+              answerKind: "selected" as const,
+              selectedIndex: shuffled.choiceIndices[0]!,
+              freeText: null,
+            },
+      ),
+    );
+    latestAfterIdChange = {
+      submissionId: changedSubmissionId,
+      revision: 3,
+      answers: canonicalAnswers,
+    };
+    for (const quiz of result.current.quizzes.filter(
+      ({ question: item }) => item.answerType === "selected",
+    )) {
+      act(() => result.current.select(quiz.question.id, 1));
+    }
+    act(() => result.current.setFreeResponse(5, "この端末の未保存案"));
+    await act(async () => result.current.saveAnswers());
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase).toMatchObject({ refreshRequired: true }));
+
+    await act(async () => result.current.refreshSavedAnswers());
+    expect(result.current.access.kind).toBe("reauthentication");
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    expect(result.current.submissionId).toBe(changedSubmissionId);
+    expect(result.current.freeResponses[5]).toBe("回答を保存しました");
+
+    act(() => result.current.editAnswers());
+    act(() => result.current.setFreeResponse(5, "別の未保存案"));
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase).toMatchObject({ refreshRequired: true });
+    await act(async () => result.current.refreshSavedAnswers());
+    expect(result.current.freeResponses[5]).toBe("最新の保存済み回答");
+    expect(result.current.revision).toBe(4);
+  });
+
   it("clears the previous participant draft when reauthentication succeeds as another participant", async () => {
     const otherParticipant = { id: 8, name: "別の参加者" };
     const attempts: Record<string, unknown>[] = [];

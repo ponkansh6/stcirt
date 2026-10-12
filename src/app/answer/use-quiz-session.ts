@@ -271,6 +271,7 @@ export function useQuizSession() {
   const failedAttemptRef = useRef<SaveAttempt | null>(null);
   const resolvingParticipantIdRef = useRef<number | null>(null);
   const resumeAfterAuthRef = useRef(false);
+  const preserveDraftOnSavedRefreshRef = useRef(false);
   const reloadedAssistedRef = useRef(false);
   const returnToOwnerRef = useRef<((afterSave?: boolean) => void) | null>(null);
   const ownerReturnAfterAssistedSaveRef = useRef(false);
@@ -330,6 +331,7 @@ export function useQuizSession() {
     busyRef.current = true;
     const initial = restart ? [] : quizzesRef.current;
     if (restart) {
+      preserveDraftOnSavedRefreshRef.current = false;
       quizzesRef.current = [];
       setQuizzes([]);
       setSelections({});
@@ -393,6 +395,7 @@ export function useQuizSession() {
       const sessionEpoch = sessionEpochRef.current;
       const resumingDraft = resumeAfterAuthRef.current && phaseRef.current.kind === "answering";
       resumeAfterAuthRef.current = false;
+      if (!resumingDraft) preserveDraftOnSavedRefreshRef.current = false;
       checkingSubmissionRef.current = true;
       resolvingParticipantIdRef.current = participant.id;
       setAccess({ kind: "ready", participant });
@@ -402,6 +405,7 @@ export function useQuizSession() {
         const latest = await fetchLatestAnswerSubmission(scope);
         if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
         if (!latest) {
+          preserveDraftOnSavedRefreshRef.current = false;
           if (scope === "owner" && ownerReturnAfterAssistedSaveRef.current) {
             setPhase({
               kind: "owner-return-error",
@@ -455,6 +459,7 @@ export function useQuizSession() {
           quizzesRef.current.length === EXAM_SIZE
         ) {
           if (latest.revision !== revisionRef.current) {
+            preserveDraftOnSavedRefreshRef.current = true;
             revisionRef.current = latest.revision;
             setRevision(latest.revision);
             failedAttemptRef.current = null;
@@ -464,6 +469,7 @@ export function useQuizSession() {
               message: "保存済み回答が更新されています。最新の回答を確認してください。",
             });
           } else {
+            preserveDraftOnSavedRefreshRef.current = false;
             setPhase({
               kind: "answering",
               retryRequired: Boolean(failedAttemptRef.current),
@@ -474,6 +480,7 @@ export function useQuizSession() {
           }
           return;
         }
+        if (resumingDraft) preserveDraftOnSavedRefreshRef.current = false;
 
         if (scope === "assisted") {
           const draft = readAssistedDraft();
@@ -670,6 +677,7 @@ export function useQuizSession() {
       const current = accessRef.current;
       if (current.kind !== "ready" || busyRef.current || checkingSubmissionRef.current) return;
       sessionEpochRef.current += 1;
+      preserveDraftOnSavedRefreshRef.current = false;
       answerModeRef.current = "assisted";
       setAnswerMode("assisted");
       setAssistedScreen("active");
@@ -1086,13 +1094,24 @@ export function useQuizSession() {
       const persisted = await fetchAnswerSubmission(currentSubmissionId, answerModeRef.current);
       if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
       const restored = restoreSavedAnswers(persisted, quizzesRef.current, currentSubmissionId);
-      freeResponsesRef.current = restored.freeResponses;
-      setFreeResponses(restored.freeResponses);
+      const preserveLocalDraft = preserveDraftOnSavedRefreshRef.current;
+      if (preserveLocalDraft) {
+        preserveDraftOnSavedRefreshRef.current = false;
+      } else {
+        freeResponsesRef.current = restored.freeResponses;
+        setFreeResponses(restored.freeResponses);
+      }
       setLegacyAnswerIds(restored.legacyAnswerIds);
       setSavedSelections(restored.selections);
+      const answerCountSelections = preserveLocalDraft
+        ? selectionsRef.current
+        : restored.selections;
+      const answerCountFreeResponses = preserveLocalDraft
+        ? freeResponsesRef.current
+        : restored.freeResponses;
       setAnsweredCount(
-        Object.keys(restored.selections).length +
-          Object.values(restored.freeResponses).filter((value) => value.trim()).length,
+        Object.keys(answerCountSelections).length +
+          Object.values(answerCountFreeResponses).filter((value) => value.trim()).length,
       );
       setRevision(persisted.revision);
       revisionRef.current = persisted.revision;
@@ -1105,6 +1124,7 @@ export function useQuizSession() {
     } catch (error) {
       if (mountedRef.current && sessionEpoch === sessionEpochRef.current) {
         if (error instanceof InvalidSavedSubmissionError) {
+          preserveDraftOnSavedRefreshRef.current = false;
           setRestoreError(error.message);
           setPhase({ kind: "complete" });
           return;

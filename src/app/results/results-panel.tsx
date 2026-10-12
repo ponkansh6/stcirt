@@ -220,9 +220,12 @@ export default function ResultsPanel({
             <p className="mt-4 text-muted">あなたの結果はまだ準備されていません。</p>
           </>
         ) : (
-          <h1 className="text-3xl font-bold tracking-tight" role="status" aria-live="polite">
-            回答中
-          </h1>
+          <div role="status" aria-live="polite">
+            <h1 className="text-3xl font-bold tracking-tight">結果公開待ち</h1>
+            <p className="mt-4 text-muted">
+              回答は受け付けました。主催者が結果を公開するまでお待ちください。
+            </p>
+          </div>
         )}
         {authorized && refreshError && (
           <p className="mt-6 text-sm text-error" role="alert">
