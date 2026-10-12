@@ -523,11 +523,11 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
     case "podium_preview":
       return page.getByRole("heading", { name: "いよいよ、結果発表です" });
     case "third":
-      return page.getByRole("region", { name: "第3位の勝者一覧" });
+      return page.getByRole("region", { name: "第三位の勝者一覧" });
     case "second":
-      return page.getByRole("region", { name: "第2位の勝者一覧" });
+      return page.getByRole("region", { name: "第二位の勝者一覧" });
     case "first":
-      return page.getByRole("region", { name: "第1位の勝者一覧" });
+      return page.getByRole("region", { name: "第一位の勝者一覧" });
     case "finished":
       return page.getByRole("heading", { name: /ご参加.*ありがとうございました/ });
     default:
@@ -1380,11 +1380,11 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   await startPresentation(page);
   await openPresenter(page);
   await advanceTo(page, "third");
-  const winners = page.getByRole("region", { name: "第3位の勝者一覧" });
+  const winners = page.getByRole("region", { name: "第三位の勝者一覧" });
   await expect(winners).toBeVisible();
   const rankTitle = winners.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(rankTitle).toHaveCount(1);
-  await expect(rankTitle).toHaveText("第3位");
+  await expect(rankTitle).toHaveText("第三位");
   const stamp = winners.locator("[data-testid='presentation-exam-stamp']");
   await expect(stamp).toHaveCount(1);
   await expect(stamp).toHaveAttribute("aria-hidden", "true");
@@ -1499,7 +1499,7 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
       regionCanScroll: winnersCanScroll(canvas),
     };
     function winnersCanScroll(root: Element) {
-      const region = root.querySelector("[aria-label='第3位の勝者一覧']");
+      const region = root.querySelector("[aria-label='第三位の勝者一覧']");
       return region instanceof HTMLElement && region.scrollHeight > region.clientHeight;
     }
   });
@@ -1550,7 +1550,7 @@ test("rank content is static on every entry and the slide fits the viewport", as
   await startPresentation(page);
   await openPresenter(page);
   await advanceTo(page, "third");
-  const winners = page.getByRole("region", { name: "第3位の勝者一覧" });
+  const winners = page.getByRole("region", { name: "第三位の勝者一覧" });
   await expect(winners).toBeVisible();
   await expect(winners).not.toHaveClass(/announce/);
   for (const viewport of [
@@ -1596,13 +1596,13 @@ test("rank content is static on every entry and the slide fits the viewport", as
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "third")).toBeVisible();
   await replayRefresh;
-  await expect(page.getByRole("region", { name: "第3位の勝者一覧" })).not.toHaveClass(/announce/);
+  await expect(page.getByRole("region", { name: "第三位の勝者一覧" })).not.toHaveClass(/announce/);
   const secondRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "second")).toBeVisible();
   await secondRefresh;
-  await expect(page.getByRole("region", { name: "第2位の勝者一覧" })).not.toHaveClass(/announce/);
-  await expect(page.getByRole("region", { name: "第2位の勝者一覧" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "第二位の勝者一覧" })).not.toHaveClass(/announce/);
+  await expect(page.getByRole("region", { name: "第二位の勝者一覧" })).toBeVisible();
   await testInfo.attach("presenter-second-480x900", {
     body: await page.screenshot({ animations: "disabled" }),
     contentType: "image/png",
@@ -1663,9 +1663,9 @@ test("every stage keeps its fixture text inside the canvas content bounds", asyn
       text: [questions[0].question, ...questions[0].choices, "正解", questions[0].explanation],
     },
     { state: "podium_preview", text: ["いよいよ、結果発表です", "どうぞお楽しみに"] },
-    { state: "third", text: ["該当する受賞者はいません", "第3位"] },
-    { state: "second", text: ["太郎", "0.00 ポイント", "第2位"] },
-    { state: "first", text: ["花子", "1.00 ポイント", "第1位"] },
+    { state: "third", text: ["該当する受賞者はいません", "第三位"] },
+    { state: "second", text: ["太郎", "0.00 ポイント", "第二位"] },
+    { state: "first", text: ["花子", "1.00 ポイント", "第一位"] },
     { state: "finished", text: ["ご参加", "ありがとうございました"] },
   ];
 
@@ -1922,7 +1922,7 @@ test("reference-size long presentation content stays readable after fitting", as
   await next("podium_preview");
   await next("third");
 
-  const region = page.getByRole("region", { name: "第3位の勝者一覧" });
+  const region = page.getByRole("region", { name: "第三位の勝者一覧" });
   await expect(region.locator("article")).toHaveCount(2);
   await expectTwoWinnerLongContentFitException();
   const cardGeometry = await region.evaluate((region) => {
@@ -1949,7 +1949,7 @@ test("reference-size long presentation content stays readable after fitting", as
       const viewport = document
         .querySelector<HTMLElement>("[data-testid='presentation-fit-viewport']")!
         .getBoundingClientRect();
-      const frame = article.closest("[aria-label='第3位の勝者一覧']")!.getBoundingClientRect();
+      const frame = article.closest("[aria-label='第三位の勝者一覧']")!.getBoundingClientRect();
       const card = article.getBoundingClientRect();
       return {
         q5AnswerText: q5AnswerNode?.textContent?.trim() ?? "",
@@ -2011,19 +2011,19 @@ test("reference-size long presentation content stays readable after fitting", as
   });
   await expect(region.locator("article")).toHaveCount(2);
   await next("second");
-  const secondPlaceRegion = page.getByRole("region", { name: "第2位の勝者一覧" });
+  const secondPlaceRegion = page.getByRole("region", { name: "第二位の勝者一覧" });
   const secondPlaceHeading = secondPlaceRegion.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(secondPlaceHeading).toBeVisible();
-  await expect(secondPlaceHeading).toHaveText("第2位");
+  await expect(secondPlaceHeading).toHaveText("第二位");
   await testInfo.attach("second-podium-current-state", {
     body: await page.screenshot({ animations: "disabled" }),
     contentType: "image/png",
   });
   await next("first");
-  const firstPlaceRegion = page.getByRole("region", { name: "第1位の勝者一覧" });
+  const firstPlaceRegion = page.getByRole("region", { name: "第一位の勝者一覧" });
   const firstPlaceHeading = firstPlaceRegion.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(firstPlaceHeading).toBeVisible();
-  await expect(firstPlaceHeading).toHaveText("第1位");
+  await expect(firstPlaceHeading).toHaveText("第一位");
   await testInfo.attach("first-podium-current-state", {
     body: await page.screenshot({ animations: "disabled" }),
     contentType: "image/png",
@@ -2056,11 +2056,11 @@ test("tied rank cards share one rank label and keep each name with its score", a
   });
   expect(fit.length).toBeGreaterThan(0);
   expect(fit.every((sizePt) => sizePt >= 20)).toBe(true);
-  const region = page.getByRole("region", { name: "第3位の勝者一覧" });
+  const region = page.getByRole("region", { name: "第三位の勝者一覧" });
   const cards = region.locator("article");
   const rank = region.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(rank).toHaveCount(1);
-  await expect(rank).toHaveText("第3位");
+  await expect(rank).toHaveText("第三位");
   await expect(cards).toHaveCount(2);
   await expect
     .poll(() =>
@@ -2073,8 +2073,8 @@ test("tied rank cards share one rank label and keep each name with its score", a
       ),
     )
     .toEqual([
-      [`${shortName} さん`, "0.75 ポイント"],
-      ["もう一人 さん", "0.75 ポイント"],
+      [`${shortName} 殿`, "0.75 ポイント"],
+      ["もう一人 殿", "0.75 ポイント"],
     ]);
   const rankPrecedesNames = await region.evaluate((node) => {
     const label = node.querySelector("[class*='rankHeader'] > h1[class*='rank']");
@@ -2088,7 +2088,7 @@ test("tied rank cards share one rank label and keep each name with its score", a
   expect(rankPrecedesNames).toBe(true);
   const geometry = await page.evaluate(() => {
     const bounds = Array.from(
-      document.querySelectorAll("[aria-label='第3位の勝者一覧'] article"),
+      document.querySelectorAll("[aria-label='第三位の勝者一覧'] article"),
       (node) => {
         const rect = node.getBoundingClientRect();
         return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
@@ -2173,7 +2173,7 @@ test("rank announcements compact saved answers and fit the slide", async ({ page
   await openPresenter(page);
   await advanceTo(page, "third");
 
-  const region = page.getByRole("region", { name: "第3位の勝者一覧" });
+  const region = page.getByRole("region", { name: "第三位の勝者一覧" });
   await expect(region.locator("article")).toHaveCount(2);
   await expect(region.getByText("○", { exact: true })).toHaveCount(1);
   await expect(region.getByText("×", { exact: true })).toHaveCount(1);
@@ -2192,7 +2192,7 @@ test("rank announcements compact saved answers and fit the slide", async ({ page
   await expect(region).not.toContainText("確認できない自由記述の問題文");
 
   const fit = await page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
-    const winnerRegion = viewport.querySelector<HTMLElement>("[aria-label='第3位の勝者一覧']");
+    const winnerRegion = viewport.querySelector<HTMLElement>("[aria-label='第三位の勝者一覧']");
     return {
       pageCanScroll: document.documentElement.scrollHeight > innerHeight,
       regionCanScroll: winnerRegion ? winnerRegion.scrollHeight > winnerRegion.clientHeight : true,
@@ -2203,7 +2203,7 @@ test("rank announcements compact saved answers and fit the slide", async ({ page
 
   const spectator = await page.context().newPage();
   await spectator.goto("/presentation");
-  const publicRegion = spectator.getByRole("region", { name: "第3位の勝者一覧" });
+  const publicRegion = spectator.getByRole("region", { name: "第三位の勝者一覧" });
   await expect(publicRegion.locator("article")).toHaveCount(2);
   await expect(publicRegion).toContainText("保存された自由記述");
   await expect(publicRegion).not.toContainText("大学");
@@ -2226,23 +2226,24 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
   await spectator.setViewportSize({ width: 1920, height: 1080 });
   await spectator.goto("/presentation");
 
-  const region = page.getByRole("region", { name: "第3位の勝者一覧" });
+  const region = page.getByRole("region", { name: "第三位の勝者一覧" });
   const name = region.locator("article h1");
   await expect(region.locator("article")).toHaveCount(1);
   await expect(region.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveCount(1);
   await expect(name).toContainText(longName);
-  await expect(name).toContainText("さん");
+  await expect(name).toContainText("殿");
   await expect(region.locator("[class*='winnerScore']")).toHaveText("0.75 ポイント");
 
   const ranks = [
-    { state: "third" as const, label: "第3位", score: "0.75 ポイント" },
-    { state: "second" as const, label: "第2位", score: "0.80 ポイント" },
-    { state: "first" as const, label: "第1位", score: "0.90 ポイント" },
+    { state: "third" as const, label: "第三位", score: "0.75 ポイント" },
+    { state: "second" as const, label: "第二位", score: "0.80 ポイント" },
+    { state: "first" as const, label: "第一位", score: "0.90 ポイント" },
   ];
   for (const [viewportIndex, viewport] of [
     { width: 1280, height: 720 },
     { width: 1366, height: 768 },
     { width: 1920, height: 1080 },
+    { width: 480, height: 900 },
   ].entries()) {
     await page.setViewportSize(viewport);
     await waitForRenderFrames(page);
@@ -2260,11 +2261,12 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
       const name = region.locator("article h1");
       await expect(region.locator("article")).toHaveCount(1);
       await expect(region.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveCount(1);
+      await expect(region.locator("[class*='rankHeader']")).toHaveText(`認定証${rankStage.label}`);
       await expect(region.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveText(
         rankStage.label,
       );
       await expect(name).toContainText(longName);
-      await expect(name).toContainText("さん");
+      await expect(name).toContainText("殿");
       await expect(region.locator("[class*='winnerScore']")).toHaveText(rankStage.score);
 
       const geometry = await page
@@ -2274,6 +2276,8 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
           const canvas = document.querySelector('[data-testid="presentation-canvas"]');
           const region = fitViewport.querySelector(`section[aria-label="${rankLabel}の勝者一覧"]`);
           const rank = region?.querySelector("[class*='rankHeader'] > h1[class*='rank']");
+          const certificate = region?.querySelector("[class*='certificateLabel']");
+          const stamp = region?.querySelector("[data-testid='presentation-exam-stamp']");
           const identity = region?.querySelector<HTMLElement>("[class*='winnerIdentity']");
           const heading = identity?.querySelector("h1");
           const score = identity?.querySelector<HTMLElement>("[class*='winnerScore']");
@@ -2281,6 +2285,8 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
             "[class*='winnerName']:not([class*='winnerNames'])",
           );
           const rankRect = rank?.getBoundingClientRect();
+          const certificateRect = certificate?.getBoundingClientRect();
+          const stampRect = stamp?.getBoundingClientRect();
           const identityRect = identity?.getBoundingClientRect();
           const headingRect = heading?.getBoundingClientRect();
           const scoreRect = score?.getBoundingClientRect();
@@ -2313,6 +2319,23 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
           const identityGap = identity ? getComputedStyle(identity) : null;
           const columnGap = Number.parseFloat(identityGap?.columnGap ?? "0") || 0;
           const rowGap = Number.parseFloat(identityGap?.rowGap ?? "0") || 0;
+          const overlaps = (left: DOMRect | undefined, right: DOMRect | undefined) =>
+            Boolean(
+              left &&
+              right &&
+              left.left < right.right &&
+              left.right > right.left &&
+              left.top < right.bottom &&
+              left.bottom > right.top,
+            );
+          const certificateRankStampDoNotOverlap = Boolean(
+            certificateRect &&
+            rankRect &&
+            stampRect &&
+            !overlaps(certificateRect, rankRect) &&
+            !overlaps(certificateRect, stampRect) &&
+            !overlaps(rankRect, stampRect),
+          );
           const nameAndScoreDoNotOverlap = Boolean(
             scoreRect &&
             textRects.every(
@@ -2357,6 +2380,11 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
           };
           return {
             rankText: rank?.textContent?.trim() ?? "",
+            certificateText: certificate?.textContent?.trim() ?? "",
+            certificateAboveRank: Boolean(
+              certificateRect && rankRect && certificateRect.bottom <= rankRect.top + 1,
+            ),
+            certificateRankStampDoNotOverlap,
             text: heading?.textContent?.replace(/\s+/g, " ").trim() ?? "",
             rankAboveIdentity: Boolean(
               rankRect && identityRect && rankRect.bottom <= identityRect.top + 1,
@@ -2397,8 +2425,11 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
         }, rankStage.label);
 
       expect(geometry.rankText).toBe(rankStage.label);
+      expect(geometry.certificateText).toBe("認定証");
+      expect(geometry.certificateAboveRank).toBe(true);
+      expect(geometry.certificateRankStampDoNotOverlap).toBe(true);
       expect(geometry.text).toContain(longName);
-      expect(geometry.text).toContain("さん");
+      expect(geometry.text).toContain("殿");
       expect(geometry.rankAboveIdentity).toBe(true);
       expect(geometry.headingAndScoreShareIdentity).toBe(true);
       expect(geometry.namePrecedesScore).toBe(true);
@@ -2491,14 +2522,14 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
   ]) {
     await page.setViewportSize(viewport);
     await waitForRenderFrames(page);
-    const firstRegion = page.getByRole("region", { name: "第1位の勝者一覧" });
+    const firstRegion = page.getByRole("region", { name: "第一位の勝者一覧" });
     await expect(firstRegion).toBeVisible();
     await expect(firstRegion.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveText(
-      "第1位",
+      "第一位",
     );
     const fit = await page.getByTestId("presentation-fit-viewport").evaluate((fitViewport) => {
       const viewportRect = fitViewport.getBoundingClientRect();
-      const region = fitViewport.querySelector<HTMLElement>("[aria-label='第1位の勝者一覧']");
+      const region = fitViewport.querySelector<HTMLElement>("[aria-label='第一位の勝者一覧']");
       const identity = region?.querySelector<HTMLElement>("[class*='winnerIdentity']");
       const name = identity?.querySelector<HTMLElement>(
         "[class*='winnerName']:not([class*='winnerNames'])",
@@ -2769,11 +2800,11 @@ test("a long tied-winner list shows two names and the remaining winner count", a
   await openPresenter(page);
   await advanceTo(page, "third");
 
-  const winnerRegion = page.getByRole("region", { name: "第3位の勝者一覧" });
+  const winnerRegion = page.getByRole("region", { name: "第三位の勝者一覧" });
   const cards = winnerRegion.locator("article");
   const rankLabels = winnerRegion.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(rankLabels).toHaveCount(1);
-  await expect(rankLabels).toHaveText("第3位");
+  await expect(rankLabels).toHaveText("第三位");
   await expect(cards).toHaveCount(2);
   await expect
     .poll(() =>
@@ -2788,7 +2819,7 @@ test("a long tied-winner list shows two names and the remaining winner count", a
     .toEqual(
       winners
         .slice(0, 2)
-        .map((winner) => [`${winner.displayName} さん`, `${winner.score.toFixed(2)} ポイント`]),
+        .map((winner) => [`${winner.displayName} 殿`, `${winner.score.toFixed(2)} ポイント`]),
     );
   await expect(winnerRegion.locator("[class*='additionalWinners']")).toHaveText("ほか 22 名");
   await expect(cards.last()).toBeVisible();
@@ -3073,9 +3104,9 @@ test("authenticated presenter captures all podium ranks in native fullscreen", a
     .toBe(true);
 
   const ranks = [
-    { state: "third" as const, label: "第3位" },
-    { state: "second" as const, label: "第2位" },
-    { state: "first" as const, label: "第1位" },
+    { state: "third" as const, label: "第三位" },
+    { state: "second" as const, label: "第二位" },
+    { state: "first" as const, label: "第一位" },
   ];
   for (const [index, rank] of ranks.entries()) {
     await expect(slideFor(page, rank.state)).toBeVisible();

@@ -310,7 +310,7 @@ async function requestAdminAction(action: AdminAction, expectedSnapshotRevision:
   return controls;
 }
 
-const rankTitle: Record<string, string> = { third: "第3位", second: "第2位", first: "第1位" };
+const rankTitle: Record<string, string> = { third: "第三位", second: "第二位", first: "第一位" };
 
 function ExamStamp({ className }: { className: string }) {
   return (
@@ -1297,6 +1297,7 @@ export default function PresentationScreen({
                   >
                     <ExamStamp className={styles.rankStamp} />
                     <div className={styles.rankHeader}>
+                      <span className={styles.certificateLabel}>認定証</span>
                       <h1 className={styles.rank}>{rankTitle[state]}</h1>
                     </div>
                     {winnerGroups.length ? (
@@ -1314,7 +1315,7 @@ export default function PresentationScreen({
                                   <h1>
                                     <span className={styles.winnerName}>
                                       {winner.displayName}
-                                      <span className={styles.winnerHonorific}>&nbsp;さん</span>
+                                      <span className={styles.winnerHonorific}>&nbsp;殿</span>
                                     </span>
                                   </h1>
                                   <p className={styles.winnerScore}>

@@ -327,17 +327,17 @@ describe("presentation projection and presenter progression", () => {
     [
       "third",
       { state: "third", winners: [{ displayName: "葵", score: 8.25, rank: 3 }] },
-      ["第3位", "8.25 ポイント", "葵"],
+      ["第三位", "8.25 ポイント", "葵"],
     ],
     [
       "second",
       { state: "second", winners: [{ displayName: "凛", score: 9.5, rank: 2 }] },
-      ["第2位", "9.50 ポイント", "凛"],
+      ["第二位", "9.50 ポイント", "凛"],
     ],
     [
       "first",
       { state: "first", winners: [{ displayName: "悠", score: 10, rank: 1 }] },
-      ["第1位", "10.00 ポイント", "悠"],
+      ["第一位", "10.00 ポイント", "悠"],
     ],
     [
       "finished",
@@ -375,19 +375,24 @@ describe("presentation projection and presenter progression", () => {
         const name = winner?.querySelector("h1");
         const score = winner?.querySelector("[class*='winnerScore']");
         expect(rank).not.toBeNull();
+        const certificateLabel = slide.querySelector("[class*='certificateLabel']");
+        expect(certificateLabel?.textContent).toBe("認定証");
+        expect(rank!.compareDocumentPosition(certificateLabel!)).toBe(
+          Node.DOCUMENT_POSITION_PRECEDING,
+        );
         expect(name).not.toBeNull();
         expect(score).not.toBeNull();
         expect(slide.querySelectorAll("[class*='rankHeader'] > h1[class*='rank']")).toHaveLength(1);
         expect(rank?.textContent).toBe(
           projection.state === "third"
-            ? "第3位"
+            ? "第三位"
             : projection.state === "second"
-              ? "第2位"
-              : "第1位",
+              ? "第二位"
+              : "第一位",
         );
         expect(rank!.compareDocumentPosition(name!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
         expect(name?.textContent).toContain(projection.winners[0]!.displayName);
-        expect(name?.textContent).toContain("さん");
+        expect(name?.textContent).toContain(`${projection.winners[0]!.displayName}\u00a0殿`);
         expect(name!.compareDocumentPosition(score!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       }
     },
@@ -1118,7 +1123,7 @@ describe("presentation projection and presenter progression", () => {
     await settled();
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    const region = await screen.findByRole("region", { name: "第3位の勝者一覧" });
+    const region = await screen.findByRole("region", { name: "第三位の勝者一覧" });
     await settled();
 
     expect(screen.getByText("該当する受賞者はいません")).toBeInTheDocument();
@@ -1596,10 +1601,10 @@ describe("presentation projection and presenter progression", () => {
     await settled();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await settled();
-    expect(await screen.findByText("第3位")).toBeInTheDocument();
+    expect(await screen.findByText("第三位")).toBeInTheDocument();
     expect(screen.getByText("12.50 ポイント")).toBeInTheDocument();
     expect(screen.getByText("葵", { exact: false })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "第3位の勝者一覧" })).not.toHaveClass(/announce/);
+    expect(screen.getByRole("region", { name: "第三位の勝者一覧" })).not.toHaveClass(/announce/);
   });
 
   it("limits visible tied winners to two and reports the remaining count", async () => {
@@ -1616,7 +1621,7 @@ describe("presentation projection and presenter progression", () => {
       admin: { state: "third", questionIndex: 5, questionCount: 5 },
     });
     render(<PresentationScreen />);
-    const region = await screen.findByRole("region", { name: "第3位の勝者一覧" });
+    const region = await screen.findByRole("region", { name: "第三位の勝者一覧" });
     expect(region.querySelectorAll("article")).toHaveLength(2);
     expect(within(region).getByText("葵", { exact: false })).toBeInTheDocument();
     expect(within(region).getByText("凛", { exact: false })).toBeInTheDocument();
@@ -1699,7 +1704,7 @@ describe("presentation projection and presenter progression", () => {
       admin: { state: "third", questionIndex: 5, questionCount: 5 },
     });
     render(<PresentationScreen />);
-    const region = await screen.findByRole("region", { name: "第3位の勝者一覧" });
+    const region = await screen.findByRole("region", { name: "第三位の勝者一覧" });
     expect(within(region).getByText("Q1")).toBeInTheDocument();
     expect(within(region).getByText("Q8")).toBeInTheDocument();
     expect(within(region).getByText("Q9")).toBeInTheDocument();
@@ -1772,7 +1777,7 @@ describe("presentation projection and presenter progression", () => {
       admin: { state: "third", questionIndex: 5, questionCount: 5 },
     });
     render(<PresentationScreen presenterRequested />);
-    const region = await screen.findByRole("region", { name: "第3位の勝者一覧" });
+    const region = await screen.findByRole("region", { name: "第三位の勝者一覧" });
     expect(region).not.toHaveClass(/announce/);
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowLeft" });
     await settled();
@@ -1795,7 +1800,7 @@ describe("presentation projection and presenter progression", () => {
     render(<PresentationScreen presenterRequested />);
     await settled();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    const region = await screen.findByRole("region", { name: "第3位の勝者一覧" });
+    const region = await screen.findByRole("region", { name: "第三位の勝者一覧" });
     await settled();
     expect(region).not.toHaveClass(/announce/);
   });

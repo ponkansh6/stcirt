@@ -785,7 +785,7 @@ describe("PresentationScreen", () => {
     expect(
       screen.getByRole("heading", { name: "スライドを読み込めませんでした" }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "第3位の勝者一覧" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "第三位の勝者一覧" })).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
     expect(api.actions).toHaveLength(0);
@@ -2059,7 +2059,7 @@ describe("PresentationScreen", () => {
     });
     render(<PresentationScreen presenterRequested />);
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
-    const initialWinnerRegion = await screen.findByRole("region", { name: "第3位の勝者一覧" });
+    const initialWinnerRegion = await screen.findByRole("region", { name: "第三位の勝者一覧" });
     expect(initialWinnerRegion).toHaveTextContent("悠");
     await waitFor(() =>
       expect(api.fetchMock).toHaveBeenCalledWith(
@@ -2072,7 +2072,7 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(1));
     expect(api.actions[0]).toMatchObject({ action: "advance" });
-    const winnerRegion = await screen.findByRole("region", { name: "第2位の勝者一覧" });
+    const winnerRegion = await screen.findByRole("region", { name: "第二位の勝者一覧" });
     expect(winnerRegion).toHaveTextContent("凛");
     expect(winnerRegion).toHaveTextContent("葵");
     expect(winnerRegion.textContent!.indexOf("凛")).toBeLessThan(
@@ -2107,7 +2107,7 @@ describe("PresentationScreen", () => {
     });
     render(<PresentationScreen presenterRequested />);
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
-    expect(await screen.findByRole("region", { name: "第2位の勝者一覧" })).toHaveTextContent("凛");
+    expect(await screen.findByRole("region", { name: "第二位の勝者一覧" })).toHaveTextContent("凛");
     await waitFor(() =>
       expect(api.fetchMock).toHaveBeenCalledWith(
         "/api/admin/presentation?view=controls",
@@ -2121,7 +2121,7 @@ describe("PresentationScreen", () => {
 
     await waitFor(() => expect(api.actions).toHaveLength(1));
     expect(api.actions[0]).toMatchObject({ action: "advance" });
-    const winnerRegion = await screen.findByRole("region", { name: "第1位の勝者一覧" });
+    const winnerRegion = await screen.findByRole("region", { name: "第一位の勝者一覧" });
     expect(winnerRegion).toHaveTextContent("葵");
     expect(winnerRegion.className).not.toContain("announce");
   });
@@ -2467,7 +2467,7 @@ describe("PresentationScreen", () => {
     await flush();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
-    const winnerRegion = screen.getByRole("region", { name: "第3位の勝者一覧" });
+    const winnerRegion = screen.getByRole("region", { name: "第三位の勝者一覧" });
     expect(winnerRegion).toHaveTextContent("9.00 ポイント");
     expect(winnerRegion.className).not.toContain("announce");
     expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 1200)).toBe(false);
