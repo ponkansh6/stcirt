@@ -278,9 +278,9 @@ describe("presentation projection and presenter progression", () => {
     [
       "not_started",
       { state: "not_started" },
-      ["しゅんたま検定", "発表が始まるまで、少々お待ちください"],
+      ["しゅんたま検定", "解答解説・表彰", "発表が始まるまで、少々お待ちください"],
     ],
-    ["opening", { state: "opening" }, ["しゅんたま検定", "検定"]],
+    ["opening", { state: "opening" }, ["しゅんたま検定", "解答解説・表彰", "検定"]],
     [
       "question",
       {
@@ -366,6 +366,10 @@ describe("presentation projection and presenter progression", () => {
         projection.state === "second" ||
         projection.state === "first"
       ) {
+        expect(slide.querySelector("img[class*='presentationFrame']")).toHaveAttribute(
+          "src",
+          "/certificate_ornate_frame_16x9_gold.svg",
+        );
         const rank = slide.querySelector("[class*='rankHeader'] > h1[class*='rank']");
         const winner = slide.querySelector("article");
         const name = winner?.querySelector("h1");
@@ -397,6 +401,13 @@ describe("presentation projection and presenter progression", () => {
 
       const slide = await screen.findByRole("region", { name: "現在のスライド" });
       expect(within(slide).getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
+      expect(within(slide).getByText("解答解説・表彰")).toBeInTheDocument();
+      const frame = slide.querySelector("img[class*='presentationFrame']");
+      expect(frame).toHaveAttribute("src", "/certificate_ornate_frame_16x9_silver.svg");
+      expect(frame).toHaveAttribute("alt", "");
+      expect(frame).toHaveAttribute("aria-hidden", "true");
+      expect(frame?.parentElement).toBe(slide);
+      expect(frame?.closest("[data-testid='presentation-fit-layer']")).toBeNull();
       const lockup = slide.querySelector("[class*='openingLockup']");
       const stamp = slide.querySelector("[data-testid='presentation-exam-stamp']");
       const waitSlot = slide.querySelector("[class*='openingWaitSlot']");

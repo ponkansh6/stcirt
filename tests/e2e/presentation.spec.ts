@@ -635,6 +635,7 @@ test("opening cover geometry matches before and after presentation start", async
       const titleColumn = section?.querySelector<HTMLElement>("[class*='openingTitle']");
       const lockup = section?.querySelector<HTMLElement>("[class*='openingLockup']");
       const stamp = lockup?.querySelector<HTMLElement>("[data-testid='presentation-exam-stamp']");
+      const subtitle = section?.querySelector<HTMLElement>("[class*='openingSubtitle']");
       const waitSlot = section?.querySelector<HTMLElement>("[class*='openingWaitSlot']");
       const waitingCopy = waitSlot?.querySelector<HTMLElement>("[class*='openingWait']");
       const fitLayer = document.querySelector<HTMLElement>(
@@ -744,6 +745,7 @@ test("opening cover geometry matches before and after presentation start", async
         !titleColumn ||
         !lockup ||
         !stamp ||
+        !subtitle ||
         !waitSlot ||
         !fitLayer ||
         !canvas ||
@@ -753,6 +755,52 @@ test("opening cover geometry matches before and after presentation start", async
       }
       const canvasRect = canvas.getBoundingClientRect();
       const viewportRect = fitViewport.getBoundingClientRect();
+      const relativeLuminance = (color: string) => {
+        const channels = color.match(/[\d.]+/g)?.map(Number) ?? [];
+        const [red, green, blue] = channels;
+        if (red === undefined || green === undefined || blue === undefined) return 0;
+        const linearize = (channel: number) => {
+          const value = channel / 255;
+          return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * linearize(red) + 0.7152 * linearize(green) + 0.0722 * linearize(blue);
+      };
+      const resolvedBackground = (element: HTMLElement) => {
+        for (
+          let ancestor: HTMLElement | null = element;
+          ancestor;
+          ancestor = ancestor.parentElement
+        ) {
+          const color = getComputedStyle(ancestor).backgroundColor;
+          const channels = color.match(/[\d.]+/g)?.map(Number) ?? [];
+          if ((channels[3] ?? 1) > 0) return color;
+        }
+        throw new Error("Opening text has no opaque background ancestor");
+      };
+      const textContrasts = [
+        ...Array.from(titleColumn.querySelectorAll<HTMLElement>("h1 > span")),
+        subtitle,
+      ].map((textElement) => {
+        const style = getComputedStyle(textElement);
+        const effectiveFontSize = Number.parseFloat(style.fontSize) * fitScale;
+        const background = resolvedBackground(textElement);
+        const foregroundLuminance = relativeLuminance(style.color);
+        const backgroundLuminance = relativeLuminance(background);
+        const minimumRatio =
+          effectiveFontSize >= 24 ||
+          (Number.parseInt(style.fontWeight, 10) >= 700 && effectiveFontSize >= 18.66)
+            ? 3
+            : 4.5;
+        return {
+          text: textElement.textContent?.trim() ?? "",
+          fontSize: effectiveFontSize,
+          background,
+          ratio:
+            (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+            (Math.min(foregroundLuminance, backgroundLuminance) + 0.05),
+          minimumRatio,
+        };
+      });
       const stampTitleNonOverlapping = titleSpans.every((span) => {
         const text = span.textBounds;
         return Boolean(
@@ -793,6 +841,7 @@ test("opening cover geometry matches before and after presentation start", async
           lineCount: Math.max(0, ...titleSpans.map((span) => span.lineCount)),
         },
         titleSpans,
+        textContrasts,
         fitScale,
         titleColumn: bounds(titleColumn),
         lockup: bounds(lockup),
@@ -892,11 +941,28 @@ test("opening cover geometry matches before and after presentation start", async
     expect(actual.width).toBeCloseTo(expected.width, 1);
     expect(actual.height).toBeCloseTo(expected.height, 1);
   };
+  const expectOpeningTextContrast = (
+    geometry: Awaited<ReturnType<typeof inspectOpening>>,
+    state: "not_started" | "opening",
+  ) => {
+    expect(geometry.textContrasts.map((entry) => entry.text)).toEqual([
+      "しゅんたま",
+      "検定",
+      "解答解説・表彰",
+    ]);
+    for (const entry of geometry.textContrasts) {
+      expect(
+        entry.ratio,
+        `${state} text ${entry.text} needs ${entry.minimumRatio}:1 contrast against its rendered ${entry.background} background at ${entry.fontSize}px`,
+      ).toBeGreaterThanOrEqual(entry.minimumRatio);
+    }
+  };
   for (const viewport of viewports) {
     await page.setViewportSize(viewport);
     const geometry = await inspectOpening(page);
     expect(geometry.heading.lineCount).toBe(1);
     expect(geometry.titleSpans).toHaveLength(2);
+    expectOpeningTextContrast(geometry, "not_started");
     expect(
       geometry.titleSpans.every(
         (span) =>
@@ -965,6 +1031,7 @@ test("opening cover geometry matches before and after presentation start", async
     const geometry = await inspectOpening(page);
     const beforeStart = notStarted[index]!;
     expect(geometry.heading.lineCount).toBe(1);
+    expectOpeningTextContrast(geometry, "opening");
     expect(geometry.heading.x).toBeCloseTo(beforeStart.heading.x, 1);
     expect(geometry.heading.y).toBeCloseTo(beforeStart.heading.y, 1);
     expect(geometry.heading.width).toBeCloseTo(beforeStart.heading.width, 1);
@@ -1322,14 +1389,72 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   await expect(stamp).toHaveCount(1);
   await expect(stamp).toHaveAttribute("aria-hidden", "true");
   await expect(stamp).toHaveText("しゅんたま検定");
+  const canvas = page.getByTestId("presentation-canvas");
+  const frame = canvas.locator("img[class*='presentationFrame']");
+  await expect(frame).toHaveCount(1);
+  await expect(frame).toHaveAttribute("src", "/certificate_ornate_frame_16x9_gold.svg");
   await expect
     .poll(() =>
-      winners.evaluate((region) => {
-        const innerFrame = getComputedStyle(region, "::after");
-        return [getComputedStyle(region).borderStyle, innerFrame.borderStyle];
-      }),
+      Promise.all([
+        winners.evaluate((region) => {
+          const outer = getComputedStyle(region);
+          const after = getComputedStyle(region, "::after");
+          return {
+            borderWidths: [
+              outer.borderTopWidth,
+              outer.borderRightWidth,
+              outer.borderBottomWidth,
+              outer.borderLeftWidth,
+            ],
+            afterGenerated: !["none", "normal"].includes(after.content),
+          };
+        }),
+        frame.evaluate((element) => {
+          const canvas = element.parentElement;
+          const fitViewport = canvas?.querySelector<HTMLElement>(
+            "[data-testid='presentation-fit-viewport']",
+          );
+          const frameStyle = getComputedStyle(element);
+          const fitStyle = fitViewport ? getComputedStyle(fitViewport) : null;
+          const frameRect = element.getBoundingClientRect();
+          const canvasRect = canvas?.getBoundingClientRect();
+          const image = element instanceof HTMLImageElement ? element : null;
+          return {
+            directCanvasChild: canvas?.matches("[data-testid='presentation-canvas']") ?? false,
+            outsideFitLayer: element.closest("[data-testid='presentation-fit-layer']") === null,
+            imageLoaded: Boolean(image?.complete && image.naturalWidth > 0),
+            intrinsicRatioPreserved: Boolean(
+              image && Math.abs(image.naturalWidth / image.naturalHeight - 16 / 9) < 0.001,
+            ),
+            frameZIndex: frameStyle.zIndex,
+            fitZIndex: fitStyle?.zIndex,
+            objectFit: frameStyle.objectFit,
+            pointerEvents: frameStyle.pointerEvents,
+            coversCanvas: Boolean(
+              canvasRect &&
+              Math.abs(frameRect.left - canvasRect.left) <= 1 &&
+              Math.abs(frameRect.top - canvasRect.top) <= 1 &&
+              Math.abs(frameRect.right - canvasRect.right) <= 1 &&
+              Math.abs(frameRect.bottom - canvasRect.bottom) <= 1,
+            ),
+          };
+        }),
+      ]),
     )
-    .toEqual(["double", "solid"]);
+    .toEqual([
+      { borderWidths: ["0px", "0px", "0px", "0px"], afterGenerated: false },
+      {
+        directCanvasChild: true,
+        outsideFitLayer: true,
+        imageLoaded: true,
+        intrinsicRatioPreserved: true,
+        frameZIndex: "0",
+        fitZIndex: "1",
+        objectFit: "contain",
+        pointerEvents: "none",
+        coversCanvas: true,
+      },
+    ]);
   await expect
     .poll(() =>
       winners.evaluate((region) => {

@@ -10,6 +10,7 @@ import {
   type MouseEvent,
   type PointerEvent,
 } from "react";
+import Image from "next/image";
 import styles from "./presentation-screen.module.css";
 
 type State =
@@ -321,6 +322,25 @@ function ExamStamp({ className }: { className: string }) {
       <span>しゅんたま</span>
       <span>検定</span>
     </span>
+  );
+}
+
+function PresentationFrame({ color }: { color: "silver" | "gold" }) {
+  return (
+    <Image
+      className={styles.presentationFrame}
+      src={
+        color === "silver"
+          ? "/certificate_ornate_frame_16x9_silver.svg"
+          : "/certificate_ornate_frame_16x9_gold.svg"
+      }
+      alt=""
+      aria-hidden="true"
+      fill
+      unoptimized
+      loading="eager"
+      draggable={false}
+    />
   );
 }
 
@@ -1164,6 +1184,13 @@ export default function PresentationScreen({
           role="region"
           aria-label="現在のスライド"
         >
+          {!loadingPresenterDeck && (state === "not_started" || state === "opening") && (
+            <PresentationFrame color="silver" />
+          )}
+          {!loadingPresenterDeck &&
+            (state === "third" || state === "second" || state === "first") && (
+              <PresentationFrame color="gold" />
+            )}
           <div
             ref={fitViewportRef}
             className={styles.fitViewport}
@@ -1222,6 +1249,7 @@ export default function PresentationScreen({
                         </h1>
                       </div>
                     </div>
+                    <p className={styles.openingSubtitle}>解答解説・表彰</p>
                     <div className={styles.openingWaitSlot}>
                       <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
                     </div>
@@ -1239,6 +1267,7 @@ export default function PresentationScreen({
                         </h1>
                       </div>
                     </div>
+                    <p className={styles.openingSubtitle}>解答解説・表彰</p>
                     <div className={styles.openingWaitSlot} aria-hidden="true">
                       <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
                     </div>

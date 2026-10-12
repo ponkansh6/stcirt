@@ -93,9 +93,20 @@
 
 .fitViewport {
   position: absolute;
-  z-index: 0;
+  z-index: 1;
   inset: var(--presentation-padding);
   overflow: hidden;
+}
+
+.presentationFrame {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
 }
 
 .fitTransform {
@@ -155,20 +166,6 @@
   gap: clamp(12px, 2.8cqh, 32px);
   min-height: clamp(340px, 64cqh, 680px);
   padding: clamp(40px, 7cqh, 84px) clamp(40px, 8cqw, 120px);
-  border: 7px double #49391f;
-  background: #fff;
-  box-shadow:
-    inset 0 0 0 2px #c4a65f,
-    inset 0 0 0 8px #fff,
-    inset 0 0 0 10px #e7d9b3;
-}
-
-.opening::before {
-  position: absolute;
-  inset: 20px;
-  border: 1px solid #c7ad6a;
-  content: "";
-  pointer-events: none;
 }
 
 .openingTitle {
@@ -213,6 +210,17 @@
   letter-spacing: 0.28em;
 }
 
+.openingSubtitle {
+  position: relative;
+  z-index: 1;
+  margin: -0.5em 0 0;
+  color: #37424c;
+  font-size: clamp(var(--presentation-min-readable-size), 2.4cqw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.4;
+}
+
 .openingLockup {
   position: relative;
   z-index: 1;
@@ -237,14 +245,6 @@
   line-height: 1.2;
   text-align: center;
   transform: rotate(8deg);
-  pointer-events: none;
-}
-
-.examStamp::before {
-  position: absolute;
-  inset: 5px;
-  border: 1px solid currentColor;
-  content: "";
   pointer-events: none;
 }
 
@@ -280,48 +280,6 @@
 
 .openingWaitSlot[aria-hidden="true"] > .openingWait {
   visibility: hidden;
-}
-
-.opening::after {
-  position: absolute;
-  inset: 30px;
-  border: 1px solid #d7c28b;
-  content: "";
-  pointer-events: none;
-}
-
-.opening::before,
-.opening::after {
-  clip-path: polygon(
-    0 0,
-    14% 0,
-    14% 2px,
-    2px 2px,
-    2px 14%,
-    0 14%,
-    0 0,
-    100% 0,
-    100% 14%,
-    calc(100% - 2px) 14%,
-    calc(100% - 2px) 2px,
-    86% 2px,
-    86% 0,
-    100% 0,
-    100% 100%,
-    86% 100%,
-    86% calc(100% - 2px),
-    calc(100% - 2px) calc(100% - 2px),
-    calc(100% - 2px) 86%,
-    100% 86%,
-    100% 100%,
-    0 100%,
-    0 86%,
-    2px 86%,
-    2px calc(100% - 2px),
-    14% calc(100% - 2px),
-    14% 100%,
-    0 100%
-  );
 }
 
 .kicker {
@@ -528,80 +486,22 @@
   align-items: center;
   justify-content: center;
   padding: clamp(22px, 4cqh, 44px) clamp(28px, 4.5cqw, 72px);
-  border: 6px double #49391f;
-  background: #fff;
-  box-shadow:
-    inset 0 0 0 2px #c4a65f,
-    inset 0 0 0 8px #fff,
-    inset 0 0 0 10px #e7d9b3;
   text-align: center;
-}
-
-.winners::after {
-  position: absolute;
-  inset: 18px;
-  border: 1px solid #c4a65f;
-  content: "";
-  pointer-events: none;
-}
-
-.winners::before {
-  position: absolute;
-  inset: 28px;
-  content: "";
-  pointer-events: none;
 }
 
 .winners[data-rank="third"] {
   --rank-metal: #a88c55;
   --rank-light: #f5efdf;
-  border-width: 5px;
-  box-shadow:
-    inset 0 0 0 1px #c4a65f,
-    inset 0 0 0 7px #fff,
-    inset 0 0 0 9px #e7d9b3;
 }
 
 .winners[data-rank="second"] {
   --rank-metal: #b6a16d;
   --rank-light: #fffdf5;
-  border-width: 6px;
-  box-shadow:
-    inset 0 0 0 2px #c4a65f,
-    inset 0 0 0 8px #fff,
-    inset 0 0 0 10px #e7d9b3,
-    inset 0 0 0 16px #fff,
-    inset 0 0 0 17px #e5d8b8;
-}
-
-.winners[data-rank="second"]::before {
-  border: 1px solid #ddcfaa;
 }
 
 .winners[data-rank="first"] {
   --rank-metal: #b58b35;
   --rank-light: #fff9e7;
-  border-width: 8px;
-  box-shadow:
-    inset 0 0 0 3px #b18d42,
-    inset 0 0 0 10px #fff,
-    inset 0 0 0 13px #e0ca8d,
-    inset 0 0 0 19px #fff,
-    inset 0 0 0 21px #c9a85b;
-}
-
-.winners[data-rank="first"]::before {
-  inset: 27px;
-  border: 1px solid #d8c184;
-  background:
-    linear-gradient(#b58b35, #b58b35) left top / 38px 2px no-repeat,
-    linear-gradient(#b58b35, #b58b35) left top / 2px 38px no-repeat,
-    linear-gradient(#b58b35, #b58b35) right top / 38px 2px no-repeat,
-    linear-gradient(#b58b35, #b58b35) right top / 2px 38px no-repeat,
-    linear-gradient(#b58b35, #b58b35) left bottom / 38px 2px no-repeat,
-    linear-gradient(#b58b35, #b58b35) left bottom / 2px 38px no-repeat,
-    linear-gradient(#b58b35, #b58b35) right bottom / 38px 2px no-repeat,
-    linear-gradient(#b58b35, #b58b35) right bottom / 2px 38px no-repeat;
 }
 
 .rankHeader {
