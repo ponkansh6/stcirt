@@ -32,17 +32,23 @@ import {
   PresentationOperationError,
 } from "@/lib/presentation/operation-diagnostics";
 
+type PresentationOperationRecoveryResult =
+  | Awaited<ReturnType<typeof operatePresentation>>
+  | Awaited<ReturnType<typeof operatePresentationControls>>;
+
 function commitWinnerThenRaiseAdapterUniqueConflict(
   operationId: string,
 ): Promise<Awaited<ReturnType<typeof operatePresentation>>>;
-function commitWinnerThenRaiseAdapterUniqueConflict<T>(
+function commitWinnerThenRaiseAdapterUniqueConflict<T extends PresentationOperationRecoveryResult>(
   operationId: string,
   run: () => Promise<T>,
+  action?: "advance" | "aggregate",
 ): Promise<T>;
 async function commitWinnerThenRaiseAdapterUniqueConflict(
   operationId: string,
-  run?: () => Promise<unknown>,
-): Promise<unknown> {
+  run?: () => Promise<PresentationOperationRecoveryResult>,
+  action: "advance" | "aggregate" = "advance",
+): Promise<PresentationOperationRecoveryResult> {
   const database = dbRef.db!;
   const originalTransaction = database.transaction.bind(database);
   let intercept = true;
@@ -51,7 +57,7 @@ async function commitWinnerThenRaiseAdapterUniqueConflict(
     if (!intercept) return originalTransaction(callback, config);
     intercept = false;
     return (async () => {
-      await operatePresentation(operationId, "advance");
+      await operatePresentation(operationId, action);
       return originalTransaction(async (tx) => {
         const [winnerOperation] = await tx
           .select()
@@ -64,7 +70,7 @@ async function commitWinnerThenRaiseAdapterUniqueConflict(
     })();
   });
   try {
-    return await (run ?? (() => operatePresentation(operationId, "advance")))();
+    return await (run ?? (() => operatePresentation(operationId, action)))();
   } finally {
     transactionSpy.mockRestore();
   }
@@ -2976,6 +2982,18 @@ describe("presentation repository", () => {
     expect(replay).not.toHaveProperty("aggregationSummary");
   });
 
+  it("returns the persisted aggregation summary when replaying an aggregate operation", async () => {
+    await addQuestions();
+    await addParticipant("Aggregate replay with summary");
+    const operationId = "aggregate-summary-replay-with-summary";
+    const first = await operatePresentation(operationId, "aggregate");
+
+    const replay = await operatePresentation(operationId, "aggregate");
+
+    expect(first.aggregationSummary).toBeDefined();
+    expect(replay.aggregationSummary).toEqual(first.aggregationSummary);
+  });
+
   it("does not attach an aggregation summary when recovering a non-aggregate operation replay", async () => {
     await addQuestions();
     await startWithAggregate("replay-non-aggregate");
@@ -2992,5 +3010,27 @@ describe("presentation repository", () => {
         .from(schema.presentationOperations)
         .where(eq(schema.presentationOperations.operationId, operationId)),
     ).resolves.toEqual([{ action: "advance" }]);
+  });
+
+  it("returns the persisted aggregation summary when recovering an aggregate operation race", async () => {
+    await addQuestions();
+    await addParticipant("Aggregate race recovery");
+    const operationId = "recover-aggregate-replay";
+
+    const recovered = await commitWinnerThenRaiseAdapterUniqueConflict(
+      operationId,
+      () => operatePresentation(operationId, "aggregate"),
+      "aggregate",
+    );
+
+    expect(recovered.aggregationSummary).toEqual({
+      snapshotUpdated: true,
+      includedSubmissionCount: 0,
+      excludedSubmissionCount: 0,
+      excludedReasonCounts: {
+        questionVersionMismatch: 0,
+        q5AssessmentVersionMismatch: 0,
+      },
+    });
   });
 });

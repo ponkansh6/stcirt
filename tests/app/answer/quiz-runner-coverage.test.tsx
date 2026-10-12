@@ -368,6 +368,34 @@ describe("QuizRunner remaining coverage states", () => {
     expect(saveAnswers).not.toHaveBeenCalled();
   });
 
+  it("does not submit when the captured submit handler runs during refresh", () => {
+    const saveAnswers = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "refreshing" },
+        {
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+          answeredCount: 5,
+          saveAnswers,
+        },
+      ),
+    );
+    render(<QuizRunner />);
+
+    const submit = screen.getByRole("button", {
+      name: "保存済み回答を確認しています…",
+    });
+    const reactPropsKey = Object.keys(submit).find((key) => key.startsWith("__reactProps$"));
+    expect(reactPropsKey).toBeDefined();
+    const onClick = (submit as unknown as Record<string, { onClick?: () => void }>)[reactPropsKey!]
+      ?.onClick;
+    expect(onClick).toBeTypeOf("function");
+
+    onClick!();
+
+    expect(saveAnswers).not.toHaveBeenCalled();
+  });
+
   it("explains when a free-text question has a legacy selected answer", () => {
     const quizzes = selectedQuizzes.map((quiz, index) =>
       index === 4

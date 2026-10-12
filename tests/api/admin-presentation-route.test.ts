@@ -232,6 +232,24 @@ describe("/api/admin/presentation route", () => {
     expect(operatePresentationControls).toHaveBeenCalledWith(operationId, "aggregate");
   });
 
+  it("includes an aggregation summary when the aggregate result has one", async () => {
+    const aggregationSummary = {
+      snapshotUpdated: true,
+      includedSubmissionCount: 2,
+      excludedSubmissionCount: 1,
+      excludedReasonCounts: { questionVersionMismatch: 1, q5AssessmentVersionMismatch: 0 },
+    };
+    vi.mocked(operatePresentationControls).mockResolvedValueOnce({
+      ...controlsPayload,
+      aggregationSummary,
+    });
+
+    const response = await POST(request("POST", { body: { operationId, action: "aggregate" } }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ...controlsPayload, aggregationSummary });
+  });
+
   it("forwards the expected snapshot revision for presenter actions", async () => {
     const response = await POST(
       request("POST", {
