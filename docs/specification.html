@@ -1,76 +1,1652 @@
 <!doctype html>
 <html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Stcirtの全体像、参加者フロー、公開境界を理解するための参考資料。製品仕様の正本はOpenSpecです。">
-<title>Stcirt — 人間向け仕様ガイド</title>
-<style>
-:root{color-scheme:light;--ink:#192b3a;--muted:#536778;--line:#d5dfe5;--paper:#fff;--wash:#f2f6f8;--blue:#14577a;--teal:#167568;--amber:#8b5700;--red:#8e3c42;--shadow:0 10px 30px #18384a12;--max:1120px}
-*{box-sizing:border-box}html{scroll-behavior:auto;scroll-padding-top:1rem}body{margin:0;background:#eaf0f3;color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.7}a{color:#075d83;text-decoration-thickness:.08em;text-underline-offset:.16em}a:hover{text-decoration-thickness:.14em}a:focus-visible{outline:3px solid #d38a00;outline-offset:3px;border-radius:2px}.shell{max-width:var(--max);margin:auto;padding:clamp(1rem,4vw,3rem)}header.hero{background:#15394e;color:white;padding:clamp(2rem,6vw,5rem) clamp(1rem,5vw,4rem)}.hero-inner{max-width:var(--max);margin:auto}.eyebrow{font-size:.82rem;letter-spacing:.12em;text-transform:uppercase;color:#c9e6ef}.hero h1{font-size:clamp(2rem,5vw,3.7rem);line-height:1.14;margin:.4rem 0 1rem}.hero p{max-width:70ch}.hero a{color:#c9f0ff}.meta{display:flex;flex-wrap:wrap;gap:.65rem;margin-top:1.5rem}.meta span{border:1px solid #ffffff55;border-radius:999px;padding:.2rem .7rem;font-size:.88rem}.notice{border-left:5px solid #d38a00;background:#fff7df;padding:1rem 1.2rem;margin:1.4rem 0;color:#372d1b}.notice strong{display:block;font-size:1.07rem}.notice p{margin:.3rem 0}.panel,section{background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:clamp(1rem,3vw,2rem);margin:1.25rem 0}.panel h2,section h2{margin-top:0;line-height:1.3}.toc ol{columns:2;column-gap:2.5rem;padding-left:1.5rem}.toc li{break-inside:avoid;margin:.35rem 0}.kicker{font-size:.78rem;letter-spacing:.1em;color:var(--blue);font-weight:750;text-transform:uppercase}.lede{font-size:1.08rem;max-width:76ch;color:#30495a}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:1rem}.card{border:1px solid var(--line);border-radius:10px;padding:1rem;background:var(--wash)}.card h3{margin:.1rem 0 .4rem;font-size:1.05rem}.tag{display:inline-block;border:1px solid #aac2cf;border-radius:999px;padding:.05rem .55rem;font-size:.8rem;font-weight:700;color:#20495f;white-space:nowrap}.callout{border-left:4px solid var(--teal);padding:.55rem 1rem;background:#edf8f5}.caution{border-left-color:#b97b18;background:#fff8e9}.flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:.5rem;padding:0;list-style:none}.flow li{flex:1 1 125px;border:1px solid var(--line);border-radius:8px;padding:.7rem;background:#f5f9fb}.flow li:not(:last-child)::after{content:"→";position:relative;left:calc(100% + .25rem);color:var(--blue);font-weight:800}.table-wrap{max-width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:9px;margin:1rem 0}table{border-collapse:collapse;width:100%;min-width:650px;font-size:.94rem}caption{text-align:left;font-weight:700;padding:.75rem;background:var(--wash)}th,td{text-align:left;vertical-align:top;padding:.7rem .8rem;border-bottom:1px solid var(--line)}th{background:#edf3f6}tr:last-child td{border-bottom:0}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.92em;overflow-wrap:anywhere}.diagram{margin:1.25rem 0;border:1px solid var(--line);border-radius:11px;background:#fbfdfe;padding:.75rem}.diagram svg{display:block;width:100%;height:auto;max-height:560px}.diagram figcaption{font-weight:750;margin:.4rem .3rem}.diagram-alt{margin:.35rem .3rem .2rem;color:#334d5c}.svg-box{fill:#f4f8fa;stroke:#35718c;stroke-width:2}.svg-safe{fill:#e9f5f1;stroke:#27796a;stroke-width:2}.svg-private{fill:#fff4e4;stroke:#a56b16;stroke-width:2}.svg-bound{fill:#f9ecec;stroke:#a14c53;stroke-width:2;stroke-dasharray:7 5}.svg-line{stroke:#35596d;stroke-width:2;fill:none;marker-end:url(#arrow)}.svg-dash{stroke:#8a672e;stroke-width:2;stroke-dasharray:7 5;fill:none;marker-end:url(#arrowGold)}.svg-label{font:16px system-ui,sans-serif;fill:#192b3a;text-anchor:middle}.svg-small{font:13px system-ui,sans-serif;fill:#334d5c;text-anchor:middle}.svg-title{font:700 18px system-ui,sans-serif;fill:#192b3a;text-anchor:middle}.req{border-top:1px solid var(--line);padding:1rem 0}.req:first-of-type{border-top:0}.req h3{margin:.15rem 0}.req p{margin:.45rem 0}.req aside{color:var(--muted);font-size:.94rem}.ref{font-size:.91rem}.foot{color:var(--muted);font-size:.9rem;padding:1rem 0 2rem}abbr[title]{text-decoration:underline dotted;cursor:help}
-@media(max-width:620px){.shell{padding:.75rem}.toc ol{columns:1}.flow li{flex-basis:100%}.flow li:not(:last-child)::after{content:"↓";left:auto;float:right}.hero{padding:2rem 1rem}.table-wrap{margin-left:-.15rem;margin-right:-.15rem}}
-@media print{body{background:white;color:#111;font-size:10pt}.hero{background:white!important;color:#111;padding:0 0 1rem;border-bottom:2px solid #333}.hero a{color:#111}.shell{max-width:none;padding:0}.panel,section{box-shadow:none;border:0;border-radius:0;padding:1rem 0;margin:.4rem 0;break-inside:auto}.notice{border:1px solid #888;background:white}.meta span{border-color:#777}.toc a::after{content:" (" attr(href) ")";font-size:8pt;color:#444}.diagram,table,.card,.callout{break-inside:avoid}.diagram svg{max-height:360px}a{color:#111;text-decoration:underline}thead{display:table-header-group}tr{break-inside:avoid}.table-wrap{overflow:visible;border:0}table{min-width:0;font-size:8.5pt}th,td{padding:.35rem;border:1px solid #aaa}.flow li:not(:last-child)::after{color:#111}}
-</style>
-</head>
-<body>
-<header class="hero">
- <div class="hero-inner">
-  <div class="eyebrow">Stcirt · 読みものとしての仕様ガイド</div>
-  <h1>5問の試験から、集計と公開まで</h1>
-  <p>参加者の回答、管理者の集計、発表投影、本人結果がどうつながるかを、図と案内索引で把握するための資料です。</p>
-  <div class="notice" role="note"><strong>このHTMLは理解を助ける参考資料であり、最新でない場合があります。最新仕様・要件・API契約は openspec/specs/stcirt/spec.md を確認してください。</strong><p>正本: <a href="../openspec/specs/stcirt/spec.md">../openspec/specs/stcirt/spec.md</a></p></div>
-  <div class="meta" aria-label="文書メタデータ"><span>生成・正本確認: 2026-10-12 09:24 UTC</span><span>正本 SHA-256: <code>c8a56b08d391e6c7ba1345a257808c8202b948310b3e99f29feda35deacc4d78</code></span><span>参考 HEAD: <code>35d1c57492bd92f7a7995507713dc39bed6b3908</code></span></div>
- </div>
-</header>
-<main class="shell">
- <section class="panel toc" aria-labelledby="toc-title"><p class="kicker">Contents</p><h2 id="toc-title">目次</h2><ol><li><a href="#read">読み方と正本</a></li><li><a href="#overview">サービス概要と用語</a></li><li><a href="#answer-flow">試験開始から回答確定</a></li><li><a href="#assisted">代理回答</a></li><li><a href="#aggregate">集計・順位・発表</a></li><li><a href="#publication">公開データと本人結果</a></li><li><a href="#trust">認証と信頼境界</a></li><li><a href="#data">データ関係</a></li><li><a href="#grading">採点と運用上の未決事項</a></li><li><a href="#apis">代表API</a></li><li><a href="#traceability">正本との対応表</a></li></ol><p class="ref">どの章から読んでも、最新契約は<a href="../openspec/specs/stcirt/spec.md">正本 <code>openspec/specs/stcirt/spec.md</code></a>で確認してください。</p></section>
- <section id="read"><p class="kicker">01 · 読み方</p><h2>正本と、このガイドの役割</h2><div class="notice"><strong>このHTMLは理解を助ける参考資料であり、最新でない場合があります。最新仕様・要件・API契約は openspec/specs/stcirt/spec.md を確認してください。</strong><p>正本: <a href="../openspec/specs/stcirt/spec.md">../openspec/specs/stcirt/spec.md</a></p></div><p class="lede"><code>openspec/specs/stcirt/spec.md</code>だけが合意済み製品要求とAPI契約の情報源です。このHTMLは全体の流れ、境界、用語を説明する派生資料で、要求・Scenario・APIの厳密な入出力契約を複製しません。自動更新・同期はありません。実装や正本が変わると説明が古くなることがあります。</p><div class="grid"><article class="card"><h3>正本のSHA-256</h3><p>上記は2026-10-12 09:24 UTCに、作業ツリーの <code>openspec/specs/stcirt/spec.md</code> を対象に <code>sha256sum</code> で計算した実バイト列の識別値です。この時点の内容を識別します。正本ファイルが変更されれば値は古くなります。</p></article><article class="card"><h3>参考 HEAD</h3><p>作業時のGit HEADです。作業ツリーには未commit変更があり得るため、HEAD単独では参照内容を特定できません。SHA-256とHEADの役割を混同しないでください。</p></article><article class="card"><h3>仕様運用と証拠</h3><p><a href="spec-management.md">docs/spec-management.md</a>はR1–R9からScenario、実装、既存テストへのtraceability索引です。テスト宣言の存在は、全assertionの監査やテスト実行を意味しません。</p></article></div><p class="callout">図は概念説明です。列、キー、制約の完全な定義は正本のData ModelとAPI節を参照してください。</p></section>
- <section id="overview"><p class="kicker">02 · 全体像</p><h2>サービス概要と用語</h2><p class="lede">Stcirtは4問の選択式と1問の自由記述を出す試験アプリです。参加者は表示名とイベント共通PINで参加し、回答中は採点情報を受け取りません。管理者が集計を明示実行すると、その時点のスナップショットを発表投影と本人結果の共通基盤にします。</p><div class="grid"><article class="card"><h3>participant / 参加者</h3><p>参加者Cookieで識別される人。自身の回答・修正と、公開後の自身の結果を扱います。</p></article><article class="card"><h3>owner / target</h3><p>代理回答の依頼元ownerと、別の参加者レコード・回答を持つtarget。ownerのCookieや回答は引き継ぎません。</p></article><article class="card"><h3>administrator</h3><p>参加者認証とは別のPINと署名Cookieで保護された管理主体。集計、発表状態、本人結果公開を操作します。</p></article><article class="card"><h3>snapshot / 投影</h3><p>明示集計で固定された共有データがsnapshot。発表stageに応じて公開APIが返す形をprojection（投影）と呼びます。</p></article></div>
- <figure class="diagram"><svg viewBox="0 0 900 470" role="img" aria-labelledby="d1t d1d"><title id="d1t">図1 全体構成とデータの流れ</title><desc id="d1d">参加者UIと管理者UIは別の認証主体としてAPIを利用し、APIはデータベース上の回答と集計スナップショットを扱う。自由記述採点はJEV providerへ非同期に依頼する。スナップショットから公開発表projectionと本人結果APIへ独立した公開経路が伸びる。</desc><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#35596d"/></marker><marker id="arrowGold" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#8a672e"/></marker></defs><rect class="svg-box" x="25" y="65" width="190" height="82" rx="12"/><text class="svg-title" x="120" y="97">参加者 UI</text><text class="svg-small" x="120" y="123">回答・本人結果</text><rect class="svg-box" x="25" y="256" width="190" height="82" rx="12"/><text class="svg-title" x="120" y="288">管理者 UI</text><text class="svg-small" x="120" y="314">集計・発表操作</text><rect class="svg-safe" x="310" y="140" width="230" height="105" rx="12"/><text class="svg-title" x="425" y="177">アプリ API</text><text class="svg-small" x="425" y="204">認証・権限・処理</text><rect class="svg-private" x="635" y="62" width="230" height="95" rx="12"/><text class="svg-title" x="750" y="100">DB / snapshot</text><text class="svg-small" x="750" y="127">回答・評価・発表データ</text><rect class="svg-private" x="635" y="229" width="230" height="76" rx="12"/><text class="svg-title" x="750" y="260">JEV provider</text><text class="svg-small" x="750" y="284">Q5評価（非同期）</text><rect class="svg-box" x="310" y="310" width="230" height="72" rx="12"/><text class="svg-title" x="425" y="340">公開発表</text><text class="svg-small" x="425" y="363">stage別projection</text><rect class="svg-box" x="635" y="340" width="230" height="65" rx="12"/><text class="svg-title" x="750" y="369">本人結果 API</text><text class="svg-small" x="750" y="391">visible設定 + participant scope</text><path class="svg-line" d="M865 108 H885 V372 H865"/><path class="svg-line" d="M215 105 H310"/><path class="svg-line" d="M215 296 H270 V220 H310"/><path class="svg-line" d="M540 165 H635"/><path class="svg-line" d="M540 218 H580 V267 H635"/><path class="svg-line" d="M635 110 H590 V346 H540"/><path class="svg-line" d="M310 200 H260 V105 H215"/><text class="svg-small" x="267" y="87">session</text><text class="svg-small" x="580" y="330">公開投影</text></svg><figcaption>図1. 主体と主要な情報の流れ</figcaption><p class="ref">正本: <a href="../openspec/specs/stcirt/spec.md#purpose">Purpose</a>、<a href="../openspec/specs/stcirt/spec.md#data-model">Data Model</a>、<a href="../openspec/specs/stcirt/spec.md#authorization-and-trust-boundaries">Authorization</a>、R1–R9</p><p class="diagram-alt"><strong>文章での説明:</strong> 参加者と管理者は別のUI/API境界で認証されます。回答はDBに保存され、Q5評価は回答保存後に非同期処理されます。管理者が集計するとスナップショットが作られ、公開発表投影と本人結果の読み出しに使われます。</p></figure>
- <div class="req"><h3>R1 · 固定された5問</h3><p>認証と保存済み回答の確認を先に行い、ID順の完全な5問を一括取得できたときだけ開始します。欠落・重複・順序不正・取得失敗は開始条件を満たしません。</p><aside>Scenario: R1-S1〜S3 · 詳細: <a href="../openspec/specs/stcirt/spec.md#requirement-r1-fixed-five-question-set">正本 R1</a></aside></div>
- <div class="req"><h3>R2 · 認証された回答確定</h3><p>4つの選択と空でないQ5自由記述を明示確認した後、participant所有の5問セットを一括保存します。同じoperation IDとcanonical payloadの再送は冪等で、異なるpayloadの再利用やstale revisionは競合になります。回答APIから採点情報を返しません。</p><aside>Scenario: R2-S1〜S3 · 詳細: <a href="../openspec/specs/stcirt/spec.md#requirement-r2-participant-authenticated-answer-confirmation-and-recording">正本 R2</a></aside></div>
- <div class="req"><h3>R3 · 完了と修正</h3><p>保存済み回答があれば完了画面を表示します。安全に復元できる場合に限って同じsubmissionを修正でき、古いQ5選択値を現在の自由記述として再送・採点しません。</p><aside>Scenario: R3-S1〜S3 · 詳細: <a href="../openspec/specs/stcirt/spec.md#requirement-r3-completion">正本 R3</a></aside></div>
- <div class="req"><h3>R4 · 参加者入口</h3><p><code>/</code>は<code>/answer</code>への互換redirectです。認証後は最新submissionを確認し、保存状態を復帰します。表示名はtrim後にUnicode NFCで正規化し、大文字小文字を区別します。PINはDBに保存せず、失敗認証の共有制限はHMAC fingerprintを使い、名前やIPを記録しません。</p><aside>Scenario: R4-S1〜S5 · 詳細: <a href="../openspec/specs/stcirt/spec.md#requirement-r4-home-and-participant-entry">正本 R4</a></aside></div>
- <div class="req"><h3>R5 · アクセシブルで応答性のある画面</h3><p>狭い幅や拡大表示、キーボード、支援技術に配慮した入力と進捗表示を備えます。送信中も選択を保持し、失敗後に再試行できます。フォーカス移動は参加者の操作を尊重します。</p><aside>Scenario: R5-S1〜S3 · 詳細: <a href="../openspec/specs/stcirt/spec.md#requirement-r5-accessible-responsive-interface">正本 R5</a>. このHTML自体の見やすさは別途CSSで対応し、完全なa11y証拠とはしません。</aside></div>
- <div class="req"><h3>R6 · 分離された管理者認証</h3><p>管理者はparticipantとは別の認証情報と署名Cookieを使います。保護された管理操作は同一Originを検証し、セッション喪失時は画面上の非公開deckを消去します。</p><aside>Scenario: R6-S1〜S4 · 詳細: <a href="../openspec/specs/stcirt/spec.md#requirement-r6-isolated-administrator-authentication">正本 R6</a></aside></div>
- <div class="req"><h3>R7 · 集計snapshotと順位</h3><p>管理者の明示集計だけが共有snapshotを更新します。version不整合データは除外され、互換Q5評価が未登録・未採点・失敗・revision不整合なら集計を止めます。採点は浮動小数点を保ち、同点は標準競技順位で扱います。</p><aside>Scenario: R7-S1〜S3 · 詳細: <a href="../openspec/specs/stcirt/spec.md#requirement-r7-presentation-snapshot-and-ranking">正本 R7</a></aside></div>
- <div class="req"><h3>R8 · stage別の発表公開</h3><p>公開発表は現在stageに許されたprojectionだけを返し、非表示時はstandbyだけを返します。質問stageは答えを含まず、答え・順位stageも内部採点情報を公開しません。</p><aside>Scenario: R8-S1〜S3 · 詳細: <a href="../openspec/specs/stcirt/spec.md#requirement-r8-staged-result-disclosure">正本 R8</a></aside></div>
- <div class="req"><h3>R9 · 本人結果の公開</h3><p>本人結果は発表stageとは独立した管理者設定で公開します。participant cookieまたはサーバーが解決するowner-target関係に応じて、本人の結果だけを返します。</p><aside>Scenario: R9-S1〜S3 · 詳細: <a href="../openspec/specs/stcirt/spec.md#requirement-r9-participant-result-visibility">正本 R9</a></aside></div></section>
- <section id="answer-flow"><p class="kicker">03 · 回答</p><h2>試験開始から回答確定まで</h2><ol class="flow"><li><strong>認証・状態確認</strong><br>sessionと最新submissionを確認</li><li><strong>5問を取得</strong><br>完全なID順バッチだけで開始</li><li><strong>下書き</strong><br>未確認回答はclient内</li><li><strong>明示確認</strong><br>5問セットを送信</li><li><strong>原子的保存</strong><br>一つのrevisionとして確定</li><li><strong>完了・修正</strong><br>同じsubmissionを更新</li></ol>
- <figure class="diagram"><svg viewBox="0 0 960 360" role="img" aria-labelledby="d2t d2d"><title id="d2t">図2 参加者回答の状態遷移</title><desc id="d2d">認証、最新回答確認、完全な5問取得、下書き、明示確認、原子的保存、完了または修正の順。質問取得失敗では開始せず、保存失敗では下書きを保つ。既存回答はlookup障害時に新規扱いせず、完了状態を維持する。</desc><defs><marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0L0 6L9 3z" fill="#35596d"/></marker></defs><rect class="svg-box" x="20" y="100" width="130" height="72" rx="10"/><text class="svg-label" x="85" y="130">認証</text><text class="svg-small" x="85" y="152">participant</text><rect class="svg-box" x="180" y="100" width="155" height="72" rx="10"/><text class="svg-label" x="257" y="130">最新回答確認</text><text class="svg-small" x="257" y="152">既存なら完了へ</text><rect class="svg-box" x="365" y="100" width="145" height="72" rx="10"/><text class="svg-label" x="437" y="130">5問一括取得</text><text class="svg-small" x="437" y="152">完全・ID順</text><rect class="svg-box" x="540" y="100" width="120" height="72" rx="10"/><text class="svg-label" x="600" y="142">下書き</text><rect class="svg-private" x="690" y="100" width="120" height="72" rx="10"/><text class="svg-label" x="750" y="142">確認</text><rect class="svg-safe" x="840" y="100" width="105" height="72" rx="10"/><text class="svg-label" x="892" y="130">保存</text><text class="svg-small" x="892" y="152">atomic</text><path d="M150 136H180M335 136H365M510 136H540M660 136H690M810 136H840" stroke="#35596d" stroke-width="2" fill="none" marker-end="url(#arrow2)"/><rect class="svg-safe" x="735" y="250" width="165" height="66" rx="10"/><text class="svg-label" x="817" y="289">完了 / 同一回答の修正</text><path d="M892 172V220H817V250" stroke="#35596d" stroke-width="2" fill="none" marker-end="url(#arrow2)"/><path d="M437 172V235H565" stroke="#a14c53" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#arrow2)"/><rect class="svg-bound" x="565" y="215" width="135" height="58" rx="10"/><text class="svg-small" x="632" y="239">取得失敗:開始しない</text><text class="svg-small" x="632" y="258">再試行を案内</text><path d="M750 172V310H605" stroke="#8a672e" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#arrow2)"/><text class="svg-small" x="644" y="333">保存失敗:下書きを保持して再試行</text></svg><figcaption>図2. 回答の開始・保存・復帰</figcaption><p class="ref">正本: <a href="../openspec/specs/stcirt/spec.md#requirement-r1-fixed-five-question-set">R1</a>、<a href="../openspec/specs/stcirt/spec.md#requirement-r2-participant-authenticated-answer-confirmation-and-recording">R2</a>、<a href="../openspec/specs/stcirt/spec.md#requirement-r3-completion">R3</a>、R4–R5</p><p class="diagram-alt"><strong>文章での説明:</strong> 認証と最新回答の確認が済んでから、完全な5問を取得します。選択中の回答は明示確認までclient内に置かれ、確認後は5問一括で保存されます。取得失敗では試験を始めず、送信失敗では下書きを保って再試行します。保存済み回答は完了画面に戻り、安全に復元できる場合だけ同じsubmissionを修正します。</p></figure><p class="callout">画面で正誤・解説・点数・合否を表示しないことが基本です。保存完了は採点完了を意味せず、Q5評価は別処理です。</p></section>
- <section id="assisted"><p class="kicker">04 · 代理回答</p><h2>ownerとtargetは別々の参加者</h2><p>完了済みownerが条件を満たして登録したtargetは、独立した参加者レコードとして扱います。ownerのCookieとsubmissionはそのまま維持され、代理回答の保存・修正はtargetに紐づく別submissionです。target名を再登録した同一要求は既存関係に解決され、別targetへの差し替えは認められません。</p><div class="grid"><article class="card"><h3>認証</h3><p>owner Cookieで関係を解決。clientがtarget IDを指定しません。</p></article><article class="card"><h3>分離</h3><p>targetは独自のparticipant行・回答を持ち、ownerの本人結果とは混ざりません。</p></article><article class="card"><h3>範囲</h3><p>owner自身がtargetである場合など、正本のeligibility条件を満たさない登録は拒否されます。</p></article></div><p class="ref">関連: <a href="../openspec/specs/stcirt/spec.md#requirement-r3-completion">R3-S3</a>、<a href="../openspec/specs/stcirt/spec.md#requirement-r2-participant-authenticated-answer-confirmation-and-recording">R2 assisted scope</a>、<a href="../openspec/specs/stcirt/spec.md#requirement-r9-participant-result-visibility">R9-S3</a>.</p></section>
- <section id="aggregate"><p class="kicker">05 · 管理・発表</p><h2>集計・順位・発表</h2><p>データが保存されたことだけでは発表データは更新されません。管理者の明示aggregateが質問・参加者・有効な最新submissionをsnapshotへ置き換えます。version整合、Q5評価のreadiness、revision整合を確認し、危険な更新は旧snapshotを保護します。開始や公開は有効な集計revisionを必要とします。</p><div class="grid"><article class="card"><h3>version</h3><p>質問とrubricは対の版として扱います。履歴を現行版と推測して埋めません。</p></article><article class="card"><h3>採点</h3><p>Q1–Q4は各1点。Q5はJEV scoreを2で割った寄与。信頼度は順位に使いません。</p></article><article class="card"><h3>順位</h3><p>浮動小数点値のまま比較し、完全一致の同点に標準競技順位（例: 1, 1, 3）を使います。小数2桁は表示丸めです。</p></article><article class="card"><h3>snapshot</h3><p>回答変更やstage移動では更新しません。明示集計まで氏名・回答・点数・順位を固定します。</p></article></div>
- <figure class="diagram" id="diagram-data"><svg viewBox="0 0 900 310" role="img" aria-labelledby="d3t d3d"><title id="d3t">図3 中心データの概念関係</title><desc id="d3d">exam participantは固定5問のsubmissionを持ち、各submissionには回答・操作記録とQ5評価が関連する。ownerとassisted targetは関係テーブルで結ばれる別participant。管理者の集計によりpresentation snapshotが質問と全participant entryを保持し、結果公開設定は独立する。legacy questionsとanswer_logsはこのアプリの読書き対象外。</desc><defs><marker id="arrow3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0L0 6L9 3z" fill="#35596d"/></marker></defs><rect class="svg-box" x="30" y="55" width="170" height="66" rx="10"/><text class="svg-label" x="115" y="84">participant</text><text class="svg-small" x="115" y="105">owner / targetを含む</text><rect class="svg-private" x="270" y="55" width="180" height="66" rx="10"/><text class="svg-label" x="360" y="84">submission</text><text class="svg-small" x="360" y="105">revision・question versions</text><rect class="svg-box" x="520" y="30" width="160" height="60" rx="10"/><text class="svg-label" x="600" y="66">回答群</text><rect class="svg-box" x="520" y="110" width="160" height="60" rx="10"/><text class="svg-label" x="600" y="146">Q5 assessment</text><rect class="svg-safe" x="270" y="205" width="180" height="68" rx="10"/><text class="svg-label" x="360" y="235">presentation snapshot</text><text class="svg-small" x="360" y="257">questions + entries</text><rect class="svg-private" x="520" y="205" width="160" height="68" rx="10"/><text class="svg-label" x="600" y="235">result settings</text><text class="svg-small" x="600" y="257">独立したvisible状態</text><path d="M200 88H270M450 75H520M450 95H490V140H520M115 121V238H270M450 239H520" stroke="#35596d" stroke-width="2" fill="none" marker-end="url(#arrow3)"/><text class="svg-small" x="115" y="188">assisted linkでowner–target関係</text><rect class="svg-bound" x="730" y="55" width="145" height="90" rx="10"/><text class="svg-label" x="802" y="91">legacy tables</text><text class="svg-small" x="802" y="116">このアプリは</text><text class="svg-small" x="802" y="134">読書きしない</text></svg><figcaption>図3. 中心データの概念図（物理ERではありません）</figcaption><p class="ref">正本: <a href="../openspec/specs/stcirt/spec.md#data-model">Data Model</a>、R2–R4、R6–R9</p><p class="diagram-alt"><strong>文章での説明:</strong> participantからowner-target関係、submission、回答、評価へつながります。管理者集計が別に共有snapshotを作り、参加者ごとの結果行を含めます。本人結果の公開設定はsnapshotや発表stageとは独立です。旧<code>questions</code>・<code>answer_logs</code>は現行アプリの読書き対象外です。これは概念関係で、物理列・外部キーの完全図ではありません。</p></figure></section>
- <section id="publication"><p class="kicker">06 · 公開</p><h2>発表projectionと本人結果は別の公開系統</h2><p>発表の公開範囲はstageとprojection-hidden状態で決まり、本人結果は専用のvisible設定とparticipant scopeで決まります。一方を隠す・公開する操作は他方のstageやsnapshotを更新しません。公開情報は必要最小限のshapeに制限されます。</p><figure class="diagram"><svg viewBox="0 0 900 290" role="img" aria-labelledby="d4t d4d"><title id="d4t">図4 snapshotから二系統へ分岐する公開</title><desc id="d4d">管理者による明示集計が共通snapshotを作る。そこから発表projectionはstageとprojection-hiddenフラグで制御され、別系統のparticipant resultsはever-publishedとvisible設定、participant cookieと本人scopeで制御される。公開後の更新は再集計まで既存snapshotを使う。</desc><defs><marker id="arrow4" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0L0 6L9 3z" fill="#35596d"/></marker></defs><rect class="svg-safe" x="40" y="100" width="190" height="76" rx="12"/><text class="svg-title" x="135" y="131">明示aggregate</text><text class="svg-small" x="135" y="155">snapshot更新</text><rect class="svg-box" x="350" y="100" width="190" height="76" rx="12"/><text class="svg-title" x="445" y="131">共有snapshot</text><text class="svg-small" x="445" y="155">一つの集計revision</text><rect class="svg-private" x="655" y="35" width="205" height="85" rx="12"/><text class="svg-title" x="757" y="68">公開発表projection</text><text class="svg-small" x="757" y="94">stage / hidden</text><rect class="svg-private" x="655" y="170" width="205" height="85" rx="12"/><text class="svg-title" x="757" y="203">本人結果</text><text class="svg-small" x="757" y="229">visible / cookie scope</text><path d="M230 138H350M540 125H600V77H655M540 151H600V212H655" stroke="#35596d" stroke-width="2" fill="none" marker-end="url(#arrow4)"/><text class="svg-small" x="600" y="48">独立制御 A</text><text class="svg-small" x="600" y="250">独立制御 B</text></svg><figcaption>図4. 公開先と公開制御の分岐</figcaption><p class="ref">正本: <a href="../openspec/specs/stcirt/spec.md#requirement-r7-presentation-snapshot-and-ranking">R7</a>、<a href="../openspec/specs/stcirt/spec.md#requirement-r8-staged-result-disclosure">R8</a>、<a href="../openspec/specs/stcirt/spec.md#requirement-r9-participant-result-visibility">R9</a></p><p class="diagram-alt"><strong>文章での説明:</strong> 明示集計で得た同じsnapshotが発表と本人結果の材料になります。発表projectionはstage/hiddenで制御され、本人結果は別の公開設定と認証済み参加者scopeで制御されます。片方の公開設定変更で他方の状態や集計revisionは変わりません。</p></figure><ul><li><strong>質問stage:</strong> 質問内容に限定し、正解・解説を含めません。</li><li><strong>回答stage:</strong> 正本で許可された答え・解説に限定し、内部rubric、raw JEV応答、assessment状態を返しません。Q5の本人回答表示には追加のidentity条件があります。</li><li><strong>順位stage:</strong> 発表中のrank groupだけを返します。全体の内部snapshotや未発表情報を公開しません。</li><li><strong>本人結果:</strong> APIでは非公開時に <code>waiting</code> 状態を返しますが、これはAPIの状態であり画面に表示する文言ではありません。認証済み利用者の <code>/results</code> と完了画面では、結果の詳細が非表示のとき、結果状態の表示は「回答済み」のみです。snapshotに本人行がない・不正な場合も0点の架空結果に置き換えず、画面上は「回答済み」とします。<code>/results</code> の未認証・session期限切れ画面は別の回復状態です。</li></ul></section>
- <section id="trust"><p class="kicker">07 · 認証と境界</p><h2>認証主体と信頼境界</h2><p>参加者・管理者・内部retry callerは別の権限です。ブラウザからの変更要求はsame-originを確認し、内部workerはBearer認証を使います。PIN、secret、cookie、token、内部assessmentデータなどの秘密値をこの資料には記載しません。</p><figure class="diagram"><svg viewBox="0 0 900 360" role="img" aria-labelledby="d5t d5d"><title id="d5t">図5 認証主体と信頼境界</title><desc id="d5d">ブラウザ内のparticipant sessionとadmin sessionは別々のHttpOnly Cookieとして保存・送信され、JavaScriptから読めない。ブラウザの変更はsame-origin検査を通過する。内部retry callerはBearer認証でアプリにアクセスする。server側に設定された秘密はserverからDBやJEV providerへ使われ、ブラウザへ返さない。</desc><defs><marker id="arrow5" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0L0 6L9 3z" fill="#35596d"/></marker></defs><rect class="svg-box" x="25" y="62" width="200" height="230" rx="14"/><text class="svg-title" x="125" y="93">ブラウザ</text><rect class="svg-safe" x="48" y="115" width="154" height="54" rx="8"/><text class="svg-small" x="125" y="138">participant HttpOnly</text><text class="svg-small" x="125" y="157">Cookie</text><rect class="svg-safe" x="48" y="186" width="154" height="54" rx="8"/><text class="svg-small" x="125" y="209">admin HttpOnly</text><text class="svg-small" x="125" y="228">Cookie（別系統）</text><text class="svg-small" x="125" y="270">JSから読めない</text><rect class="svg-bound" x="300" y="62" width="245" height="230" rx="14"/><text class="svg-title" x="422" y="94">server境界</text><text class="svg-label" x="422" y="145">Origin確認・認可</text><text class="svg-small" x="422" y="177">秘密設定を保持</text><text class="svg-small" x="422" y="207">署名検証・scope解決</text><text class="svg-small" x="422" y="256">秘密値は応答へ出さない</text><rect class="svg-private" x="640" y="55" width="220" height="75" rx="12"/><text class="svg-title" x="750" y="88">DB</text><text class="svg-small" x="750" y="112">状態・回答・snapshot</text><rect class="svg-private" x="640" y="222" width="220" height="75" rx="12"/><text class="svg-title" x="750" y="255">JEV provider</text><text class="svg-small" x="750" y="279">Q5内容をserver経由で評価</text><path d="M225 150H300M225 214H270V190H300M545 113H640M545 245H590V260H640" stroke="#35596d" stroke-width="2" fill="none" marker-end="url(#arrow5)"/><text class="svg-small" x="262" y="137">same-origin</text><rect class="svg-box" x="300" y="310" width="245" height="40" rx="9"/><text class="svg-small" x="422" y="336">内部retry caller: Bearer認証</text><path d="M422 310V292" stroke="#8a672e" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#arrow5)"/></svg><figcaption>図5. ブラウザ、server、外部依存の信頼境界</figcaption><p class="ref">正本: <a href="../openspec/specs/stcirt/spec.md#authorization-and-trust-boundaries">Authorization and trust boundaries</a>、R2、R4、R6、R8–R9</p><p class="diagram-alt"><strong>文章での説明:</strong> ブラウザはparticipant/adminの別々のHttpOnly cookieを保存して送信し、client JavaScriptからは読めません。serverはcookie、Origin、許可scopeを検証してからDBを操作します。JEV retryは別のBearer主体です。秘密設定はserver側に留め、実際の認証値は図にも説明にも載せません。</p></figure><div class="callout"><strong>same-originと認証は別の確認:</strong> Origin検査はブラウザからの変更要求を守り、署名cookieや内部Bearerは呼出主体を示します。<code>?presenter=1</code>は認証ではありません。</div></section>
- <section id="data"><p class="kicker">08 · データ関係</p><h2>永続状態とsnapshot</h2><p>概念上、participantは自身のsubmissionと回答を持ち、owner-target関係は別々のparticipantを結びます。Q5のassessmentは保存済みsubmission revisionに対応します。明示aggregateで作られるpresentation snapshotは質問とparticipant entryをまとめ、発表と本人結果の共通材料になります。result visibility設定とprojectionの表示状態は独立しています。</p><p>図3はこの関係を示す概念図で、物理ERや列・キーの定義ではありません。legacy <code>questions</code>・<code>answer_logs</code>は現行アプリの読書き対象外です。詳細は正本の<a href="../openspec/specs/stcirt/spec.md#data-model">Data Model</a>を参照してください。</p><p class="ref">図: <a href="#diagram-data">図3</a> · 正本: <a href="../openspec/specs/stcirt/spec.md#data-model">Data Model</a>、R2–R4、R6–R9</p></section>
- <section id="grading"><p class="kicker">09 · 採点とretry</p><h2>Q5 durable retry — 回答保存と評価の分離</h2><p>Q5のquestion/rubricは対応する <code>tamami-egg-v1</code> pairとrevisionで扱います。互換性とreadinessをfail-closedにし、過去行へ版を推測してbackfillしません。Q5自由記述の保存transactionにはdurable pending評価が含まれます。回答保存後、応答を返してから評価workerを起動します。API key欠如やworker起動失敗でも回答は取り消さず、pendingをretry入口で処理できます。schedulerの設定や実運用は確認されていないため、定期処理の成功を保証しません。</p><figure class="diagram"><svg viewBox="0 0 920 310" role="img" aria-labelledby="d6t d6d"><title id="d6t">図6 Q5 durable retryの概念</title><desc id="d6d">一つのtransactionで5問回答とpending評価を保存した後、回答応答を返す。応答後にJEV workerを起動し、評価成功はgraded、再試行可能な失敗はpending、終端失敗はfailedになる。API key不足・worker起動失敗時にもpendingを保持する。internal retry入口はBearer認証される。外部schedulerの設定・稼働は未確認。</desc><defs><marker id="arrow6" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0L0 6L9 3z" fill="#35596d"/></marker><marker id="arrowGold6" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0L0 6L9 3z" fill="#8a672e"/></marker></defs><rect class="svg-safe" x="25" y="90" width="175" height="74" rx="11"/><text class="svg-label" x="112" y="120">atomic save</text><text class="svg-small" x="112" y="143">answers + pending</text><rect class="svg-box" x="255" y="90" width="150" height="74" rx="11"/><text class="svg-label" x="330" y="120">API応答</text><text class="svg-small" x="330" y="143">回答確定</text><rect class="svg-box" x="460" y="90" width="160" height="74" rx="11"/><text class="svg-label" x="540" y="120">JEV worker</text><text class="svg-small" x="540" y="143">claim / evaluate</text><rect class="svg-safe" x="690" y="25" width="175" height="62" rx="11"/><text class="svg-label" x="777" y="63">graded</text><rect class="svg-private" x="690" y="110" width="175" height="62" rx="11"/><text class="svg-label" x="777" y="148">retry pending</text><rect class="svg-bound" x="690" y="195" width="175" height="62" rx="11"/><text class="svg-label" x="777" y="233">failed</text><path d="M200 127H255M405 127H460M620 106L690 56M620 127H690M620 148L690 226" stroke="#35596d" stroke-width="2" fill="none" marker-end="url(#arrow6)"/><path d="M777 172V195" stroke="#8a672e" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#arrowGold6)"/><path d="M690 141H645V282H540V164" stroke="#8a672e" stroke-width="2" stroke-dasharray="7 5" fill="none" marker-end="url(#arrowGold6)"/><rect class="svg-box" x="260" y="235" width="200" height="52" rx="10"/><text class="svg-small" x="360" y="257">internal retry endpoint</text><text class="svg-small" x="360" y="276">Bearer認証</text><path d="M460 260H540V164" stroke="#35596d" stroke-width="2" fill="none" marker-end="url(#arrow6)"/><text class="svg-small" x="112" y="205">key / 起動失敗でも回答とpending保持</text><text class="svg-small" x="777" y="286">scheduler: 設定・稼働 未確認</text></svg><figcaption>図6. 回答保存後のQ5評価とretry</figcaption><p class="ref">正本: <a href="../openspec/specs/stcirt/spec.md#api">API</a> (<code>POST /api/internal/jev/retry</code>)、<a href="../openspec/specs/stcirt/spec.md#environment">Environment</a>、R2・R7</p><p class="diagram-alt"><strong>文章での説明:</strong> 5問回答とpending評価を同じtransactionで保存します。その後に回答APIが応答し、非同期workerが評価します。成功はgraded、再試行可能なエラーはpending、終端エラーはfailedです。設定不足やworker起動失敗で回答を戻さず、internal Bearer retryでpendingを処理できます。schedulerが本番で定期実行されるかは未確認です。</p></figure><div id="operations" class="req"><h3>まだ合意・確認されていないこと</h3><div class="grid"><article class="card"><h3>Q5の版</h3><p>questionとrubricを対応するversion pairとして扱い、現在の対応pair以外を推測で互換にしません。評価のreadinessはaggregate前に確認されます。</p></article><article class="card"><h3>非同期評価</h3><p>workerが呼ばれた場合の状態遷移やretry動作は契約に記載されています。これはschedulerの配置、監視、実稼働や所要時間の保証ではありません。</p></article><article class="card"><h3>データ保持・復旧</h3><p>通常retention、削除伝播、backup/restore、RPO/RTOは合意値がありません。データリセットmigrationを通常保持手順として扱いません。</p></article><article class="card"><h3>性能・可用性</h3><p>本番SLO、remote Turso capacity、p95、可用性、retry完了目標は未確認です。ローカル測定から運用目標を推定しません。</p></article><article class="card"><h3>アクセシビリティの証拠</h3><p>要求と一部browser testのtraceabilityがありますが、支援技術を含む完全な適合証明ではありません。200% zoom・reduced motionの完全な確認も別途必要です。</p></article><article class="card"><h3>テスト証拠</h3><p><a href="spec-management.md">spec-management</a>の対応は既存のtest entry pointの索引です。テスト実行済みや要求網羅率を示すものではありません。</p></article></div><p class="callout caution"><strong>未決事項を実装済み保証として読まないでください。</strong> scheduler運用、保持・削除、backup/restore、RPO/RTO、本番SLO、完全なa11y evidenceは未合意または未確認です。</p></div></section>
- <section id="apis"><p class="kicker">10 · APIへの案内</p><h2>代表API索引</h2><p>以下は用途・主体と正本内の参照先を探す索引です。厳密なstatus、request/response shape、cache、replay契約の複製ではありません。API契約は常に<a href="../openspec/specs/stcirt/spec.md#api">正本 API節</a>を参照してください。</p><div class="table-wrap"><table><caption>代表的なAPIと正本へのリンク</caption><thead><tr><th scope="col">用途</th><th scope="col">認証主体</th><th scope="col">method / path</th><th scope="col">正本の参照先</th></tr></thead><tbody>
-<tr><td>5問取得</td><td>公開。試験開始前にparticipant session/stateを確認</td><td><code>GET /api/questions/batch</code></td><td><a href="../openspec/specs/stcirt/spec.md#get-apiquestionsbatch">API / batch</a>、<a href="#r1-map">R1</a></td></tr>
-<tr><td>5問一括保存・修正</td><td>participant cookie + same-origin Origin</td><td><code>POST /api/answers/batch</code></td><td><a href="../openspec/specs/stcirt/spec.md#apianswersbatch">API / batch</a>、R2–R3</td></tr>
-<tr><td>最新submission確認</td><td>participant cookie</td><td><code>GET /api/answers/latest</code></td><td><a href="../openspec/specs/stcirt/spec.md#get-apianswerslatest">API / latest</a>、R1・R3</td></tr>
-<tr><td>participant session作成・確認・終了</td><td>PINで作成、以後participant cookie</td><td><code>POST /api/participants/session</code><br><code>GET /api/participants/session</code><br><code>DELETE /api/participants/session</code></td><td><a href="../openspec/specs/stcirt/spec.md#apiparticipantssession">API / session</a>、R4</td></tr>
-<tr><td>代理scope・target登録</td><td>owner participant cookie</td><td><code>GET /api/participants/assisted</code><br><code>POST /api/participants/assisted</code></td><td><a href="../openspec/specs/stcirt/spec.md#apiparticipantsassisted">API / assisted</a>、R2–R4</td></tr>
-<tr><td>admin session作成・確認・終了</td><td>別個のadmin PIN/session</td><td><code>POST /api/admin/session</code><br><code>GET /api/admin/session</code><br><code>DELETE /api/admin/session</code></td><td><a href="../openspec/specs/stcirt/spec.md#apiadminsession">API / admin session</a>、R6</td></tr>
-<tr><td>発表状態・管理操作</td><td>admin cookie。公開読取は別API</td><td><code>GET /api/admin/presentation</code><br><code>POST /api/admin/presentation</code></td><td><a href="../openspec/specs/stcirt/spec.md#apiadminpresentation">API / admin presentation</a>、R6–R8</td></tr>
-<tr><td>管理者用発表deck</td><td>admin cookie</td><td><code>GET /api/admin/presentation/deck</code></td><td><a href="../openspec/specs/stcirt/spec.md#get-apiadminpresentationdeck">API / deck</a>、R6–R8</td></tr>
-<tr><td>公開発表projection</td><td>公開</td><td><code>GET /api/presentation</code></td><td><a href="../openspec/specs/stcirt/spec.md#get-apipresentation">API / projection</a>、R8</td></tr>
-<tr><td>本人結果の公開設定</td><td>admin cookie + same-origin Origin</td><td><code>POST /api/admin/participant-results</code></td><td><a href="../openspec/specs/stcirt/spec.md#apiadminparticipant-results">API / admin results</a>、R6・R9</td></tr>
-<tr><td>認証済み本人結果取得</td><td>participant cookie。assisted targetはowner関係から解決</td><td><code>GET /api/participants/results</code></td><td><a href="../openspec/specs/stcirt/spec.md#get-apiparticipantsresults">API / results</a>、R9</td></tr>
-<tr><td>Q5 retry worker</td><td>internal Bearer</td><td><code>POST /api/internal/jev/retry</code></td><td><a href="../openspec/specs/stcirt/spec.md#post-apiinternaljevretry">API / retry</a>、R2・Environment</td></tr>
-</tbody></table></div><p class="ref">legacy単一回答APIやcursor APIも正本には記載されていますが、このガイドでは現在の5問参加フローと誤認されないよう主フロー図に含めません。</p></section>
- <section id="traceability"><p class="kicker">11 · 正本との対応表</p><h2>R1–R9を章・図・代表APIへたどる</h2><p>Scenario traceabilityの詳しい実装・test entry pointは<a href="spec-management.md">docs/spec-management.md</a>を参照してください。表は読者向け索引です。API契約、実装状態、test assertionの網羅性を保証しません。</p><div class="table-wrap"><table><caption>Requirement cross-reference</caption><thead><tr><th scope="col">正本要求</th><th scope="col">主題 / HTML章</th><th scope="col">図</th><th scope="col">代表API</th><th scope="col">正本Scenario</th></tr></thead><tbody>
-<tr id="r1-map"><td><a href="../openspec/specs/stcirt/spec.md#requirement-r1-fixed-five-question-set">R1</a></td><td>5問取得と開始条件 · <a href="#answer-flow">3</a></td><td>1, 2</td><td><code>GET /api/questions/batch</code>; <code>GET /api/answers/latest</code></td><td>R1-S1–S3</td></tr>
-<tr id="r2-map"><td><a href="../openspec/specs/stcirt/spec.md#requirement-r2-participant-authenticated-answer-confirmation-and-recording">R2</a></td><td>確認保存、評価起動、retry · <a href="#answer-flow">3</a>, <a href="#grading">9</a></td><td>1, 2, 3, 5, 6</td><td><code>POST /api/answers/batch</code>; <code>POST /api/internal/jev/retry</code></td><td>R2-S1–S3</td></tr>
-<tr id="r3-map"><td><a href="../openspec/specs/stcirt/spec.md#requirement-r3-completion">R3</a></td><td>完了・修正・代理分離 · <a href="#answer-flow">3</a>, <a href="#assisted">4</a></td><td>2, 3</td><td><code>GET /api/answers/latest</code>; <code>POST /api/participants/assisted</code></td><td>R3-S1–S3</td></tr>
-<tr id="r4-map"><td><a href="../openspec/specs/stcirt/spec.md#requirement-r4-home-and-participant-entry">R4</a></td><td>入口・session · <a href="#overview">2</a>, <a href="#trust">7</a></td><td>1, 2, 5</td><td><code>POST/GET/DELETE /api/participants/session</code></td><td>R4-S1–S5</td></tr>
-<tr id="r5-map"><td><a href="../openspec/specs/stcirt/spec.md#requirement-r5-accessible-responsive-interface">R5</a></td><td>狭幅・keyboard・focus · <a href="#overview">2</a>, <a href="#answer-flow">3</a></td><td>2</td><td><code>/answer</code> UI</td><td>R5-S1–S3</td></tr>
-<tr id="r6-map"><td><a href="../openspec/specs/stcirt/spec.md#requirement-r6-isolated-administrator-authentication">R6</a></td><td>admin認証と管理境界 · <a href="#overview">2</a>, <a href="#trust">7</a></td><td>1, 5</td><td><code>/api/admin/session</code>; <code>/api/admin/presentation</code></td><td>R6-S1–S4</td></tr>
-<tr id="r7-map"><td><a href="../openspec/specs/stcirt/spec.md#requirement-r7-presentation-snapshot-and-ranking">R7</a></td><td>aggregate・snapshot・順位 · <a href="#aggregate">5</a></td><td>1, 3, 4, 6</td><td><code>POST /api/admin/presentation</code></td><td>R7-S1–S3</td></tr>
-<tr id="r8-map"><td><a href="../openspec/specs/stcirt/spec.md#requirement-r8-staged-result-disclosure">R8</a></td><td>発表stageの公開制御 · <a href="#publication">6</a></td><td>1, 4, 5</td><td><code>GET /api/presentation</code>; <code>GET /api/admin/presentation/deck</code></td><td>R8-S1–S3</td></tr>
-<tr id="r9-map"><td><a href="../openspec/specs/stcirt/spec.md#requirement-r9-participant-result-visibility">R9</a></td><td>本人結果とscope · <a href="#publication">6</a>, <a href="#assisted">4</a></td><td>1, 3, 4, 5</td><td><code>POST /api/admin/participant-results</code>; <code>GET /api/participants/results</code></td><td>R9-S1–S3</td></tr>
-</tbody></table></div><p>詳細要求は正本の<a href="../openspec/specs/stcirt/spec.md#requirements">Requirements</a>、APIは<a href="../openspec/specs/stcirt/spec.md#api">API</a>、主体の権限は<a href="../openspec/specs/stcirt/spec.md#authorization-and-trust-boundaries">Authorization and trust boundaries</a>を参照してください。</p></section>
- <footer class="foot"><p>この文書は外部通信・外部font・runtime・JavaScriptを必要としない単一HTMLです。印刷時にも正本注意書きを含みます。正本リンクは同じcheckout内の相対参照です。最終確認は正本と現行実装に対して行ってください。</p><p><a href="../openspec/specs/stcirt/spec.md">正本へ戻る: openspec/specs/stcirt/spec.md</a> · <a href="#toc-title">目次へ戻る</a></p></footer>
-</main>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Stcirtの全体像、参加者フロー、公開境界を理解するための参考資料。製品仕様の正本はOpenSpecです。"
+    />
+    <title>Stcirt — 人間向け仕様ガイド</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #192b3a;
+        --muted: #536778;
+        --line: #d5dfe5;
+        --paper: #fff;
+        --wash: #f2f6f8;
+        --blue: #14577a;
+        --teal: #167568;
+        --amber: #8b5700;
+        --red: #8e3c42;
+        --shadow: 0 10px 30px #18384a12;
+        --max: 1120px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: auto;
+        scroll-padding-top: 1rem;
+      }
+      body {
+        margin: 0;
+        background: #eaf0f3;
+        color: var(--ink);
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        line-height: 1.7;
+      }
+      a {
+        color: #075d83;
+        text-decoration-thickness: 0.08em;
+        text-underline-offset: 0.16em;
+      }
+      a:hover {
+        text-decoration-thickness: 0.14em;
+      }
+      a:focus-visible {
+        outline: 3px solid #d38a00;
+        outline-offset: 3px;
+        border-radius: 2px;
+      }
+      .shell {
+        max-width: var(--max);
+        margin: auto;
+        padding: clamp(1rem, 4vw, 3rem);
+      }
+      header.hero {
+        background: #15394e;
+        color: white;
+        padding: clamp(2rem, 6vw, 5rem) clamp(1rem, 5vw, 4rem);
+      }
+      .hero-inner {
+        max-width: var(--max);
+        margin: auto;
+      }
+      .eyebrow {
+        font-size: 0.82rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #c9e6ef;
+      }
+      .hero h1 {
+        font-size: clamp(2rem, 5vw, 3.7rem);
+        line-height: 1.14;
+        margin: 0.4rem 0 1rem;
+      }
+      .hero p {
+        max-width: 70ch;
+      }
+      .hero a {
+        color: #c9f0ff;
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        margin-top: 1.5rem;
+      }
+      .meta span {
+        border: 1px solid #ffffff55;
+        border-radius: 999px;
+        padding: 0.2rem 0.7rem;
+        font-size: 0.88rem;
+      }
+      .notice {
+        border-left: 5px solid #d38a00;
+        background: #fff7df;
+        padding: 1rem 1.2rem;
+        margin: 1.4rem 0;
+        color: #372d1b;
+      }
+      .notice strong {
+        display: block;
+        font-size: 1.07rem;
+      }
+      .notice p {
+        margin: 0.3rem 0;
+      }
+      .panel,
+      section {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        box-shadow: var(--shadow);
+        padding: clamp(1rem, 3vw, 2rem);
+        margin: 1.25rem 0;
+      }
+      .panel h2,
+      section h2 {
+        margin-top: 0;
+        line-height: 1.3;
+      }
+      .toc ol {
+        columns: 2;
+        column-gap: 2.5rem;
+        padding-left: 1.5rem;
+      }
+      .toc li {
+        break-inside: avoid;
+        margin: 0.35rem 0;
+      }
+      .kicker {
+        font-size: 0.78rem;
+        letter-spacing: 0.1em;
+        color: var(--blue);
+        font-weight: 750;
+        text-transform: uppercase;
+      }
+      .lede {
+        font-size: 1.08rem;
+        max-width: 76ch;
+        color: #30495a;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+        gap: 1rem;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 1rem;
+        background: var(--wash);
+      }
+      .card h3 {
+        margin: 0.1rem 0 0.4rem;
+        font-size: 1.05rem;
+      }
+      .tag {
+        display: inline-block;
+        border: 1px solid #aac2cf;
+        border-radius: 999px;
+        padding: 0.05rem 0.55rem;
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: #20495f;
+        white-space: nowrap;
+      }
+      .callout {
+        border-left: 4px solid var(--teal);
+        padding: 0.55rem 1rem;
+        background: #edf8f5;
+      }
+      .caution {
+        border-left-color: #b97b18;
+        background: #fff8e9;
+      }
+      .flow {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: stretch;
+        gap: 0.5rem;
+        padding: 0;
+        list-style: none;
+      }
+      .flow li {
+        flex: 1 1 125px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.7rem;
+        background: #f5f9fb;
+      }
+      .flow li:not(:last-child)::after {
+        content: "→";
+        position: relative;
+        left: calc(100% + 0.25rem);
+        color: var(--blue);
+        font-weight: 800;
+      }
+      .table-wrap {
+        max-width: 100%;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        margin: 1rem 0;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 650px;
+        font-size: 0.94rem;
+      }
+      caption {
+        text-align: left;
+        font-weight: 700;
+        padding: 0.75rem;
+        background: var(--wash);
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.7rem 0.8rem;
+        border-bottom: 1px solid var(--line);
+      }
+      th {
+        background: #edf3f6;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 0.92em;
+        overflow-wrap: anywhere;
+      }
+      .diagram {
+        margin: 1.25rem 0;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: #fbfdfe;
+        padding: 0.75rem;
+      }
+      .diagram svg {
+        display: block;
+        width: 100%;
+        height: auto;
+        max-height: 560px;
+      }
+      .diagram figcaption {
+        font-weight: 750;
+        margin: 0.4rem 0.3rem;
+      }
+      .diagram-alt {
+        margin: 0.35rem 0.3rem 0.2rem;
+        color: #334d5c;
+      }
+      .svg-box {
+        fill: #f4f8fa;
+        stroke: #35718c;
+        stroke-width: 2;
+      }
+      .svg-safe {
+        fill: #e9f5f1;
+        stroke: #27796a;
+        stroke-width: 2;
+      }
+      .svg-private {
+        fill: #fff4e4;
+        stroke: #a56b16;
+        stroke-width: 2;
+      }
+      .svg-bound {
+        fill: #f9ecec;
+        stroke: #a14c53;
+        stroke-width: 2;
+        stroke-dasharray: 7 5;
+      }
+      .svg-line {
+        stroke: #35596d;
+        stroke-width: 2;
+        fill: none;
+        marker-end: url(#arrow);
+      }
+      .svg-dash {
+        stroke: #8a672e;
+        stroke-width: 2;
+        stroke-dasharray: 7 5;
+        fill: none;
+        marker-end: url(#arrowGold);
+      }
+      .svg-label {
+        font:
+          16px system-ui,
+          sans-serif;
+        fill: #192b3a;
+        text-anchor: middle;
+      }
+      .svg-small {
+        font:
+          13px system-ui,
+          sans-serif;
+        fill: #334d5c;
+        text-anchor: middle;
+      }
+      .svg-title {
+        font:
+          700 18px system-ui,
+          sans-serif;
+        fill: #192b3a;
+        text-anchor: middle;
+      }
+      .req {
+        border-top: 1px solid var(--line);
+        padding: 1rem 0;
+      }
+      .req:first-of-type {
+        border-top: 0;
+      }
+      .req h3 {
+        margin: 0.15rem 0;
+      }
+      .req p {
+        margin: 0.45rem 0;
+      }
+      .req aside {
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
+      .ref {
+        font-size: 0.91rem;
+      }
+      .foot {
+        color: var(--muted);
+        font-size: 0.9rem;
+        padding: 1rem 0 2rem;
+      }
+      abbr[title] {
+        text-decoration: underline dotted;
+        cursor: help;
+      }
+      @media (max-width: 620px) {
+        .shell {
+          padding: 0.75rem;
+        }
+        .toc ol {
+          columns: 1;
+        }
+        .flow li {
+          flex-basis: 100%;
+        }
+        .flow li:not(:last-child)::after {
+          content: "↓";
+          left: auto;
+          float: right;
+        }
+        .hero {
+          padding: 2rem 1rem;
+        }
+        .table-wrap {
+          margin-left: -0.15rem;
+          margin-right: -0.15rem;
+        }
+      }
+      @media print {
+        body {
+          background: white;
+          color: #111;
+          font-size: 10pt;
+        }
+        .hero {
+          background: white !important;
+          color: #111;
+          padding: 0 0 1rem;
+          border-bottom: 2px solid #333;
+        }
+        .hero a {
+          color: #111;
+        }
+        .shell {
+          max-width: none;
+          padding: 0;
+        }
+        .panel,
+        section {
+          box-shadow: none;
+          border: 0;
+          border-radius: 0;
+          padding: 1rem 0;
+          margin: 0.4rem 0;
+          break-inside: auto;
+        }
+        .notice {
+          border: 1px solid #888;
+          background: white;
+        }
+        .meta span {
+          border-color: #777;
+        }
+        .toc a::after {
+          content: " (" attr(href) ")";
+          font-size: 8pt;
+          color: #444;
+        }
+        .diagram,
+        table,
+        .card,
+        .callout {
+          break-inside: avoid;
+        }
+        .diagram svg {
+          max-height: 360px;
+        }
+        a {
+          color: #111;
+          text-decoration: underline;
+        }
+        thead {
+          display: table-header-group;
+        }
+        tr {
+          break-inside: avoid;
+        }
+        .table-wrap {
+          overflow: visible;
+          border: 0;
+        }
+        table {
+          min-width: 0;
+          font-size: 8.5pt;
+        }
+        th,
+        td {
+          padding: 0.35rem;
+          border: 1px solid #aaa;
+        }
+        .flow li:not(:last-child)::after {
+          color: #111;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <div class="eyebrow">Stcirt · 読みものとしての仕様ガイド</div>
+        <h1>5問の試験から、集計と公開まで</h1>
+        <p>
+          参加者の回答、管理者の集計、発表投影、本人結果がどうつながるかを、図と案内索引で把握するための資料です。
+        </p>
+        <div class="notice" role="note">
+          <strong
+            >このHTMLは理解を助ける参考資料であり、最新でない場合があります。最新仕様・要件・API契約は
+            openspec/specs/stcirt/spec.md を確認してください。</strong
+          >
+          <p>
+            正本: <a href="../openspec/specs/stcirt/spec.md">../openspec/specs/stcirt/spec.md</a>
+          </p>
+        </div>
+        <div class="meta" aria-label="文書メタデータ">
+          <span>生成・正本確認: 2026-10-12 09:24 UTC</span
+          ><span
+            >正本 SHA-256:
+            <code>c8a56b08d391e6c7ba1345a257808c8202b948310b3e99f29feda35deacc4d78</code></span
+          ><span>参考 HEAD: <code>35d1c57492bd92f7a7995507713dc39bed6b3908</code></span>
+        </div>
+      </div>
+    </header>
+    <main class="shell">
+      <section class="panel toc" aria-labelledby="toc-title">
+        <p class="kicker">Contents</p>
+        <h2 id="toc-title">目次</h2>
+        <ol>
+          <li><a href="#read">読み方と正本</a></li>
+          <li><a href="#overview">サービス概要と用語</a></li>
+          <li><a href="#answer-flow">試験開始から回答確定</a></li>
+          <li><a href="#assisted">代理回答</a></li>
+          <li><a href="#aggregate">集計・順位・発表</a></li>
+          <li><a href="#publication">公開データと本人結果</a></li>
+          <li><a href="#trust">認証と信頼境界</a></li>
+          <li><a href="#data">データ関係</a></li>
+          <li><a href="#grading">採点と運用上の未決事項</a></li>
+          <li><a href="#apis">代表API</a></li>
+          <li><a href="#traceability">正本との対応表</a></li>
+        </ol>
+        <p class="ref">
+          どの章から読んでも、最新契約は<a href="../openspec/specs/stcirt/spec.md"
+            >正本 <code>openspec/specs/stcirt/spec.md</code></a
+          >で確認してください。
+        </p>
+      </section>
+      <section id="read">
+        <p class="kicker">01 · 読み方</p>
+        <h2>正本と、このガイドの役割</h2>
+        <div class="notice">
+          <strong
+            >このHTMLは理解を助ける参考資料であり、最新でない場合があります。最新仕様・要件・API契約は
+            openspec/specs/stcirt/spec.md を確認してください。</strong
+          >
+          <p>
+            正本: <a href="../openspec/specs/stcirt/spec.md">../openspec/specs/stcirt/spec.md</a>
+          </p>
+        </div>
+        <p class="lede">
+          <code>openspec/specs/stcirt/spec.md</code
+          >だけが合意済み製品要求とAPI契約の情報源です。このHTMLは全体の流れ、境界、用語を説明する派生資料で、要求・Scenario・APIの厳密な入出力契約を複製しません。自動更新・同期はありません。実装や正本が変わると説明が古くなることがあります。
+        </p>
+        <div class="grid">
+          <article class="card">
+            <h3>正本のSHA-256</h3>
+            <p>
+              上記は2026-10-12 09:24 UTCに、作業ツリーの
+              <code>openspec/specs/stcirt/spec.md</code> を対象に
+              <code>sha256sum</code>
+              で計算した実バイト列の識別値です。この時点の内容を識別します。正本ファイルが変更されれば値は古くなります。
+            </p>
+          </article>
+          <article class="card">
+            <h3>参考 HEAD</h3>
+            <p>
+              作業時のGit
+              HEADです。作業ツリーには未commit変更があり得るため、HEAD単独では参照内容を特定できません。SHA-256とHEADの役割を混同しないでください。
+            </p>
+          </article>
+          <article class="card">
+            <h3>仕様運用と証拠</h3>
+            <p>
+              <a href="spec-management.md">docs/spec-management.md</a
+              >はR1–R9からScenario、実装、既存テストへのtraceability索引です。テスト宣言の存在は、全assertionの監査やテスト実行を意味しません。
+            </p>
+          </article>
+        </div>
+        <p class="callout">
+          図は概念説明です。列、キー、制約の完全な定義は正本のData ModelとAPI節を参照してください。
+        </p>
+      </section>
+      <section id="overview">
+        <p class="kicker">02 · 全体像</p>
+        <h2>サービス概要と用語</h2>
+        <p class="lede">
+          Stcirtは4問の選択式と1問の自由記述を出す試験アプリです。参加者は表示名とイベント共通PINで参加し、回答中は採点情報を受け取りません。管理者が集計を明示実行すると、その時点のスナップショットを発表投影と本人結果の共通基盤にします。
+        </p>
+        <div class="grid">
+          <article class="card">
+            <h3>participant / 参加者</h3>
+            <p>参加者Cookieで識別される人。自身の回答・修正と、公開後の自身の結果を扱います。</p>
+          </article>
+          <article class="card">
+            <h3>owner / target</h3>
+            <p>
+              代理回答の依頼元ownerと、別の参加者レコード・回答を持つtarget。ownerのCookieや回答は引き継ぎません。
+            </p>
+          </article>
+          <article class="card">
+            <h3>administrator</h3>
+            <p>
+              参加者認証とは別のPINと署名Cookieで保護された管理主体。集計、発表状態、本人結果公開を操作します。
+            </p>
+          </article>
+          <article class="card">
+            <h3>snapshot / 投影</h3>
+            <p>
+              明示集計で固定された共有データがsnapshot。発表stageに応じて公開APIが返す形をprojection（投影）と呼びます。
+            </p>
+          </article>
+        </div>
+        <figure class="diagram">
+          <svg viewBox="0 0 900 470" role="img" aria-labelledby="d1t d1d">
+            <title id="d1t">図1 全体構成とデータの流れ</title>
+            <desc id="d1d">
+              参加者UIと管理者UIは別の認証主体としてAPIを利用し、APIはデータベース上の回答と集計スナップショットを扱う。自由記述採点はJEV
+              providerへ非同期に依頼する。スナップショットから公開発表projectionと本人結果APIへ独立した公開経路が伸びる。
+            </desc>
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L9,3 z" fill="#35596d" />
+              </marker>
+              <marker
+                id="arrowGold"
+                markerWidth="10"
+                markerHeight="10"
+                refX="8"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0,0 L0,6 L9,3 z" fill="#8a672e" />
+              </marker>
+            </defs>
+            <rect class="svg-box" x="25" y="65" width="190" height="82" rx="12" />
+            <text class="svg-title" x="120" y="97">参加者 UI</text>
+            <text class="svg-small" x="120" y="123">回答・本人結果</text>
+            <rect class="svg-box" x="25" y="256" width="190" height="82" rx="12" />
+            <text class="svg-title" x="120" y="288">管理者 UI</text>
+            <text class="svg-small" x="120" y="314">集計・発表操作</text>
+            <rect class="svg-safe" x="310" y="140" width="230" height="105" rx="12" />
+            <text class="svg-title" x="425" y="177">アプリ API</text>
+            <text class="svg-small" x="425" y="204">認証・権限・処理</text>
+            <rect class="svg-private" x="635" y="62" width="230" height="95" rx="12" />
+            <text class="svg-title" x="750" y="100">DB / snapshot</text>
+            <text class="svg-small" x="750" y="127">回答・評価・発表データ</text>
+            <rect class="svg-private" x="635" y="229" width="230" height="76" rx="12" />
+            <text class="svg-title" x="750" y="260">JEV provider</text>
+            <text class="svg-small" x="750" y="284">Q5評価（非同期）</text>
+            <rect class="svg-box" x="310" y="310" width="230" height="72" rx="12" />
+            <text class="svg-title" x="425" y="340">公開発表</text>
+            <text class="svg-small" x="425" y="363">stage別projection</text>
+            <rect class="svg-box" x="635" y="340" width="230" height="65" rx="12" />
+            <text class="svg-title" x="750" y="369">本人結果 API</text>
+            <text class="svg-small" x="750" y="391">visible設定 + participant scope</text>
+            <path class="svg-line" d="M865 108 H885 V372 H865" />
+            <path class="svg-line" d="M215 105 H310" />
+            <path class="svg-line" d="M215 296 H270 V220 H310" />
+            <path class="svg-line" d="M540 165 H635" />
+            <path class="svg-line" d="M540 218 H580 V267 H635" />
+            <path class="svg-line" d="M635 110 H590 V346 H540" />
+            <path class="svg-line" d="M310 200 H260 V105 H215" />
+            <text class="svg-small" x="267" y="87">session</text>
+            <text class="svg-small" x="580" y="330">公開投影</text>
+          </svg>
+          <figcaption>図1. 主体と主要な情報の流れ</figcaption>
+          <p class="ref">
+            正本: <a href="../openspec/specs/stcirt/spec.md#purpose">Purpose</a>、<a
+              href="../openspec/specs/stcirt/spec.md#data-model"
+              >Data Model</a
+            >、<a href="../openspec/specs/stcirt/spec.md#authorization-and-trust-boundaries"
+              >Authorization</a
+            >、R1–R9
+          </p>
+          <p class="diagram-alt">
+            <strong>文章での説明:</strong>
+            参加者と管理者は別のUI/API境界で認証されます。回答はDBに保存され、Q5評価は回答保存後に非同期処理されます。管理者が集計するとスナップショットが作られ、公開発表投影と本人結果の読み出しに使われます。
+          </p>
+        </figure>
+        <div class="req">
+          <h3>R1 · 固定された5問</h3>
+          <p>
+            認証と保存済み回答の確認を先に行い、ID順の完全な5問を一括取得できたときだけ開始します。欠落・重複・順序不正・取得失敗は開始条件を満たしません。
+          </p>
+          <aside>
+            Scenario: R1-S1〜S3 · 詳細:
+            <a href="../openspec/specs/stcirt/spec.md#requirement-r1-fixed-five-question-set"
+              >正本 R1</a
+            >
+          </aside>
+        </div>
+        <div class="req">
+          <h3>R2 · 認証された回答確定</h3>
+          <p>
+            4つの選択と空でないQ5自由記述を明示確認した後、participant所有の5問セットを一括保存します。同じoperation
+            IDとcanonical payloadの再送は冪等で、異なるpayloadの再利用やstale
+            revisionは競合になります。回答APIから採点情報を返しません。
+          </p>
+          <aside>
+            Scenario: R2-S1〜S3 · 詳細:
+            <a
+              href="../openspec/specs/stcirt/spec.md#requirement-r2-participant-authenticated-answer-confirmation-and-recording"
+              >正本 R2</a
+            >
+          </aside>
+        </div>
+        <div class="req">
+          <h3>R3 · 完了と修正</h3>
+          <p>
+            保存済み回答があれば完了画面を表示します。安全に復元できる場合に限って同じsubmissionを修正でき、古いQ5選択値を現在の自由記述として再送・採点しません。
+          </p>
+          <aside>
+            Scenario: R3-S1〜S3 · 詳細:
+            <a href="../openspec/specs/stcirt/spec.md#requirement-r3-completion">正本 R3</a>
+          </aside>
+        </div>
+        <div class="req">
+          <h3>R4 · 参加者入口</h3>
+          <p>
+            <code>/</code
+            >は<code>/answer</code>への互換redirectです。認証後は最新submissionを確認し、保存状態を復帰します。表示名はtrim後にUnicode
+            NFCで正規化し、大文字小文字を区別します。PINはDBに保存せず、失敗認証の共有制限はHMAC
+            fingerprintを使い、名前やIPを記録しません。
+          </p>
+          <aside>
+            Scenario: R4-S1〜S5 · 詳細:
+            <a href="../openspec/specs/stcirt/spec.md#requirement-r4-home-and-participant-entry"
+              >正本 R4</a
+            >
+          </aside>
+        </div>
+        <div class="req">
+          <h3>R5 · アクセシブルで応答性のある画面</h3>
+          <p>
+            狭い幅や拡大表示、キーボード、支援技術に配慮した入力と進捗表示を備えます。送信中も選択を保持し、失敗後に再試行できます。フォーカス移動は参加者の操作を尊重します。
+          </p>
+          <aside>
+            Scenario: R5-S1〜S3 · 詳細:
+            <a
+              href="../openspec/specs/stcirt/spec.md#requirement-r5-accessible-responsive-interface"
+              >正本 R5</a
+            >. このHTML自体の見やすさは別途CSSで対応し、完全なa11y証拠とはしません。
+          </aside>
+        </div>
+        <div class="req">
+          <h3>R6 · 分離された管理者認証</h3>
+          <p>
+            管理者はparticipantとは別の認証情報と署名Cookieを使います。保護された管理操作は同一Originを検証し、セッション喪失時は画面上の非公開deckを消去します。
+          </p>
+          <aside>
+            Scenario: R6-S1〜S4 · 詳細:
+            <a
+              href="../openspec/specs/stcirt/spec.md#requirement-r6-isolated-administrator-authentication"
+              >正本 R6</a
+            >
+          </aside>
+        </div>
+        <div class="req">
+          <h3>R7 · 集計snapshotと順位</h3>
+          <p>
+            管理者の明示集計だけが共有snapshotを更新します。version不整合データは除外され、互換Q5評価が未登録・未採点・失敗・revision不整合なら集計を止めます。採点は浮動小数点を保ち、同点は標準競技順位で扱います。
+          </p>
+          <aside>
+            Scenario: R7-S1〜S3 · 詳細:
+            <a
+              href="../openspec/specs/stcirt/spec.md#requirement-r7-presentation-snapshot-and-ranking"
+              >正本 R7</a
+            >
+          </aside>
+        </div>
+        <div class="req">
+          <h3>R8 · stage別の発表公開</h3>
+          <p>
+            公開発表は現在stageに許されたprojectionだけを返し、非表示時はstandbyだけを返します。質問stageは答えを含まず、答え・順位stageも内部採点情報を公開しません。
+          </p>
+          <aside>
+            Scenario: R8-S1〜S3 · 詳細:
+            <a href="../openspec/specs/stcirt/spec.md#requirement-r8-staged-result-disclosure"
+              >正本 R8</a
+            >
+          </aside>
+        </div>
+        <div class="req">
+          <h3>R9 · 本人結果の公開</h3>
+          <p>
+            本人結果は発表stageとは独立した管理者設定で公開します。participant
+            cookieまたはサーバーが解決するowner-target関係に応じて、本人の結果だけを返します。
+          </p>
+          <aside>
+            Scenario: R9-S1〜S3 · 詳細:
+            <a href="../openspec/specs/stcirt/spec.md#requirement-r9-participant-result-visibility"
+              >正本 R9</a
+            >
+          </aside>
+        </div>
+      </section>
+      <section id="answer-flow">
+        <p class="kicker">03 · 回答</p>
+        <h2>試験開始から回答確定まで</h2>
+        <ol class="flow">
+          <li><strong>認証・状態確認</strong><br />sessionと最新submissionを確認</li>
+          <li><strong>5問を取得</strong><br />完全なID順バッチだけで開始</li>
+          <li><strong>下書き</strong><br />未確認回答はclient内</li>
+          <li><strong>明示確認</strong><br />5問セットを送信</li>
+          <li><strong>原子的保存</strong><br />一つのrevisionとして確定</li>
+          <li><strong>完了・修正</strong><br />同じsubmissionを更新</li>
+        </ol>
+        <figure class="diagram">
+          <svg viewBox="0 0 960 360" role="img" aria-labelledby="d2t d2d">
+            <title id="d2t">図2 参加者回答の状態遷移</title>
+            <desc id="d2d">
+              認証、最新回答確認、完全な5問取得、下書き、明示確認、原子的保存、完了または修正の順。質問取得失敗では開始せず、保存失敗では下書きを保つ。既存回答はlookup障害時に新規扱いせず、完了状態を維持する。
+            </desc>
+            <defs>
+              <marker
+                id="arrow2"
+                markerWidth="10"
+                markerHeight="10"
+                refX="8"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0 0L0 6L9 3z" fill="#35596d" />
+              </marker>
+            </defs>
+            <rect class="svg-box" x="20" y="100" width="130" height="72" rx="10" />
+            <text class="svg-label" x="85" y="130">認証</text>
+            <text class="svg-small" x="85" y="152">participant</text>
+            <rect class="svg-box" x="180" y="100" width="155" height="72" rx="10" />
+            <text class="svg-label" x="257" y="130">最新回答確認</text>
+            <text class="svg-small" x="257" y="152">既存なら完了へ</text>
+            <rect class="svg-box" x="365" y="100" width="145" height="72" rx="10" />
+            <text class="svg-label" x="437" y="130">5問一括取得</text>
+            <text class="svg-small" x="437" y="152">完全・ID順</text>
+            <rect class="svg-box" x="540" y="100" width="120" height="72" rx="10" />
+            <text class="svg-label" x="600" y="142">下書き</text>
+            <rect class="svg-private" x="690" y="100" width="120" height="72" rx="10" />
+            <text class="svg-label" x="750" y="142">確認</text>
+            <rect class="svg-safe" x="840" y="100" width="105" height="72" rx="10" />
+            <text class="svg-label" x="892" y="130">保存</text>
+            <text class="svg-small" x="892" y="152">atomic</text>
+            <path
+              d="M150 136H180M335 136H365M510 136H540M660 136H690M810 136H840"
+              stroke="#35596d"
+              stroke-width="2"
+              fill="none"
+              marker-end="url(#arrow2)"
+            />
+            <rect class="svg-safe" x="735" y="250" width="165" height="66" rx="10" />
+            <text class="svg-label" x="817" y="289">完了 / 同一回答の修正</text>
+            <path
+              d="M892 172V220H817V250"
+              stroke="#35596d"
+              stroke-width="2"
+              fill="none"
+              marker-end="url(#arrow2)"
+            />
+            <path
+              d="M437 172V235H565"
+              stroke="#a14c53"
+              stroke-width="2"
+              stroke-dasharray="7 5"
+              fill="none"
+              marker-end="url(#arrow2)"
+            />
+            <rect class="svg-bound" x="565" y="215" width="135" height="58" rx="10" />
+            <text class="svg-small" x="632" y="239">取得失敗:開始しない</text>
+            <text class="svg-small" x="632" y="258">再試行を案内</text>
+            <path
+              d="M750 172V310H605"
+              stroke="#8a672e"
+              stroke-width="2"
+              stroke-dasharray="7 5"
+              fill="none"
+              marker-end="url(#arrow2)"
+            />
+            <text class="svg-small" x="644" y="333">保存失敗:下書きを保持して再試行</text>
+          </svg>
+          <figcaption>図2. 回答の開始・保存・復帰</figcaption>
+          <p class="ref">
+            正本:
+            <a href="../openspec/specs/stcirt/spec.md#requirement-r1-fixed-five-question-set">R1</a
+            >、<a
+              href="../openspec/specs/stcirt/spec.md#requirement-r2-participant-authenticated-answer-confirmation-and-recording"
+              >R2</a
+            >、<a href="../openspec/specs/stcirt/spec.md#requirement-r3-completion">R3</a>、R4–R5
+          </p>
+          <p class="diagram-alt">
+            <strong>文章での説明:</strong>
+            認証と最新回答の確認が済んでから、完全な5問を取得します。選択中の回答は明示確認までclient内に置かれ、確認後は5問一括で保存されます。取得失敗では試験を始めず、送信失敗では下書きを保って再試行します。保存済み回答は完了画面に戻り、安全に復元できる場合だけ同じsubmissionを修正します。
+          </p>
+        </figure>
+        <p class="callout">
+          画面で正誤・解説・点数・合否を表示しないことが基本です。保存完了は採点完了を意味せず、Q5評価は別処理です。
+        </p>
+      </section>
+      <section id="assisted">
+        <p class="kicker">04 · 代理回答</p>
+        <h2>ownerとtargetは別々の参加者</h2>
+        <p>
+          完了済みownerが条件を満たして登録したtargetは、独立した参加者レコードとして扱います。ownerのCookieとsubmissionはそのまま維持され、代理回答の保存・修正はtargetに紐づく別submissionです。target名を再登録した同一要求は既存関係に解決され、別targetへの差し替えは認められません。
+        </p>
+        <div class="grid">
+          <article class="card">
+            <h3>認証</h3>
+            <p>owner Cookieで関係を解決。clientがtarget IDを指定しません。</p>
+          </article>
+          <article class="card">
+            <h3>分離</h3>
+            <p>targetは独自のparticipant行・回答を持ち、ownerの本人結果とは混ざりません。</p>
+          </article>
+          <article class="card">
+            <h3>範囲</h3>
+            <p>
+              owner自身がtargetである場合など、正本のeligibility条件を満たさない登録は拒否されます。
+            </p>
+          </article>
+        </div>
+        <p class="ref">
+          関連: <a href="../openspec/specs/stcirt/spec.md#requirement-r3-completion">R3-S3</a>、<a
+            href="../openspec/specs/stcirt/spec.md#requirement-r2-participant-authenticated-answer-confirmation-and-recording"
+            >R2 assisted scope</a
+          >、<a href="../openspec/specs/stcirt/spec.md#requirement-r9-participant-result-visibility"
+            >R9-S3</a
+          >.
+        </p>
+      </section>
+      <section id="aggregate">
+        <p class="kicker">05 · 管理・発表</p>
+        <h2>集計・順位・発表</h2>
+        <p>
+          データが保存されたことだけでは発表データは更新されません。管理者の明示aggregateが質問・参加者・有効な最新submissionをsnapshotへ置き換えます。version整合、Q5評価のreadiness、revision整合を確認し、危険な更新は旧snapshotを保護します。開始や公開は有効な集計revisionを必要とします。
+        </p>
+        <div class="grid">
+          <article class="card">
+            <h3>version</h3>
+            <p>質問とrubricは対の版として扱います。履歴を現行版と推測して埋めません。</p>
+          </article>
+          <article class="card">
+            <h3>採点</h3>
+            <p>Q1–Q4は各1点。Q5はJEV scoreを2で割った寄与。信頼度は順位に使いません。</p>
+          </article>
+          <article class="card">
+            <h3>順位</h3>
+            <p>
+              浮動小数点値のまま比較し、完全一致の同点に標準競技順位（例: 1, 1,
+              3）を使います。小数2桁は表示丸めです。
+            </p>
+          </article>
+          <article class="card">
+            <h3>snapshot</h3>
+            <p>
+              回答変更やstage移動では更新しません。明示集計まで氏名・回答・点数・順位を固定します。
+            </p>
+          </article>
+        </div>
+        <figure class="diagram" id="diagram-data">
+          <svg viewBox="0 0 900 310" role="img" aria-labelledby="d3t d3d">
+            <title id="d3t">図3 中心データの概念関係</title>
+            <desc id="d3d">
+              exam
+              participantは固定5問のsubmissionを持ち、各submissionには回答・操作記録とQ5評価が関連する。ownerとassisted
+              targetは関係テーブルで結ばれる別participant。管理者の集計によりpresentation
+              snapshotが質問と全participant entryを保持し、結果公開設定は独立する。legacy
+              questionsとanswer_logsはこのアプリの読書き対象外。
+            </desc>
+            <defs>
+              <marker
+                id="arrow3"
+                markerWidth="10"
+                markerHeight="10"
+                refX="8"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0 0L0 6L9 3z" fill="#35596d" />
+              </marker>
+            </defs>
+            <rect class="svg-box" x="30" y="55" width="170" height="66" rx="10" />
+            <text class="svg-label" x="115" y="84">participant</text>
+            <text class="svg-small" x="115" y="105">owner / targetを含む</text>
+            <rect class="svg-private" x="270" y="55" width="180" height="66" rx="10" />
+            <text class="svg-label" x="360" y="84">submission</text>
+            <text class="svg-small" x="360" y="105">revision・question versions</text>
+            <rect class="svg-box" x="520" y="30" width="160" height="60" rx="10" />
+            <text class="svg-label" x="600" y="66">回答群</text>
+            <rect class="svg-box" x="520" y="110" width="160" height="60" rx="10" />
+            <text class="svg-label" x="600" y="146">Q5 assessment</text>
+            <rect class="svg-safe" x="270" y="205" width="180" height="68" rx="10" />
+            <text class="svg-label" x="360" y="235">presentation snapshot</text>
+            <text class="svg-small" x="360" y="257">questions + entries</text>
+            <rect class="svg-private" x="520" y="205" width="160" height="68" rx="10" />
+            <text class="svg-label" x="600" y="235">result settings</text>
+            <text class="svg-small" x="600" y="257">独立したvisible状態</text>
+            <path
+              d="M200 88H270M450 75H520M450 95H490V140H520M115 121V238H270M450 239H520"
+              stroke="#35596d"
+              stroke-width="2"
+              fill="none"
+              marker-end="url(#arrow3)"
+            />
+            <text class="svg-small" x="115" y="188">assisted linkでowner–target関係</text>
+            <rect class="svg-bound" x="730" y="55" width="145" height="90" rx="10" />
+            <text class="svg-label" x="802" y="91">legacy tables</text>
+            <text class="svg-small" x="802" y="116">このアプリは</text>
+            <text class="svg-small" x="802" y="134">読書きしない</text>
+          </svg>
+          <figcaption>図3. 中心データの概念図（物理ERではありません）</figcaption>
+          <p class="ref">
+            正本: <a href="../openspec/specs/stcirt/spec.md#data-model">Data Model</a>、R2–R4、R6–R9
+          </p>
+          <p class="diagram-alt">
+            <strong>文章での説明:</strong>
+            participantからowner-target関係、submission、回答、評価へつながります。管理者集計が別に共有snapshotを作り、参加者ごとの結果行を含めます。本人結果の公開設定はsnapshotや発表stageとは独立です。旧<code>questions</code>・<code>answer_logs</code>は現行アプリの読書き対象外です。これは概念関係で、物理列・外部キーの完全図ではありません。
+          </p>
+        </figure>
+      </section>
+      <section id="publication">
+        <p class="kicker">06 · 公開</p>
+        <h2>発表projectionと本人結果は別の公開系統</h2>
+        <p>
+          発表の公開範囲はstageとprojection-hidden状態で決まり、本人結果は専用のvisible設定とparticipant
+          scopeで決まります。一方を隠す・公開する操作は他方のstageやsnapshotを更新しません。公開情報は必要最小限のshapeに制限されます。
+        </p>
+        <figure class="diagram">
+          <svg viewBox="0 0 900 290" role="img" aria-labelledby="d4t d4d">
+            <title id="d4t">図4 snapshotから二系統へ分岐する公開</title>
+            <desc id="d4d">
+              管理者による明示集計が共通snapshotを作る。そこから発表projectionはstageとprojection-hiddenフラグで制御され、別系統のparticipant
+              resultsはever-publishedとvisible設定、participant
+              cookieと本人scopeで制御される。公開後の更新は再集計まで既存snapshotを使う。
+            </desc>
+            <defs>
+              <marker
+                id="arrow4"
+                markerWidth="10"
+                markerHeight="10"
+                refX="8"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0 0L0 6L9 3z" fill="#35596d" />
+              </marker>
+            </defs>
+            <rect class="svg-safe" x="40" y="100" width="190" height="76" rx="12" />
+            <text class="svg-title" x="135" y="131">明示aggregate</text>
+            <text class="svg-small" x="135" y="155">snapshot更新</text>
+            <rect class="svg-box" x="350" y="100" width="190" height="76" rx="12" />
+            <text class="svg-title" x="445" y="131">共有snapshot</text>
+            <text class="svg-small" x="445" y="155">一つの集計revision</text>
+            <rect class="svg-private" x="655" y="35" width="205" height="85" rx="12" />
+            <text class="svg-title" x="757" y="68">公開発表projection</text>
+            <text class="svg-small" x="757" y="94">stage / hidden</text>
+            <rect class="svg-private" x="655" y="170" width="205" height="85" rx="12" />
+            <text class="svg-title" x="757" y="203">本人結果</text>
+            <text class="svg-small" x="757" y="229">visible / cookie scope</text>
+            <path
+              d="M230 138H350M540 125H600V77H655M540 151H600V212H655"
+              stroke="#35596d"
+              stroke-width="2"
+              fill="none"
+              marker-end="url(#arrow4)"
+            />
+            <text class="svg-small" x="600" y="48">独立制御 A</text>
+            <text class="svg-small" x="600" y="250">独立制御 B</text>
+          </svg>
+          <figcaption>図4. 公開先と公開制御の分岐</figcaption>
+          <p class="ref">
+            正本:
+            <a
+              href="../openspec/specs/stcirt/spec.md#requirement-r7-presentation-snapshot-and-ranking"
+              >R7</a
+            >、<a href="../openspec/specs/stcirt/spec.md#requirement-r8-staged-result-disclosure"
+              >R8</a
+            >、<a
+              href="../openspec/specs/stcirt/spec.md#requirement-r9-participant-result-visibility"
+              >R9</a
+            >
+          </p>
+          <p class="diagram-alt">
+            <strong>文章での説明:</strong>
+            明示集計で得た同じsnapshotが発表と本人結果の材料になります。発表projectionはstage/hiddenで制御され、本人結果は別の公開設定と認証済み参加者scopeで制御されます。片方の公開設定変更で他方の状態や集計revisionは変わりません。
+          </p>
+        </figure>
+        <ul>
+          <li><strong>質問stage:</strong> 質問内容に限定し、正解・解説を含めません。</li>
+          <li>
+            <strong>回答stage:</strong> 正本で許可された答え・解説に限定し、内部rubric、raw
+            JEV応答、assessment状態を返しません。Q5の本人回答表示には追加のidentity条件があります。
+          </li>
+          <li>
+            <strong>順位stage:</strong> 発表中のrank
+            groupだけを返します。全体の内部snapshotや未発表情報を公開しません。
+          </li>
+          <li>
+            <strong>本人結果:</strong> APIでは非公開時に
+            <code>waiting</code>
+            状態を返しますが、これはAPIの状態であり画面に表示する文言ではありません。認証済み利用者の
+            <code>/results</code>
+            と完了画面では、結果の詳細が非表示のとき、結果状態の表示は「回答済み」のみです。snapshotに本人行がない・不正な場合も0点の架空結果に置き換えず、画面上は「回答済み」とします。<code
+              >/results</code
+            >
+            の未認証・session期限切れ画面は別の回復状態です。
+          </li>
+        </ul>
+      </section>
+      <section id="trust">
+        <p class="kicker">07 · 認証と境界</p>
+        <h2>認証主体と信頼境界</h2>
+        <p>
+          参加者・管理者・内部retry
+          callerは別の権限です。ブラウザからの変更要求はsame-originを確認し、内部workerはBearer認証を使います。PIN、secret、cookie、token、内部assessmentデータなどの秘密値をこの資料には記載しません。
+        </p>
+        <figure class="diagram">
+          <svg viewBox="0 0 900 360" role="img" aria-labelledby="d5t d5d">
+            <title id="d5t">図5 認証主体と信頼境界</title>
+            <desc id="d5d">
+              ブラウザ内のparticipant sessionとadmin sessionは別々のHttpOnly
+              Cookieとして保存・送信され、JavaScriptから読めない。ブラウザの変更はsame-origin検査を通過する。内部retry
+              callerはBearer認証でアプリにアクセスする。server側に設定された秘密はserverからDBやJEV
+              providerへ使われ、ブラウザへ返さない。
+            </desc>
+            <defs>
+              <marker
+                id="arrow5"
+                markerWidth="10"
+                markerHeight="10"
+                refX="8"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0 0L0 6L9 3z" fill="#35596d" />
+              </marker>
+            </defs>
+            <rect class="svg-box" x="25" y="62" width="200" height="230" rx="14" />
+            <text class="svg-title" x="125" y="93">ブラウザ</text>
+            <rect class="svg-safe" x="48" y="115" width="154" height="54" rx="8" />
+            <text class="svg-small" x="125" y="138">participant HttpOnly</text>
+            <text class="svg-small" x="125" y="157">Cookie</text>
+            <rect class="svg-safe" x="48" y="186" width="154" height="54" rx="8" />
+            <text class="svg-small" x="125" y="209">admin HttpOnly</text>
+            <text class="svg-small" x="125" y="228">Cookie（別系統）</text>
+            <text class="svg-small" x="125" y="270">JSから読めない</text>
+            <rect class="svg-bound" x="300" y="62" width="245" height="230" rx="14" />
+            <text class="svg-title" x="422" y="94">server境界</text>
+            <text class="svg-label" x="422" y="145">Origin確認・認可</text>
+            <text class="svg-small" x="422" y="177">秘密設定を保持</text>
+            <text class="svg-small" x="422" y="207">署名検証・scope解決</text>
+            <text class="svg-small" x="422" y="256">秘密値は応答へ出さない</text>
+            <rect class="svg-private" x="640" y="55" width="220" height="75" rx="12" />
+            <text class="svg-title" x="750" y="88">DB</text>
+            <text class="svg-small" x="750" y="112">状態・回答・snapshot</text>
+            <rect class="svg-private" x="640" y="222" width="220" height="75" rx="12" />
+            <text class="svg-title" x="750" y="255">JEV provider</text>
+            <text class="svg-small" x="750" y="279">Q5内容をserver経由で評価</text>
+            <path
+              d="M225 150H300M225 214H270V190H300M545 113H640M545 245H590V260H640"
+              stroke="#35596d"
+              stroke-width="2"
+              fill="none"
+              marker-end="url(#arrow5)"
+            />
+            <text class="svg-small" x="262" y="137">same-origin</text>
+            <rect class="svg-box" x="300" y="310" width="245" height="40" rx="9" />
+            <text class="svg-small" x="422" y="336">内部retry caller: Bearer認証</text>
+            <path
+              d="M422 310V292"
+              stroke="#8a672e"
+              stroke-width="2"
+              stroke-dasharray="7 5"
+              fill="none"
+              marker-end="url(#arrow5)"
+            />
+          </svg>
+          <figcaption>図5. ブラウザ、server、外部依存の信頼境界</figcaption>
+          <p class="ref">
+            正本:
+            <a href="../openspec/specs/stcirt/spec.md#authorization-and-trust-boundaries"
+              >Authorization and trust boundaries</a
+            >、R2、R4、R6、R8–R9
+          </p>
+          <p class="diagram-alt">
+            <strong>文章での説明:</strong> ブラウザはparticipant/adminの別々のHttpOnly
+            cookieを保存して送信し、client
+            JavaScriptからは読めません。serverはcookie、Origin、許可scopeを検証してからDBを操作します。JEV
+            retryは別のBearer主体です。秘密設定はserver側に留め、実際の認証値は図にも説明にも載せません。
+          </p>
+        </figure>
+        <div class="callout">
+          <strong>same-originと認証は別の確認:</strong>
+          Origin検査はブラウザからの変更要求を守り、署名cookieや内部Bearerは呼出主体を示します。<code>?presenter=1</code>は認証ではありません。
+        </div>
+      </section>
+      <section id="data">
+        <p class="kicker">08 · データ関係</p>
+        <h2>永続状態とsnapshot</h2>
+        <p>
+          概念上、participantは自身のsubmissionと回答を持ち、owner-target関係は別々のparticipantを結びます。Q5のassessmentは保存済みsubmission
+          revisionに対応します。明示aggregateで作られるpresentation snapshotは質問とparticipant
+          entryをまとめ、発表と本人結果の共通材料になります。result
+          visibility設定とprojectionの表示状態は独立しています。
+        </p>
+        <p>
+          図3はこの関係を示す概念図で、物理ERや列・キーの定義ではありません。legacy
+          <code>questions</code
+          >・<code>answer_logs</code>は現行アプリの読書き対象外です。詳細は正本の<a
+            href="../openspec/specs/stcirt/spec.md#data-model"
+            >Data Model</a
+          >を参照してください。
+        </p>
+        <p class="ref">
+          図: <a href="#diagram-data">図3</a> · 正本:
+          <a href="../openspec/specs/stcirt/spec.md#data-model">Data Model</a>、R2–R4、R6–R9
+        </p>
+      </section>
+      <section id="grading">
+        <p class="kicker">09 · 採点とretry</p>
+        <h2>Q5 durable retry — 回答保存と評価の分離</h2>
+        <p>
+          Q5のquestion/rubricは対応する
+          <code>tamami-egg-v1</code>
+          pairとrevisionで扱います。互換性とreadinessをfail-closedにし、過去行へ版を推測してbackfillしません。Q5自由記述の保存transactionにはdurable
+          pending評価が含まれます。回答保存後、応答を返してから評価workerを起動します。API
+          key欠如やworker起動失敗でも回答は取り消さず、pendingをretry入口で処理できます。schedulerの設定や実運用は確認されていないため、定期処理の成功を保証しません。
+        </p>
+        <figure class="diagram">
+          <svg viewBox="0 0 920 310" role="img" aria-labelledby="d6t d6d">
+            <title id="d6t">図6 Q5 durable retryの概念</title>
+            <desc id="d6d">
+              一つのtransactionで5問回答とpending評価を保存した後、回答応答を返す。応答後にJEV
+              workerを起動し、評価成功はgraded、再試行可能な失敗はpending、終端失敗はfailedになる。API
+              key不足・worker起動失敗時にもpendingを保持する。internal
+              retry入口はBearer認証される。外部schedulerの設定・稼働は未確認。
+            </desc>
+            <defs>
+              <marker
+                id="arrow6"
+                markerWidth="10"
+                markerHeight="10"
+                refX="8"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0 0L0 6L9 3z" fill="#35596d" />
+              </marker>
+              <marker
+                id="arrowGold6"
+                markerWidth="10"
+                markerHeight="10"
+                refX="8"
+                refY="3"
+                orient="auto"
+              >
+                <path d="M0 0L0 6L9 3z" fill="#8a672e" />
+              </marker>
+            </defs>
+            <rect class="svg-safe" x="25" y="90" width="175" height="74" rx="11" />
+            <text class="svg-label" x="112" y="120">atomic save</text>
+            <text class="svg-small" x="112" y="143">answers + pending</text>
+            <rect class="svg-box" x="255" y="90" width="150" height="74" rx="11" />
+            <text class="svg-label" x="330" y="120">API応答</text>
+            <text class="svg-small" x="330" y="143">回答確定</text>
+            <rect class="svg-box" x="460" y="90" width="160" height="74" rx="11" />
+            <text class="svg-label" x="540" y="120">JEV worker</text>
+            <text class="svg-small" x="540" y="143">claim / evaluate</text>
+            <rect class="svg-safe" x="690" y="25" width="175" height="62" rx="11" />
+            <text class="svg-label" x="777" y="63">graded</text>
+            <rect class="svg-private" x="690" y="110" width="175" height="62" rx="11" />
+            <text class="svg-label" x="777" y="148">retry pending</text>
+            <rect class="svg-bound" x="690" y="195" width="175" height="62" rx="11" />
+            <text class="svg-label" x="777" y="233">failed</text>
+            <path
+              d="M200 127H255M405 127H460M620 106L690 56M620 127H690M620 148L690 226"
+              stroke="#35596d"
+              stroke-width="2"
+              fill="none"
+              marker-end="url(#arrow6)"
+            />
+            <path
+              d="M777 172V195"
+              stroke="#8a672e"
+              stroke-width="2"
+              stroke-dasharray="7 5"
+              fill="none"
+              marker-end="url(#arrowGold6)"
+            />
+            <path
+              d="M690 141H645V282H540V164"
+              stroke="#8a672e"
+              stroke-width="2"
+              stroke-dasharray="7 5"
+              fill="none"
+              marker-end="url(#arrowGold6)"
+            />
+            <rect class="svg-box" x="260" y="235" width="200" height="52" rx="10" />
+            <text class="svg-small" x="360" y="257">internal retry endpoint</text>
+            <text class="svg-small" x="360" y="276">Bearer認証</text>
+            <path
+              d="M460 260H540V164"
+              stroke="#35596d"
+              stroke-width="2"
+              fill="none"
+              marker-end="url(#arrow6)"
+            />
+            <text class="svg-small" x="112" y="205">key / 起動失敗でも回答とpending保持</text>
+            <text class="svg-small" x="777" y="286">scheduler: 設定・稼働 未確認</text>
+          </svg>
+          <figcaption>図6. 回答保存後のQ5評価とretry</figcaption>
+          <p class="ref">
+            正本: <a href="../openspec/specs/stcirt/spec.md#api">API</a> (<code
+              >POST /api/internal/jev/retry</code
+            >)、<a href="../openspec/specs/stcirt/spec.md#environment">Environment</a>、R2・R7
+          </p>
+          <p class="diagram-alt">
+            <strong>文章での説明:</strong>
+            5問回答とpending評価を同じtransactionで保存します。その後に回答APIが応答し、非同期workerが評価します。成功はgraded、再試行可能なエラーはpending、終端エラーはfailedです。設定不足やworker起動失敗で回答を戻さず、internal
+            Bearer retryでpendingを処理できます。schedulerが本番で定期実行されるかは未確認です。
+          </p>
+        </figure>
+        <div id="operations" class="req">
+          <h3>まだ合意・確認されていないこと</h3>
+          <div class="grid">
+            <article class="card">
+              <h3>Q5の版</h3>
+              <p>
+                questionとrubricを対応するversion
+                pairとして扱い、現在の対応pair以外を推測で互換にしません。評価のreadinessはaggregate前に確認されます。
+              </p>
+            </article>
+            <article class="card">
+              <h3>非同期評価</h3>
+              <p>
+                workerが呼ばれた場合の状態遷移やretry動作は契約に記載されています。これはschedulerの配置、監視、実稼働や所要時間の保証ではありません。
+              </p>
+            </article>
+            <article class="card">
+              <h3>データ保持・復旧</h3>
+              <p>
+                通常retention、削除伝播、backup/restore、RPO/RTOは合意値がありません。データリセットmigrationを通常保持手順として扱いません。
+              </p>
+            </article>
+            <article class="card">
+              <h3>性能・可用性</h3>
+              <p>
+                本番SLO、remote Turso
+                capacity、p95、可用性、retry完了目標は未確認です。ローカル測定から運用目標を推定しません。
+              </p>
+            </article>
+            <article class="card">
+              <h3>アクセシビリティの証拠</h3>
+              <p>
+                要求と一部browser
+                testのtraceabilityがありますが、支援技術を含む完全な適合証明ではありません。200%
+                zoom・reduced motionの完全な確認も別途必要です。
+              </p>
+            </article>
+            <article class="card">
+              <h3>テスト証拠</h3>
+              <p>
+                <a href="spec-management.md">spec-management</a>の対応は既存のtest entry
+                pointの索引です。テスト実行済みや要求網羅率を示すものではありません。
+              </p>
+            </article>
+          </div>
+          <p class="callout caution">
+            <strong>未決事項を実装済み保証として読まないでください。</strong>
+            scheduler運用、保持・削除、backup/restore、RPO/RTO、本番SLO、完全なa11y
+            evidenceは未合意または未確認です。
+          </p>
+        </div>
+      </section>
+      <section id="apis">
+        <p class="kicker">10 · APIへの案内</p>
+        <h2>代表API索引</h2>
+        <p>
+          以下は用途・主体と正本内の参照先を探す索引です。厳密なstatus、request/response
+          shape、cache、replay契約の複製ではありません。API契約は常に<a
+            href="../openspec/specs/stcirt/spec.md#api"
+            >正本 API節</a
+          >を参照してください。
+        </p>
+        <div class="table-wrap">
+          <table>
+            <caption>
+              代表的なAPIと正本へのリンク
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">用途</th>
+                <th scope="col">認証主体</th>
+                <th scope="col">method / path</th>
+                <th scope="col">正本の参照先</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>5問取得</td>
+                <td>公開。試験開始前にparticipant session/stateを確認</td>
+                <td><code>GET /api/questions/batch</code></td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#get-apiquestionsbatch">API / batch</a
+                  >、<a href="#r1-map">R1</a>
+                </td>
+              </tr>
+              <tr>
+                <td>5問一括保存・修正</td>
+                <td>participant cookie + same-origin Origin</td>
+                <td><code>POST /api/answers/batch</code></td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#apianswersbatch">API / batch</a>、R2–R3
+                </td>
+              </tr>
+              <tr>
+                <td>最新submission確認</td>
+                <td>participant cookie</td>
+                <td><code>GET /api/answers/latest</code></td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#get-apianswerslatest">API / latest</a
+                  >、R1・R3
+                </td>
+              </tr>
+              <tr>
+                <td>participant session作成・確認・終了</td>
+                <td>PINで作成、以後participant cookie</td>
+                <td>
+                  <code>POST /api/participants/session</code><br /><code
+                    >GET /api/participants/session</code
+                  ><br /><code>DELETE /api/participants/session</code>
+                </td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#apiparticipantssession">API / session</a
+                  >、R4
+                </td>
+              </tr>
+              <tr>
+                <td>代理scope・target登録</td>
+                <td>owner participant cookie</td>
+                <td>
+                  <code>GET /api/participants/assisted</code><br /><code
+                    >POST /api/participants/assisted</code
+                  >
+                </td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#apiparticipantsassisted"
+                    >API / assisted</a
+                  >、R2–R4
+                </td>
+              </tr>
+              <tr>
+                <td>admin session作成・確認・終了</td>
+                <td>別個のadmin PIN/session</td>
+                <td>
+                  <code>POST /api/admin/session</code><br /><code>GET /api/admin/session</code
+                  ><br /><code>DELETE /api/admin/session</code>
+                </td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#apiadminsession">API / admin session</a
+                  >、R6
+                </td>
+              </tr>
+              <tr>
+                <td>発表状態・管理操作</td>
+                <td>admin cookie。公開読取は別API</td>
+                <td>
+                  <code>GET /api/admin/presentation</code><br /><code
+                    >POST /api/admin/presentation</code
+                  >
+                </td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#apiadminpresentation"
+                    >API / admin presentation</a
+                  >、R6–R8
+                </td>
+              </tr>
+              <tr>
+                <td>管理者用発表deck</td>
+                <td>admin cookie</td>
+                <td><code>GET /api/admin/presentation/deck</code></td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#get-apiadminpresentationdeck"
+                    >API / deck</a
+                  >、R6–R8
+                </td>
+              </tr>
+              <tr>
+                <td>公開発表projection</td>
+                <td>公開</td>
+                <td><code>GET /api/presentation</code></td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#get-apipresentation">API / projection</a
+                  >、R8
+                </td>
+              </tr>
+              <tr>
+                <td>本人結果の公開設定</td>
+                <td>admin cookie + same-origin Origin</td>
+                <td><code>POST /api/admin/participant-results</code></td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#apiadminparticipant-results"
+                    >API / admin results</a
+                  >、R6・R9
+                </td>
+              </tr>
+              <tr>
+                <td>認証済み本人結果取得</td>
+                <td>participant cookie。assisted targetはowner関係から解決</td>
+                <td><code>GET /api/participants/results</code></td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#get-apiparticipantsresults"
+                    >API / results</a
+                  >、R9
+                </td>
+              </tr>
+              <tr>
+                <td>Q5 retry worker</td>
+                <td>internal Bearer</td>
+                <td><code>POST /api/internal/jev/retry</code></td>
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#post-apiinternaljevretry">API / retry</a
+                  >、R2・Environment
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="ref">
+          legacy単一回答APIやcursor
+          APIも正本には記載されていますが、このガイドでは現在の5問参加フローと誤認されないよう主フロー図に含めません。
+        </p>
+      </section>
+      <section id="traceability">
+        <p class="kicker">11 · 正本との対応表</p>
+        <h2>R1–R9を章・図・代表APIへたどる</h2>
+        <p>
+          Scenario traceabilityの詳しい実装・test entry pointは<a href="spec-management.md"
+            >docs/spec-management.md</a
+          >を参照してください。表は読者向け索引です。API契約、実装状態、test
+          assertionの網羅性を保証しません。
+        </p>
+        <div class="table-wrap">
+          <table>
+            <caption>
+              Requirement cross-reference
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">正本要求</th>
+                <th scope="col">主題 / HTML章</th>
+                <th scope="col">図</th>
+                <th scope="col">代表API</th>
+                <th scope="col">正本Scenario</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr id="r1-map">
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#requirement-r1-fixed-five-question-set"
+                    >R1</a
+                  >
+                </td>
+                <td>5問取得と開始条件 · <a href="#answer-flow">3</a></td>
+                <td>1, 2</td>
+                <td><code>GET /api/questions/batch</code>; <code>GET /api/answers/latest</code></td>
+                <td>R1-S1–S3</td>
+              </tr>
+              <tr id="r2-map">
+                <td>
+                  <a
+                    href="../openspec/specs/stcirt/spec.md#requirement-r2-participant-authenticated-answer-confirmation-and-recording"
+                    >R2</a
+                  >
+                </td>
+                <td>
+                  確認保存、評価起動、retry · <a href="#answer-flow">3</a>, <a href="#grading">9</a>
+                </td>
+                <td>1, 2, 3, 5, 6</td>
+                <td>
+                  <code>POST /api/answers/batch</code>; <code>POST /api/internal/jev/retry</code>
+                </td>
+                <td>R2-S1–S3</td>
+              </tr>
+              <tr id="r3-map">
+                <td><a href="../openspec/specs/stcirt/spec.md#requirement-r3-completion">R3</a></td>
+                <td>
+                  完了・修正・代理分離 · <a href="#answer-flow">3</a>, <a href="#assisted">4</a>
+                </td>
+                <td>2, 3</td>
+                <td>
+                  <code>GET /api/answers/latest</code>; <code>POST /api/participants/assisted</code>
+                </td>
+                <td>R3-S1–S3</td>
+              </tr>
+              <tr id="r4-map">
+                <td>
+                  <a
+                    href="../openspec/specs/stcirt/spec.md#requirement-r4-home-and-participant-entry"
+                    >R4</a
+                  >
+                </td>
+                <td>入口・session · <a href="#overview">2</a>, <a href="#trust">7</a></td>
+                <td>1, 2, 5</td>
+                <td><code>POST/GET/DELETE /api/participants/session</code></td>
+                <td>R4-S1–S5</td>
+              </tr>
+              <tr id="r5-map">
+                <td>
+                  <a
+                    href="../openspec/specs/stcirt/spec.md#requirement-r5-accessible-responsive-interface"
+                    >R5</a
+                  >
+                </td>
+                <td>
+                  狭幅・keyboard・focus · <a href="#overview">2</a>, <a href="#answer-flow">3</a>
+                </td>
+                <td>2</td>
+                <td><code>/answer</code> UI</td>
+                <td>R5-S1–S3</td>
+              </tr>
+              <tr id="r6-map">
+                <td>
+                  <a
+                    href="../openspec/specs/stcirt/spec.md#requirement-r6-isolated-administrator-authentication"
+                    >R6</a
+                  >
+                </td>
+                <td>admin認証と管理境界 · <a href="#overview">2</a>, <a href="#trust">7</a></td>
+                <td>1, 5</td>
+                <td><code>/api/admin/session</code>; <code>/api/admin/presentation</code></td>
+                <td>R6-S1–S4</td>
+              </tr>
+              <tr id="r7-map">
+                <td>
+                  <a
+                    href="../openspec/specs/stcirt/spec.md#requirement-r7-presentation-snapshot-and-ranking"
+                    >R7</a
+                  >
+                </td>
+                <td>aggregate・snapshot・順位 · <a href="#aggregate">5</a></td>
+                <td>1, 3, 4, 6</td>
+                <td><code>POST /api/admin/presentation</code></td>
+                <td>R7-S1–S3</td>
+              </tr>
+              <tr id="r8-map">
+                <td>
+                  <a href="../openspec/specs/stcirt/spec.md#requirement-r8-staged-result-disclosure"
+                    >R8</a
+                  >
+                </td>
+                <td>発表stageの公開制御 · <a href="#publication">6</a></td>
+                <td>1, 4, 5</td>
+                <td>
+                  <code>GET /api/presentation</code>; <code>GET /api/admin/presentation/deck</code>
+                </td>
+                <td>R8-S1–S3</td>
+              </tr>
+              <tr id="r9-map">
+                <td>
+                  <a
+                    href="../openspec/specs/stcirt/spec.md#requirement-r9-participant-result-visibility"
+                    >R9</a
+                  >
+                </td>
+                <td>本人結果とscope · <a href="#publication">6</a>, <a href="#assisted">4</a></td>
+                <td>1, 3, 4, 5</td>
+                <td>
+                  <code>POST /api/admin/participant-results</code>;
+                  <code>GET /api/participants/results</code>
+                </td>
+                <td>R9-S1–S3</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          詳細要求は正本の<a href="../openspec/specs/stcirt/spec.md#requirements">Requirements</a
+          >、APIは<a href="../openspec/specs/stcirt/spec.md#api">API</a>、主体の権限は<a
+            href="../openspec/specs/stcirt/spec.md#authorization-and-trust-boundaries"
+            >Authorization and trust boundaries</a
+          >を参照してください。
+        </p>
+      </section>
+      <footer class="foot">
+        <p>
+          この文書は外部通信・外部font・runtime・JavaScriptを必要としない単一HTMLです。印刷時にも正本注意書きを含みます。正本リンクは同じcheckout内の相対参照です。最終確認は正本と現行実装に対して行ってください。
+        </p>
+        <p>
+          <a href="../openspec/specs/stcirt/spec.md">正本へ戻る: openspec/specs/stcirt/spec.md</a> ·
+          <a href="#toc-title">目次へ戻る</a>
+        </p>
+      </footer>
+    </main>
+  </body>
 </html>

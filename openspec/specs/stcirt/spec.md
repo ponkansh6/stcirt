@@ -1,6 +1,6 @@
 # Stcirt Five-Question Exam Specification
 
-## Overview
+## Purpose
 
 Stcirt presents four multiple-choice questions and one free-response question in ID order. Participants join with a display name and the event's shared four-digit PIN; a signed HttpOnly cookie identifies them for subsequent answers. The exam UI and exam-time APIs do not disclose correctness, explanations, scores, rubric details, JEV responses, or assessment state. Legacy `questions` and `answer_logs` data remain intact and are not read or written by this application. There is no home UI; `/` redirects to `/answer`.
 
@@ -26,6 +26,8 @@ The Drizzle schema in `src/lib/db/schema.ts` contains the legacy tables and the 
 - `presentation_operations`: admin operation IDs and actions for idempotent retries and mismatch rejection. The legacy optional mode payload remains for existing rows but is no longer written or interpreted.
 - `participant_result_settings`: singleton durable participant-results visibility (`visible`) and publication-history (`ever_published`) flags, independent of presentation stage and projection visibility. `ever_published` defaults to false, becomes true after successful publication, and remains true when results are hidden
 
+The matching application/API types are defined alongside their boundaries: `AnswerBatchInput`, `AnswerBatchResult`, and `AnswerSubmission` in `src/lib/api/client.ts`; request/result schemas in `src/lib/api/schemas.ts`; `ParticipantResult` and `ParticipantResultQuestion` in `src/lib/participant-results-contract.ts`; and `PresentationState`, `PresentationAction`, and `PresentationAnswerSnapshot` in `src/lib/db/repository/presentation-repository.reads.ts`. These are the client and service contracts; persisted records remain the Drizzle tables above rather than a second hand-maintained data model.
+
 Migration 0013 adds `presentation_sessions.snapshot_revision`: rows with a prior snapshot or started state become revision 1, including valid empty snapshots, while sessions without a snapshot remain revision 0. Participant names are trimmed and normalized to Unicode NFC for case-sensitive uniqueness. They are not compatibility-normalized and internal whitespace is preserved. The shared event PIN and session signing secret are held only in server-side environment configuration.
 
 Migration 0015 adds `assisted_participants`. The owner is a participant with a completed submission; the target is a separately created `exam_participants` row whose answers are saved in the existing participant-owned submission tables. The relationship does not replace or alter the owner's participant cookie or submission.
@@ -40,7 +42,28 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 
 ## Requirements
 
-### R1: Fixed five-question set
+### Requirement: R1: Fixed five-question set
+
+The participant client MUST check authentication and saved-submission state before starting an attempt, and MUST start only with the complete fixed five-question batch.
+
+#### Scenario: [R1-S1] Start only from a complete ordered batch
+
+- WHEN latest-submission lookup returns no saved submission and the batch endpoint returns exactly five unique questions in ascending ID order
+- THEN the client may begin the exam with those questions, and the batch contains no answer key or grading fields
+- WHEN the batch is incomplete, malformed, or unavailable
+- THEN the exam does not begin and the participant can retry
+
+#### Scenario: [R1-S2] Refuse an incomplete batch
+
+- WHEN `/api/questions/batch` returns fewer than five questions
+- THEN `/answer` keeps the question screen closed and offers a retry action
+
+#### Scenario: [R1-S3] Do not treat a failed saved-submission lookup as a new attempt
+
+- WHEN the latest-submission lookup fails after participant authentication
+- THEN the client reports a retryable lookup failure and does not fetch questions as if no submission existed
+- WHEN a saved submission is returned
+- THEN completion is shown instead of starting a new exam
 
 **WHEN** an unauthenticated user opens `/answer`, or an authenticated participant has no saved submission
 **THEN** the client checks the participant session and latest submission before fetching the fixed five-question set in one request.
@@ -55,7 +78,30 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - A latest-submission request failure is shown with a retry action and is never treated as an empty submission.
 - If fewer than five questions are available, `/answer` does not start the exam and shows a retryable load error.
 
-### R2: Participant-authenticated answer confirmation and recording
+### Requirement: R2: Participant-authenticated answer confirmation and recording
+
+The answer API MUST atomically save a confirmed five-question answer set for the authenticated participant and MUST NOT return grading data.
+
+#### Scenario: [R2-S1] Save one authenticated five-question answer set
+
+- WHEN a participant with a valid signed cookie confirms a five-question answer set (four selected choices and one non-empty Q5 free-text answer) using a new operation ID and the current expected revision
+- THEN all answers and the next revision are saved atomically, and the response contains no grading data
+- WHEN the same operation ID and canonical payload is retried after a transport failure
+- THEN the original revision is returned without a second write or assessment start
+- WHEN the participant is missing, the Origin is invalid, or the request body is invalid
+- THEN the request fails with the documented status and no partial answer set is committed
+
+#### Scenario: [R2-S2] Reject a missing or non-owned submission
+
+- WHEN a valid participant requests a missing or non-owned submission through `GET /api/answers/batch`, or tries to revise a submission owned by another participant
+- THEN the request returns 404 without exposing or changing that submission
+
+#### Scenario: [R2-S3] Reject stale and conflicting concurrent writes
+
+- WHEN two corrections use the same expected revision and only one commits first
+- THEN the other correction receives 409 and does not overwrite the committed answer set
+- WHEN an operation ID is reused with a different canonical payload
+- THEN the request receives 409
 
 **WHEN** a user chooses options for the five questions and confirms the set
 **THEN** `POST /api/answers/batch` atomically saves the five answers for one stable submission.
@@ -83,7 +129,28 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - When the validated participant cookie belongs to an owner who has an assisted target, `scope=assisted` resolves that target server-side for latest, restore, and batch-save operations; the client cannot provide a target participant ID.
 - The assisted target uses the same fixed question set, submission validation, revision checks, and durable assessment behavior as a normal participant. Owner and target submissions remain separate and the owner cookie remains valid throughout.
 
-### R3: Completion
+### Requirement: R3: Completion
+
+The participant client MUST show completion for an existing saved submission and MUST preserve that submission when correction is unavailable or not requested.
+
+#### Scenario: [R3-S1] Restore a saved submission
+
+- WHEN an authenticated participant returns with a complete saved answer set matching the current exam
+- THEN completion is shown and correction restores that same submission
+- WHEN the saved set cannot be safely restored
+- THEN completion remains visible and correction is unavailable
+
+#### Scenario: [R3-S2] Preserve a legacy fifth answer during correction
+
+- WHEN the saved fifth answer has the recognized historical choice-shaped form
+- THEN completion preserves it as legacy, correction treats Q5 as unanswered, and only a replacement free-text value may be submitted
+
+#### Scenario: [R3-S3] Keep an assisted target separate from its owner
+
+- WHEN an eligible completed owner registers the same target name again
+- THEN the existing target is returned without replacing the owner cookie or creating a second target
+- WHEN the owner requests a different target after a link exists
+- THEN registration returns 409 and the original target remains linked
 
 **WHEN** the batch answer POST succeeds, or the latest-submission lookup finds an existing submission
 **THEN** show `回答済み` and offer `回答を修正する` only when the saved set can be safely restored.
@@ -102,7 +169,41 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - The target's submission is distinct from the owner's and persists across route changes and reloads. If the target signs in later through the regular shared-PIN flow, the same participant record and submission are used.
 - After an assisted target confirms answers, return to the owner's completion view after the save is confirmed. Keep the owner's saved answers and submission unchanged. Report an owner reload failure separately from a failed assisted save. A response whose submission ID differs from the requested ID is not a successful save.
 
-### R4: Home and participant entry
+### Requirement: R4: Home and participant entry
+
+The root route MUST redirect to participant entry, and participant sign-in MUST resolve the participant's saved state before the exam begins.
+
+#### Scenario: [R4-S1] Use the compatibility route
+
+- WHEN a visitor opens `/`
+- THEN the server redirects to `/answer` without rendering home statistics
+- WHEN a participant submits a valid display name and event PIN
+- THEN the client checks that participant's latest submission before showing the exam or completion view
+
+#### Scenario: [R4-S2] Reject invalid participant sign-in
+
+- WHEN a participant submits a malformed or incorrect PIN, or the request has an invalid Origin
+- THEN no participant session is issued and the quiz does not start
+
+#### Scenario: [R4-S3] Resume the participant's existing state
+
+- WHEN sign-in succeeds and the latest-submission endpoint returns a saved submission
+- THEN the app enters completion rather than creating a second submission or loading a new question set
+
+#### Scenario: [R4-S4] Expired or revoked participant sessions require explicit recovery
+
+- WHEN a participant cookie is expired, invalid, or signed under a participant PIN/secret that has since changed
+- THEN protected participant requests reject it and the answer flow requires reauthentication
+- WHEN the same participant reauthenticates after an answer-save 401
+- THEN the draft may be preserved for that participant, but the participant must explicitly resubmit it; a different participant does not inherit the draft
+
+#### Scenario: [R4-S5] Rate-limit failed participant sign-in by normalized name
+
+- WHEN failed sign-in attempts for one normalized name reach the configured limit (default five in a 15-minute window)
+- THEN further sign-in attempts for that name are rate-limited and include the retry time
+- WHEN the limiter is unavailable
+- THEN sign-in fails closed without issuing a session
+- Answer APIs do not use this sign-in rate limiter.
 
 **WHEN** the user visits `/`
 **THEN** redirect to `/answer` without rendering home content or loading statistics.
@@ -110,7 +211,30 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - `/` remains a compatibility entry point only. Do not show a home briefing, statistics, or a link back to `/` in participant, administration, or presentation screens.
 - The answer entry flow accepts a name and the organizer-provided shared four-digit PIN in one form. After authentication, the client checks latest submission and proceeds directly to quiz or completion without an intermediate ready screen.
 
-### R5: Accessible responsive interface
+### Requirement: R5: Accessible responsive interface
+
+The participant interface MUST support the documented responsive layout, keyboard operation, accessible status communication, and focus behavior.
+
+#### Scenario: [R5-S1] Navigate and answer with keyboard at narrow width
+
+- WHEN a participant uses the answer flow at 320 CSS px width or 200% zoom
+- THEN the content remains usable without horizontal scrolling, and keyboard focus can reach question navigation and answer controls
+- WHEN reduced motion is requested
+- THEN the answer interface respects that preference
+
+#### Scenario: [R5-S2] Keep the answer flow usable during a failed submission
+
+- WHEN submission is pending
+- THEN selected answers remain checked, controls are disabled, and the polite status announces progress
+- WHEN the request fails
+- THEN the participant can retry without losing the selected answers
+
+#### Scenario: [R5-S3] Preserve focus chosen by the participant
+
+- WHEN focus has moved away from the confirmation action before the completion handoff
+- THEN the completion view does not steal focus from the participant's selected destination
+- WHEN keyboard focus is on the confirmation action at submission start
+- THEN the documented focus handoff targets the confirmation/completion heading
 
 - Use a restrained exam-paper visual style with light surfaces, ink text, subtle borders, and a primary accent; do not use medals, pass/fail imagery, or certificate visuals.
 - Always use the light color palette regardless of the operating system's color-scheme preference.
@@ -122,7 +246,35 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - Show each question prompt only once visually in its heading; keep the duplicate fieldset legend visually hidden and available to assistive technology as the radio group's accessible name. Do not show per-question helper paragraphs below the radio choices or reference them with `aria-describedby`; retain native radio group semantics, overall unanswered guidance, and answer progress.
 - In-page links to unanswered questions move focus to a visible question heading without it being hidden behind page chrome. Do not add exam-time correctness, explanation, score, accuracy, or pass/fail information.
 
-### R6: Isolated administrator authentication
+### Requirement: R6: Isolated administrator authentication
+
+Administrator access MUST use its separate signed session and MUST remain isolated from participant authentication.
+
+#### Scenario: [R6-S1] Keep administrator access isolated
+
+- WHEN an administrator signs in with valid admin configuration and PIN
+- THEN a separate signed admin cookie authorizes protected admin requests
+- WHEN participant credentials are used at an admin endpoint, admin configuration is missing, or the request lacks a valid cookie
+- THEN protected admin access is denied
+
+#### Scenario: [R6-S2] Reject invalid administrative mutations
+
+- WHEN an otherwise valid administrator submits a mutation with a missing or cross-origin `Origin`
+- THEN the mutation is rejected and the presentation/result visibility state is not changed
+- WHEN the admin PIN is invalid
+- THEN no admin cookie is issued
+
+#### Scenario: [R6-S3] Clear private presenter data after session loss
+
+- WHEN a protected presenter request returns 401
+- THEN presenter controls and the in-memory private deck are cleared and polling waits for login or visible resume
+- WHEN a protected read fails transiently without 401
+- THEN the latest valid displayed state is retained for retry
+
+#### Scenario: [R6-S4] Reject an expired administrator session
+
+- WHEN an administrator cookie is expired, malformed, or cannot be verified
+- THEN protected admin requests are unauthorized and presenter private data is cleared after a 401
 
 - Admin sign-in uses `ADMIN_PRESENTATION_PIN` and `ADMIN_PRESENTATION_SESSION_SECRET`; if either is missing or invalid, admin sign-in and protected admin endpoints fail closed.
 - The admin session is a signed HttpOnly cookie with a purpose-specific HMAC key, separate cookie name and secret from the participant session. Participant cookies never grant admin access.
@@ -134,16 +286,45 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - Admin and presenter polling schedule the next read only after the current read settles, and each polling loop has at most one active refresh. In the admin console, login and mutations wait for an active poll to settle; while they run, scheduled polls wait, so the poll and user operation do not start duplicate HTTP work. Presenter navigation waits for an active poll and uses its confirmed controls before sending the mutation. The presenter's eight-second timeout covers the complete serial session → controls → deck refresh, not eight seconds per request. Poll requests retry after timeout/failure and are aborted on unmount. Responses from canceled or superseded refreshes cannot update the screen or start later reads in the serial refresh. A failed read keeps the latest valid admin state or presenter deck/stage visible and reports that it is retrying. Invalid controls/deck/projection payloads are treated as failed reads rather than default state values. Presenter polling treats the protected GET endpoints' 401 response as authentication loss; network errors, timeouts, malformed data, and 5xx responses retain the displayed stage and retry. A 403 is not treated as authentication loss: it is used by authenticated mutation endpoints for invalid Origin and remains an operation failure.
 - When presenter controls successfully report a new snapshot revision, the previous deck is known to be stale because aggregation can change questions, answers, scores, ranks, and names. The old slide is hidden while a matching deck is loaded; it is not restored if the deck fetch fails or returns another revision. Polling retries and progression remains disabled until controls and deck revisions match. This fail-closed handling applies only after authoritative controls confirm a revision mismatch; transient read failures without a confirmed newer revision keep the currently displayed stage.
 
-### R7: Presentation snapshot and ranking
+### Requirement: R7: Presentation snapshot and ranking
+
+The presentation MUST use an explicitly aggregated versioned snapshot and MUST preserve the prior snapshot when aggregation cannot safely update it.
+
+#### Scenario: [R7-S1] Aggregate only by explicit administrator action
+
+- WHEN an administrator aggregates a compatible answer set
+- THEN a transaction replaces the shared snapshot and advances its revision
+- WHEN presentation starts or participant results are published without a nonzero snapshot revision
+- THEN the operation returns 409 and does not create a snapshot implicitly
+- WHEN aggregation fails
+- THEN the prior snapshot and presentation state remain intact
+
+#### Scenario: [R7-S2] Exclude version-incompatible submissions and reject unready compatible assessments
+
+- WHEN a completed submission has an incompatible question-version map, or its existing Q5 assessment has an incompatible question/rubric version
+- THEN the submission is excluded from the aggregate candidate set
+- WHEN no submission is included and at least one completed version-incompatible submission was excluded
+- THEN aggregation succeeds with `snapshotUpdated: false` and preserves the current snapshot and revision
+- WHEN a version-compatible submission has a missing, pending, failed, or stale-for-revision Q5 assessment
+- THEN aggregation returns 409 and preserves the current snapshot
+- WHEN the compatible assessment becomes ready
+- THEN a later explicit aggregate may include that submission
+
+#### Scenario: [R7-S3] Reject stale and replayed presentation operations safely
+
+- WHEN an operation ID is replayed with its same action and payload
+- THEN the recorded operation does not execute a second time
+- WHEN an operation ID is reused with a different action, or presenter navigation uses a stale snapshot revision
+- THEN the request returns 409 and does not apply the conflicting operation
 
 - Only one current presentation session is stored. An explicit administrator aggregate action snapshots all `exam_questions` in `id ASC` order, all `exam_participants`, and each participant's latest valid complete saved submission against that question set in one database transaction. This is the only operation that creates or replaces the snapshot. Start, publication, republishing, answer updates, and stage navigation read the current snapshot without rebuilding it. A failed aggregate leaves the prior snapshot, state, cursor, visibility, and projection-hidden flag unchanged.
 - A successful aggregate increments `snapshot_revision` and the normal operation `version`, while retaining the current state and cursor when the cursor remains valid. During ordinary presentation operation, if aggregation invalidates a `question` or `answer` cursor, correct it to `question` at index zero, or to `podium_preview` at index zero when there are no questions. This aggregate-time cursor correction is independent of the `start` and `reset` transitions, which enter `opening` at cursor zero. Preserve `not_started` and `finished` session states. Existing snapshots and started empty snapshots migrate as revision 1; sessions with no snapshot migrate as revision 0.
 - Start and first or later publication require a nonzero snapshot revision and return 409 while unaggregated. Result visibility remains independent from `projection_hidden`, stage, and operation version. Hiding results and repeated already-public requests do not rebuild the snapshot. A later explicit aggregate updates the snapshot used by both the presentation and participant results without changing result visibility.
 - Questions 1–4 award one point for a correct selection. Question 5 awards `JEV score / 2` points (0–1), with no correctness threshold; confidence is ignored. Stored scores and rank comparisons retain floating-point precision, and display rounds only to two decimals. Legacy question-5 selections contribute no question-5 point and are labeled legacy without regrading. Unanswered or invalid/incomplete submissions score zero. Every participant is included. Ties use exact score equality and standard competition ranking (1, 1, 3).
-- Aggregation fails atomically while any latest free-text assessment is absent, pending, failed, or stale for its answer revision.
+- Aggregation fails atomically while any otherwise version-compatible latest free-text submission has an assessment absent, pending, failed, or stale for its answer revision. Version-incompatible submissions are excluded as described above and do not create this readiness conflict.
 - The presentation labels the existing correct-answer count as `ポイント` in the projection and authenticated admin list/preview; this is display wording only and does not change scoring.
 - A correct multiple-choice answer is identified by reversing the background and text colors across the full correct-choice row, including its label, body, and wrapped lines, and by the visible text label `正解`; correctness remains understandable without color. At the documented 1920×1080 CSS viewport (16:9 reference), normal question, choice, explanation, rank, name, score, and answer text must remain at least 20 pt (26.67 CSS px) after fitting. The regression measures each main text element's computed font size multiplied by the shared fit scale and converts CSS pixels to points at 0.75 pt per pixel. The layout must leave enough space for normal reference content to meet this target. The sole rank-screen exception applies only when exactly two winner cards are displayed and a long winner name or long free-text Q5 answer makes a shared fit reduction necessary to keep the complete rank slide inside its frame without overlap, omission, or clipping. Because fit uses one scale for the slide, this necessary reduction may also put other main text on that rank screen below 20 pt. Long content that fits without such a reduction, and all opening, question, answer, and other normal rank content, remains subject to the 20 pt target. An individual long answer detail may also use the narrowly scoped text ellipsis described in R8. No clipping or truncation is used to preserve a font size.
-- In the public projection and authenticated admin preview, each rank stage shows its rank label once, followed by winners in HTML order. For one winner, the name is the largest text and the score is smaller supporting information. For a tie, each winner keeps the name and score paired in one item under the shared rank label. The name keeps its `さん` honorific, and the score remains `ポイント` rounded to two decimals. The display renders at most two winners per rank in source order and, when more are tied, shows `ほか N 名` with the same rank group. This is a display-only limit; projection data, scores, and ranks retain every tied participant.
+- In the public projection and authenticated admin preview, each rank stage shows its rank label once, followed by winners in HTML order. For one winner, the name is the largest text and the score is smaller supporting information. For a tie, each winner keeps the name and score paired in one item under the shared rank label. For result-announcement ranks, each name has a space before the `殿` honorific; the score remains `ポイント` rounded to two decimals. The display renders at most two winners per rank in source order and, when more are tied, shows `ほか N 名` with the same rank group. This is a display-only limit; projection data, scores, and ranks retain every tied participant.
 - The score, rank, participant display name, selected-answer snapshot, question text, choices, correct answer, and non-empty snapshot explanation stay fixed until the next explicit aggregate. For a legacy snapshot with a null or blank explanation, the answer-stage projection uses the current `exam_questions.explanation` for its `sourceQuestionId` until aggregation captures the explanation; this fallback is never shown in the question stage. Later answer revisions and other question edits do not alter the snapshot before aggregation.
 - Aggregation captures `questionVersions` and `rubricVersions` maps in the presentation session. A completed submission with a missing or outdated question-version map is excluded; a later compatible submission from the same participant may still be selected. A submission whose Q5 assessment has a missing or incompatible question/rubric version is also excluded; these reason counts may overlap, while the excluded submission count is unique. A newly recorded aggregate operation returns `snapshotUpdated`, `includedSubmissionCount`, `excludedSubmissionCount`, and `excludedReasonCounts` (`questionVersionMismatch` and `q5AssessmentVersionMismatch`) with its successful response. With at least one included submission, the partial result snapshot is committed and `snapshotUpdated` is true. If no submission is included because at least one completed version-incompatible submission was excluded, aggregation succeeds with `snapshotUpdated: false` and leaves the existing snapshot and revision unchanged. If there are no submissions or only structurally incomplete submissions, explicit empty aggregation proceeds as before and `snapshotUpdated` is true, including when there are no participants. A compatible assessment that is absent, ungraded, or stale for the current submission revision remains a 409 readiness conflict, as do unsupported current question/rubric registry versions and concurrent session/CAS conflicts. Starting a presentation with an old or incomplete version snapshot fails with a conflict until an explicit aggregate creates a valid snapshot. Existing rows are never assigned a version by inference or backfill.
 - State progression is manual: `start` enters the `opening` cover at cursor zero; `advance` from opening enters `question` zero, or `podium_preview` at cursor zero when there are no questions. Each question advances `question` then `answer`; after the last answer, `podium_preview` announces no winners; ranks with no winners are skipped while announcing rank 3, then 2, then 1; the process ends at `finished`.
@@ -157,7 +338,32 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - Stage progression is available only to a confirmed presenter whose authenticated deck has loaded successfully, through Space, Enter, ArrowRight, ArrowLeft for previous, and horizontal pointer swipe (left advances, right returns). The existing slide-surface click/tap advance remains pending user confirmation and is retained provisionally. Controls are enabled only while both `presenter=1` and a valid admin session are confirmed; handlers remain inactive until the deck is ready. Repeated keys, modifier keys (Shift, Alt, Ctrl, Meta), and interactive, input, editable, or dialog targets do not trigger progression; repeat, multi-touch, canceled, vertical, and in-flight gestures do not send mutations, and a swipe's follow-up click is suppressed. Public `/presentation` spectators are read-only. Movement cannot start a not-started session; finished blocks forward movement but permits previous.
 - The viewport projection uses the full viewport without reserving footer height or causing page scroll. The 16:9 slide canvas and safe area remain within that viewport. Presenter progression never requests browser fullscreen. Unsupported or rejected fullscreen, and exiting fullscreen with Escape, leave the viewport projection and manual progression usable; fullscreen is not automatically retried. Admin start, opening the projection tab, polling, idle time, and reload never request fullscreen.
 
-### R8: Staged result disclosure
+### Requirement: R8: Staged result disclosure
+
+Public presentation responses MUST disclose only the data permitted for the current presentation stage and visibility state.
+
+#### Scenario: [R8-S1] Return only the data allowed for the public stage
+
+- WHEN the projection is hidden
+- THEN the public API returns only standby state
+- WHEN the stage is a question
+- THEN the public API omits answer keys and explanation
+- WHEN the stage is an answer or rank announcement
+- THEN it returns only the stage-specific answer or announced-winner data defined below
+
+#### Scenario: [R8-S2] Withhold answer details at question stage and while hidden
+
+- WHEN a question is projected
+- THEN choices are public but answer keys and explanation are omitted
+- WHEN projection hiding is enabled
+- THEN the API returns only `{ state: 'standby' }` regardless of the private presentation stage
+
+#### Scenario: [R8-S3] Resolve Q5 identity before suppressing response rows
+
+- WHEN the current snapshot source question resolves to key `it-literacy-005`
+- THEN the answer stage includes the model answer and omits the optional `responses` property
+- WHEN source identity cannot be confirmed
+- THEN response rows are retained rather than treating position or free-text type as proof of Q5 identity
 
 - The opening projection displays the title `しゅんたま検定` and contains no question, answer, or ranking data. An unstarted session remains `not_started` for administration while using the same opening cover design. Projection hiding takes precedence and returns standby without opening content.
 - The admin projection includes the complete current question and ranking snapshot at every state plus `projectionHidden: boolean` and `snapshotRevision`. It is available only through authenticated admin APIs. Its snapshot changes only after explicit aggregation.
@@ -175,7 +381,32 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - Projection reads are stage-specific and use one consistent database transaction. If projection is hidden, the repository returns standby before reading questions, entries, or source-question metadata. The `question` stage reads only its cursor-indexed question. The `answer` stage reads the cursor snapshot and required source-question metadata, and reads participant entries only for non-Q5 free-text response data. A rank stage loads only the announced winners' detail required by its response; `podium_preview` and `finished` skip question, entry, and source-question reads. Non-Q5 free-text responses retain rank then display-name order. Projection data is not cached across users or requests.
 - Existing participant session, answer, and batch APIs do not return presentation ranking or answer keys.
 
-### R9: Participant result visibility
+### Requirement: R9: Participant result visibility
+
+Participant result reads MUST require the appropriate authenticated participant scope and MUST follow the separately controlled publication state.
+
+#### Scenario: [R9-S1] Publish a snapshot and scope reads to the authenticated participant
+
+- WHEN an administrator publishes after an explicit nonzero-revision aggregation
+- THEN a signed participant can read only their own result from that snapshot
+- WHEN no snapshot exists or the participant has no valid snapshot entry
+- THEN publication is rejected or the participant receives the documented unavailable state without another participant's data
+- WHEN an administrator hides results
+- THEN participant result details are no longer returned while presentation projection visibility remains independent
+
+#### Scenario: [R9-S2] Keep private or unavailable participant results distinct
+
+- WHEN results are private
+- THEN an authenticated participant receives the waiting state without result details
+- WHEN no valid snapshot entry exists
+- THEN the participant receives unavailable rather than an invented zero score
+
+#### Scenario: [R9-S3] Resolve assisted results only through the owner relationship
+
+- WHEN an authenticated owner requests `scope=assisted` and has a linked target
+- THEN only the linked target's own snapshot result is returned
+- WHEN no target resolves or a scope value is invalid
+- THEN the API returns the documented not-found or bad-request result without querying another participant's result
 
 - Participant result visibility is stored independently from `presentation_sessions.projection_hidden`, stage, and operation version. It defaults to false. The participant-results view shares the `presentation_questions` and `presentation_entries` snapshot with the presentation.
 - An administrator can hide results at any time. Publication requires a snapshot created by explicit aggregation and changes only visibility; an unaggregated publication returns 409 and remains private. Hiding, publication, republishing, and later presentation starts never rebuild the shared snapshot. A later explicit aggregate updates the shared question, answer, score, and rank snapshot while retaining the visibility setting and presentation stage/cursor when valid. A repeated publish request is idempotent. Visibility operations do not change projection visibility or presentation operation version. A hide operation does not rebuild the snapshot.
@@ -190,6 +421,26 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - Participant result responses and the result page's data access use `no-store`. Publication changes do not alter projection hiding, mode, snapshot revision, or operation version. Results are published from the latest explicit aggregate. Aggregation updates the shared snapshot used by `/api/presentation` and participant results; any correction of an invalid active presentation cursor follows the aggregate-time rule in R7 and remains independent of `start` and `reset`.
 
 ## API
+
+The entries below are concise contract indexes; the endpoint sections that follow define complete response fields, status, and cache behavior. `Origin` means same-origin validation. The cache column states only behavior specified for that route.
+
+| Method and path                                                      | Authorization / input                                                                                                                                          | Success output                                          | Errors and replay behavior                                                                                                                                                                                                                                                                | Cache / state effect                                                                      |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `GET /api/questions/batch`                                           | Public; no input                                                                                                                                               | Five ordered question prompts without answer keys       | Unavailable or invalid exam data is an error; no partial exam starts                                                                                                                                                                                                                      | Question data only; no write                                                              |
+| `GET /api/questions/next`                                            | Public; optional ID cursor                                                                                                                                     | Next question prompt                                    | Invalid cursor/request is rejected                                                                                                                                                                                                                                                        | No write                                                                                  |
+| `POST /api/participants/session`                                     | Name and shared PIN; same-origin `Origin`                                                                                                                      | Participant identity and expiry; signed cookie          | Invalid credentials `401`, rate limit `429`, bad Origin `403`, unavailable config/service `503`                                                                                                                                                                                           | Sets session cookie; creates/reuses participant                                           |
+| `GET /api/participants/session` / `DELETE /api/participants/session` | Signed participant cookie for lookup; DELETE requires same-origin `Origin`                                                                                     | Current participant or cleared session                  | Invalid session returns no participant; invalid Origin rejected                                                                                                                                                                                                                           | GET is read only; DELETE clears only cookie                                               |
+| `POST /api/answers`                                                  | Participant cookie; same-origin `Origin`; legacy single-answer body                                                                                            | `{ recorded: true }`                                    | Invalid/auth/origin/service failures; no grading response                                                                                                                                                                                                                                 | Legacy answer log write; no grading disclosure                                            |
+| `POST /api/answers/batch`                                            | Participant cookie; same-origin `Origin`; `submissionId`, `operationId`, `expectedRevision`, five-question answer set; optional server-resolved assisted scope | `{ submissionId, revision }`                            | `400` invalid body/question set; `401` missing/invalid participant; `403` invalid Origin; `404` existing submission is non-owned or replay's recorded submission is missing/non-owned; `409` operation/payload or revision conflict; identical operation replay returns original revision | Private, no-store; atomic write; assessment trigger only for newly committed free text    |
+| `GET /api/answers/latest` / `GET /api/answers/batch`                 | Participant cookie; batch GET takes submission ID; optional server-resolved assisted scope                                                                     | Latest submission or saved answers                      | `400` invalid ID/scope; `401` missing/invalid participant; `404` requested submission is absent or non-owned / assisted target does not resolve; errors are not treated as no submission                                                                                                  | Private, no-store; read only                                                              |
+| `GET /api/participants/assisted` / `POST /api/participants/assisted` | Owner cookie; POST name and same-origin `Origin`                                                                                                               | Existing target/eligibility or registered target        | `400/401/403/409/429/503`; same normalized owner/name replay is idempotent                                                                                                                                                                                                                | Private, no-store; POST creates target and owner link atomically, does not replace cookie |
+| `POST /api/internal/jev/retry`                                       | `Authorization: Bearer <JEV_RETRY_SECRET>`; optional `retryFailed=1`                                                                                           | Processed/graded/retried/failed counts                  | Unauthorized/invalid service request fails; job claim and lease prevent duplicate active processing                                                                                                                                                                                       | Durable assessment state changes; at most five due jobs per call                          |
+| `GET /api/admin/session` / `POST` / `DELETE`                         | POST PIN or DELETE; both mutations require same-origin `Origin`                                                                                                | Authenticated status and separate admin cookie          | Invalid PIN `401`, unavailable config `503`, invalid Origin `403`                                                                                                                                                                                                                         | No-store; session-only state                                                              |
+| `GET /api/admin/presentation` / `POST /api/admin/presentation`       | Admin cookie; POST operation ID/action, optional expected snapshot revision                                                                                    | Private snapshot/controls or confirmed mutation result  | `401/403/409/503`; operation replay is idempotent and conflicting ID/action is rejected                                                                                                                                                                                                   | No-store; aggregate replaces snapshot, other actions mutate presentation state            |
+| `GET /api/admin/presentation/deck`                                   | Admin cookie                                                                                                                                                   | Full in-memory presenter deck for its snapshot revision | `401/503`; no public fallback                                                                                                                                                                                                                                                             | No-store; read only                                                                       |
+| `GET /api/presentation`                                              | Public                                                                                                                                                         | Current stage-limited projection or standby             | Service failure is an error                                                                                                                                                                                                                                                               | No-store; read only                                                                       |
+| `POST /api/admin/participant-results`                                | Admin cookie; `{ visible }`; same-origin `Origin`                                                                                                              | `{ visible }`                                           | `401/403/409/503`; publish without snapshot revision returns `409`                                                                                                                                                                                                                        | Private, no-store; changes result visibility only                                         |
+| `GET /api/participants/results`                                      | Signed participant cookie; optional assisted scope resolved server-side                                                                                        | Waiting, unavailable, or own result                     | `401` for missing/invalid session; unavailable snapshot entry stays distinct                                                                                                                                                                                                              | Private, no-store; read only                                                              |
 
 ### `GET /api/questions/next`
 
@@ -270,7 +521,8 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 
 - Requires `Authorization: Bearer <JEV_RETRY_SECRET>`; accepts no answer text from callers.
 - Processes up to five due durable assessment jobs with a 45-second lease and compare-and-set claim. Transient failures use bounded exponential backoff. A privileged call with `?retryFailed=1` requeues terminal failures.
-- Response contains aggregate processed, graded, retried, and failed counts only. Configure an external scheduler to call periodically; there is no scheduler configuration in this repository.
+- The observed state flow is `pending` → `processing` under a 45-second lease → `graded`; retryable failures return to `pending` with bounded exponential backoff, and permanent failures or the eighth attempt end in `failed`. The provider request timeout is 30 seconds. These implementation values are not service-level objectives.
+- Response contains aggregate processed, graded, retried, and failed counts only. Configure an external scheduler to call periodically; there is no scheduler configuration, monitored invocation, or assigned operational owner in this repository.
 - JEV grading uses the versioned Q5 question, expected answer, and rubric. The only supported current pair is `tamami-egg-v1` / `tamami-egg-v1`; missing, unknown, and mismatched versions fail before calling the provider. It uses `TYPESAFE_API_KEY`, optional `TYPESAFE_MODEL` (default `jev-latest`), and optional `TYPESAFE_BASE_URL`. Responses are strictly checked; scores must be finite and within 0–2. The point contribution is raw score divided by two, and confidence is ignored.
 
 ### `/api/participants/session`
@@ -322,6 +574,19 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 - Response 200 while private: `{ state: 'waiting' }`. Response 200 when published and the participant has a valid snapshot entry: `{ state: 'visible', rank, score, questions }`, where each question is `{ position, question, answer }` and `answer` is `{ kind: 'selected', value, correctness: 'correct' | 'incorrect' | 'unavailable' }`, `{ kind: 'freeText', value, score: number | null }`, `{ kind: 'unanswered' }`, or `{ kind: 'legacy' }`. Data comes only from the authenticated participant's current shared presentation question and entry snapshots; current question data is not consulted outside the snapshot. A participant without a snapshot entry or with a malformed snapshot receives `{ state: 'unavailable' }` (or the existing unavailable server error). No correct choice, raw answers JSON, raw score, JEV data, internal assessment data, names, or other participants' information is returned. Publication exposes the most recently aggregated snapshot; publication itself does not refresh it. Migration 0012's `ever_published` marker backfills all existing visibility-settings rows true; an exceptional prior false write before initial publication is therefore treated as previously published.
 - Invalid or missing sessions return 401. All responses are `Cache-Control: private, no-store`.
 
+## Authorization and trust boundaries
+
+| Actor / context       | Identifying authority                                                                          | Allowed boundary                                                                                                                   | Explicitly denied or limited                                                                                                                       |
+| --------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Guest                 | No participant cookie                                                                          | Read public question prompts and public presentation projection; attempt participant sign-in                                       | Cannot submit or read participant answers, admin deck, or participant results                                                                      |
+| Participant           | Valid signed participant cookie plus an existing participant row                               | Own submission, correction, and own published result; same-origin answer mutations                                                 | Client-supplied participant IDs are ignored/rejected; cookie expiry, invalid signature, missing participant, PIN/secret rotation invalidate access |
+| Proxy owner           | The authenticated participant relationship in `assisted_participants`                          | Resolve one linked target through server-side `scope=assisted`; create a target only after owner completion and eligibility checks | Cannot choose an arbitrary target ID, replace owner cookie, register a second/different target, or create a target when themselves a target        |
+| Assisted target       | Its own participant identity when signing in normally; owner relationship only for proxy scope | Has a separate participant record and submission; owner can operate its linked target through the server-resolved relationship     | Target does not inherit owner identity and cannot create another assisted target                                                                   |
+| Administrator         | Separate admin PIN and signed `stcirt_admin_presentation` cookie                               | Read private presentation/deck; mutate presentation and result visibility with a valid same-origin Origin                          | Participant cookie never grants admin; `presenter=1` is not authorization; invalid/missing configuration fails closed                              |
+| Internal retry caller | `Authorization: Bearer <JEV_RETRY_SECRET>`                                                     | Process due durable assessment jobs; request body cannot supply answer content                                                     | No participant or admin authority; `retryFailed=1` is restricted to this secret-protected endpoint                                                 |
+
+Participant failed sign-in and assisted-name registration share the database-backed per-normalized-name limiter (default five attempts per 15 minutes). It stores HMAC fingerprints, not names or IP addresses. Answer endpoints themselves have no rate limit. Mutating participant/admin endpoints validate same-origin `Origin`; protected reads rely on the appropriate signed cookie. Existing cookies expire, and rotating the participant PIN/secret or admin secret invalidates its corresponding session.
+
 ## Components
 
 - `/`: server-side redirect to `/answer`
@@ -362,6 +627,29 @@ Unconfirmed answers are held only in client state. Confirmed answer sets are per
 Vitest covers core logic, API/client behavior, the sequential question repository, answer session state, shared components, and statistics repositories. Playwright covers the home, answer, and answer submission flows.
 
 ## Environment
+
+### Runtime configuration inventory
+
+| Setting                                                       | Use and required state                                                                                                                                          | Missing or invalid behavior                                                                                                      |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`                      | Required to connect to Turso at runtime. `.env.local.example` documents both.                                                                                   | Database access fails; `scripts/check-env.ts` checks only that these two keys appear in `.env.local`, not that credentials work. |
+| `PARTICIPANT_PIN`, `PARTICIPANT_SESSION_SECRET`               | Required for participant authentication; PIN is four ASCII digits and secret is at least 32 bytes. Generated by `pnpm participant-auth generate`.               | Participant auth fails closed. Changing either invalidates participant cookies.                                                  |
+| `PARTICIPANT_SESSION_DAYS`                                    | Optional integer from 1–90; defaults to 30.                                                                                                                     | Invalid configuration is rejected by the auth helper.                                                                            |
+| `PARTICIPANT_RATE_LIMIT_NAME`                                 | Optional positive attempt limit per normalized name per 15-minute window; defaults to 5.                                                                        | Invalid configuration does not produce a usable configured limit; auth handling fails closed.                                    |
+| `ADMIN_PRESENTATION_PIN`, `ADMIN_PRESENTATION_SESSION_SECRET` | Required for administrator authentication; PIN is 1–128 characters and secret at least 32 bytes. Created with `pnpm participant-auth generate --profile admin`. | Admin sign-in and protected APIs fail closed. Admin credentials are independent of participant credentials.                      |
+| `TYPESAFE_API_KEY`                                            | Required for provider grading, server-only.                                                                                                                     | Answer save still succeeds; assessment remains durably pending for retry.                                                        |
+| `TYPESAFE_MODEL`, `TYPESAFE_BASE_URL`                         | Optional provider model and base URL; defaults are `jev-latest` and `https://api.typesafe.ai`.                                                                  | Defaults are used.                                                                                                               |
+| `JEV_RETRY_SECRET`                                            | Required to authorize the internal retry endpoint; server-only.                                                                                                 | Retry invocation is unauthorized/unavailable; the durable job is not removed by the failed invocation.                           |
+
+Names and behaviors above are documentation, not permission to copy credential values into docs. `.env.local.example` intentionally contains placeholders/commented generated fields. The environment preflight in `scripts/check-env.ts` verifies only presence of the two Turso keys, so it must not be described as comprehensive runtime validation. The participant/admin credential CLI writes local values and can optionally sync a selected pair through Vercel CLI; see README for the operational flow. Secret ownership and rotation details remain unresolved in [the data lifecycle guide](../../../docs/data-governance.md) and [open decisions](../../../docs/decisions/open-items.md).
+
+### Lifecycle, NFR, and validation limits
+
+Normal retention, participant correction/deletion policy, backup retention/deletion propagation, and RPO/RTO have no agreed values. Migration 0011 is a dataset reset and must not be presented as routine retention. See [`docs/data-governance.md`](../../../docs/data-governance.md) and [`docs/operations/database-recovery.md`](../../../docs/operations/database-recovery.md).
+
+The repository has no verified scheduler configuration for `POST /api/internal/jev/retry`; deployment, monitoring, and operational responsibility are unresolved. Existing local performance measurements under `docs/performance/` do not establish remote Turso capacity, production p95, concurrency, availability, or retry completion targets. Do not infer a target from them.
+
+The existing responsive/accessibility requirements are in R5, and presentation fit constraints are in R8. The existing hooks and CI workflow are the validation source. Coverage thresholds measure executable-code coverage, not requirement coverage. OpenSpec CLI 1.5.0 was found globally and lists the configured `spec-driven` schema; no local package dependency, project schema file, or registered validation gate exists. Formal validation is therefore not described as a repository check. See [`docs/spec-management.md`](../../../docs/spec-management.md).
 
 JEV grading uses server-only `TYPESAFE_API_KEY`, optional `TYPESAFE_MODEL` (default `jev-latest`), and optional `TYPESAFE_BASE_URL`. Newly saved free-text answers trigger one asynchronous assessment attempt after the answer response. The durable retry worker requires `JEV_RETRY_SECRET`; configure an external deployment scheduler to call `POST /api/internal/jev/retry` periodically for pending jobs, including jobs left pending when JEV configuration or post-response execution is unavailable. The repository has no scheduler configuration. An authenticated `?retryFailed=1` call requeues terminal failures.
 

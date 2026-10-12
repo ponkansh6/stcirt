@@ -14,20 +14,22 @@ context: |
 
   ## プロジェクト構造
   - src/app/ — App Router pages/layouts (RSC + Client Components)
-  - src/app/page.tsx — Home: today's JST stats + start learning button
+  - src/app/page.tsx — Compatibility entry point: redirects `/` to `/answer`
   - src/app/answer/page.tsx — Answer session runner
-  - src/app/api/questions/next/route.ts — Sequential question retrieval
-  - src/app/api/answers/route.ts — Answer submission
-  - src/components/ — UI components (Button, ChoiceButton, ResultBanner, etc.)
-  - src/lib/ — Utilities (db, api, shuffle, choice-label, date, constants)
+  - src/app/api/questions/batch/route.ts — Fixed five-question exam retrieval
+  - src/app/api/answers/batch/route.ts — Atomic participant-owned answer submission
+  - src/app/api/admin/ — Admin session, presentation, and result publication APIs
+  - src/app/api/presentation/route.ts — Public staged presentation projection
+  - src/components/ — Shared exam UI components
+  - src/lib/ — Utilities, participant auth, JEV assessment, and database repositories
   - src/types/ — TypeScript type definitions
   - tests/ — Test suites (unit, e2e)
 
   ## ドメイン知識
-  - 保存済みクイズを ID 昇順で順次出題
-  - 出題カーソルは解答記録成功後に進める
-  - 解答結果は Turso データベース (`answer_logs`) に永続化
-  - ホーム画面に本日の JST 統計を表示
+  - 固定された5問（選択式4問・自由記述1問）の試験を提供
+  - 参加者が確認した回答一式を Turso に保存し、同じ提出を訂正可能
+  - 管理者が明示的に集計したスナップショットをプレゼンテーションと個人結果に利用
+  - `/` は `/answer` へ転送し、ホーム統計画面は提供しない
 
   ## コーディング規約
   - TypeScript strict mode、any 禁止
@@ -48,6 +50,9 @@ rules:
     - Each task must have a clear acceptance criterion
     - Prefer small, independent PRs over monolithic changes
   spec:
-    - Each requirement must have at least one Scenario
-    - Data models should reference actual TypeScript types
-    - UI specifications should reference component names
+    - Keep one canonical product specification at openspec/specs/stcirt/spec.md and preserve its R1–R9 requirement identifiers unless an agreed change requires otherwise
+    - Give every requirement at least one concrete WHEN/THEN scenario; distinguish observed implementation behavior from agreed requirements and unresolved decisions
+    - Reference actual source paths and existing tests where evidence exists; record missing test coverage explicitly and never treat coverage percentage as requirement traceability
+    - Do not turn local benchmarks, implementation details, unverified external services, or unresolved operational targets into new guarantees
+    - Keep operational procedures, decision history, and data lifecycle guidance in linked docs rather than duplicating them in the product requirements
+    - Reference actual TypeScript types and UI component names when the specification describes them

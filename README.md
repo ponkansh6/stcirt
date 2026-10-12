@@ -1,12 +1,23 @@
-# Stcirt - 1-Knowledge-1-Question Endless Learning App
+# Stcirt — Five-Question Exam and Presentation App
 
-A Next.js 16 application for answering a shared set of stored 4-choice questions in insertion order.
+A Next.js 16 application for a shared five-question exam: four multiple-choice questions and one free-response question. Participants submit and may correct one saved answer set; an administrator explicitly aggregates results for a staged presentation and private participant results.
 
 ## Features
 
-- 📚 **Fixed Exam Experience**: Answer the same five-question exam in order.
-- 📝 **Shared Exam Set**: Participants answer the same fixed set of five questions in order.
-- 👤 **Participant Answers**: Participants sign in with their name and the shared four-digit event PIN; their answers are saved in the database under their participant record.
+- **Fixed exam**: Every participant receives the same five questions in ID order.
+- **Participant answers**: A shared four-digit event PIN and signed session identify the participant; confirmed answers are saved to their participant record.
+- **Presentation**: An administrator controls a private slide deck and publishes a separate public projection or participant-result snapshot.
+- **Entry point**: `/` redirects to `/answer`; the app has no home statistics page.
+
+## Documentation
+
+- [Product requirements, API contracts, and current component map](openspec/specs/stcirt/spec.md)
+- [Specification management and requirement traceability](docs/spec-management.md)
+- [Open decisions and operational ownership](docs/decisions/open-items.md)
+- [JEV retry operations](docs/operations/jev-retry.md)
+- [Database migration and recovery notes](docs/operations/database-recovery.md)
+- [Data lifecycle and provider boundary](docs/data-governance.md)
+- [Local performance measurements and their limits](docs/performance/)
 
 ## Stack
 
