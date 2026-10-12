@@ -203,6 +203,112 @@ describe("QuizRunner remaining coverage states", () => {
     expect(setFreeResponse).toHaveBeenCalledWith(5, "入力中の回答");
   });
 
+  it("focuses the selected answer or the first available answer from final review", () => {
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "answering" }, { selections: { 1: 2 }, answeredCount: 1 }),
+    );
+    render(<QuizRunner />);
+
+    const selected = document.querySelector<HTMLElement>('#question-1 input[type="radio"]:checked');
+    const unanswered = document.querySelector<HTMLElement>('#question-2 input[type="radio"]');
+    expect(selected).not.toBeNull();
+    expect(unanswered).not.toBeNull();
+    const selectedFocus = vi.spyOn(selected as HTMLElement, "focus");
+    const unansweredFocus = vi.spyOn(unanswered as HTMLElement, "focus");
+    const firstHeading = document.querySelector<HTMLElement>("#question-1 h2");
+    const secondHeading = document.querySelector<HTMLElement>("#question-2 h2");
+    expect(firstHeading).not.toBeNull();
+    expect(secondHeading).not.toBeNull();
+    firstHeading!.scrollIntoView = vi.fn();
+    secondHeading!.scrollIntoView = vi.fn();
+
+    fireEvent.click(screen.getByRole("button", { name: "第1問「設問1」を編集" }));
+    expect(selectedFocus).toHaveBeenCalledWith({ preventScroll: true });
+    fireEvent.click(screen.getByRole("button", { name: "第2問「設問2」を編集" }));
+    expect(unansweredFocus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it("shows a long free response preview and its full text, including unanswered free text", () => {
+    const quizzes = selectedQuizzes.map((quiz, index) =>
+      index >= 3
+        ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
+        : quiz,
+    );
+    const longAnswer = "あ".repeat(181);
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        { quizzes, selections: { 1: 0, 2: 0, 3: 0 }, freeResponses: { 5: longAnswer } },
+      ),
+    );
+    render(<QuizRunner />);
+
+    expect(screen.getByText(`${"あ".repeat(180)}…`, { exact: true })).toBeInTheDocument();
+    const fullResponse = screen.getByText("全文を表示（181文字）").closest("details");
+    expect(fullResponse).not.toBeNull();
+    fireEvent.click(within(fullResponse as HTMLElement).getByText("全文を表示（181文字）"));
+    expect(
+      within(fullResponse as HTMLElement).getByText(longAnswer, { exact: true }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("自由記述は未入力です。")).toBeInTheDocument();
+  });
+
+  it("keeps reauthentication guidance for submission and load failures, and blocks stale recovery actions", () => {
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "submission-error", message: "回答状況を確認できません。" },
+        { access: { kind: "reauthentication", participant: { id: 7, name: "参加者" } } },
+      ),
+    );
+    const { rerender } = render(<QuizRunner />);
+    expect(screen.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("再ログイン後に状態を確認");
+
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "load-error", message: "設問を読み込めません。" },
+        { access: { kind: "reauthentication", participant: { id: 7, name: "参加者" } } },
+      ),
+    );
+    rerender(<QuizRunner />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "設問を読み込めません。再ログイン後に状態を確認",
+    );
+
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering", message: "保存状態を再確認してください。", refreshRequired: true },
+        { access: { kind: "reauthentication", participant: { id: 7, name: "参加者" } } },
+      ),
+    );
+    rerender(<QuizRunner />);
+    expect(
+      screen.getByRole("button", { name: "再ログイン後に保存済み回答を再確認する" }),
+    ).toBeDisabled();
+  });
+
+  it.each([
+    ["submitting", { kind: "submitting" }],
+    ["refreshing", { kind: "refreshing" }],
+  ] as const)("ignores a forced submit click while %s", (_label, phase) => {
+    const saveAnswers = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(phase, {
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        answeredCount: 5,
+        saveAnswers,
+      }),
+    );
+    render(<QuizRunner />);
+
+    const submit = screen.getByRole("button", {
+      name: /回答を送信しています|保存済み回答を確認しています/,
+    });
+    submit.removeAttribute("disabled");
+    fireEvent.click(submit);
+    expect(saveAnswers).not.toHaveBeenCalled();
+  });
+
   it("explains when a free-text question has a legacy selected answer", () => {
     const quizzes = selectedQuizzes.map((quiz, index) =>
       index === 4

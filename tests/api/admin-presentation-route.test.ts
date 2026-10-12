@@ -208,7 +208,8 @@ describe("/api/admin/presentation route", () => {
 
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store, private");
-      await expect(response.json()).resolves.toEqual({
+      const payload = await response.json();
+      expect(payload).toEqual({
         state: controlsPayload.state,
         version: controlsPayload.version,
         snapshotRevision: controlsPayload.snapshotRevision,
@@ -217,6 +218,7 @@ describe("/api/admin/presentation route", () => {
         projectionHidden: controlsPayload.projectionHidden,
       });
       expect(operatePresentationControls).toHaveBeenCalledWith(operationId, action);
+      if (action !== "aggregate") expect(payload).not.toHaveProperty("aggregationSummary");
     },
   );
 

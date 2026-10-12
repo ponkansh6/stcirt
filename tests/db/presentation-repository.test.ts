@@ -2953,4 +2953,31 @@ describe("presentation repository", () => {
     expect(error).toHaveProperty("message", "Operation ID conflict");
     expect(error).toHaveProperty("status", 409);
   });
+
+  it("does not invent an aggregation summary when replaying an aggregate without persisted summary data", async () => {
+    await addQuestions();
+    await addParticipant("Aggregate replay");
+    const operationId = "aggregate-summary-replay";
+    await operatePresentation(operationId, "aggregate");
+    await testDb.db
+      .update(schema.presentationOperations)
+      .set({ aggregationSummary: null })
+      .where(eq(schema.presentationOperations.operationId, operationId));
+
+    const replay = await operatePresentation(operationId, "aggregate");
+
+    expect(replay).not.toHaveProperty("aggregationSummary");
+  });
+
+  it("does not attach an aggregation summary when recovering a non-aggregate operation replay", async () => {
+    await addQuestions();
+    await startWithAggregate("replay-non-aggregate");
+    const operationId = "recover-non-aggregate-replay";
+
+    const recovered = await commitWinnerThenRaiseAdapterUniqueConflict(operationId, () =>
+      operatePresentation(operationId, "advance"),
+    );
+
+    expect(recovered).not.toHaveProperty("aggregationSummary");
+  });
 });

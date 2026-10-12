@@ -16,6 +16,8 @@ function apiFetch(options: {
   session?: unknown;
   state?: Record<string, unknown>;
   mutationStatus?: number;
+  mutationPayload?: unknown;
+  mutationRawBody?: string;
   publishStatus?: number;
 }) {
   const actions: { path: string; body: unknown }[] = [];
@@ -26,7 +28,9 @@ function apiFetch(options: {
     if (path === "/api/admin/presentation" && init?.method === "POST") {
       const body = JSON.parse(String(init.body));
       actions.push({ path, body });
-      return response(options.mutationStatus ?? 200, {});
+      return options.mutationRawBody === undefined
+        ? response(options.mutationStatus ?? 200, options.mutationPayload ?? {})
+        : new Response(options.mutationRawBody, { status: options.mutationStatus ?? 200 });
     }
     if (path === "/api/admin/participant-results") {
       const body = JSON.parse(String(init?.body));
@@ -579,6 +583,174 @@ describe("presentation admin console", () => {
         body: expect.objectContaining({ action: "reset" }),
       }),
     );
+  });
+
+  it("renders a valid aggregate summary when the snapshot is updated", async () => {
+    const user = userEvent.setup();
+    apiFetch({
+      mutationPayload: {
+        aggregationSummary: {
+          snapshotUpdated: true,
+          includedSubmissionCount: 3,
+          excludedSubmissionCount: 2,
+          excludedReasonCounts: { questionVersionMismatch: 1, q5AssessmentVersionMismatch: 1 },
+        },
+      },
+    });
+    render(<PresentationAdmin />);
+
+    await user.click(await screen.findByRole("button", { name: "集計" }));
+
+    const outcome = await screen.findByText("集計スナップショットを更新しました。");
+    const summary = outcome.parentElement!;
+    expect(summary).toHaveAttribute("role", "status");
+    expect(summary).toHaveTextContent("集計スナップショットを更新しました。");
+    expect(summary).toHaveTextContent("集計対象 3 件 · 除外 2 件");
+    expect(summary).toHaveTextContent("質問バージョン不一致 1 件、 Q5 評価バージョン不一致 1 件");
+    expect(summary.className).not.toContain("aggregateNotUpdated");
+  });
+
+  it("renders an unchanged zero-eligible aggregate summary", async () => {
+    const user = userEvent.setup();
+    apiFetch({
+      mutationPayload: {
+        aggregationSummary: {
+          snapshotUpdated: false,
+          includedSubmissionCount: 0,
+          excludedSubmissionCount: 4,
+          excludedReasonCounts: { questionVersionMismatch: 4, q5AssessmentVersionMismatch: 0 },
+        },
+      },
+    });
+    render(<PresentationAdmin />);
+
+    await user.click(await screen.findByRole("button", { name: "集計" }));
+
+    const outcome = await screen.findByText(
+      "集計対象となる回答が見つからなかったため、スナップショットは更新していません。既存のスナップショットを保持しています。",
+    );
+    const summary = outcome.parentElement!;
+    expect(summary).toHaveAttribute("role", "status");
+    expect(summary).toHaveTextContent("集計対象となる回答が見つからなかったため");
+    expect(summary).toHaveTextContent("集計対象 0 件 · 除外 4 件");
+    expect(summary.className).toContain("aggregateNotUpdated");
+  });
+
+  it.each([
+    ["missing summary", {}],
+    [
+      "non-boolean updated flag",
+      {
+        aggregationSummary: {
+          snapshotUpdated: "true",
+          includedSubmissionCount: 1,
+          excludedSubmissionCount: 0,
+          excludedReasonCounts: { questionVersionMismatch: 0, q5AssessmentVersionMismatch: 0 },
+        },
+      },
+    ],
+    [
+      "missing reason counts",
+      {
+        aggregationSummary: {
+          snapshotUpdated: true,
+          includedSubmissionCount: 1,
+          excludedSubmissionCount: 0,
+        },
+      },
+    ],
+    [
+      "negative count",
+      {
+        aggregationSummary: {
+          snapshotUpdated: true,
+          includedSubmissionCount: -1,
+          excludedSubmissionCount: 0,
+          excludedReasonCounts: { questionVersionMismatch: 0, q5AssessmentVersionMismatch: 0 },
+        },
+      },
+    ],
+    [
+      "fractional count",
+      {
+        aggregationSummary: {
+          snapshotUpdated: true,
+          includedSubmissionCount: 1.5,
+          excludedSubmissionCount: 0,
+          excludedReasonCounts: { questionVersionMismatch: 0, q5AssessmentVersionMismatch: 0 },
+        },
+      },
+    ],
+    [
+      "non-number count",
+      {
+        aggregationSummary: {
+          snapshotUpdated: true,
+          includedSubmissionCount: "1",
+          excludedSubmissionCount: 0,
+          excludedReasonCounts: { questionVersionMismatch: 0, q5AssessmentVersionMismatch: 0 },
+        },
+      },
+    ],
+    [
+      "invalid excluded count",
+      {
+        aggregationSummary: {
+          snapshotUpdated: true,
+          includedSubmissionCount: 1,
+          excludedSubmissionCount: "0",
+          excludedReasonCounts: { questionVersionMismatch: 0, q5AssessmentVersionMismatch: 0 },
+        },
+      },
+    ],
+    [
+      "invalid question-version reason count",
+      {
+        aggregationSummary: {
+          snapshotUpdated: true,
+          includedSubmissionCount: 1,
+          excludedSubmissionCount: 0,
+          excludedReasonCounts: { questionVersionMismatch: 0.5, q5AssessmentVersionMismatch: 0 },
+        },
+      },
+    ],
+    [
+      "invalid Q5 reason count",
+      {
+        aggregationSummary: {
+          snapshotUpdated: true,
+          includedSubmissionCount: 1,
+          excludedSubmissionCount: 0,
+          excludedReasonCounts: { questionVersionMismatch: 0, q5AssessmentVersionMismatch: -1 },
+        },
+      },
+    ],
+  ])("treats %s aggregate summaries as unavailable", async (_label, mutationPayload) => {
+    const user = userEvent.setup();
+    apiFetch({ mutationPayload });
+    render(<PresentationAdmin />);
+
+    await user.click(await screen.findByRole("button", { name: "集計" }));
+
+    expect(
+      await screen.findByText(
+        "件数内訳を取得できませんでした。操作状態を再読み込みして確認してください。",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("treats an aggregate response that is not valid JSON as unavailable", async () => {
+    const user = userEvent.setup();
+    apiFetch({ mutationRawBody: "not JSON" });
+    render(<PresentationAdmin />);
+
+    await user.click(await screen.findByRole("button", { name: "集計" }));
+
+    expect(
+      await screen.findByText(
+        "件数内訳を取得できませんでした。操作状態を再読み込みして確認してください。",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows running and finished state with named projection tab and publish controls", async () => {
