@@ -634,8 +634,7 @@ test("opening cover geometry matches before and after presentation start", async
       const section = element.closest("section");
       const titleColumn = section?.querySelector<HTMLElement>("[class*='openingTitle']");
       const lockup = section?.querySelector<HTMLElement>("[class*='openingLockup']");
-      const emblem = lockup?.querySelector<HTMLElement>("[class*='examEmblem']");
-      const emblemSvg = emblem?.querySelector<SVGSVGElement>("svg");
+      const stamp = lockup?.querySelector<HTMLElement>("[data-testid='presentation-exam-stamp']");
       const waitSlot = section?.querySelector<HTMLElement>("[class*='openingWaitSlot']");
       const waitingCopy = waitSlot?.querySelector<HTMLElement>("[class*='openingWait']");
       const fitLayer = document.querySelector<HTMLElement>(
@@ -646,8 +645,12 @@ test("opening cover geometry matches before and after presentation start", async
       );
       const fitScale =
         Number.isFinite(measuredFitScale) && measuredFitScale > 0 ? measuredFitScale : 1;
-      const lockupRect = lockup?.getBoundingClientRect();
       const fitLayerRect = fitLayer?.getBoundingClientRect();
+      const fitViewport = document.querySelector<HTMLElement>(
+        "[data-testid='presentation-fit-viewport']",
+      );
+      const fitViewportRect = fitViewport?.getBoundingClientRect();
+      const stampRect = stamp?.getBoundingClientRect();
       const isTextClippedByOverflow = (
         element: HTMLElement,
         textBounds: { x: number; y: number; width: number; height: number },
@@ -717,13 +720,6 @@ test("opening cover geometry matches before and after presentation start", async
             scrollOverflowWidth,
             scrollOverflowHeight,
             lineCount: lineTops.length,
-            textInsideLockup: Boolean(
-              lockupRect &&
-              textBounds.x >= lockupRect.left &&
-              textBounds.x + textBounds.width <= lockupRect.right &&
-              textBounds.y >= lockupRect.top &&
-              textBounds.y + textBounds.height <= lockupRect.bottom,
-            ),
             textInsideFitLayer: Boolean(
               fitLayerRect &&
               textBounds.x >= fitLayerRect.left &&
@@ -731,20 +727,23 @@ test("opening cover geometry matches before and after presentation start", async
               textBounds.y >= fitLayerRect.top &&
               textBounds.y + textBounds.height <= fitLayerRect.bottom,
             ),
+            textInsideViewport: Boolean(
+              fitViewportRect &&
+              textBounds.x >= fitViewportRect.left &&
+              textBounds.x + textBounds.width <= fitViewportRect.right &&
+              textBounds.y >= fitViewportRect.top &&
+              textBounds.y + textBounds.height <= fitViewportRect.bottom,
+            ),
             clipped: isTextClippedByOverflow(span, textBounds),
           };
         },
       );
       const canvas = document.querySelector<HTMLElement>("[data-testid='presentation-canvas']");
-      const fitViewport = document.querySelector<HTMLElement>(
-        "[data-testid='presentation-fit-viewport']",
-      );
       if (
         !section ||
         !titleColumn ||
         !lockup ||
-        !emblem ||
-        !emblemSvg ||
+        !stamp ||
         !waitSlot ||
         !fitLayer ||
         !canvas ||
@@ -754,6 +753,16 @@ test("opening cover geometry matches before and after presentation start", async
       }
       const canvasRect = canvas.getBoundingClientRect();
       const viewportRect = fitViewport.getBoundingClientRect();
+      const stampTitleNonOverlapping = titleSpans.every((span) => {
+        const text = span.textBounds;
+        return Boolean(
+          stampRect &&
+          (text.x + text.width <= stampRect.left ||
+            stampRect.right <= text.x ||
+            text.y + text.height <= stampRect.top ||
+            stampRect.bottom <= text.y),
+        );
+      });
       const bounds = (node: Element) => {
         const nodeRect = node.getBoundingClientRect();
         return {
@@ -788,10 +797,10 @@ test("opening cover geometry matches before and after presentation start", async
         titleColumn: bounds(titleColumn),
         lockup: bounds(lockup),
         fitLayer: bounds(fitLayer!),
-        emblem: bounds(emblem),
-        emblemSvg: bounds(emblemSvg),
+        stamp: bounds(stamp),
         lockupContainsTitle: lockup.contains(titleColumn),
-        lockupContainsEmblem: lockup.contains(emblem),
+        lockupContainsStamp: lockup.contains(stamp),
+        stampTitleNonOverlapping,
         waitSlot: bounds(waitSlot),
         waitSlotAriaHidden: waitSlot.getAttribute("aria-hidden"),
         waitingCopy: waitingCopy?.textContent?.trim() ?? null,
@@ -895,8 +904,9 @@ test("opening cover geometry matches before and after presentation start", async
           span.textBounds.height > 0 &&
           span.lineCount === 1 &&
           !span.clipped &&
-          span.textInsideLockup &&
-          span.textInsideFitLayer,
+          span.textInsideFitLayer &&
+          span.textInsideViewport &&
+          geometry.lockupContainsTitle,
       ),
       `Opening title span text must fit without clipping; geometry: ${JSON.stringify(
         {
@@ -909,6 +919,7 @@ test("opening cover geometry matches before and after presentation start", async
         2,
       )}`,
     ).toBe(true);
+    expect(geometry.stampTitleNonOverlapping).toBe(true);
     expect(geometry.waitingCopy).toBe("発表が始まるまで、少々お待ちください");
     expect(geometry.waitSlotVisibility).toBe("visible");
     expect(geometry.waitingCopyVisibility).toBe("visible");
@@ -973,7 +984,10 @@ test("opening cover geometry matches before and after presentation start", async
       expect(span.textBounds.height).toBeGreaterThan(0);
       expect(span.lineCount).toBe(1);
       expect(
-        !span.clipped && span.textInsideLockup && span.textInsideFitLayer,
+        !span.clipped &&
+          geometry.lockupContainsTitle &&
+          span.textInsideFitLayer &&
+          span.textInsideViewport,
         `Opening title text must fit after start; geometry: ${JSON.stringify(
           {
             span,
@@ -986,19 +1000,17 @@ test("opening cover geometry matches before and after presentation start", async
         )}`,
       ).toBe(true);
     }
+    expect(geometry.stampTitleNonOverlapping).toBe(true);
     expectSameBounds(geometry.titleColumn, beforeStart.titleColumn);
     expectSameBounds(geometry.lockup, beforeStart.lockup);
-    expectSameBounds(geometry.emblem, beforeStart.emblem);
-    expectSameBounds(geometry.emblemSvg, beforeStart.emblemSvg);
+    expectSameBounds(geometry.stamp, beforeStart.stamp);
     expectSameBounds(geometry.waitSlot, beforeStart.waitSlot);
     expect(geometry.lockupContainsTitle).toBe(true);
-    expect(geometry.lockupContainsEmblem).toBe(true);
+    expect(geometry.lockupContainsStamp).toBe(true);
     if (viewports[index]!.width > 640) {
-      expect(geometry.emblem.x + geometry.emblem.width).toBeLessThanOrEqual(geometry.titleColumn.x);
+      expect(geometry.stamp.x + geometry.stamp.width).toBeLessThanOrEqual(geometry.titleColumn.x);
     } else {
-      expect(geometry.emblem.y + geometry.emblem.height).toBeLessThanOrEqual(
-        geometry.titleColumn.y,
-      );
+      expect(geometry.stamp.y + geometry.stamp.height).toBeLessThanOrEqual(geometry.titleColumn.y);
     }
     expect(geometry.waitingCopy).toBe("発表が始まるまで、少々お待ちください");
     expect(geometry.waitSlotVisibility).toBe("visible");
@@ -1306,10 +1318,10 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
   const rankTitle = winners.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(rankTitle).toHaveCount(1);
   await expect(rankTitle).toHaveText("第3位");
-  const rankHeader = winners.locator("[class*='rankHeader']");
-  const emblem = rankHeader.locator("[class*='examEmblem']");
-  await expect(emblem).toHaveAttribute("aria-hidden", "true");
-  await expect(emblem.locator("svg")).toBeVisible();
+  const stamp = winners.locator("[data-testid='presentation-exam-stamp']");
+  await expect(stamp).toHaveCount(1);
+  await expect(stamp).toHaveAttribute("aria-hidden", "true");
+  await expect(stamp).toHaveText("しゅんたま検定");
   await expect
     .poll(() =>
       winners.evaluate((region) => {
@@ -1322,15 +1334,9 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
     .poll(() =>
       winners.evaluate((region) => {
         const header = region.querySelector<HTMLElement>("[class*='rankHeader']");
-        const emblem = header?.querySelector<HTMLElement>("[class*='examEmblem']");
         const rankTitle = header?.querySelector<HTMLElement>("h1[class*='rank']");
-        return Boolean(
-          header &&
-          emblem &&
-          rankTitle &&
-          emblem.parentElement === header &&
-          rankTitle.parentElement === header,
-        );
+        const stamp = region.querySelector<HTMLElement>("[data-testid='presentation-exam-stamp']");
+        return Boolean(header && stamp && rankTitle && rankTitle.parentElement === header);
       }),
     )
     .toBe(true);
@@ -1384,6 +1390,20 @@ test("all rank entries fit on the slide without vertical scrolling", async ({ pa
     );
   }
   await expect(winners.locator("[class*='additionalWinners']")).toHaveText("ほか 22 名");
+  const stampClearsRemainingCount = await winners.evaluate((region) => {
+    const stamp = region.querySelector<HTMLElement>("[data-testid='presentation-exam-stamp']");
+    const count = region.querySelector<HTMLElement>("[class*='additionalWinners']");
+    if (!stamp || !count) return false;
+    const stampRect = stamp.getBoundingClientRect();
+    const countRect = count.getBoundingClientRect();
+    return (
+      stampRect.right <= countRect.left ||
+      countRect.right <= stampRect.left ||
+      stampRect.bottom <= countRect.top ||
+      countRect.bottom <= stampRect.top
+    );
+  });
+  expect(stampClearsRemainingCount).toBe(true);
   expect(
     [...bounds.winners, ...bounds.content].every(
       (rect) =>
@@ -1690,16 +1710,18 @@ test("reference-size long presentation content stays readable after fitting", as
     .locator("xpath=ancestor::section");
   const openingColumns = await opening.evaluate((section) => {
     const title = section.querySelector("[class*='openingTitle']")!.getBoundingClientRect();
-    const emblem = section.querySelector("[class*='examEmblem']")!.getBoundingClientRect();
+    const stamp = section
+      .querySelector("[data-testid='presentation-exam-stamp']")!
+      .getBoundingClientRect();
     const lockup = section.querySelector("[class*='openingLockup']")!;
     return {
-      emblemBeforeTitle: emblem.right <= title.left,
+      stampBeforeTitle: stamp.right <= title.left,
       lockupContainsTitle: lockup.contains(section.querySelector("[class*='openingTitle']")),
     };
   });
-  expect(openingColumns.emblemBeforeTitle).toBe(true);
+  expect(openingColumns.stampBeforeTitle).toBe(true);
   expect(openingColumns.lockupContainsTitle).toBe(true);
-  await expect(page.getByText("検定", { exact: true })).toBeVisible();
+  await expect(page.locator("#opening-title span:last-child")).toBeVisible();
   await expect(page.getByText("PRESENTATION", { exact: true })).toHaveCount(0);
   await expect(page.getByText("これまでの思い出を振り返りましょう", { exact: true })).toHaveCount(
     0,
@@ -2294,40 +2316,39 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
             rect.bottom <= geometry.bounds.bottom + 1,
         ),
       ).toBe(true);
-      const emblemTier = await region
-        .locator(`span[data-tier="${rankStage.state}"] svg`)
-        .evaluate((svg) => {
-          const computed = (part: string) => {
-            const element = svg.querySelector<SVGElement>(`[data-emblem-part="${part}"]`);
-            if (!element) throw new Error(`Missing emblem part: ${part}`);
-            const style = getComputedStyle(element);
-            return {
-              strokeWidth: Number.parseFloat(style.strokeWidth),
-              opacity: Number.parseFloat(style.opacity),
-            };
-          };
+      const stampGeometry = await region
+        .locator("[data-testid='presentation-exam-stamp']")
+        .evaluate((stamp) => {
+          const stampRect = stamp.getBoundingClientRect();
+          const regionRect = stamp.parentElement!.getBoundingClientRect();
+          const headingRect = stamp
+            .parentElement!.querySelector("[class*='rankHeader']")!
+            .getBoundingClientRect();
+          const cardRects = Array.from(stamp.parentElement!.querySelectorAll("article"), (card) =>
+            card.getBoundingClientRect(),
+          );
+          const overlaps = (left: DOMRect, right: DOMRect) =>
+            left.left < right.right &&
+            left.right > right.left &&
+            left.top < right.bottom &&
+            left.bottom > right.top;
           return {
-            rim: computed("rim"),
-            highlight: computed("highlight"),
-            reflection: computed("reflection"),
-            detailLevel: Number(svg.getAttribute("data-emblem-detail-level")),
-            detailCount: svg.querySelectorAll("[data-emblem-detail]").length,
+            insideRegion:
+              stampRect.left >= regionRect.left &&
+              stampRect.right <= regionRect.right &&
+              stampRect.top >= regionRect.top &&
+              stampRect.bottom <= regionRect.bottom,
+            inUpperRight: stampRect.left > regionRect.left + regionRect.width / 2,
+            overlapsHeading: overlaps(stampRect, headingRect),
+            overlapsCards: cardRects.some((cardRect) => overlaps(stampRect, cardRect)),
+            pointerEvents: getComputedStyle(stamp).pointerEvents,
           };
         });
-      expect(emblemTier.rim.strokeWidth).toBe(
-        rankStage.state === "third" ? 2.5 : rankStage.state === "second" ? 3.5 : 4.5,
-      );
-      expect(emblemTier.highlight.strokeWidth).toBe(
-        rankStage.state === "third" ? 3 : rankStage.state === "second" ? 4 : 5,
-      );
-      expect(emblemTier.reflection.strokeWidth).toBe(
-        rankStage.state === "third" ? 2.5 : rankStage.state === "second" ? 4 : 5.5,
-      );
-      expect(emblemTier.reflection.opacity).toBe(
-        rankStage.state === "third" ? 0.35 : rankStage.state === "second" ? 0.68 : 0.95,
-      );
-      expect(emblemTier.detailLevel).toBe(rankIndex);
-      expect(emblemTier.detailCount).toBe(rankIndex);
+      expect(stampGeometry.insideRegion).toBe(true);
+      expect(stampGeometry.inUpperRight).toBe(true);
+      expect(stampGeometry.overlapsHeading).toBe(false);
+      expect(stampGeometry.overlapsCards).toBe(false);
+      expect(stampGeometry.pointerEvents).toBe("none");
       const nextRank = ranks[rankIndex + 1];
       if (nextRank) {
         const nextRefresh = nextAdminMutation(page);
@@ -2371,6 +2392,16 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
       }));
       const rank = region?.querySelector<HTMLElement>("[class*='rankHeader'] > h1[class*='rank']");
       const rankRect = rank?.getBoundingClientRect();
+      const stamp = region?.querySelector<HTMLElement>("[data-testid='presentation-exam-stamp']");
+      const stampRect = stamp?.getBoundingClientRect();
+      const articleRects = Array.from(region?.querySelectorAll("article") ?? [], (article) =>
+        article.getBoundingClientRect(),
+      );
+      const overlaps = (left: DOMRect, right: DOMRect) =>
+        left.left < right.right &&
+        left.right > right.left &&
+        left.top < right.bottom &&
+        left.bottom > right.top;
       const fitLayer = document.querySelector<HTMLElement>(
         "[data-testid='presentation-fit-layer']",
       );
@@ -2393,6 +2424,20 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
         ),
         rankAboveIdentity: Boolean(
           rankRect && identityRect && rankRect.bottom <= identityRect.top + 1,
+        ),
+        stampInsideRegion: Boolean(
+          stampRect &&
+          regionRect &&
+          stampRect.left >= regionRect.left &&
+          stampRect.right <= regionRect.right &&
+          stampRect.top >= regionRect.top &&
+          stampRect.bottom <= regionRect.bottom,
+        ),
+        stampClearOfRankAndWinners: Boolean(
+          stampRect &&
+          rankRect &&
+          !overlaps(stampRect, rankRect) &&
+          articleRects.every((articleRect) => !overlaps(stampRect, articleRect)),
         ),
         nameFits: Boolean(name && name.scrollWidth <= name.clientWidth + 1),
         nameAndScoreDoNotOverlap: Boolean(
@@ -2437,6 +2482,8 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
     }
     expect(fit.regionInsideViewport).toBe(true);
     expect(fit.rankAboveIdentity).toBe(true);
+    expect(fit.stampInsideRegion).toBe(true);
+    expect(fit.stampClearOfRankAndWinners).toBe(true);
     expect(fit.nameFits).toBe(true);
     expect(fit.nameAndScoreDoNotOverlap).toBe(true);
     expect(fit.allVisibleContentInsideViewport).toBe(true);

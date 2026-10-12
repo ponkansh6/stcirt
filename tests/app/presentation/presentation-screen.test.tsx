@@ -398,10 +398,12 @@ describe("presentation projection and presenter progression", () => {
       const slide = await screen.findByRole("region", { name: "現在のスライド" });
       expect(within(slide).getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
       const lockup = slide.querySelector("[class*='openingLockup']");
-      const emblem = slide.querySelector("[class*='examEmblem']");
+      const stamp = slide.querySelector("[data-testid='presentation-exam-stamp']");
       const waitSlot = slide.querySelector("[class*='openingWaitSlot']");
       expect(lockup).not.toBeNull();
-      expect(emblem).toHaveAttribute("aria-hidden", "true");
+      expect(stamp).toHaveAttribute("aria-hidden", "true");
+      expect(stamp).toHaveTextContent("しゅんたま検定");
+      expect(stamp?.querySelector("svg")).toBeNull();
       expect(waitSlot).not.toBeNull();
       if (state === "opening") {
         expect(waitSlot).toHaveAttribute("aria-hidden", "true");

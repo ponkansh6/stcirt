@@ -213,11 +213,6 @@
   letter-spacing: 0.28em;
 }
 
-.openingEmblem {
-  width: clamp(210px, 25cqw, 330px);
-  flex: 0 0 auto;
-}
-
 .openingLockup {
   position: relative;
   z-index: 1;
@@ -225,118 +220,43 @@
   width: 100%;
   align-items: center;
   justify-content: center;
-  gap: clamp(24px, 4cqw, 60px);
+  gap: clamp(28px, 4cqw, 60px);
 }
 
-.examEmblem {
+.examStamp {
   position: relative;
-  display: block;
+  box-sizing: border-box;
+  display: grid;
+  align-content: center;
+  justify-items: center;
   aspect-ratio: 1;
+  border: 3px double #b33b32;
+  color: #b33b32;
+  font-size: clamp(0.65rem, 0.95cqw, 1rem);
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+  transform: rotate(8deg);
   pointer-events: none;
 }
 
-.examEmblem svg {
-  display: block;
-  width: 100%;
-  height: 100%;
+.examStamp::before {
+  position: absolute;
+  inset: 5px;
+  border: 1px solid currentColor;
+  content: "";
   pointer-events: none;
 }
 
-.emblemRim {
-  fill: #3b2d1c;
-  stroke: #231b12;
-  stroke-width: var(--emblem-rim-width, 2);
+.examStamp span {
+  white-space: nowrap;
 }
 
-.emblemMetal {
-  stroke: #6d5228;
-  stroke-width: var(--emblem-rim-width, 2);
-}
-
-.emblemHighlight {
-  fill: none;
-  stroke: #fff8db;
-  stroke-width: var(--emblem-highlight-width, 3);
-}
-
-.emblemReflection {
-  fill: none;
-  stroke: #fffef5;
-  stroke-linecap: round;
-  stroke-width: var(--emblem-reflection-width, 2);
-  opacity: var(--emblem-reflection-opacity, 0.25);
-}
-
-.emblemTierDetail,
-.emblemFirstDetail {
-  fill: none;
-  stroke: #9a7432;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: var(--emblem-detail-width, 2);
-  opacity: var(--emblem-detail-opacity, 1);
-}
-
-.emblemFirstDetail path:first-child,
-.emblemFirstDetail path:nth-child(2),
-.emblemFirstDetail path:nth-child(3) {
-  fill: #e0c477;
-}
-
-.emblemFace {
-  stroke: #8b6c32;
-  stroke-width: 1.5;
-}
-
-.emblemInnerRim {
-  fill: none;
-  stroke: #9d7a3a;
-  stroke-width: var(--emblem-rim-width, 2);
-}
-
-.emblemLaurel {
-  fill: none;
-  stroke: #765620;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 4;
-}
-
-.emblemBook {
-  fill: #fffdf5;
-  stroke: #44351f;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 3;
-}
-
-.emblemBook path:nth-of-type(3) {
-  fill: #b28c3d;
-}
-
-.emblemThird {
-  --emblem-rim-width: 2.5;
-  --emblem-highlight-width: 3;
-  --emblem-reflection-width: 2.5;
-  --emblem-reflection-opacity: 0.35;
-}
-
-.emblemSecond {
-  --emblem-rim-width: 3.5;
-  --emblem-highlight-width: 4;
-  --emblem-reflection-width: 4;
-  --emblem-reflection-opacity: 0.68;
-  --emblem-detail-width: 2.25;
-  --emblem-detail-opacity: 0.82;
-}
-
-.emblemFirst {
-  --emblem-rim-width: 4.5;
-  --emblem-highlight-width: 5;
-  --emblem-reflection-width: 5.5;
-  --emblem-reflection-opacity: 0.95;
-  --emblem-detail-width: 2.75;
-  --emblem-detail-opacity: 1;
+.openingStamp {
+  z-index: 1;
+  width: clamp(48px, 5.5cqw, 72px);
+  flex: 0 0 auto;
+  font-size: clamp(0.55rem, 0.75cqw, 0.8rem);
 }
 
 .openingWaitSlot {
@@ -691,20 +611,16 @@
   align-items: center;
   justify-content: center;
   gap: clamp(12px, 2cqw, 26px);
+  margin-top: clamp(48px, 6cqh, 72px);
   margin-bottom: clamp(12px, 1.6cqh, 20px);
 }
 
-.rankEmblem {
-  width: clamp(48px, 6cqw, 78px);
-  flex: 0 0 auto;
-}
-
-.winners[data-rank="first"] .rankEmblem {
-  width: clamp(54px, 6.8cqw, 86px);
-}
-
-.winners[data-rank="second"] .rankEmblem {
-  width: clamp(51px, 6.4cqw, 82px);
+.rankStamp {
+  position: absolute;
+  z-index: 2;
+  top: clamp(18px, 3cqh, 36px);
+  right: clamp(20px, 3.5cqw, 52px);
+  width: clamp(58px, 7cqw, 100px);
 }
 
 .winners:focus-visible {
@@ -1016,8 +932,9 @@
     gap: 16px;
   }
 
-  .openingEmblem {
-    width: clamp(120px, 30cqw, 190px);
+  .openingStamp {
+    width: clamp(52px, 15cqw, 68px);
+    font-size: clamp(0.6rem, 2.2cqw, 0.75rem);
   }
 
   .opening .openingTitle h1 {
