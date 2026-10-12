@@ -779,11 +779,7 @@ export default function QuizRunner() {
               </p>
               <ParticipantForm
                 onLogin={login}
-                initialName={
-                  access.kind === "ready" || access.kind === "reauthentication"
-                    ? access.participant.name
-                    : ownerName
-                }
+                initialName={ownerName}
                 onSuccess={() => setParticipantResultsAuthExpired(false)}
                 submitLabel="再ログインする"
               />
