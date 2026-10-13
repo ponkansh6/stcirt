@@ -50,6 +50,16 @@ type AnswerUiModel = {
   primaryAction: AnswerUiAction;
 };
 
+function hasAnswer(
+  question: { id: number; answerType: "selected" | "freeText" },
+  selections: Record<number, number | undefined>,
+  freeResponses: Record<number, string>,
+): boolean {
+  return question.answerType === "freeText"
+    ? Boolean(freeResponses[question.id]?.trim())
+    : selections[question.id] !== undefined;
+}
+
 function deriveAnswerUi({
   access,
   assistedScreen,
@@ -473,10 +483,8 @@ export default function QuizRunner() {
   }, []);
   const isSubmitting = phase.kind === "submitting";
   const isRefreshing = phase.kind === "refreshing";
-  const unanswered = quizzes.filter(({ question }) =>
-    question.answerType === "freeText"
-      ? !freeResponses[question.id]?.trim()
-      : selections[question.id] === undefined,
+  const unanswered = quizzes.filter(
+    ({ question }) => !hasAnswer(question, selections, freeResponses),
   );
   const ui = deriveAnswerUi({
     access,
@@ -883,10 +891,7 @@ export default function QuizRunner() {
         <nav aria-label="設問へ移動">
           <ol className="grid grid-cols-5 gap-2">
             {quizzes.map(({ question }, index) => {
-              const answered =
-                question.answerType === "freeText"
-                  ? Boolean(freeResponses[question.id]?.trim())
-                  : selections[question.id] !== undefined;
+              const answered = hasAnswer(question, selections, freeResponses);
               return (
                 <li key={question.id}>
                   <a
@@ -1113,10 +1118,7 @@ export default function QuizRunner() {
             {quizzes.map(({ question, shuffled }, index) => {
               const selectedIndex = selections[question.id];
               const freeText = freeResponses[question.id] ?? "";
-              const answered =
-                question.answerType === "freeText"
-                  ? freeText.trim().length > 0
-                  : selectedIndex !== undefined;
+              const answered = hasAnswer(question, selections, freeResponses);
               const selectedChoice =
                 question.answerType === "selected" && selectedIndex !== undefined
                   ? {

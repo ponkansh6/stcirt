@@ -109,6 +109,39 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
   });
 
+  it("uses the same answered status in navigation and final review", () => {
+    const freeResponseQuizzes = quizzes.map((quiz, index) =>
+      index === 4
+        ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        { quizzes: freeResponseQuizzes, selections: { 1: 0 }, freeResponses: { 5: "  \n" } },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    const navigation = screen.getByRole("navigation", { name: "設問へ移動" });
+    expect(within(navigation).getByRole("link", { name: "第1問へ移動、回答済み" })).toBeVisible();
+    expect(within(navigation).getByRole("link", { name: "第2問へ移動、未回答" })).toBeVisible();
+    expect(within(navigation).getByRole("link", { name: "第5問へ移動、未回答" })).toBeVisible();
+
+    const reviewAnswers = screen.getByRole("list", { name: "回答内容" });
+    const reviewItems = within(reviewAnswers).getAllByRole("listitem");
+    expect(within(reviewItems[0]).getByText("回答")).toBeInTheDocument();
+    expect(within(reviewItems[4]).getByText("未回答")).toBeInTheDocument();
+    const finalReview = document.querySelector<HTMLElement>(
+      '[aria-labelledby="final-check-title"]',
+    );
+    expect(finalReview).not.toBeNull();
+    expect(finalReview?.querySelector(':scope > p[aria-live="polite"]')).toHaveTextContent(
+      "未回答 4問",
+    );
+  });
+
   it("renders the fifth-question free-response field, max length, and legacy guidance", () => {
     const setFreeResponse = vi.fn();
     const freeResponseQuizzes = quizzes.map((quiz, index) =>

@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
 import { makeQuestion } from "../fixtures/question";
 
 const questionFor = (id: number) =>
@@ -416,6 +416,188 @@ test("reviews all five current answers on mobile and edits a question from the s
   await expect(details.getByText(longFreeText, { exact: true })).toBeVisible();
 });
 
+async function runAnswerFlowProxyAtWidth(page: Page, testInfo: TestInfo, width: number) {
+  const viewport = { width, height: 812 };
+  await page.setViewportSize(viewport);
+  expect(page.viewportSize()).toEqual(viewport);
+  await mockParticipantSession(page);
+  const questionRequests: string[] = [];
+  await mockQuestions(page, questionRequests);
+  const submitted: BatchPayload[] = [];
+  await page.route("**/api/answers/batch", async (route) => {
+    submitted.push(route.request().postDataJSON() as BatchPayload);
+    const body = submitted.at(-1)!;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ submissionId: body.submissionId, revision: 1 }),
+    });
+  });
+
+  // Count deliberate in-quiz browser interactions; sign-in is fixture setup.
+  let operationCount = 0;
+  const act = async (operation: () => Promise<unknown>) => {
+    operationCount += 1;
+    await operation();
+  };
+  const scrollCheckpoints: Array<{ name: string; scrollY: number; documentHeight: number }> = [];
+  const recordScroll = async (name: string) => {
+    const measurement = await page.evaluate(() => ({
+      scrollY: Math.round(window.scrollY),
+      documentHeight: document.documentElement.scrollHeight,
+    }));
+    scrollCheckpoints.push({ name, ...measurement });
+  };
+  const expectInViewport = async (locator: Locator) => {
+    await expect(locator).toBeVisible();
+    const bounds = await locator.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: document.documentElement.clientWidth,
+        height: window.innerHeight,
+      };
+    });
+    expect(bounds.right).toBeGreaterThan(0);
+    expect(bounds.left).toBeLessThan(bounds.width);
+    expect(bounds.bottom).toBeGreaterThan(0);
+    expect(bounds.top).toBeLessThan(bounds.height);
+  };
+  const expectNoHorizontalOverflow = async () => {
+    const widths = await page.evaluate(() => ({
+      document: document.documentElement.scrollWidth,
+      body: document.body.scrollWidth,
+      viewport: document.documentElement.clientWidth,
+    }));
+    expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport);
+  };
+
+  await page.goto("/answer");
+  await signIn(page, "Aki");
+  await startQuiz(page);
+  await recordScroll("question-1-start");
+
+  await act(() => answerQuestion(page, 2, "B"));
+  await act(() => answerQuestion(page, 3, "C"));
+  await act(() => answerQuestion(page, 4, "D"));
+  const longFreeText = "自由記述の全文を確認してから送信します。".repeat(20);
+  await act(() => page.getByRole("textbox", { name: "回答（1000字以内）" }).fill(longFreeText));
+  await act(() =>
+    page
+      .getByRole("navigation", { name: "設問へ移動" })
+      .getByRole("link", { name: "第5問へ移動、回答済み" })
+      .click(),
+  );
+  await act(() => page.keyboard.press("End"));
+
+  const unansweredLink = page.getByRole("button", { name: "第1問へ" });
+  await expect(unansweredLink).toBeVisible();
+  const unansweredGuidance = page.getByText("未回答の設問へ移動できます：");
+  const disabledSubmit = page.getByRole("button", { name: "未回答の設問に回答してください" });
+  await act(() => unansweredGuidance.scrollIntoViewIfNeeded());
+  await expectInViewport(unansweredGuidance);
+  await expectInViewport(unansweredLink);
+  await recordScroll("unanswered-guidance-visible");
+  await expect(disabledSubmit).toBeDisabled();
+  await act(() => disabledSubmit.scrollIntoViewIfNeeded());
+  await expectInViewport(disabledSubmit);
+  await recordScroll("incomplete-primary-action-visible");
+  await expectNoHorizontalOverflow();
+  await act(() => unansweredLink.click());
+  await act(() => answerQuestion(page, 1, "A"));
+  await act(() =>
+    page
+      .getByRole("navigation", { name: "設問へ移動" })
+      .getByRole("link", { name: "第5問へ移動、回答済み" })
+      .click(),
+  );
+  await act(() => page.keyboard.press("End"));
+  await recordScroll("all-five-answered-review");
+
+  const review = page.locator('ol[aria-label="回答内容"]');
+  const reviewItems = review.getByRole("listitem");
+  await expect(reviewItems).toHaveCount(5);
+  await expect(reviewItems.nth(4)).toContainText(longFreeText.slice(0, 180));
+  await expect(reviewItems.nth(4)).toContainText("…");
+  const details = reviewItems.nth(4).locator("details");
+  const summary = details.locator("summary");
+  await expect(summary).toHaveText(`全文を表示（${Array.from(longFreeText).length}文字）`);
+  await act(() => summary.click());
+  await expect(details.getByText(longFreeText, { exact: true })).toBeVisible();
+
+  await act(() =>
+    reviewItems.nth(2).getByRole("button", { name: "第3問「Question 3?」を編集" }).click(),
+  );
+  await act(() => selectRadio(page, /Option 3A/));
+  await act(() =>
+    page
+      .getByRole("navigation", { name: "設問へ移動" })
+      .getByRole("link", { name: "第5問へ移動、回答済み" })
+      .click(),
+  );
+  await act(() => page.keyboard.press("End"));
+  await expect(reviewItems.nth(2)).toContainText("Option 3A");
+  await expect(details.getByText(longFreeText, { exact: true })).toBeVisible();
+  await recordScroll("review-after-edit");
+  await expectNoHorizontalOverflow();
+
+  const submit = page.getByRole("button", { name: "5問の回答を確定する" });
+  await act(() => submit.scrollIntoViewIfNeeded());
+  await expectInViewport(submit);
+  await recordScroll("final-primary-action-visible");
+  await act(() => submit.click());
+  await expectResultsWaiting(page);
+  const maxObservedScrollY = Math.max(...scrollCheckpoints.map(({ scrollY }) => scrollY));
+  await testInfo.attach(`answer-flow-${width}px-scroll-proxy`, {
+    body: JSON.stringify(
+      {
+        definition:
+          "Maximum window.scrollY sampled at named in-quiz checkpoints; not user-session scroll analytics.",
+        viewport,
+        browserProject: testInfo.project.name,
+        maxObservedScrollY,
+        checkpoints: scrollCheckpoints,
+        inQuizOperationCount: operationCount,
+        expectedInQuizOperationCount: 19,
+        operationCountMatchesExpected: operationCount === 19,
+        questionBatchFetchCount: questionRequests.length,
+        answerBatchSubmitCount: submitted.length,
+      },
+      null,
+      2,
+    ),
+    contentType: "application/json",
+  });
+  expect(operationCount).toBe(19);
+  expect(questionRequests).toEqual(["/api/questions/batch"]);
+  expect(submitted).toHaveLength(1);
+  expect(submitted[0]).toMatchObject({
+    expectedRevision: 0,
+    answers: [
+      { questionId: 1, selectedIndex: 0 },
+      { questionId: 2, selectedIndex: 1 },
+      { questionId: 3, selectedIndex: 0 },
+      { questionId: 4, selectedIndex: 3 },
+      { questionId: 5, freeText: longFreeText },
+    ],
+  });
+}
+
+for (const width of [320, 375, 1280]) {
+  test(`records the ${width}×812 incomplete-answer recovery, review edit, and single submission flow`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name === "Mobile Chrome" && width !== 375,
+      "The width matrix runs in Desktop Chromium; Mobile Chrome retains its 375px run.",
+    );
+    await runAnswerFlowProxyAtWidth(page, testInfo, width);
+  });
+}
+
 test("locks the full answer sheet while its batch request is pending", async ({ page }) => {
   await mockParticipantSession(page);
   await mockQuestions(page);
@@ -523,9 +705,7 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   expect(radioNames).toEqual(["answer-1", "answer-2", "answer-3", "answer-4"]);
 
   const navigation = page.getByRole("navigation", { name: "設問へ移動" });
-  await firstRadio.locator("xpath=ancestor::label").click();
-  await expect(firstRadio).toBeChecked();
-  await expect(navigation.getByRole("link", { name: "第1問へ移動、回答済み" })).toBeVisible();
+  await expect(firstRadio).not.toBeChecked();
   const navControls = navigation.getByRole("link");
   for (let index = 0; index < 5; index += 1) {
     const box = await navControls.nth(index).boundingBox();
@@ -534,8 +714,11 @@ test("supports native radio keyboard operation and reflows long Japanese text at
   }
 
   await firstRadio.focus();
+  await expect(firstRadio).toBeFocused();
+  await expect(firstRadio).not.toBeChecked();
   await page.keyboard.press("Space");
   await expect(firstRadio).toBeChecked();
+  await expect(navigation.getByRole("link", { name: "第1問へ移動、回答済み" })).toBeVisible();
   const firstRow = firstRadio.locator("xpath=..");
   const radioFocusRing = await firstRow.evaluate((element) => getComputedStyle(element).boxShadow);
   expect(radioFocusRing).not.toBe("none");
