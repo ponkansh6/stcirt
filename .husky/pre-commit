@@ -21,11 +21,8 @@ export PATH
 # 整形差分が「次のコミット」に漏れない。
 lint-staged
 
-# 削除ファイルを含めて型チェック対象とする。専用設定には全体型チェックだけを置く。
-pnpm exec lint-staged --config .lintstaged-typecheck.config.js --hide-all --diff-filter=ACMRD --concurrent false
-
 # --- 2. リポジトリ全体の静的ゲート（整形後の内容に対して） ------------------
-# oxlint 0.07s。type-check:fast は直前の専用lint-staged invocationで実行する。
+# oxlint 0.07s。プロジェクト全体の型チェックは pre-push / CI で実行する。
 oxlint --nextjs-plugin --react-plugin --react-perf-plugin
 
 # --- 3. 非ブロッキング advisory ---------------------------------------------
