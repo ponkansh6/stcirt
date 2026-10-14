@@ -34,6 +34,7 @@ import {
   JEV_QUESTION_VERSION,
   JEV_RUBRIC_VERSION,
 } from "@/lib/jev/adapter";
+import { sqliteCauseObjects } from "./sqlite-cause-traversal";
 
 export class PresentationConflictError extends Error {
   readonly status = 409;
@@ -748,20 +749,7 @@ async function withTransactionRetry<T>(run: () => Promise<T>): Promise<T> {
 }
 
 function isSqliteLockRace(error: unknown) {
-  const pending: unknown[] = [error];
-  const visited = new Set<object>();
-  for (let depth = 0; pending.length > 0 && depth < 6; depth += 1) {
-    const current = pending.shift();
-    if (!current || typeof current !== "object" || visited.has(current)) continue;
-    visited.add(current);
-    const value = current as {
-      code?: unknown;
-      extendedCode?: unknown;
-      cause?: unknown;
-      originalError?: unknown;
-      original?: unknown;
-      error?: unknown;
-    };
+  for (const value of sqliteCauseObjects(error)) {
     const codes = [value.code, value.extendedCode].filter(
       (code): code is string => typeof code === "string",
     );
@@ -770,27 +758,12 @@ function isSqliteLockRace(error: unknown) {
     ) {
       return true;
     }
-    pending.push(value.cause, value.originalError, value.original, value.error);
   }
   return false;
 }
 
 function isKnownTransactionRace(error: unknown) {
-  const pending: unknown[] = [error];
-  const visited = new Set<object>();
-  for (let depth = 0; pending.length > 0 && depth < 6; depth += 1) {
-    const current = pending.shift();
-    if (!current || typeof current !== "object" || visited.has(current)) continue;
-    visited.add(current);
-    const value = current as {
-      code?: unknown;
-      extendedCode?: unknown;
-      message?: unknown;
-      cause?: unknown;
-      originalError?: unknown;
-      original?: unknown;
-      error?: unknown;
-    };
+  for (const value of sqliteCauseObjects(error)) {
     const codes = [value.code, value.extendedCode].filter(
       (code): code is string => typeof code === "string",
     );
@@ -804,7 +777,6 @@ function isKnownTransactionRace(error: unknown) {
     ) {
       return true;
     }
-    pending.push(value.cause, value.originalError, value.original, value.error);
   }
   return false;
 }

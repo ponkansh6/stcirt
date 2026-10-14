@@ -11,10 +11,48 @@ import {
 import { jstDayStart } from "../../date";
 import { gradeFreeResponse, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
 import { randomUUID } from "node:crypto";
+import { sqliteCauseObjects } from "./sqlite-cause-traversal";
 
 export type BatchAnswer =
   | { questionId: number; selectedIndex: number }
   | { questionId: number; freeText: string };
+
+type RestoredAnswer = {
+  questionId: number;
+  answerKind: "selected" | "legacy" | "freeText";
+  selectedIndex: number | null;
+  freeText: string | null;
+};
+
+type StoredSubmissionAnswer = {
+  questionId: number;
+  selectedIndex: number | null;
+  freeText: string | null;
+  answerKind: string;
+};
+
+function restoreSubmissionAnswers(
+  questionIds: number[],
+  storedAnswers: StoredSubmissionAnswer[],
+): RestoredAnswer[] {
+  const answerByQuestion = new Map(storedAnswers.map((answer) => [answer.questionId, answer]));
+  return questionIds.flatMap<RestoredAnswer>((questionId) => {
+    const answer = answerByQuestion.get(questionId);
+    if (!answer) return [];
+    if (answer.answerKind === "freeText")
+      return [
+        { questionId, answerKind: "freeText", selectedIndex: null, freeText: answer.freeText },
+      ];
+    return [
+      {
+        questionId,
+        answerKind: answer.answerKind as "selected" | "legacy",
+        selectedIndex: answer.selectedIndex,
+        freeText: null,
+      },
+    ];
+  });
+}
 
 export class BatchSubmissionError extends Error {
   constructor(
@@ -43,29 +81,7 @@ export async function getAnswerSubmission(submissionId: string, participantId: n
       })
       .from(examSubmissionAnswers)
       .where(eq(examSubmissionAnswers.submissionId, submissionId));
-    const answerByQuestion = new Map(storedAnswers.map((answer) => [answer.questionId, answer]));
-    type RestoredAnswer = {
-      questionId: number;
-      answerKind: "selected" | "legacy" | "freeText";
-      selectedIndex: number | null;
-      freeText: string | null;
-    };
-    const answers = submission.questionIds.flatMap<RestoredAnswer>((questionId) => {
-      const answer = answerByQuestion.get(questionId);
-      if (!answer) return [];
-      if (answer.answerKind === "freeText")
-        return [
-          { questionId, answerKind: "freeText", selectedIndex: null, freeText: answer.freeText },
-        ];
-      return [
-        {
-          questionId,
-          answerKind: answer.answerKind as "selected" | "legacy",
-          selectedIndex: answer.selectedIndex,
-          freeText: null,
-        },
-      ];
-    });
+    const answers = restoreSubmissionAnswers(submission.questionIds, storedAnswers);
     return { submissionId: submission.id, revision: submission.revision, answers };
   });
 }
@@ -95,29 +111,7 @@ export async function getLatestAnswerSubmission(participantId: number) {
       })
       .from(examSubmissionAnswers)
       .where(eq(examSubmissionAnswers.submissionId, submission.id));
-    const answerByQuestion = new Map(storedAnswers.map((answer) => [answer.questionId, answer]));
-    type RestoredAnswer = {
-      questionId: number;
-      answerKind: "selected" | "legacy" | "freeText";
-      selectedIndex: number | null;
-      freeText: string | null;
-    };
-    const answers = submission.questionIds.flatMap<RestoredAnswer>((questionId) => {
-      const answer = answerByQuestion.get(questionId);
-      if (!answer) return [];
-      if (answer.answerKind === "freeText")
-        return [
-          { questionId, answerKind: "freeText", selectedIndex: null, freeText: answer.freeText },
-        ];
-      return [
-        {
-          questionId,
-          answerKind: answer.answerKind as "selected" | "legacy",
-          selectedIndex: answer.selectedIndex,
-          freeText: null,
-        },
-      ];
-    });
+    const answers = restoreSubmissionAnswers(submission.questionIds, storedAnswers);
     return { submissionId: submission.id, revision: submission.revision, answers };
   });
 }
@@ -343,23 +337,7 @@ export async function saveAnswerSubmission(input: {
 }
 
 function isKnownSqliteConflict(error: unknown): boolean {
-  const pending: unknown[] = [error];
-  const visited = new Set<object>();
-
-  for (let depth = 0; pending.length > 0 && depth < 6; depth += 1) {
-    const current = pending.shift();
-    if (!current || typeof current !== "object" || visited.has(current)) continue;
-    visited.add(current);
-
-    const value = current as {
-      code?: unknown;
-      extendedCode?: unknown;
-      message?: unknown;
-      cause?: unknown;
-      originalError?: unknown;
-      original?: unknown;
-      error?: unknown;
-    };
+  for (const value of sqliteCauseObjects(error)) {
     const code = typeof value.code === "string" ? value.code : "";
     const extendedCode = typeof value.extendedCode === "string" ? value.extendedCode : "";
     if (/^SQLITE_BUSY(?:_|$)/.test(code) || /^SQLITE_LOCKED(?:_|$)/.test(code)) return true;
@@ -378,8 +356,6 @@ function isKnownSqliteConflict(error: unknown): boolean {
     ) {
       return true;
     }
-
-    pending.push(value.cause, value.originalError, value.original, value.error);
   }
   return false;
 }
