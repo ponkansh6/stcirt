@@ -600,6 +600,25 @@ describe("answer-repository", () => {
       }
     });
 
+    it("rethrows an unclassified SQLite error without starting recovery", async () => {
+      const failure = Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR" });
+      const transaction = vi.spyOn(dbRef.db!, "transaction").mockRejectedValueOnce(failure);
+      try {
+        await expect(
+          saveAnswerSubmission({
+            submissionId: "io-error-submission",
+            operationId: "io-error-operation",
+            expectedRevision: 0,
+            participantId: 1,
+            answers: [],
+          }),
+        ).rejects.toBe(failure);
+        expect(transaction).toHaveBeenCalledTimes(1);
+      } finally {
+        transaction.mockRestore();
+      }
+    });
+
     it("reports an owner mismatch when recovering an existing operation", async () => {
       const questionId = await insertQuestion();
       const ownerId = await insertParticipant("operation-owner");
