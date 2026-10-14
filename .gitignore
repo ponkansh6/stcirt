@@ -27,6 +27,11 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
+# Local-only Q5 pilot answers (contains answer text)
+/.local/jev-q5-score-gap-pilot.json
+/.local/jev-q5-score-gap-runs/
+/.local/jev-q5-score-gap-hmac.key
+
 # Playwright
 /playwright-report/
 /blob-report/

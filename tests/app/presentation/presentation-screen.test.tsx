@@ -375,6 +375,7 @@ describe("presentation projection and presenter progression", () => {
         const name = winner?.querySelector("h1");
         const score = winner?.querySelector("[class*='winnerScore']");
         expect(rank).not.toBeNull();
+        expect(slide.querySelectorAll("[data-testid='presentation-exam-stamp']")).toHaveLength(1);
         const certificateLabel = slide.querySelector("[class*='certificateLabel']");
         expect(certificateLabel?.textContent).toBe("認定証");
         expect(rank!.compareDocumentPosition(certificateLabel!)).toBe(
@@ -414,12 +415,9 @@ describe("presentation projection and presenter progression", () => {
       expect(frame?.parentElement).toBe(slide);
       expect(frame?.closest("[data-testid='presentation-fit-layer']")).toBeNull();
       const lockup = slide.querySelector("[class*='openingLockup']");
-      const stamp = slide.querySelector("[data-testid='presentation-exam-stamp']");
       const waitSlot = slide.querySelector("[class*='openingWaitSlot']");
       expect(lockup).not.toBeNull();
-      expect(stamp).toHaveAttribute("aria-hidden", "true");
-      expect(stamp).toHaveTextContent("しゅんたま検定");
-      expect(stamp?.querySelector("svg")).toBeNull();
+      expect(slide.querySelectorAll("[data-testid='presentation-exam-stamp']")).toHaveLength(0);
       expect(waitSlot).not.toBeNull();
       if (state === "opening") {
         expect(waitSlot).toHaveAttribute("aria-hidden", "true");

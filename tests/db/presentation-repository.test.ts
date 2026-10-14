@@ -441,9 +441,9 @@ describe("presentation repository", () => {
       answerText: `Q5 ${suffix}`,
       questionVersion: q5.questionVersion!,
       state: "graded",
-      rawScore: selectedIndices[1] === 0 ? 2 : 0,
+      rawScore: selectedIndices[1] === 0 ? 9 : 0,
       normalizedScore: selectedIndices[1] === 0 ? 1 : 0,
-      rubricVersion: q5.questionVersion!,
+      rubricVersion: "jev-q5-fulfillment-v3-02",
     });
   }
 
@@ -614,7 +614,7 @@ describe("presentation repository", () => {
     });
   });
 
-  async function addFreeTextProjectionFixture(sourceKey?: string) {
+  async function addFreeTextProjectionFixture(sourceKey?: string, rawScore = 1) {
     await testDb.db.insert(schema.presentationSessions).values({
       id: 1,
       state: "answer",
@@ -653,7 +653,7 @@ describe("presentation repository", () => {
           answerKind: "freeText",
           selectedIndex: null,
           freeText: "Private response",
-          rawScore: 1,
+          rawScore,
           normalizedScore: 0.5,
         },
       ],
@@ -1273,7 +1273,7 @@ describe("presentation repository", () => {
   });
 
   it("suppresses only the identified fifth-question responses in the public projection", async () => {
-    await addFreeTextProjectionFixture("it-literacy-005");
+    await addFreeTextProjectionFixture("it-literacy-005", 4.5);
 
     const projection = await getPublicPresentation();
     expect(projection).toEqual({
@@ -1293,7 +1293,11 @@ describe("presentation repository", () => {
     }
     const admin = await getAdminPresentation();
     expect(admin.entries[0]?.answers).toContainEqual(
-      expect.objectContaining({ freeText: "Private response", rawScore: 1, normalizedScore: 0.5 }),
+      expect.objectContaining({
+        freeText: "Private response",
+        rawScore: 4.5,
+        normalizedScore: 0.5,
+      }),
     );
     await expect(getParticipantResult(1)).resolves.toEqual({
       state: "visible",
@@ -1423,7 +1427,7 @@ describe("presentation repository", () => {
         state: "graded" as const,
         rawScore: 0,
         normalizedScore: 0,
-        rubricVersion: "tamami-egg-v1",
+        rubricVersion: "jev-q5-fulfillment-v3-02",
       })),
     );
 
@@ -1604,9 +1608,9 @@ describe("presentation repository", () => {
       answerText: "Q5 current answer",
       questionVersion: "tamami-egg-v1",
       state: "graded",
-      rawScore: 1,
+      rawScore: 4.5,
       normalizedScore: 0.5,
-      rubricVersion: "tamami-egg-v1",
+      rubricVersion: "jev-q5-fulfillment-v3-02",
     });
 
     await op("aggregate", "current-five-question-aggregate");
@@ -1618,7 +1622,7 @@ describe("presentation repository", () => {
       { participantId: participant, score: 4.5 },
     ]);
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
-      { questionVersions, rubricVersions: { "5": "tamami-egg-v1" } },
+      { questionVersions, rubricVersions: { "5": "jev-q5-fulfillment-v3-02" } },
     ]);
   });
 
@@ -1666,7 +1670,7 @@ describe("presentation repository", () => {
         answerText: "Q5 current answer",
         questionVersion,
         state: "graded",
-        rawScore: 1,
+        rawScore: 4.5,
         normalizedScore: 0.5,
         rubricVersion,
       });
@@ -1725,9 +1729,9 @@ describe("presentation repository", () => {
       answerText: "Q5 current answer",
       questionVersion: "tamami-egg-v1",
       state: "graded",
-      rawScore: 1,
+      rawScore: 4.5,
       normalizedScore: 0.5,
-      rubricVersion: "tamami-egg-v1",
+      rubricVersion: "jev-q5-fulfillment-v3-02",
     });
 
     await op("aggregate", "stale-q5-snapshot-aggregate");
@@ -2248,7 +2252,7 @@ describe("presentation repository", () => {
         answerText: "pending response",
         state: "pending",
         questionVersion: "tamami-egg-v1",
-        rubricVersion: "tamami-egg-v1",
+        rubricVersion: "jev-q5-fulfillment-v3-02",
       })
       .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
 
@@ -2290,7 +2294,7 @@ describe("presentation repository", () => {
       );
     await testDb.db
       .update(schema.examAnswerAssessments)
-      .set({ answerText: "graded response", rawScore: 1, normalizedScore: 0.75 })
+      .set({ answerText: "graded response", rawScore: 6.75, normalizedScore: 0.75 })
       .where(
         eq(schema.examAnswerAssessments.submissionId, `submission-${gradedParticipant}-graded`),
       );

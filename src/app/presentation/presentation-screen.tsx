@@ -1241,7 +1241,6 @@ export default function PresentationScreen({
                 {!loadingPresenterDeck && (!data || state === "not_started") && (
                   <section className={styles.opening} aria-labelledby="presentation-title">
                     <div className={styles.openingLockup}>
-                      <ExamStamp className={styles.openingStamp} />
                       <div className={styles.openingTitle}>
                         <h1 id="presentation-title" aria-label="しゅんたま検定">
                           <span>しゅんたま</span>
@@ -1259,7 +1258,6 @@ export default function PresentationScreen({
                 {state === "opening" && (
                   <section className={styles.opening} aria-labelledby="opening-title">
                     <div className={styles.openingLockup}>
-                      <ExamStamp className={styles.openingStamp} />
                       <div className={styles.openingTitle}>
                         <h1 id="opening-title" aria-label="しゅんたま検定">
                           <span>しゅんたま</span>

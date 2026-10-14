@@ -232,7 +232,7 @@ describe("durable free-response assessment and restoration", () => {
     });
     vi.mocked(gradeFreeResponse)
       .mockRejectedValueOnce(new Error("network down"))
-      .mockResolvedValueOnce({ score: 1.4, confidence: 0.99, model: "jev-latest" });
+      .mockResolvedValueOnce({ score: 6.3, confidence: 0.99, model: "jev-latest" });
     await expect(processDueAssessments()).resolves.toMatchObject({
       processed: 1,
       retried: 1,
@@ -252,7 +252,7 @@ describe("durable free-response assessment and restoration", () => {
     expect(graded).toMatchObject({
       state: "graded",
       attempts: 2,
-      rawScore: 1.4,
+      rawScore: 6.3,
       normalizedScore: 0.7,
       confidence: 0.99,
     });
@@ -305,7 +305,7 @@ describe("durable free-response assessment and restoration", () => {
       },
     }) as TestDb["db"];
     vi.mocked(gradeFreeResponse).mockResolvedValueOnce({
-      score: 1.4,
+      score: 6.3,
       confidence: 0.99,
       model: "jev-latest",
     });
@@ -376,7 +376,7 @@ describe("durable free-response assessment and restoration", () => {
       answers: validAnswers,
     });
     vi.mocked(gradeFreeResponse).mockResolvedValueOnce({
-      score: 1.4,
+      score: 6.3,
       confidence: 0.99,
       model: "jev-latest",
     });
@@ -410,7 +410,7 @@ describe("durable free-response assessment and restoration", () => {
     const [failed] = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(failed).toMatchObject({ state: "failed", attempts: 1, nextAttemptAt: null });
     vi.mocked(gradeFreeResponse).mockResolvedValueOnce({
-      score: 1.2,
+      score: 5.4,
       confidence: 0.8,
       model: "jev-latest",
     });
@@ -420,9 +420,9 @@ describe("durable free-response assessment and restoration", () => {
     expect(retried).toMatchObject({
       state: "graded",
       attempts: 1,
-      rawScore: 1.2,
-      normalizedScore: 0.6,
+      rawScore: 5.4,
     });
+    expect(retried!.normalizedScore).toBeCloseTo(0.6);
   });
 
   it("rejects a late result after the lease is reclaimed by another worker", async () => {
@@ -447,7 +447,7 @@ describe("durable free-response assessment and restoration", () => {
         await oldResult;
         return { score: 0.4, confidence: 0.5, model: "jev-latest" };
       })
-      .mockResolvedValueOnce({ score: 1.6, confidence: 0.9, model: "jev-latest" });
+      .mockResolvedValueOnce({ score: 7.2, confidence: 0.9, model: "jev-latest" });
 
     const oldWorker = processDueAssessments();
     await oldStartedPromise;
@@ -460,7 +460,7 @@ describe("durable free-response assessment and restoration", () => {
     const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(assessment).toMatchObject({
       state: "graded",
-      rawScore: 1.6,
+      rawScore: 7.2,
       normalizedScore: 0.8,
       claimToken: null,
     });

@@ -553,7 +553,7 @@ export async function processDueAssessments(
               .set({
                 state: "graded",
                 rawScore: result.score,
-                normalizedScore: result.score / 2,
+                normalizedScore: result.score / 9,
                 confidence: result.confidence,
                 model: result.model,
                 gradedAt: new Date(),

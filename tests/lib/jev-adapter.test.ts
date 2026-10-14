@@ -15,6 +15,12 @@ function gradeCurrentAnswer(answer: string) {
 }
 
 function envelope(overrides: Record<string, unknown> = {}) {
+  const probabilities = Object.fromEntries(
+    Array.from({ length: 10 }, (_, score) => [
+      String(score),
+      score === 0 ? 0.1 : score === 1 ? 0.3 : score === 2 ? 0.6 : 0,
+    ]),
+  );
   return {
     model: "jev-latest",
     answers: {
@@ -22,8 +28,10 @@ function envelope(overrides: Record<string, unknown> = {}) {
         type: "score",
         score: 1.5,
         confidence: 0.98,
-        legend: { "0": "不一致", "1": "部分一致", "2": "意味的に一致" },
-        probabilities: { "0": 0.1, "1": 0.3, "2": 0.6 },
+        legend: Object.fromEntries(
+          Array.from({ length: 10 }, (_, score) => [String(score), `score ${score}`]),
+        ),
+        probabilities,
       },
     },
     usage: { input_tokens: 130, output_tokens: 18 },
@@ -68,6 +76,33 @@ describe("JEV score adapter", () => {
     );
   });
 
+  it("accepts a score that differs from the weighted probability and logs the delta", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
+    respond(
+      envelope({
+        answers: {
+          answer_match: { ...envelope().answers.answer_match, score: 0.8 },
+        },
+      }),
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await expect(gradeCurrentAnswer("回答文")).resolves.toEqual({
+        score: 0.8,
+        confidence: 0.98,
+        model: "jev-latest",
+      });
+      expect(warn).toHaveBeenCalledWith("JEV weighted score differs from returned score", {
+        returnedScore: 0.8,
+        weightedScore: 1.5,
+        delta: 0.7,
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("fails closed when the provider API key is not configured", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -86,8 +121,10 @@ describe("JEV score adapter", () => {
         answers: {
           answer_match: {
             ...envelope().answers.answer_match,
-            score: 2.01,
-            probabilities: { "0": 0, "1": 0, "2": 1 },
+            score: 9.01,
+            probabilities: Object.fromEntries(
+              Array.from({ length: 10 }, (_, score) => [String(score), score === 9 ? 1 : 0]),
+            ),
           },
         },
       },
@@ -102,7 +139,12 @@ describe("JEV score adapter", () => {
         answers: {
           answer_match: {
             ...envelope().answers.answer_match,
-            probabilities: { "0": 0.2, "1": 0.2, "2": 0.2 },
+            probabilities: {
+              ...envelope().answers.answer_match.probabilities,
+              "0": 0.2,
+              "1": 0.2,
+              "2": 0.2,
+            },
           },
         },
       },
@@ -113,8 +155,13 @@ describe("JEV score adapter", () => {
         answers: {
           answer_match: {
             ...envelope().answers.answer_match,
-            probabilities: { "0": -0.1, "1": 0.2, "2": 0.9 },
-            score: 1.8,
+            probabilities: {
+              ...envelope().answers.answer_match.probabilities,
+              "0": -0.1,
+              "1": 0.2,
+              "2": 0.9,
+            },
+            score: 2,
           },
         },
       },
@@ -125,14 +172,14 @@ describe("JEV score adapter", () => {
         answers: {
           answer_match: {
             ...envelope().answers.answer_match,
-            probabilities: { "0": 0.1, "1": 0.9 },
+            probabilities: Object.fromEntries(
+              Object.entries(envelope().answers.answer_match.probabilities).filter(
+                ([key]) => key !== "9",
+              ),
+            ),
           },
         },
       },
-    ],
-    [
-      "score disagrees with weighted probability",
-      { answers: { answer_match: { ...envelope().answers.answer_match, score: 0.8 } } },
     ],
     [
       "confidence outside its range",

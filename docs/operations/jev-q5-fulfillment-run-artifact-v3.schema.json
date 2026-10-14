@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stcirt.invalid/schemas/jev-q5-fulfillment-run-artifact-v3.schema.json",
+  "title": "JEV Q5 semantic-fulfillment scoring run artifact v3",
+  "description": "Condition-specific schema for the preregistered Q5 semantic-fulfillment rubric. Preserve the native score on a 0-9 scale; score01 is derived as rawScore / 9. Store only in a restricted audit area. Do not record answer text, credentials, secrets, or answer-bearing error details in this artifact or its referenced logs. Never write this artifact to the assessment production database.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "runId",
+    "artifactVersion",
+    "supersedesRunId",
+    "model",
+    "comparisonMode",
+    "condition",
+    "dataset",
+    "answer",
+    "inputFingerprint",
+    "versions",
+    "timestamp",
+    "schedule",
+    "replicateIndex",
+    "requestConfig",
+    "probabilities",
+    "rawScore",
+    "score01",
+    "attempts",
+    "status",
+    "cost",
+    "response"
+  ],
+  "properties": {
+    "artifactVersion": { "type": "string", "const": "jev-q5-run-artifact-v3" },
+    "supersedesRunId": {
+      "type": "string",
+      "const": "jev-q5-20261013110343293-c93b0fea-3796-4310-9c3d-2c5ab5e7891f",
+      "description": "Prior six-record fulfillment-v2 run superseded by a later run; prior artifacts remain immutable."
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique run identifier; opaque identifier only."
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["realId", "alias"],
+      "properties": {
+        "realId": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "Provider-reported real model ID; null if the run failed before a provider response."
+        },
+        "alias": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Configured model alias for this run."
+        }
+      }
+    },
+    "comparisonMode": {
+      "type": "string",
+      "const": "single_condition_descriptive",
+      "description": "One scoring condition only; this run does not compare a baseline with a candidate."
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conditionId"],
+      "properties": {
+        "conditionId": {
+          "type": "string",
+          "const": "fulfillment-semantic-01-v3",
+          "description": "Versioned semantic-fulfillment scoring condition evaluated by this run."
+        }
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["datasetId", "manifestReference", "manifestSha256"],
+      "properties": {
+        "datasetId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "description": "Opaque ID of the fixed anonymous answer dataset."
+        },
+        "manifestReference": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+          "description": "Opaque reference to the restricted dataset manifest; do not include answer text or real submission IDs."
+        },
+        "manifestSha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "description": "SHA-256 of the frozen manifest containing only anonymous IDs and revisions, not answer text or real IDs."
+        }
+      }
+    },
+    "answer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anonymousId", "sourceKind", "revision"],
+      "properties": {
+        "anonymousId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "description": "Stable opaque anonymous answer ID reused across runs; must not encode participant identity, real submission ID, or answer text."
+        },
+        "sourceKind": { "type": "string", "enum": ["db_submission", "synthetic_fixture"] },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Source revision: the original submission revision or synthetic fixture revision, not a run/replicate counter."
+        }
+      }
+    },
+    "inputFingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "keyId", "digest"],
+      "properties": {
+        "algorithm": { "type": "string", "const": "HMAC-SHA-256" },
+        "keyId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "description": "Opaque identifier for the protected HMAC key; never include key material."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "description": "HMAC-SHA-256 of the exact canonical answer input payload, excluding credentials."
+        }
+      },
+      "description": "Keyed fingerprint prevents dictionary guessing of short answers. The key must be held outside the artifact in a protected store."
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["questionVersion", "rubricVersion"],
+      "properties": {
+        "questionVersion": { "type": "string", "minLength": 1 },
+        "rubricVersion": { "type": "string", "const": "jev-q5-fulfillment-v3-01" }
+      }
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeBlock", "order"],
+      "properties": {
+        "timeBlock": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Preregistered time-block ID used for paired comparison."
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Randomized execution order within the preregistered schedule."
+        }
+      }
+    },
+    "replicateIndex": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Planned repeat index for this answer and single scoring condition; distinct from attempts, which counts API requests within this run."
+    },
+    "requestConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference", "sha256"],
+      "properties": {
+        "reference": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+          "description": "Opaque restricted-store reference to non-answer request/config snapshot; do not inline request text or secrets."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "description": "SHA-256 of the referenced canonical non-answer configuration snapshot, with answer input and credentials excluded."
+        }
+      }
+    },
+    "probabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+      "properties": {
+        "0": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "1": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "2": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "3": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "4": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "5": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "6": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "7": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "8": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "9": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      },
+      "description": "Provider probabilities for the ten native ordinal score classes 0 through 9; all values are null when probabilities are unavailable."
+    },
+    "rawScore": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 9,
+      "description": "Provider native raw score in [0,9], or null when unavailable."
+    },
+    "score01": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Normalized presentation score. For succeeded artifacts, score01 MUST equal rawScore / 9 (allowing at most floating-point epsilon); preserve rawScore as the provider-native value."
+    },
+    "attempts": { "type": "integer", "minimum": 1 },
+    "status": { "type": "string", "enum": ["succeeded", "failed", "incomplete"] },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["knowledge", "currency"],
+      "properties": {
+        "knowledge": { "type": "string", "enum": ["known", "unknown"] },
+        "amount": { "type": "number", "minimum": 0 },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "ISO 4217 three-letter code when amount is known; use XXX when unknown."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "knowledge": { "const": "known" } }, "required": ["knowledge"] },
+          "then": { "required": ["amount"] }
+        },
+        {
+          "if": {
+            "properties": { "knowledge": { "const": "unknown" } },
+            "required": ["knowledge"]
+          },
+          "then": { "not": { "required": ["amount"] } }
+        }
+      ]
+    },
+    "response": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["reference", "sha256"],
+      "properties": {
+        "reference": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+          "description": "Opaque restricted-store reference to provider response. Do not inline response body or secrets."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "description": "SHA-256 of the referenced response snapshot, with secrets removed."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "succeeded" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "model": { "properties": { "realId": { "type": "string", "minLength": 1 } } },
+          "probabilities": {
+            "properties": {
+              "0": { "type": "number" },
+              "1": { "type": "number" },
+              "2": { "type": "number" },
+              "3": { "type": "number" },
+              "4": { "type": "number" },
+              "5": { "type": "number" },
+              "6": { "type": "number" },
+              "7": { "type": "number" },
+              "8": { "type": "number" },
+              "9": { "type": "number" }
+            }
+          },
+          "rawScore": { "type": "number" },
+          "score01": { "type": "number" },
+          "response": {
+            "type": "object",
+            "properties": {
+              "reference": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

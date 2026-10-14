@@ -634,7 +634,6 @@ test("opening cover geometry matches before and after presentation start", async
       const section = element.closest("section");
       const titleColumn = section?.querySelector<HTMLElement>("[class*='openingTitle']");
       const lockup = section?.querySelector<HTMLElement>("[class*='openingLockup']");
-      const stamp = lockup?.querySelector<HTMLElement>("[data-testid='presentation-exam-stamp']");
       const subtitle = section?.querySelector<HTMLElement>("[class*='openingSubtitle']");
       const waitSlot = section?.querySelector<HTMLElement>("[class*='openingWaitSlot']");
       const waitingCopy = waitSlot?.querySelector<HTMLElement>("[class*='openingWait']");
@@ -651,7 +650,6 @@ test("opening cover geometry matches before and after presentation start", async
         "[data-testid='presentation-fit-viewport']",
       );
       const fitViewportRect = fitViewport?.getBoundingClientRect();
-      const stampRect = stamp?.getBoundingClientRect();
       const isTextClippedByOverflow = (
         element: HTMLElement,
         textBounds: { x: number; y: number; width: number; height: number },
@@ -712,6 +710,7 @@ test("opening cover geometry matches before and after presentation start", async
           return {
             content: span.textContent?.trim() ?? "",
             fontSize: Number.parseFloat(getComputedStyle(span).fontSize),
+            color: getComputedStyle(span).color,
             span: spanBounds,
             textBounds,
             scrollWidth: span.scrollWidth,
@@ -744,7 +743,6 @@ test("opening cover geometry matches before and after presentation start", async
         !section ||
         !titleColumn ||
         !lockup ||
-        !stamp ||
         !subtitle ||
         !waitSlot ||
         !fitLayer ||
@@ -801,16 +799,6 @@ test("opening cover geometry matches before and after presentation start", async
           minimumRatio,
         };
       });
-      const stampTitleNonOverlapping = titleSpans.every((span) => {
-        const text = span.textBounds;
-        return Boolean(
-          stampRect &&
-          (text.x + text.width <= stampRect.left ||
-            stampRect.right <= text.x ||
-            text.y + text.height <= stampRect.top ||
-            stampRect.bottom <= text.y),
-        );
-      });
       const bounds = (node: Element) => {
         const nodeRect = node.getBoundingClientRect();
         return {
@@ -841,15 +829,15 @@ test("opening cover geometry matches before and after presentation start", async
           lineCount: Math.max(0, ...titleSpans.map((span) => span.lineCount)),
         },
         titleSpans,
+        titleDividerColor: headingStyle.borderBottomColor,
+        openingStampCount: section.querySelectorAll("[data-testid='presentation-exam-stamp']")
+          .length,
         textContrasts,
         fitScale,
         titleColumn: bounds(titleColumn),
         lockup: bounds(lockup),
         fitLayer: bounds(fitLayer!),
-        stamp: bounds(stamp),
         lockupContainsTitle: lockup.contains(titleColumn),
-        lockupContainsStamp: lockup.contains(stamp),
-        stampTitleNonOverlapping,
         waitSlot: bounds(waitSlot),
         waitSlotAriaHidden: waitSlot.getAttribute("aria-hidden"),
         waitingCopy: waitingCopy?.textContent?.trim() ?? null,
@@ -962,6 +950,11 @@ test("opening cover geometry matches before and after presentation start", async
     const geometry = await inspectOpening(page);
     expect(geometry.heading.lineCount).toBe(1);
     expect(geometry.titleSpans).toHaveLength(2);
+    expect(geometry.titleSpans.find((span) => span.content === "検定")?.color).toBe(
+      "rgb(23, 62, 39)",
+    );
+    expect(geometry.titleDividerColor).toBe("rgb(23, 62, 39)");
+    expect(geometry.openingStampCount).toBe(0);
     expectOpeningTextContrast(geometry, "not_started");
     expect(
       geometry.titleSpans.every(
@@ -985,7 +978,6 @@ test("opening cover geometry matches before and after presentation start", async
         2,
       )}`,
     ).toBe(true);
-    expect(geometry.stampTitleNonOverlapping).toBe(true);
     expect(geometry.waitingCopy).toBe("発表が始まるまで、少々お待ちください");
     expect(geometry.waitSlotVisibility).toBe("visible");
     expect(geometry.waitingCopyVisibility).toBe("visible");
@@ -1040,6 +1032,11 @@ test("opening cover geometry matches before and after presentation start", async
     expect(geometry.titleSpans.map((span) => span.content)).toEqual(
       beforeStart.titleSpans.map((span) => span.content),
     );
+    expect(geometry.titleSpans.find((span) => span.content === "検定")?.color).toBe(
+      "rgb(23, 62, 39)",
+    );
+    expect(geometry.titleDividerColor).toBe("rgb(23, 62, 39)");
+    expect(geometry.openingStampCount).toBe(0);
     for (const span of geometry.titleSpans) {
       const beforeSpan = beforeStart.titleSpans.find(
         (candidate) => candidate.content === span.content,
@@ -1067,18 +1064,10 @@ test("opening cover geometry matches before and after presentation start", async
         )}`,
       ).toBe(true);
     }
-    expect(geometry.stampTitleNonOverlapping).toBe(true);
     expectSameBounds(geometry.titleColumn, beforeStart.titleColumn);
     expectSameBounds(geometry.lockup, beforeStart.lockup);
-    expectSameBounds(geometry.stamp, beforeStart.stamp);
     expectSameBounds(geometry.waitSlot, beforeStart.waitSlot);
     expect(geometry.lockupContainsTitle).toBe(true);
-    expect(geometry.lockupContainsStamp).toBe(true);
-    if (viewports[index]!.width > 640) {
-      expect(geometry.stamp.x + geometry.stamp.width).toBeLessThanOrEqual(geometry.titleColumn.x);
-    } else {
-      expect(geometry.stamp.y + geometry.stamp.height).toBeLessThanOrEqual(geometry.titleColumn.y);
-    }
     expect(geometry.waitingCopy).toBe("発表が始まるまで、少々お待ちください");
     expect(geometry.waitSlotVisibility).toBe("visible");
     expect(geometry.waitingCopyVisibility).toBe("hidden");
@@ -1834,18 +1823,14 @@ test("reference-size long presentation content stays readable after fitting", as
     .getByRole("heading", { name: /^しゅんたま\s*検定$/ })
     .locator("xpath=ancestor::section");
   const openingColumns = await opening.evaluate((section) => {
-    const title = section.querySelector("[class*='openingTitle']")!.getBoundingClientRect();
-    const stamp = section
-      .querySelector("[data-testid='presentation-exam-stamp']")!
-      .getBoundingClientRect();
     const lockup = section.querySelector("[class*='openingLockup']")!;
     return {
-      stampBeforeTitle: stamp.right <= title.left,
       lockupContainsTitle: lockup.contains(section.querySelector("[class*='openingTitle']")),
+      stampCount: section.querySelectorAll("[data-testid='presentation-exam-stamp']").length,
     };
   });
-  expect(openingColumns.stampBeforeTitle).toBe(true);
   expect(openingColumns.lockupContainsTitle).toBe(true);
+  expect(openingColumns.stampCount).toBe(0);
   await expect(page.locator("#opening-title span:last-child")).toBeVisible();
   await expect(page.getByText("PRESENTATION", { exact: true })).toHaveCount(0);
   await expect(page.getByText("これまでの思い出を振り返りましょう", { exact: true })).toHaveCount(
