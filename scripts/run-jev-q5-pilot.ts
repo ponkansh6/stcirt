@@ -204,14 +204,20 @@ function isNullableNumberInRange(value: unknown, min: number, max: number) {
   return value === null || (isFiniteNumber(value) && value >= min && value <= max);
 }
 
+function nullableNumberInRange(value: unknown, min: number, max: number): number | null {
+  if (value === null) return null;
+  if (!isFiniteNumber(value) || value < min || value > max) throw new Error("invalid_artifact");
+  return value;
+}
+
 function matches(value: unknown, pattern: RegExp) {
   return typeof value === "string" && pattern.test(value);
 }
 
 function validateArtifact(value: unknown) {
-  const fail = (): never => {
+  function fail(): never {
     throw new Error("invalid_artifact");
-  };
+  }
   const refPattern = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/;
   const shaPattern = /^[a-fA-F0-9]{64}$/;
   const rootKeys = [
@@ -237,55 +243,49 @@ function validateArtifact(value: unknown) {
     "cost",
     "response",
   ];
-  if (!isRecord(value) || !exactKeys(value, rootKeys)) fail();
+  const artifact = isRecord(value) ? value : fail();
+  if (!exactKeys(artifact, rootKeys)) fail();
   if (
-    typeof value.runId !== "string" ||
-    !value.runId ||
-    value.artifactVersion !== "jev-q5-run-artifact-v3" ||
-    value.supersedesRunId !== SUPERSEDES_RUN_ID ||
-    value.comparisonMode !== "single_condition_descriptive" ||
-    !["succeeded", "failed", "incomplete"].includes(String(value.status)) ||
-    !Number.isInteger(value.replicateIndex) ||
-    (value.replicateIndex as number) < 1 ||
-    !Number.isInteger(value.attempts) ||
-    (value.attempts as number) < 1 ||
-    typeof value.timestamp !== "string" ||
-    !Number.isFinite(Date.parse(value.timestamp))
+    typeof artifact.runId !== "string" ||
+    !artifact.runId ||
+    artifact.artifactVersion !== "jev-q5-run-artifact-v3" ||
+    artifact.supersedesRunId !== SUPERSEDES_RUN_ID ||
+    artifact.comparisonMode !== "single_condition_descriptive" ||
+    !["succeeded", "failed", "incomplete"].includes(String(artifact.status)) ||
+    !Number.isInteger(artifact.replicateIndex) ||
+    (artifact.replicateIndex as number) < 1 ||
+    !Number.isInteger(artifact.attempts) ||
+    (artifact.attempts as number) < 1 ||
+    typeof artifact.timestamp !== "string" ||
+    !Number.isFinite(Date.parse(artifact.timestamp))
   )
     fail();
 
-  const model = value.model;
+  const model = isRecord(artifact.model) ? artifact.model : fail();
+  if (!exactKeys(model, ["realId", "alias"])) fail();
   if (
-    !isRecord(model) ||
-    !exactKeys(model, ["realId", "alias"]) ||
     !(model.realId === null || (typeof model.realId === "string" && model.realId.length > 0)) ||
     typeof model.alias !== "string" ||
     !model.alias
   )
     fail();
 
-  const condition = value.condition;
-  if (
-    !isRecord(condition) ||
-    !exactKeys(condition, ["conditionId"]) ||
-    condition.conditionId !== "fulfillment-semantic-01-v3-02"
-  )
-    fail();
+  const condition = isRecord(artifact.condition) ? artifact.condition : fail();
+  if (!exactKeys(condition, ["conditionId"])) fail();
+  if (condition.conditionId !== "fulfillment-semantic-01-v3-02") fail();
 
-  const dataset = value.dataset;
+  const dataset = isRecord(artifact.dataset) ? artifact.dataset : fail();
+  if (!exactKeys(dataset, ["datasetId", "manifestReference", "manifestSha256"])) fail();
   if (
-    !isRecord(dataset) ||
-    !exactKeys(dataset, ["datasetId", "manifestReference", "manifestSha256"]) ||
     !matches(dataset.datasetId, ID_PATTERN) ||
     !matches(dataset.manifestReference, refPattern) ||
     !matches(dataset.manifestSha256, shaPattern)
   )
     fail();
 
-  const answer = value.answer;
+  const answer = isRecord(artifact.answer) ? artifact.answer : fail();
+  if (!exactKeys(answer, ["anonymousId", "sourceKind", "revision"])) fail();
   if (
-    !isRecord(answer) ||
-    !exactKeys(answer, ["anonymousId", "sourceKind", "revision"]) ||
     !matches(answer.anonymousId, ID_PATTERN) ||
     !["db_submission", "synthetic_fixture"].includes(String(answer.sourceKind)) ||
     !Number.isInteger(answer.revision) ||
@@ -293,30 +293,27 @@ function validateArtifact(value: unknown) {
   )
     fail();
 
-  const fingerprint = value.inputFingerprint;
+  const fingerprint = isRecord(artifact.inputFingerprint) ? artifact.inputFingerprint : fail();
+  if (!exactKeys(fingerprint, ["algorithm", "keyId", "digest"])) fail();
   if (
-    !isRecord(fingerprint) ||
-    !exactKeys(fingerprint, ["algorithm", "keyId", "digest"]) ||
     fingerprint.algorithm !== "HMAC-SHA-256" ||
     !matches(fingerprint.keyId, ID_PATTERN) ||
     !matches(fingerprint.digest, shaPattern)
   )
     fail();
 
-  const versions = value.versions;
+  const versions = isRecord(artifact.versions) ? artifact.versions : fail();
+  if (!exactKeys(versions, ["questionVersion", "rubricVersion"])) fail();
   if (
-    !isRecord(versions) ||
-    !exactKeys(versions, ["questionVersion", "rubricVersion"]) ||
     typeof versions.questionVersion !== "string" ||
     !versions.questionVersion ||
     versions.rubricVersion !== RUBRIC_VERSION
   )
     fail();
 
-  const schedule = value.schedule;
+  const schedule = isRecord(artifact.schedule) ? artifact.schedule : fail();
+  if (!exactKeys(schedule, ["timeBlock", "order"])) fail();
   if (
-    !isRecord(schedule) ||
-    !exactKeys(schedule, ["timeBlock", "order"]) ||
     typeof schedule.timeBlock !== "string" ||
     !schedule.timeBlock ||
     !Number.isInteger(schedule.order) ||
@@ -324,33 +321,21 @@ function validateArtifact(value: unknown) {
   )
     fail();
 
-  const requestConfig = value.requestConfig;
-  if (
-    !isRecord(requestConfig) ||
-    !exactKeys(requestConfig, ["reference", "sha256"]) ||
-    !matches(requestConfig.reference, refPattern) ||
-    !matches(requestConfig.sha256, shaPattern)
-  )
+  const requestConfig = isRecord(artifact.requestConfig) ? artifact.requestConfig : fail();
+  if (!exactKeys(requestConfig, ["reference", "sha256"])) fail();
+  if (!matches(requestConfig.reference, refPattern) || !matches(requestConfig.sha256, shaPattern))
     fail();
 
-  const probabilities = value.probabilities;
+  const probabilities = isRecord(artifact.probabilities) ? artifact.probabilities : fail();
   const scoreKeys = Array.from({ length: 10 }, (_, index) => String(index));
-  if (
-    !isRecord(probabilities) ||
-    !exactKeys(probabilities, scoreKeys) ||
-    !scoreKeys.every((key) => isNullableNumberInRange(probabilities[key], 0, 1))
-  )
-    fail();
+  if (!exactKeys(probabilities, scoreKeys)) fail();
+  if (!scoreKeys.every((key) => isNullableNumberInRange(probabilities[key], 0, 1))) fail();
 
-  if (
-    !isNullableNumberInRange(value.rawScore, 0, 9) ||
-    !isNullableNumberInRange(value.score01, 0, 1)
-  )
-    fail();
+  const rawScore = nullableNumberInRange(artifact.rawScore, 0, 9);
+  const score01 = nullableNumberInRange(artifact.score01, 0, 1);
 
-  const cost = value.cost;
+  const cost = isRecord(artifact.cost) ? artifact.cost : fail();
   if (
-    !isRecord(cost) ||
     !["known", "unknown"].includes(String(cost.knowledge)) ||
     (cost.knowledge === "known"
       ? !exactKeys(cost, ["knowledge", "amount", "currency"]) ||
@@ -361,31 +346,28 @@ function validateArtifact(value: unknown) {
   )
     fail();
 
-  if (value.response === null) {
-    if (value.status === "succeeded") fail();
+  if (artifact.response === null) {
+    if (artifact.status === "succeeded") fail();
   } else {
-    const response = value.response;
-    if (
-      !isRecord(response) ||
-      !exactKeys(response, ["reference", "sha256"]) ||
-      !matches(response.reference, refPattern) ||
-      !matches(response.sha256, shaPattern)
-    )
-      fail();
+    const response = isRecord(artifact.response) ? artifact.response : fail();
+    if (!exactKeys(response, ["reference", "sha256"])) fail();
+    if (!matches(response.reference, refPattern) || !matches(response.sha256, shaPattern)) fail();
   }
 
-  if (value.status === "succeeded") {
+  if (artifact.status === "succeeded") {
     if (
       typeof model.realId !== "string" ||
-      value.response === null ||
+      artifact.response === null ||
       !scoreKeys.every((key) => isFiniteNumber(probabilities[key])) ||
-      !isFiniteNumber(value.rawScore) ||
-      !isFiniteNumber(value.score01)
+      rawScore === null ||
+      score01 === null
     )
       fail();
-    const expectedScore01 = value.rawScore / 9;
+    const validatedRawScore: number = rawScore;
+    const validatedScore01: number = score01;
+    const expectedScore01 = validatedRawScore / 9;
     const floatingEpsilon = Number.EPSILON * Math.max(1, Math.abs(expectedScore01));
-    if (Math.abs(value.score01 - expectedScore01) > floatingEpsilon) fail();
+    if (Math.abs(validatedScore01 - expectedScore01) > floatingEpsilon) fail();
   }
 }
 
@@ -403,6 +385,14 @@ type DiagnosticIssue = {
   probabilitySumDelta?: number;
 };
 
+type ValidatedResponse = {
+  model: string;
+  score: number;
+  confidence: number;
+  probabilities: Record<string, number>;
+  usage: { input_tokens: number; output_tokens: number };
+};
+
 function safeType(value: unknown) {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
@@ -413,12 +403,14 @@ function validateResponse(
   value: unknown,
   diagnosticIssues?: DiagnosticIssue[],
   options: { disableWeightedScoreConsistency?: boolean } = {},
-) {
+): ValidatedResponse {
   const scoreKeys = Array.from({ length: 10 }, (_, index) => String(index));
   const root = isRecord(value) ? value : undefined;
-  const answers = root && isRecord(root.answers) ? root.answers : undefined;
+  const candidateAnswers = root && isRecord(root.answers) ? root.answers : undefined;
   const candidateAnswer =
-    answers && isRecord(answers.answer_match) ? answers.answer_match : undefined;
+    candidateAnswers && isRecord(candidateAnswers.answer_match)
+      ? candidateAnswers.answer_match
+      : undefined;
   const candidateProbabilities =
     candidateAnswer && isRecord(candidateAnswer.probabilities)
       ? candidateAnswer.probabilities
@@ -426,19 +418,15 @@ function validateResponse(
   const probabilityValues = candidateProbabilities
     ? scoreKeys.map((key) => candidateProbabilities[key])
     : [];
+  const finiteProbabilityValues = probabilityValues.filter(isFiniteNumber);
   const allProbabilitiesFinite =
     probabilityValues.length === scoreKeys.length &&
-    probabilityValues.every((item) => typeof item === "number" && Number.isFinite(item));
+    finiteProbabilityValues.length === scoreKeys.length;
   const weightedScoreFromProbabilities = allProbabilitiesFinite
-    ? (probabilityValues as number[]).reduce(
-        (sum, probability, index) => sum + probability * index,
-        0,
-      )
+    ? finiteProbabilityValues.reduce((sum, probability, index) => sum + probability * index, 0)
     : undefined;
   const diagnosticProbabilitySumDelta = allProbabilitiesFinite
-    ? Math.abs(
-        (probabilityValues as number[]).reduce((sum, probability) => sum + probability, 0) - 1,
-      )
+    ? Math.abs(finiteProbabilityValues.reduce((sum, probability) => sum + probability, 0) - 1)
     : undefined;
   const returnedScore =
     candidateAnswer &&
@@ -460,7 +448,7 @@ function validateResponse(
       ? {}
       : { probabilitySumDelta: diagnosticProbabilitySumDelta }),
   };
-  const reject = (
+  function reject(
     code: string,
     path: string,
     expected?: string,
@@ -468,7 +456,7 @@ function validateResponse(
     delta?: number,
     knownKeys?: string[],
     actualObject?: Record<string, unknown>,
-  ): never => {
+  ): never {
     diagnosticIssues?.push({
       code,
       path,
@@ -486,28 +474,56 @@ function validateResponse(
         : {}),
     });
     throw new Error("invalid_response");
-  };
-  if (!isRecord(value)) reject("root_type", "$", "object", safeType(value));
-  if (!exactKeys(value, ["model", "answers", "usage"])) {
-    reject("root_keys", "$", undefined, undefined, undefined, ["model", "answers", "usage"], value);
   }
-  if (typeof value.model !== "string")
-    reject("model_type", "model", "string", safeType(value.model));
-  if (!value.model) reject("model_empty", "model", "non_empty_string", "empty_string");
-  if (!isRecord(value.answers))
-    reject("answers_type", "answers", "object", safeType(value.answers));
-  if (!exactKeys(value.answers, ["answer_match"]))
+  const requireNumberInRange = (
+    candidate: unknown,
+    code: string,
+    path: string,
+    expected: string,
+    min: number,
+    max: number,
+  ): number => {
+    if (
+      typeof candidate !== "number" ||
+      !Number.isFinite(candidate) ||
+      candidate < min ||
+      candidate > max
+    ) {
+      reject(code, path, expected, safeType(candidate));
+    }
+    return candidate;
+  };
+  const requireNonNegativeInteger = (candidate: unknown, code: string, path: string): number => {
+    if (typeof candidate !== "number" || !Number.isInteger(candidate) || candidate < 0) {
+      reject(code, path, "non_negative_integer", safeType(candidate));
+    }
+    return candidate;
+  };
+  const rootValue = isRecord(value) ? value : reject("root_type", "$", "object", safeType(value));
+  if (!exactKeys(rootValue, ["model", "answers", "usage"])) {
     reject(
-      "answers_keys",
-      "answers",
+      "root_keys",
+      "$",
       undefined,
       undefined,
       undefined,
-      ["answer_match"],
-      value.answers,
+      ["model", "answers", "usage"],
+      rootValue,
     );
-  if (!isRecord(value.usage)) reject("usage_type", "usage", "object", safeType(value.usage));
-  if (!exactKeys(value.usage, ["input_tokens", "output_tokens"]))
+  }
+  const modelValue = rootValue.model;
+  if (typeof modelValue !== "string") reject("model_type", "model", "string", safeType(modelValue));
+  if (!modelValue) reject("model_empty", "model", "non_empty_string", "empty_string");
+  const model = modelValue;
+  const answers = isRecord(rootValue.answers)
+    ? rootValue.answers
+    : reject("answers_type", "answers", "object", safeType(rootValue.answers));
+  if (!exactKeys(answers, ["answer_match"]))
+    reject("answers_keys", "answers", undefined, undefined, undefined, ["answer_match"], answers);
+  const usage = isRecord(rootValue.usage)
+    ? rootValue.usage
+    : reject("usage_type", "usage", "object", safeType(rootValue.usage));
+  if (!exactKeys(usage, ["input_tokens", "output_tokens"]))
     reject(
       "usage_keys",
       "usage",
@@ -515,27 +531,22 @@ function validateResponse(
       undefined,
       undefined,
       ["input_tokens", "output_tokens"],
-      value.usage,
+      usage,
     );
-  if (!Number.isInteger(value.usage.input_tokens) || (value.usage.input_tokens as number) < 0) {
-    reject(
-      "input_tokens_invalid",
-      "usage.input_tokens",
-      "non_negative_integer",
-      safeType(value.usage.input_tokens),
-    );
-  }
-  if (!Number.isInteger(value.usage.output_tokens) || (value.usage.output_tokens as number) < 0) {
-    reject(
-      "output_tokens_invalid",
-      "usage.output_tokens",
-      "non_negative_integer",
-      safeType(value.usage.output_tokens),
-    );
-  }
-  const answer = value.answers.answer_match;
-  if (!isRecord(answer))
-    reject("answer_match_type", "answers.answer_match", "object", safeType(answer));
+  const inputTokens = requireNonNegativeInteger(
+    usage.input_tokens,
+    "input_tokens_invalid",
+    "usage.input_tokens",
+  );
+  const outputTokens = requireNonNegativeInteger(
+    usage.output_tokens,
+    "output_tokens_invalid",
+    "usage.output_tokens",
+  );
+  const answerValue = answers.answer_match;
+  const answer = isRecord(answerValue)
+    ? answerValue
+    : reject("answer_match_type", "answers.answer_match", "object", safeType(answerValue));
   if (!exactKeys(answer, ["type", "score", "confidence", "legend", "probabilities"])) {
     reject(
       "answer_match_keys",
@@ -549,9 +560,11 @@ function validateResponse(
   }
   if (answer.type !== "score")
     reject("answer_type_value", "answers.answer_match.type", "score", safeType(answer.type));
-  if (!isRecord(answer.legend))
-    reject("legend_type", "answers.answer_match.legend", "object", safeType(answer.legend));
-  if (!exactKeys(answer.legend, scoreKeys))
+  const legendValue = answer.legend;
+  const legend = isRecord(legendValue)
+    ? legendValue
+    : reject("legend_type", "answers.answer_match.legend", "object", safeType(legendValue));
+  if (!exactKeys(legend, scoreKeys))
     reject(
       "legend_keys",
       "answers.answer_match.legend",
@@ -559,19 +572,21 @@ function validateResponse(
       undefined,
       undefined,
       scoreKeys,
-      answer.legend,
+      legend,
     );
-  if (!Object.values(answer.legend).every((item) => typeof item === "string")) {
+  if (!Object.values(legend).every((item) => typeof item === "string")) {
     reject("legend_value_type", "answers.answer_match.legend.*", "string", "non_string_value");
   }
-  if (!isRecord(answer.probabilities))
-    reject(
-      "probabilities_type",
-      "answers.answer_match.probabilities",
-      "object",
-      safeType(answer.probabilities),
-    );
-  if (!exactKeys(answer.probabilities, scoreKeys))
+  const probabilitiesValue = answer.probabilities;
+  const probabilities = isRecord(probabilitiesValue)
+    ? probabilitiesValue
+    : reject(
+        "probabilities_type",
+        "answers.answer_match.probabilities",
+        "object",
+        safeType(probabilitiesValue),
+      );
+  if (!exactKeys(probabilities, scoreKeys))
     reject(
       "probabilities_keys",
       "answers.answer_match.probabilities",
@@ -579,52 +594,43 @@ function validateResponse(
       undefined,
       undefined,
       scoreKeys,
-      answer.probabilities,
+      probabilities,
     );
-  const probabilities = answer.probabilities;
-  const values = scoreKeys.map((key) => probabilities[key]);
-  if (
-    !Number.isFinite(answer.score) ||
-    typeof answer.score !== "number" ||
-    answer.score < 0 ||
-    answer.score > 9
-  ) {
-    reject(
-      "score_range",
-      "answers.answer_match.score",
-      "finite_number_0_to_9",
-      safeType(answer.score),
-    );
-  }
-  if (
-    !Number.isFinite(answer.confidence) ||
-    typeof answer.confidence !== "number" ||
-    answer.confidence < 0 ||
-    answer.confidence > 1
-  ) {
-    reject(
-      "confidence_range",
-      "answers.answer_match.confidence",
-      "finite_number_0_to_1",
-      safeType(answer.confidence),
-    );
-  }
-  const badProbability = values.find(
-    (probability) =>
+  const score = requireNumberInRange(
+    answer.score,
+    "score_range",
+    "answers.answer_match.score",
+    "finite_number_0_to_9",
+    0,
+    9,
+  );
+  const confidence = requireNumberInRange(
+    answer.confidence,
+    "confidence_range",
+    "answers.answer_match.confidence",
+    "finite_number_0_to_1",
+    0,
+    1,
+  );
+  const values: number[] = scoreKeys.map((key) => {
+    const probability = probabilities[key];
+    if (
       typeof probability !== "number" ||
       !Number.isFinite(probability) ||
       probability < 0 ||
-      probability > 1,
-  );
-  if (badProbability !== undefined)
-    reject(
-      "probability_range",
-      "answers.answer_match.probabilities.*",
-      "finite_number_0_to_1",
-      safeType(badProbability),
-    );
+      probability > 1
+    ) {
+      reject(
+        "probability_range",
+        "answers.answer_match.probabilities.*",
+        "finite_number_0_to_1",
+        safeType(probability),
+      );
+    }
+    return probability;
+  });
   const probabilitySumDelta = Math.abs(
-    (values as number[]).reduce((sum, probability) => sum + probability, 0) - 1,
+    values.reduce((sum, probability) => sum + probability, 0) - 1,
   );
   if (probabilitySumDelta > 0.02)
     reject(
@@ -634,11 +640,8 @@ function validateResponse(
       "number",
       probabilitySumDelta,
     );
-  const weighted = (values as number[]).reduce(
-    (sum, probability, index) => sum + probability * index,
-    0,
-  );
-  const weightedScoreDelta = Math.abs(weighted - answer.score);
+  const weighted = values.reduce((sum, probability, index) => sum + probability * index, 0);
+  const weightedScoreDelta = Math.abs(weighted - score);
   // The epsilon only absorbs floating-point noise at the inclusive 0.02 boundary.
   const weightedScoreBoundaryEpsilon = 1e-12;
   if (
@@ -654,11 +657,11 @@ function validateResponse(
     );
   }
   return {
-    model: value.model,
-    score: answer.score,
-    confidence: answer.confidence,
+    model,
+    score,
+    confidence,
     probabilities: Object.fromEntries(scoreKeys.map((key, index) => [key, values[index]])),
-    usage: { input_tokens: value.usage.input_tokens, output_tokens: value.usage.output_tokens },
+    usage: { input_tokens: inputTokens, output_tokens: outputTokens },
   };
 }
 
@@ -1025,6 +1028,7 @@ async function verifyContinuationParent(
       }
     }
   }
+  const firstProbabilities = isRecord(first.probabilities) ? first.probabilities : undefined;
   const firstArtifactMatches =
     first.runId === `${CONTINUATION_PARENT_RUN_ID}-1` &&
     first.status === "succeeded" &&
@@ -1052,9 +1056,9 @@ async function verifyContinuationParent(
     first.cost.currency === "USD" &&
     isFiniteNumber(first.cost.amount) &&
     Math.abs(first.cost.amount - firstCostUsd) <= costEpsilon &&
-    firstProbabilityKeys.every(
-      (key) => isRecord(first.probabilities) && isFiniteNumber(first.probabilities[key]),
-    );
+    firstProbabilities !== undefined &&
+    firstProbabilityKeys.every((key) => isFiniteNumber(firstProbabilities[key]));
+  const secondProbabilities = isRecord(second.probabilities) ? second.probabilities : undefined;
   const secondArtifactMatches =
     second.runId === `${CONTINUATION_PARENT_RUN_ID}-2` &&
     second.status === "failed" &&
@@ -1078,8 +1082,8 @@ async function verifyContinuationParent(
     second.response === null &&
     second.rawScore === null &&
     second.score01 === null &&
-    isRecord(second.probabilities) &&
-    firstProbabilityKeys.every((key) => second.probabilities[key] === null);
+    secondProbabilities !== undefined &&
+    firstProbabilityKeys.every((key) => secondProbabilities[key] === null);
   if (
     exactKeys(runLock, [
       "runId",
