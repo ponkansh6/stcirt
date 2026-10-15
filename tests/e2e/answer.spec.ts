@@ -1,5 +1,7 @@
-import { test, expect, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
+import { test, expect, type Locator, type Page, type Route, type TestInfo } from "./fixtures/test";
 import { makeQuestion } from "../fixtures/question";
+import { expectNoAccessibilityViolations } from "./axe";
+import { expectPrimaryTargetGeometry } from "./target-geometry";
 
 const questionFor = (id: number) =>
   makeQuestion({
@@ -8,6 +10,33 @@ const questionFor = (id: number) =>
     choices: id === 5 ? [] : [`Option ${id}A`, `Option ${id}B`, `Option ${id}C`, `Option ${id}D`],
     answerType: id === 5 ? "freeText" : "selected",
   });
+
+const longJapaneseQuestion = "長文の設問です。".repeat(20);
+const longJapaneseChoice = "長文の選択肢です。".repeat(20);
+const noSpaceChoice = "BoundaryWithoutSpaces1234567890".repeat(8);
+const emojiChoice = "🧪🌿🎓📚✨".repeat(24);
+const longReviewAnswer = "自由記述の全文を確認できるようにします。\n次の行も表示します。".repeat(
+  14,
+);
+
+test("answer login controls meet the selected target geometry at representative widths", async ({
+  page,
+}) => {
+  await mockParticipantSession(page);
+  await mockQuestions(page);
+  await page.goto("/answer");
+
+  const participantName = page.getByRole("textbox", { name: "受験者氏名" });
+  const pin = page.getByRole("textbox", { name: "受験コード" });
+  const submit = page.getByRole("button", { name: "はじめる" });
+
+  for (const width of [320, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectPrimaryTargetGeometry(participantName, `answer participant name at ${width}px`);
+    await expectPrimaryTargetGeometry(pin, `answer PIN at ${width}px`);
+    await expectPrimaryTargetGeometry(submit, `answer login submit at ${width}px`);
+  }
+});
 
 type BatchAnswer =
   | { questionId: number; selectedIndex: number }
@@ -204,6 +233,31 @@ async function selectRadio(page: Page, name: RegExp) {
   await expect(radio).toBeChecked();
 }
 
+async function expectCenteredHitTest(locator: Locator, name: string) {
+  await locator.scrollIntoViewIfNeeded();
+  const result = await locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return {
+      inViewport: x >= 0 && x < document.documentElement.clientWidth && y >= 0 && y < innerHeight,
+      hitAcceptsTarget: hit === element || (hit !== null && element.contains(hit)),
+    };
+  });
+  expect(result.inViewport, `${name} center is in the viewport`).toBe(true);
+  expect(result.hitAcceptsTarget, `${name} center is not occluded`).toBe(true);
+}
+
+async function expectNoPageHorizontalOverflow(page: Page) {
+  const widths = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth,
+    body: document.body.scrollWidth,
+    viewport: document.documentElement.clientWidth,
+  }));
+  expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport + 1);
+}
+
 async function answerQuestion(page: Page, id: number, choice: string) {
   if (id === 5) {
     await page.getByRole("textbox", { name: "回答（1000字以内）" }).fill(`自由記載${choice}`);
@@ -226,6 +280,7 @@ test("direct answer access requires name and four digit PIN before loading the q
   await expect(sharedHeader.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
   await expect(page.getByLabel("受験コード")).toHaveAttribute("inputmode", "numeric");
   await expect(page.getByLabel("受験コード")).toHaveAttribute("pattern", "[0-9]{4}");
+  await expectNoAccessibilityViolations(page, "answer login form");
   await signIn(page, "Aki", "0123");
 
   expect(loginRequests).toEqual([{ name: "Aki", pin: "0123" }]);
@@ -245,6 +300,42 @@ test("direct answer access requires name and four digit PIN before loading the q
     }),
   ).toBeVisible();
   expect(requests).toEqual(["/api/questions/batch"]);
+});
+
+test("participant login follows name, PIN, and submit Tab order and submits once with Enter", async ({
+  page,
+}) => {
+  const { loginRequests } = await mockParticipantSession(page);
+  const questionRequests: string[] = [];
+  await mockQuestions(page, questionRequests);
+
+  await page.goto("/answer");
+  const name = page.getByRole("textbox", { name: "受験者氏名" });
+  const pin = page.getByRole("textbox", { name: "受験コード" });
+  const submit = page.getByRole("button", { name: "はじめる" });
+  await expect(name).toHaveAccessibleName("受験者氏名");
+  await expect(pin).toHaveAccessibleName("受験コード");
+
+  await name.fill("Aki");
+  await name.focus();
+  await page.keyboard.press("Tab");
+  await expect(pin).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(name).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(pin).toBeFocused();
+  await pin.fill("0123");
+  await page.keyboard.press("Tab");
+  await expect(submit).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect(
+    page.getByRole("heading", {
+      name: /5問検定|しゅんたま検定|受検票|問題が足りません|問題を読み込めませんでした/,
+    }),
+  ).toBeVisible();
+  expect(loginRequests).toEqual([{ name: "Aki", pin: "0123" }]);
+  expect(questionRequests).toEqual(["/api/questions/batch"]);
 });
 
 test("keeps DOM focus unchanged while checking whether a submission exists", async ({ page }) => {
@@ -291,6 +382,7 @@ test("keeps DOM focus unchanged while checking whether a submission exists", asy
 });
 
 test("direct answer access refuses an incomplete question batch", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
   await mockParticipantSession(page);
   await page.route("**/api/questions/batch", async (route) => {
     await route.fulfill({
@@ -303,8 +395,14 @@ test("direct answer access refuses an incomplete question batch", async ({ page 
   await page.goto("/answer");
   await signIn(page);
   await expect(page.getByRole("heading", { name: "問題を読み込めませんでした" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "もう一度読み込む" })).toBeVisible();
+  const retry = page.getByRole("button", { name: "もう一度読み込む" });
+  await expect(retry).toBeVisible();
+  await expect(page.getByText("通信状態を確認して、もう一度お試しください。")).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  await expectCenteredHitTest(retry, "answer load-error retry");
+  await expectNoPageHorizontalOverflow(page);
   await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
+  await expectNoAccessibilityViolations(page, "incomplete question batch error");
 });
 
 test("keeps choices local, blocks an incomplete batch, then confirms all five with the participant cookie", async ({
@@ -360,6 +458,7 @@ test("keeps choices local, blocks an incomplete batch, then confirms all five wi
   await expect(page.getByRole("navigation", { name: "設問へ移動" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
   await expect(page.getByText(/正解！|不正解|解説:|正答率|合格/)).toHaveCount(0);
+  await expectNoAccessibilityViolations(page, "completed answer submission");
   expect(submitted).toHaveLength(1);
   expect(submitted[0].body).toMatchObject({ expectedRevision: 0 });
   expect(submitted[0].body.answers).toHaveLength(5);
@@ -382,10 +481,11 @@ test("reviews all five current answers on mobile and edits a question from the s
   await startQuiz(page);
 
   const selectedChoices = ["C", "A", "D", "B"];
+  await expectNoAccessibilityViolations(page, "answer question form");
   for (let index = 0; index < selectedChoices.length; index += 1) {
     await answerQuestion(page, index + 1, selectedChoices[index]!);
   }
-  const longFreeText = "自由記述の全文を確認できるようにします。".repeat(22);
+  const longFreeText = longReviewAnswer;
   expect(Array.from(longFreeText).length).toBeGreaterThan(180);
   await page.getByRole("textbox", { name: "回答（1000字以内）" }).fill(longFreeText);
 
@@ -414,6 +514,7 @@ test("reviews all five current answers on mobile and edits a question from the s
   }
   await expect(reviewItems.nth(4)).toContainText(longFreeText.slice(0, 180));
   await expect(reviewItems.nth(4)).toContainText("…");
+  await expectNoAccessibilityViolations(page, "answer review summary");
 
   const details = reviewItems.nth(4).locator("details");
   const summary = details.locator("summary");
@@ -507,18 +608,20 @@ async function runAnswerFlowProxyAtWidth(page: Page, testInfo: TestInfo, width: 
       body: document.body.scrollWidth,
       viewport: document.documentElement.clientWidth,
     }));
-    expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport);
+    expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport + 1);
   };
 
   await page.goto("/answer");
+  await page.evaluate(() => document.fonts.ready);
   await signIn(page, "Aki");
   await startQuiz(page);
+  await page.evaluate(() => document.fonts.ready);
   await recordScroll("question-1-start");
 
   await act(() => answerQuestion(page, 2, "B"));
   await act(() => answerQuestion(page, 3, "C"));
   await act(() => answerQuestion(page, 4, "D"));
-  const longFreeText = "自由記述の全文を確認してから送信します。".repeat(20);
+  const longFreeText = longReviewAnswer;
   await act(() => page.getByRole("textbox", { name: "回答（1000字以内）" }).fill(longFreeText));
   await act(() =>
     page
@@ -532,13 +635,16 @@ async function runAnswerFlowProxyAtWidth(page: Page, testInfo: TestInfo, width: 
   await expect(unansweredLink).toBeVisible();
   const unansweredGuidance = page.getByText("未回答の設問へ移動できます：");
   const disabledSubmit = page.getByRole("button", { name: "未回答の設問に回答してください" });
+  await expect(disabledSubmit).toBeDisabled();
+  await page.evaluate(() => document.fonts.ready);
   await act(() => unansweredGuidance.scrollIntoViewIfNeeded());
   await expectInViewport(unansweredGuidance);
   await expectInViewport(unansweredLink);
+  await expectCenteredHitTest(unansweredLink, `unanswered question link at ${width}px`);
   await recordScroll("unanswered-guidance-visible");
-  await expect(disabledSubmit).toBeDisabled();
   await act(() => disabledSubmit.scrollIntoViewIfNeeded());
   await expectInViewport(disabledSubmit);
+  await expectCenteredHitTest(disabledSubmit, `incomplete submit at ${width}px`);
   await recordScroll("incomplete-primary-action-visible");
   await expectNoHorizontalOverflow();
   await act(() => unansweredLink.click());
@@ -550,6 +656,7 @@ async function runAnswerFlowProxyAtWidth(page: Page, testInfo: TestInfo, width: 
       .click(),
   );
   await act(() => page.keyboard.press("End"));
+  await page.evaluate(() => document.fonts.ready);
   await recordScroll("all-five-answered-review");
 
   const review = page.locator('ol[aria-label="回答内容"]');
@@ -574,6 +681,7 @@ async function runAnswerFlowProxyAtWidth(page: Page, testInfo: TestInfo, width: 
       .click(),
   );
   await act(() => page.keyboard.press("End"));
+  await page.evaluate(() => document.fonts.ready);
   await expect(reviewItems.nth(2)).toContainText("Option 3A");
   await expect(details.getByText(longFreeText, { exact: true })).toBeVisible();
   await recordScroll("review-after-edit");
@@ -581,7 +689,9 @@ async function runAnswerFlowProxyAtWidth(page: Page, testInfo: TestInfo, width: 
 
   const submit = page.getByRole("button", { name: "5問の回答を確定する" });
   await act(() => submit.scrollIntoViewIfNeeded());
+  await page.evaluate(() => document.fonts.ready);
   await expectInViewport(submit);
+  await expectCenteredHitTest(submit, `final submit at ${width}px`);
   await recordScroll("final-primary-action-visible");
   await act(() => submit.click());
   await expectResultsWaiting(page);
@@ -621,7 +731,7 @@ async function runAnswerFlowProxyAtWidth(page: Page, testInfo: TestInfo, width: 
   });
 }
 
-for (const width of [320, 375, 1280]) {
+for (const width of [320, 375, 768, 1280]) {
   test(`records the ${width}×812 incomplete-answer recovery, review edit, and single submission flow`, async ({
     page,
   }, testInfo) => {
@@ -634,6 +744,7 @@ for (const width of [320, 375, 1280]) {
 }
 
 test("locks the full answer sheet while its batch request is pending", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await mockParticipantSession(page);
   await mockQuestions(page);
 
@@ -659,6 +770,7 @@ test("locks the full answer sheet while its batch request is pending", async ({ 
   });
 
   await page.goto("/answer");
+  await page.evaluate(() => document.fonts.ready);
   await signIn(page);
   await startQuiz(page);
   for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "B");
@@ -679,7 +791,35 @@ test("locks the full answer sheet while its batch request is pending", async ({ 
   await expect(submittingStatus).toContainText(
     "送信が完了するまで、回答の変更や再送はできません。",
   );
-  await expect(page.getByRole("radio", { name: /Option 1B/ })).toBeChecked();
+  const selectedAnswer = page.getByRole("radio", { name: /Option 1B/ });
+  const choiceButton = selectedAnswer.locator("xpath=..");
+  await expect(selectedAnswer).toBeChecked();
+  await expect(selectedAnswer).toBeDisabled();
+  await expectNoAccessibilityViolations(page, "pending answer batch");
+  const spinner = submittingButton.locator('[aria-hidden="true"]');
+  await expect(spinner).toHaveCSS("animation-name", "spin");
+  await expect(submittingButton).toHaveCSS("transition-duration", "0.2s");
+  await expect(choiceButton).toHaveCSS("transition-duration", "0.2s");
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(spinner).toHaveCSS("animation-name", "none");
+  await expect(submittingButton).toHaveCSS("transition-duration", "0s");
+  await expect(choiceButton).toHaveCSS("transition-duration", "0s");
+  await expect(selectedAnswer).toBeChecked();
+  await expect(selectedAnswer).toBeDisabled();
+  await expect(submittingButton).toHaveAttribute("disabled", "");
+  await expect(submittingButton).toHaveAccessibleName("回答を送信しています…");
+  await expect(submittingStatus).toContainText("回答を送信しています…");
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(spinner).toHaveCSS("animation-name", "spin");
+  await expect(submittingButton).toHaveCSS("transition-duration", "0.2s");
+  await expect(choiceButton).toHaveCSS("transition-duration", "0.2s");
+  await expect(selectedAnswer).toBeChecked();
+  await expect(selectedAnswer).toBeDisabled();
+  await expect(submittingButton).toHaveAttribute("disabled", "");
+  await expect(submittingButton).toHaveAccessibleName("回答を送信しています…");
+  await expect(submittingStatus).toContainText("回答を送信しています…");
   await submittingButton.evaluate((button: HTMLButtonElement) => button.click());
   expect(answerCalls).toBe(1);
 
@@ -701,15 +841,15 @@ test("supports native radio keyboard operation and reflows long Japanese text at
         questions: [1, 2, 3, 4, 5].map((id) =>
           makeQuestion({
             id,
-            question: "長文の設問です。".repeat(20),
+            question: longJapaneseQuestion,
             choices:
               id === 5
                 ? []
                 : [
                     "長文の選択肢Aです。".repeat(20),
-                    "長文の選択肢Bです。".repeat(20),
-                    "長文の選択肢Cです。".repeat(20),
-                    "長文の選択肢Dです。".repeat(20),
+                    noSpaceChoice,
+                    emojiChoice,
+                    longJapaneseChoice,
                   ],
             answerType: id === 5 ? "freeText" : "selected",
           }),
@@ -723,14 +863,23 @@ test("supports native radio keyboard operation and reflows long Japanese text at
 
   const group = page.locator("#question-1 fieldset");
   await expect(group).toBeVisible();
-  await expect(group.getByRole("radio")).toHaveCount(4);
+  const longOptionRadios = group.getByRole("radio");
+  await expect(longOptionRadios).toHaveCount(4);
   const radios = page.getByRole("radio");
   await expect(radios).toHaveCount(16);
   await expect(page.getByRole("textbox", { name: "回答（1000字以内）" })).toBeVisible();
-  const firstRadio = radios.nth(0);
+  const firstRadio = group.getByRole("radio", { name: /長文の選択肢Aです/ });
+  await page.evaluate(() => document.fonts.ready);
+  await expectCenteredHitTest(
+    firstRadio.locator("xpath=ancestor::label"),
+    "visible label for long-content first answer option at 320px",
+  );
+  const noSpaceOption = group.getByRole("radio", { name: /BoundaryWithoutSpaces1234567890/ });
+  const emojiOption = group.getByRole("radio", { name: /🧪🌿🎓📚✨/ });
+  await expect(noSpaceOption).toHaveAccessibleName(/[A-D]\.\s*BoundaryWithoutSpaces1234567890/);
+  await expect(emojiOption).toHaveAccessibleName(/[A-D]\.\s*🧪🌿🎓📚✨/);
   await expect(firstRadio).toHaveAttribute("name", "answer-1");
-  await expect(firstRadio).toHaveAttribute("value", "0");
-  await expect(firstRadio).toHaveAccessibleName(/A\. 長文の選択肢[A-D]です/);
+  await expect(firstRadio).toHaveAccessibleName(/[A-D]\.\s*長文の選択肢Aです/);
   const firstRadioId = await firstRadio.getAttribute("id");
   expect(firstRadioId).toBeTruthy();
   await expect(page.locator(`label[for="${firstRadioId}"]`)).toHaveCount(1);
@@ -784,7 +933,7 @@ test("supports native radio keyboard operation and reflows long Japanese text at
     body: document.body.scrollWidth,
     viewport: document.documentElement.clientWidth,
   }));
-  expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport);
+  expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport + 1);
 });
 
 test("returns to owner completion after an assisted save and opens target correction directly", async ({

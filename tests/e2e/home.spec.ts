@@ -1,6 +1,19 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/test";
 
 test("root is a compatibility redirect to participant entry", async ({ page }) => {
+  await page.route("**/api/participants/session", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ participant: null }),
+    });
+  });
+
   await page.goto("/");
 
   await expect(page).toHaveURL(/\/answer$/);

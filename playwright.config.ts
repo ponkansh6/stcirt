@@ -1,5 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
-import { e2eAdminPin, e2eAdminSessionSecret } from "./tests/e2e/fixtures/admin-auth";
+import {
+  e2eAdminPin,
+  e2eAdminSessionSecret,
+  e2eDatabaseUrl,
+} from "./tests/e2e/fixtures/admin-auth";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -12,6 +16,7 @@ export default defineConfig({
     baseURL: "http://localhost:3001",
     locale: "ja-JP",
     trace: "on-first-retry",
+    serviceWorkers: "block",
   },
 
   projects: [
@@ -32,6 +37,9 @@ export default defineConfig({
     env: {
       ADMIN_PRESENTATION_PIN: e2eAdminPin,
       ADMIN_PRESENTATION_SESSION_SECRET: e2eAdminSessionSecret,
+      STCIRT_E2E_DB_ISOLATION: "1",
+      TURSO_DATABASE_URL: e2eDatabaseUrl,
+      TURSO_AUTH_TOKEN: "",
     },
   },
 });

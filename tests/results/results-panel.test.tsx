@@ -435,6 +435,63 @@ describe("ResultsPanel", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("announces a manual refresh once and applies the new result when it resolves", async () => {
+    const response = deferred<{ ok: boolean; status: number; json: () => Promise<unknown> }>();
+    const fetchMock = vi.fn().mockReturnValue(response.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ResultsPanel initial={visibleResult} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "結果を再読み込み" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    const button = screen.getByRole("button", { name: "更新中…" });
+    expect(button).toBeDisabled();
+    expect(screen.getByText("2位")).toBeVisible();
+    const refreshStatus = screen.getByRole("status");
+    expect(refreshStatus).toHaveTextContent("更新中…");
+    expect(refreshStatus.closest("[aria-busy='true']")).toBeNull();
+    expect(screen.getAllByText("更新中…")).toHaveLength(2);
+
+    await act(async () => {
+      response.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ ...visibleResult, rank: 1 }),
+      });
+      await response.promise;
+    });
+
+    expect(screen.getByText("1位")).toBeVisible();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the confirmed result and restores manual refresh after a deferred rejection", async () => {
+    const response = deferred<Response>();
+    const fetchMock = vi.fn().mockReturnValue(response.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ResultsPanel initial={visibleResult} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "結果を再読み込み" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(screen.getByRole("button", { name: "更新中…" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("更新中…");
+    expect(screen.getByText("2位")).toBeVisible();
+
+    await act(async () => {
+      response.reject(new Error("network unavailable"));
+      await response.promise.catch(() => undefined);
+    });
+
+    expect(screen.getByText("2位")).toBeVisible();
+    expect(screen.getByText("最初の問題")).toBeVisible();
+    expect(screen.queryByText("更新中…")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("does not start an unmounted queued refresh after JSON parsing rejects", async () => {
     const response = deferred<{ ok: boolean; status: number; json: () => Promise<unknown> }>();
     const fetchMock = vi.fn().mockReturnValue(response.promise);

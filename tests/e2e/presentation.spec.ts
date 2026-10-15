@@ -1,5 +1,6 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/test";
 import { e2eAdminPin } from "./fixtures/admin-auth";
+import { expectNoAccessibilityViolations } from "./axe";
 
 declare global {
   interface Window {
@@ -1629,6 +1630,8 @@ test("every stage keeps its fixture text inside the canvas content bounds", asyn
   };
   await page.goto("/presentation");
   await expect(page.getByRole("heading", { name: /^しゅんたま\s*検定$/ })).toBeVisible();
+  await expect(page.getByText("発表が始まるまで、少々お待ちください")).toBeVisible();
+  await expectNoAccessibilityViolations(page, "presentation waiting state");
   const notStartedInspection = await inspectSlide();
   expect(notStartedInspection.text).toContain("しゅんたま検定");
   expect(notStartedInspection.outOfBounds).toBe(0);
@@ -1667,6 +1670,9 @@ test("every stage keeps its fixture text inside the canvas content bounds", asyn
     await expect(slideFor(page, stage.state)).toBeVisible();
     const inspection = await inspectSlide();
     for (const text of stage.text) expect(inspection.text).toContain(text);
+    if (stage.state === "question" || stage.state === "answer") {
+      await expectNoAccessibilityViolations(page, `presentation ${stage.state} state`);
+    }
     expect(inspection.outOfBounds).toBe(0);
     expect(inspection.pageCanScroll).toBe(false);
     await testInfo.attach(`all-stages-presenter-${stage.state}`, {
@@ -2214,6 +2220,10 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
   const spectator = await page.context().newPage();
   await spectator.setViewportSize({ width: 1920, height: 1080 });
   await spectator.goto("/presentation");
+  await Promise.all([
+    page.evaluate(() => document.fonts.ready),
+    spectator.evaluate(() => document.fonts.ready),
+  ]);
 
   const region = page.getByRole("region", { name: "第三位の勝者一覧" });
   const name = region.locator("article h1");
@@ -2235,6 +2245,7 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
     { width: 480, height: 900 },
   ].entries()) {
     await page.setViewportSize(viewport);
+    await page.evaluate(() => document.fonts.ready);
     await waitForRenderFrames(page);
     if (viewportIndex > 0) {
       for (const state of ["second", "third"] as const) {
@@ -2400,6 +2411,11 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
             fontSizes,
             fitScale,
             effectiveFontSizesPt,
+            outerHorizontalWidths: {
+              document: document.documentElement.scrollWidth,
+              body: document.body.scrollWidth,
+              viewport: document.documentElement.clientWidth,
+            },
             contrasts: elements.map((element) => contrastRatio(element, canvas)),
             nameFits: Boolean(
               winnerName instanceof HTMLElement &&
@@ -2443,6 +2459,9 @@ test("a single long winner name wraps fully inside the slide", async ({ page }, 
       }
       expect(geometry.contrasts.every((ratio) => ratio >= 4.5)).toBe(true);
       expect(geometry.nameFits).toBe(true);
+      expect(
+        Math.max(geometry.outerHorizontalWidths.document, geometry.outerHorizontalWidths.body),
+      ).toBeLessThanOrEqual(geometry.outerHorizontalWidths.viewport + 1);
       expect(geometry.pageCanScroll).toBe(false);
       expect(geometry.regionCanScroll).toBe(false);
       expect(geometry.rects.every((rect) => rect !== null)).toBe(true);

@@ -42,7 +42,7 @@ export default function ChoiceButton({
   return (
     <label
       htmlFor={id}
-      className={`flex w-full min-h-14 cursor-pointer items-center gap-3 rounded-card border p-3 text-left transition duration-200 ease-[var(--ease-out-soft)] focus-within:outline-none focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 ${disabled ? "cursor-not-allowed" : ""} ${getStyles()}`}
+      className={`flex w-full min-h-14 cursor-pointer items-center gap-3 rounded-card border p-3 text-left transition duration-200 ease-[var(--ease-out-soft)] motion-reduce:duration-0 focus-within:outline-none focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 ${disabled ? "cursor-not-allowed" : ""} ${getStyles()}`}
     >
       <input
         id={id}

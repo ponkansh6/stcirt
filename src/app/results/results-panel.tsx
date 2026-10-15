@@ -22,7 +22,9 @@ export default function ResultsPanel({
   );
   const [authorized, setAuthorized] = useState(initial.state !== "unauthenticated");
   const [refreshing, setRefreshing] = useState(false);
+  const [manuallyRefreshing, setManuallyRefreshing] = useState(false);
   const refreshRef = useRef<(() => void) | null>(null);
+  const manualRefreshQueuedRef = useRef(false);
 
   const answerStatus = (correctness: "correct" | "incorrect") => {
     if (correctness === "correct") {
@@ -37,7 +39,7 @@ export default function ResultsPanel({
     let pending = false;
     let refreshQueued = false;
     let requestRevision = 0;
-    const refresh = async () => {
+    const refresh = async (manual = false) => {
       if (pending) {
         refreshQueued = true;
         requestRevision += 1;
@@ -45,6 +47,7 @@ export default function ResultsPanel({
       }
       pending = true;
       setRefreshing(true);
+      if (manual) setManuallyRefreshing(true);
       const currentRevision = ++requestRevision;
       try {
         const response = await fetch(
@@ -82,13 +85,18 @@ export default function ResultsPanel({
       } finally {
         pending = false;
         if (active) setRefreshing(false);
+        if (active && manual) setManuallyRefreshing(false);
         if (active && refreshQueued) {
           refreshQueued = false;
           void refresh();
         }
       }
     };
-    refreshRef.current = () => void refresh();
+    refreshRef.current = () => void refresh(true);
+    if (manualRefreshQueuedRef.current) {
+      manualRefreshQueuedRef.current = false;
+      void refresh(true);
+    }
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh();
     };
@@ -102,7 +110,10 @@ export default function ResultsPanel({
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-      <section className="rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10">
+      <section
+        aria-busy={refreshing}
+        className="rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10"
+      >
         <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
         {!authorized ? (
           <>
@@ -213,13 +224,27 @@ export default function ResultsPanel({
         )}
         <Button
           variant="outline"
-          onClick={() => refreshRef.current?.()}
+          onClick={() => {
+            if (scope === null) return;
+            if (refreshRef.current) {
+              refreshRef.current();
+              return;
+            }
+            manualRefreshQueuedRef.current = true;
+            setRefreshing(true);
+            setManuallyRefreshing(true);
+          }}
           disabled={refreshing}
           className="mt-6 self-start"
         >
-          結果を再読み込み
+          {manuallyRefreshing ? "更新中…" : "結果を再読み込み"}
         </Button>
       </section>
+      {manuallyRefreshing ? (
+        <p role="status" aria-live="polite" className="sr-only">
+          更新中…
+        </p>
+      ) : null}
     </main>
   );
 }
