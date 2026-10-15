@@ -11,6 +11,11 @@ test("an existing admin session opens the dashboard when revisiting the admin ro
       await route.fallback();
       return;
     }
+    const cookieHeader = route.request().headers().cookie ?? "";
+    if (!/(?:^|;\s*)stcirt_admin_presentation=/.test(cookieHeader)) {
+      await route.fulfill({ status: 401 });
+      return;
+    }
     await route.fulfill({
       json: {
         state: "not_started",
