@@ -229,6 +229,10 @@ async function installAdminApiMock(
               await route.fulfill({ status: 503, json: { error: "Unavailable" } });
               return;
             }
+            if (!authenticated) {
+              await route.fulfill({ status: 401, json: { error: "Unauthorized" } });
+              return;
+            }
             if (new URL(route.request().url()).searchParams.get("view") === "controls") {
               presentationRouteEvents.push("controls:get");
               await route.fulfill({ json: controlsPayload() });
