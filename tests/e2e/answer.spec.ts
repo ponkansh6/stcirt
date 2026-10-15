@@ -22,6 +22,32 @@ type BatchPayload = {
   answers: BatchAnswer[];
 };
 
+type ApiRequestTrace = { method: string; path: string };
+
+function matchesRequestPath(requestPath: string, path: string) {
+  return (
+    requestPath === path || (path.includes("?") === false && requestPath.startsWith(`${path}?`))
+  );
+}
+
+function captureApiRequests(page: Page) {
+  const requests: ApiRequestTrace[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/")) {
+      requests.push({ method: request.method(), path: `${url.pathname}${url.search}` });
+    }
+  });
+  return requests;
+}
+
+function requestIndex(requests: ApiRequestTrace[], method: string, path: string, fromIndex = 0) {
+  return requests.findIndex(
+    (request, index) =>
+      index >= fromIndex && request.method === method && matchesRequestPath(request.path, path),
+  );
+}
+
 async function mockParticipantSession(
   page: Page,
   initialName: string | null = null,
@@ -189,6 +215,7 @@ async function answerQuestion(page: Page, id: number, choice: string) {
 test("direct answer access requires name and four digit PIN before loading the quiz", async ({
   page,
 }) => {
+  const requestTrace = captureApiRequests(page);
   const { loginRequests } = await mockParticipantSession(page);
   const requests: string[] = [];
   await mockQuestions(page, requests);
@@ -203,6 +230,14 @@ test("direct answer access requires name and four digit PIN before loading the q
 
   expect(loginRequests).toEqual([{ name: "Aki", pin: "0123" }]);
   expect(requests).toEqual(["/api/questions/batch"]);
+  const initialSession = requestIndex(requestTrace, "GET", "/api/participants/session");
+  const login = requestIndex(requestTrace, "POST", "/api/participants/session");
+  const latest = requestIndex(requestTrace, "GET", "/api/answers/latest");
+  const questionBatch = requestIndex(requestTrace, "GET", "/api/questions/batch");
+  expect(initialSession).toBeGreaterThanOrEqual(0);
+  expect(login).toBeGreaterThan(initialSession);
+  expect(latest).toBeGreaterThan(login);
+  expect(questionBatch).toBeGreaterThan(latest);
   await startQuiz(page);
   await expect(
     page.locator('section[aria-labelledby="question-title-1"]').getByRole("heading", {
@@ -755,6 +790,7 @@ test("supports native radio keyboard operation and reflows long Japanese text at
 test("returns to owner completion after an assisted save and opens target correction directly", async ({
   page,
 }) => {
+  const requestTrace = captureApiRequests(page);
   const questions: SavedBatchAnswer[] = [
     { questionId: 1, answerKind: "selected", selectedIndex: 0, freeText: null },
     { questionId: 2, answerKind: "selected", selectedIndex: 0, freeText: null },
@@ -885,6 +921,17 @@ test("returns to owner completion after an assisted save and opens target correc
     }),
   ).toBeVisible();
   await expect.poll(() => assistedLatestRequests).toContain("?scope=assisted");
+  const assistedIdentityPost = requestIndex(requestTrace, "POST", "/api/participants/assisted");
+  const assistedLatest = requestIndex(requestTrace, "GET", "/api/answers/latest?scope=assisted");
+  const questionsLoaded = requestIndex(
+    requestTrace,
+    "GET",
+    "/api/questions/batch",
+    assistedIdentityPost + 1,
+  );
+  expect(assistedIdentityPost).toBeGreaterThanOrEqual(0);
+  expect(assistedLatest).toBeGreaterThan(assistedIdentityPost);
+  expect(questionsLoaded).toBeGreaterThan(assistedIdentityPost);
 
   for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "B");
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();
@@ -895,6 +942,8 @@ test("returns to owner completion after an assisted save and opens target correc
   await expect(page.getByText("代理回答者", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
   expect(assistedSaves).toHaveLength(1);
+  const assistedSave = requestIndex(requestTrace, "POST", "/api/answers/batch?scope=assisted");
+  expect(assistedSave).toBeGreaterThan(assistedLatest);
 
   await page.getByRole("button", { name: "代理回答を修正する" }).click();
   await expect(
@@ -996,6 +1045,7 @@ test("shows neutral completion after one batch and can reopen the same answer se
 test("revisits a saved submission, restores it, and posts a correction to the same revisioned submission", async ({
   page,
 }) => {
+  const requestTrace = captureApiRequests(page);
   const submissionId = "00000000-0000-4000-8000-000000000023";
   const savedAnswers: SavedBatchAnswer[] = [
     ...[1, 2, 3, 4].map((questionId) => ({
@@ -1053,11 +1103,18 @@ test("revisits a saved submission, restores it, and posts a correction to the sa
     questionId: 5,
     freeText: "修正後の回答です。",
   });
+  const latest = requestIndex(requestTrace, "GET", "/api/answers/latest");
+  const questionsLoaded = requestIndex(requestTrace, "GET", "/api/questions/batch");
+  const correction = requestIndex(requestTrace, "POST", "/api/answers/batch");
+  expect(latest).toBeGreaterThanOrEqual(0);
+  expect(questionsLoaded).toBeGreaterThan(latest);
+  expect(correction).toBeGreaterThan(questionsLoaded);
 });
 
 test("restores the latest saved answers after a same-participant re-login on correction 401", async ({
   page,
 }) => {
+  const requestTrace = captureApiRequests(page);
   const initialSubmissionId = "00000000-0000-4000-8000-000000000031";
   const latestSubmissionId = initialSubmissionId;
   const savedAnswers = (questionOneIndex: number, freeText: string): SavedBatchAnswer[] => [
@@ -1168,6 +1225,20 @@ test("restores the latest saved answers after a same-participant re-login on cor
     questionId: 5,
     freeText: "送信に失敗した未保存の回答。",
   });
+  const correctionAttempts = requestTrace
+    .map((request, index) => ({ request, index }))
+    .filter(
+      ({ request }) =>
+        request.method === "POST" && matchesRequestPath(request.path, "/api/answers/batch"),
+    );
+  const relogin = requestIndex(requestTrace, "POST", "/api/participants/session");
+  const latestAfterRelogin = requestIndex(requestTrace, "GET", "/api/answers/latest", relogin + 1);
+  const restoredBatch = requestIndex(requestTrace, "GET", "/api/answers/batch", relogin + 1);
+  expect(correctionAttempts).toHaveLength(2);
+  expect(relogin).toBeGreaterThan(correctionAttempts[0]!.index);
+  expect(latestAfterRelogin).toBeGreaterThan(relogin);
+  expect(restoredBatch).toBeGreaterThan(latestAfterRelogin);
+  expect(correctionAttempts[1]!.index).toBeGreaterThan(restoredBatch);
 });
 
 test("loads the canonical batch after a revision conflict while preserving the local draft", async ({

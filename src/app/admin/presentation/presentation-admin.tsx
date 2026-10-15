@@ -27,19 +27,13 @@ function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
-async function requestSession(
-  method: "GET" | "POST",
-  body?: { pin: string },
-  signal?: AbortSignal,
-) {
+async function requestSession(body: { pin: string }) {
   const response = await fetch("/api/admin/session", {
-    method,
+    method: "POST",
     cache: "no-store",
     credentials: "same-origin",
-    ...(signal ? { signal } : {}),
-    ...(body
-      ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }
-      : {}),
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
   });
   const payload = (await response.json().catch(() => null)) as {
     authenticated?: unknown;
@@ -51,6 +45,23 @@ async function requestSession(
     throw error;
   }
   return payload;
+}
+
+async function getSessionStatus(signal: AbortSignal): Promise<boolean> {
+  const response = await fetch("/api/admin/session", {
+    cache: "no-store",
+    credentials: "same-origin",
+    signal,
+  });
+  const payload = (await response.json().catch(() => null)) as {
+    authenticated?: unknown;
+  } | null;
+  if (!response.ok || typeof payload?.authenticated !== "boolean") {
+    const error = new Error("管理者セッションを確認できませんでした。") as ApiError;
+    error.status = response.status;
+    throw error;
+  }
+  return payload.authenticated;
 }
 
 async function getAdminState(signal: AbortSignal): Promise<AdminState> {
@@ -175,7 +186,7 @@ export default function PresentationAdmin() {
   const [aggregationResult, setAggregationResult] = useState<
     AggregationSummary | "unavailable" | null
   >(null);
-  const [authenticated, setAuthenticated] = useState(false);
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const authenticatedRef = useRef(false);
   const [adminState, setAdminState] = useState<AdminState | null>(null);
   const refreshSequence = useRef(0);
@@ -195,32 +206,14 @@ export default function PresentationAdmin() {
       pollAbortController.current = controller;
       const timeout = window.setTimeout(() => controller.abort(), POLL_TIMEOUT_MS);
       try {
-        if (checkSession) {
-          const session = await requestSession("GET", undefined, controller.signal);
-          if (sequence !== refreshSequence.current) return null;
-          if (session?.authenticated === false) {
-            if (authenticatedRef.current)
-              setMessage("管理者セッションの有効期限が切れました。PIN を入力してください。");
-            updateAuthenticated(false);
-            setAdminState(null);
-            return false;
-          }
-          if (session?.authenticated !== true) {
-            setMessage("管理状態を取得できませんでした。自動で再試行しています。");
-            return null;
-          }
-          updateAuthenticated(true);
-        }
-        // An unchecked refresh only starts from an authenticated poll; a checked refresh sets this ref before reaching here.
-        /* v8 ignore if */
-        if (!authenticatedRef.current) return false;
+        // Startup and visible-resume checks can use the protected state read itself to confirm the session.
+        if (!checkSession && !authenticatedRef.current) return false;
         const current = await getAdminState(controller.signal);
-        if (sequence === refreshSequence.current) {
-          setAdminState(current);
-          setMessage(null);
-          return true;
-        }
-        return null;
+        if (sequence !== refreshSequence.current) return null;
+        if (checkSession) updateAuthenticated(true);
+        setAdminState(current);
+        setMessage(null);
+        return true;
       } catch (error) {
         if (sequence !== refreshSequence.current) return null;
         if ((error as ApiError).status === 401) {
@@ -229,6 +222,27 @@ export default function PresentationAdmin() {
           setMessage("管理者セッションの有効期限が切れました。PIN を入力してください。");
           return false;
         } else {
+          if (checkSession) {
+            try {
+              const sessionAuthenticated = await getSessionStatus(controller.signal);
+              if (sequence !== refreshSequence.current) return null;
+              if (!sessionAuthenticated) {
+                const wasAuthenticated = authenticatedRef.current;
+                updateAuthenticated(false);
+                setAdminState(null);
+                setMessage(
+                  wasAuthenticated
+                    ? "管理者セッションの有効期限が切れました。PIN を入力してください。"
+                    : null,
+                );
+                return false;
+              }
+              updateAuthenticated(true);
+            } catch {
+              if (sequence !== refreshSequence.current) return null;
+              // An inconclusive fallback must not change the last known authentication state.
+            }
+          }
           setMessage("管理状態を取得できませんでした。自動で再試行しています。");
         }
         return null;
@@ -275,22 +289,26 @@ export default function PresentationAdmin() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!authenticated) return;
+    if (authenticated === false) return;
 
     let active = true;
     let timer: number | undefined;
     async function poll() {
       if (!active || document.visibilityState === "hidden") return;
-      if (!authenticatedRef.current) return;
       if (externalOperationInFlight.current) {
         schedulePoll();
         return;
       }
-      await refresh();
+      await refresh(authenticated === null);
       schedulePoll();
     }
     function schedulePoll() {
-      if (!active || document.visibilityState === "hidden" || !authenticatedRef.current) return;
+      if (
+        !active ||
+        document.visibilityState === "hidden" ||
+        (!authenticatedRef.current && authenticated === false)
+      )
+        return;
       if (timer !== undefined) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         timer = undefined;
@@ -328,7 +346,7 @@ export default function PresentationAdmin() {
     setMessage(null);
     try {
       await refreshFlight.current;
-      const session = await requestSession("POST", { pin });
+      const session = await requestSession({ pin });
       setPin("");
       if (session?.authenticated === true) {
         updateAuthenticated(true);
@@ -392,7 +410,7 @@ export default function PresentationAdmin() {
     window.open("/presentation?presenter=1", "stcirt-presentation");
   }
 
-  if (authenticated && !adminState) {
+  if (authenticated !== false && !adminState) {
     return (
       <main className={styles.shell}>
         <section className={styles.console} aria-labelledby="admin-title">

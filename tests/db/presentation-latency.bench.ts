@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { eq } from "drizzle-orm";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { gzipSync } from "node:zlib";
 import type { Logger } from "drizzle-orm/logger";
 import { createTestDb, type TestDb } from "../helpers/db";
 import * as schema from "@/lib/db/schema";
@@ -121,6 +122,7 @@ describe("presentation repository latency benchmark", () => {
       {
         id: 11,
         key: "bench-question-11",
+        questionVersion: "nagano-001-v1",
         question: "Question 11",
         choices: ["Correct", "Wrong"],
         correctIndex: 0,
@@ -128,9 +130,10 @@ describe("presentation repository latency benchmark", () => {
       },
       {
         id: 22,
-        key: "bench-question-22",
+        key: "it-literacy-005",
+        questionVersion: "tamami-egg-v1",
         question: "Question 22",
-        choices: ["Correct", "Wrong"],
+        choices: [],
         correctIndex: 0,
         explanation: "Explanation 22",
       },
@@ -152,19 +155,15 @@ describe("presentation repository latency benchmark", () => {
     await resetFixture();
 
     const isFreeText = stage === "q5-free-text-answer" || stage === "non-q5-free-text-answer";
-    const sourceKey =
-      stage === "q5-free-text-answer"
-        ? "it-literacy-005"
-        : stage === "non-q5-free-text-answer"
-          ? "presentation-free-text"
-          : "bench-question-11";
     const questionChoices = isFreeText ? [] : ["Correct", "Wrong"];
-    if (sourceKey !== "bench-question-11") {
+    if (stage === "non-q5-free-text-answer") {
       await testDb.db
         .update(schema.examQuestions)
-        .set({ key: sourceKey, choices: questionChoices })
+        .set({ key: "presentation-free-text", choices: questionChoices })
         .where(eq(schema.examQuestions.id, 11));
     }
+    const primarySourceId = stage === "q5-free-text-answer" ? 22 : 11;
+    const secondarySourceId = stage === "q5-free-text-answer" ? 11 : 22;
 
     const state =
       stage === "question" || stage === "hidden"
@@ -189,7 +188,7 @@ describe("presentation repository latency benchmark", () => {
       {
         sessionId: 1,
         position: 0,
-        sourceQuestionId: 11,
+        sourceQuestionId: primarySourceId,
         question: isFreeText ? "Free-text question" : "Question 11",
         choices: questionChoices,
         correctIndex: 0,
@@ -198,11 +197,11 @@ describe("presentation repository latency benchmark", () => {
       {
         sessionId: 1,
         position: 1,
-        sourceQuestionId: 22,
-        question: "Question 22",
-        choices: ["Correct", "Wrong"],
+        sourceQuestionId: secondarySourceId,
+        question: secondarySourceId === 11 ? "Question 11" : "Question 22",
+        choices: secondarySourceId === 11 ? ["Correct", "Wrong"] : [],
         correctIndex: 0,
-        explanation: "Explanation 22",
+        explanation: `Explanation ${secondarySourceId}`,
       },
     ]);
     await testDb.db.insert(schema.presentationEntries).values(
@@ -214,7 +213,7 @@ describe("presentation repository latency benchmark", () => {
         rank,
         answers: [
           {
-            questionId: 11,
+            questionId: primarySourceId,
             answerKind: isFreeText ? ("freeText" as const) : ("selected" as const),
             selectedIndex: isFreeText ? null : 0,
             freeText: isFreeText ? `Response ${rank}` : null,
@@ -222,10 +221,10 @@ describe("presentation repository latency benchmark", () => {
             normalizedScore: 1,
           },
           {
-            questionId: 22,
-            answerKind: "selected" as const,
-            selectedIndex: 0,
-            freeText: null,
+            questionId: secondarySourceId,
+            answerKind: secondarySourceId === 22 ? ("freeText" as const) : ("selected" as const),
+            selectedIndex: secondarySourceId === 22 ? null : 0,
+            freeText: secondarySourceId === 22 ? `Response ${rank}` : null,
             rawScore: 1,
             normalizedScore: 1,
           },
@@ -465,4 +464,43 @@ describe("presentation repository latency benchmark", () => {
       );
     }
   }
+
+  bench(
+    "getAdminPresentationDeck/serialized-payload",
+    async () => {
+      await ensureInitialized();
+      // This shared fixture has 2 questions and all 3 podium ranks, yielding
+      // opening + 4 question/answer + podium preview + 3 ranks + finished = 10 slides.
+      await preparePublicStage("finished");
+      assert.ok(repository, "Presentation repository was not initialized");
+      const getDeck = repository.getAdminPresentationDeck as (() => Promise<unknown>) | undefined;
+      if (typeof getDeck !== "function") throw new Error("getAdminPresentationDeck must exist");
+      const deck = await getDeck();
+      assert.ok(deck !== null && typeof deck === "object");
+      assert.ok("slides" in deck && Array.isArray(deck.slides));
+      assert.ok("questionCount" in deck && typeof deck.questionCount === "number");
+      const serialized = JSON.stringify(deck);
+      const uncompressedBytes = Buffer.byteLength(serialized, "utf8");
+      const gzipBytes = gzipSync(Buffer.from(serialized, "utf8")).byteLength;
+      assert.equal(deck.questionCount, 2);
+      assert.equal(deck.slides.length, 10);
+      emitResult({
+        benchmark: "presentation-deck-payload",
+        fixture: "local file-backed SQLite; 2 questions; 3 participant ranks",
+        questionCount: deck.questionCount,
+        slideCount: deck.slides.length,
+        serializationBytes: {
+          utf8Uncompressed: uncompressedBytes,
+          gzip: gzipBytes,
+        },
+        timingScope: "serialization size only; excludes HTTP, wire headers, and browser rendering",
+      });
+    },
+    {
+      time: 0,
+      iterations: 1,
+      warmupIterations: 0,
+      warmupTime: 0,
+    },
+  );
 });

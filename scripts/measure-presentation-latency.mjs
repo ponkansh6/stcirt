@@ -52,6 +52,8 @@ const entries = [
   { displayName: "太郎", score: 0, rank: 2 },
 ];
 const samples = new Map();
+const requestCountSamples = new Map();
+const browserResourceTimingWindows = {};
 const definitions = [
   { name: "keyboard_advance", input: "keyboard", action: "advance" },
   { name: "keyboard_previous", input: "keyboard", action: "previous" },
@@ -80,6 +82,10 @@ function percentile(values, fraction) {
 
 function summary(values) {
   return { p50_ms: percentile(values, 0.5), p95_ms: percentile(values, 0.95) };
+}
+
+function countSummary(values) {
+  return { p50_count: percentile(values, 0.5), p95_count: percentile(values, 0.95) };
 }
 
 function addSample(name, metric, value) {
@@ -156,6 +162,51 @@ async function probeUntilNextActionAccepted(page, tracker, key) {
   throw new Error("next_action_not_accepted");
 }
 
+async function collectBrowserResourceTimings(page, windowName) {
+  browserResourceTimingWindows[windowName] = await page.evaluate(() =>
+    performance
+      .getEntriesByType("resource")
+      .filter((entry) => {
+        const type = entry.initiatorType;
+        return ["script", "link", "css", "font"].includes(type);
+      })
+      .map((entry) => {
+        const url = new URL(entry.name);
+        const resourceType =
+          entry.initiatorType === "script"
+            ? "script"
+            : entry.initiatorType === "font"
+              ? "font"
+              : entry.initiatorType === "css"
+                ? "stylesheet"
+                : url.pathname.endsWith(".css")
+                  ? "stylesheet"
+                  : url.pathname.match(/\.(woff2?|ttf|otf)(?:$|\?)/i)
+                    ? "font"
+                    : null;
+        if (!resourceType) return null;
+        const timing = {
+          resource_type: resourceType,
+          pathname: url.pathname,
+          transfer_size_bytes: entry.transferSize ?? null,
+          encoded_body_size_bytes: entry.encodedBodySize ?? null,
+          decoded_body_size_bytes: entry.decodedBodySize ?? null,
+          duration_ms: entry.duration ?? null,
+          response_end_ms: entry.responseEnd ?? null,
+          next_hop_protocol: entry.nextHopProtocol || null,
+        };
+        timing.transfer_observation =
+          timing.transfer_size_bytes === 0
+            ? "zero_reported_cache_or_reuse_possible_not_proven"
+            : timing.transfer_size_bytes > 0
+              ? "browser_reports_transfer"
+              : "unknown_or_unavailable";
+        return timing;
+      })
+      .filter(Boolean),
+  );
+}
+
 async function performUnmeasuredKeyboardAction(page, key, setActiveOperation) {
   const tracker = createOperationTracker();
   setActiveOperation(tracker);
@@ -165,19 +216,21 @@ async function performUnmeasuredKeyboardAction(page, key, setActiveOperation) {
   setActiveOperation(null);
 }
 
-function makeControls(state, version, hidden = false) {
+function makeControls(state, version, hidden, snapshotRevision) {
   return {
     state,
     version,
+    snapshotRevision,
     questionIndex: 0,
     questionCount: 1,
     projectionHidden: hidden,
   };
 }
 
-function makeDeck() {
+function makeDeck(snapshotRevision) {
   const slides = ["question", "answer", "podium_preview", "third", "second", "first", "finished"];
   return {
+    snapshotRevision,
     slides: slides.map((state) => {
       let projection;
       if (state === "question" || state === "answer") {
@@ -224,7 +277,7 @@ async function installMock(context) {
   let cursor = 0;
   let version = 0;
   let hidden = false;
-  let snapshotRevision = 0;
+  let snapshotRevision = 1;
 
   const delay = async () => {
     if (mockDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, mockDelayMs));
@@ -241,9 +294,9 @@ async function installMock(context) {
     } else if (request.method() === "POST") {
       // Keep the real login endpoint so the running app issues its normal auth cookie.
       const body = request.postDataJSON();
-      authenticated = body.pin === pin;
       await delay();
       await route.fallback();
+      authenticated = body.pin === pin;
     } else if (request.method() === "DELETE") {
       authenticated = false;
       await fulfill(route, { authenticated });
@@ -253,7 +306,7 @@ async function installMock(context) {
   });
 
   await context.route("**/api/admin/presentation/deck", async (route) => {
-    await fulfill(route, makeDeck());
+    await fulfill(route, makeDeck(snapshotRevision));
   });
 
   await context.route(
@@ -261,12 +314,16 @@ async function installMock(context) {
     async (route) => {
       const request = route.request();
       if (request.method() === "GET") {
+        if (!authenticated) {
+          await fulfill(route, { error: "Unauthorized" }, 401);
+          return;
+        }
         const url = new URL(request.url());
         if (url.searchParams.get("view") === "controls") {
-          await fulfill(route, makeControls(state, version, hidden));
+          await fulfill(route, makeControls(state, version, hidden, snapshotRevision));
         } else {
           await fulfill(route, {
-            ...makeControls(state, version, hidden),
+            ...makeControls(state, version, hidden, snapshotRevision),
             questions: [question],
             entries,
             participantResultsVisible: false,
@@ -297,7 +354,7 @@ async function installMock(context) {
         hidden = false;
       }
       version += 1;
-      await fulfill(route, makeControls(state, version, hidden));
+      await fulfill(route, makeControls(state, version, hidden, snapshotRevision));
     },
   );
 
@@ -345,12 +402,36 @@ async function main() {
   await installMock(context);
 
   let activeOperation = null;
+  let activeAssetWindow = null;
+  const assetResponses = [];
   const pendingRequests = new Map();
   let requestOrder = 0;
   page.on("request", (request) => {
     const url = new URL(request.url());
+    const resourceType = request.resourceType();
+    let asset;
+    if (activeAssetWindow && ["script", "stylesheet", "font"].includes(resourceType)) {
+      asset = {
+        request_window: activeAssetWindow,
+        resource_type: resourceType,
+        pathname: url.pathname,
+        http_status: null,
+        content_length_bytes: null,
+        content_encoding: null,
+      };
+    }
     const kind = requestKind(url, request.method());
-    const record = { kind, startedAt: Date.now(), responseAt: null, order: requestOrder++ };
+    const record = {
+      kind,
+      method: request.method(),
+      pathname: url.pathname,
+      startedAt: Date.now(),
+      responseAt: null,
+      status: null,
+      failure: null,
+      order: requestOrder++,
+      asset,
+    };
     pendingRequests.set(request, record);
     if (activeOperation && kind) {
       activeOperation.recordRequest(record);
@@ -358,7 +439,19 @@ async function main() {
   });
   page.on("response", (response) => {
     const record = pendingRequests.get(response.request());
-    if (record) record.responseAt = Date.now();
+    if (record?.asset) {
+      const headers = response.headers();
+      const contentLength = headers["content-length"];
+      record.asset.http_status = response.status();
+      record.asset.content_length_bytes =
+        contentLength !== undefined && /^\d+$/.test(contentLength) ? Number(contentLength) : null;
+      record.asset.content_encoding = headers["content-encoding"] ?? null;
+      assetResponses.push(record.asset);
+    }
+    if (record) {
+      record.responseAt = Date.now();
+      record.status = response.status();
+    }
   });
   page.on("requestfinished", (request) => {
     const record = pendingRequests.get(request);
@@ -366,43 +459,80 @@ async function main() {
   });
   page.on("requestfailed", (request) => {
     const record = pendingRequests.get(request);
-    if (record) record.finishedAt = Date.now();
+    if (record) {
+      record.finishedAt = Date.now();
+      record.failure = request.failure()?.errorText ?? null;
+    }
   });
 
   currentStage = "admin_navigation";
+  activeAssetWindow = "initial_admin_navigation";
+  const startupStartedAt = Date.now();
   await page.goto("/admin/presentation");
+  await page.getByLabel("管理者 PIN").waitFor({ state: "visible" });
+  const pinVisibleAt = Date.now();
+  await collectBrowserResourceTimings(page, "initial_admin_navigation");
+  activeAssetWindow = null;
   currentStage = "admin_login";
   await page.getByLabel("管理者 PIN").fill(pin);
+  const loginSubmitAt = Date.now();
   await page.getByRole("button", { name: "管理ページにログイン" }).click();
   await page.getByText(/現在の状態：/).waitFor();
+  const authenticatedStateAt = Date.now();
   currentStage = "start_presentation";
+  const startClickAt = Date.now();
   await page.getByRole("button", { name: "発表を開始" }).click();
   await page.getByText("現在の状態：進行中：問題").waitFor();
+  const firstQuestionAt = Date.now();
+  const startupRequests = classifiedRequestSequence(
+    pendingRequests,
+    startupStartedAt,
+    firstQuestionAt,
+  );
 
-  // Cold/deck-load sample is intentionally kept outside the warm interaction samples.
-  const coldStartedAt = Date.now();
-  let coldDeckWait;
-  const coldDeckRequest = (response) => {
+  currentStage = "authenticated_admin_reload";
+  activeAssetWindow = "authenticated_admin_reload_same_context";
+  const authenticatedReloadStartedAt = Date.now();
+  await page.goto("/admin/presentation");
+  await page.getByText("現在の状態：進行中：問題").waitFor();
+  const authenticatedStateReadyAt = Date.now();
+  await collectBrowserResourceTimings(page, "authenticated_admin_reload_same_context");
+  activeAssetWindow = null;
+  const authenticatedReloadRequests = classifiedRequestSequence(
+    pendingRequests,
+    authenticatedReloadStartedAt,
+    authenticatedStateReadyAt,
+  );
+
+  // Presenter navigation is kept outside the warm interaction samples.
+  activeAssetWindow = "presenter_navigation_same_context";
+  const presenterStartedAt = Date.now();
+  let presenterDeckWait;
+  const presenterDeckRequest = (response) => {
     const url = new URL(response.url());
     if (url.pathname === "/api/admin/presentation/deck" && response.request().method() === "GET") {
       const requestRecord = pendingRequests.get(response.request());
       if (requestRecord?.startedAt !== undefined) {
-        coldDeckWait = Date.now() - requestRecord.startedAt;
+        presenterDeckWait = Date.now() - requestRecord.startedAt;
       }
     }
   };
-  page.on("response", coldDeckRequest);
-  currentStage = "cold_presenter_navigation";
+  page.on("response", presenterDeckRequest);
+  currentStage = "presenter_navigation";
   await page.goto("/presentation?presenter=1");
   await page.getByTestId("presentation-canvas").waitFor();
-  currentStage = "cold_presenter_slide_ready";
+  currentStage = "presenter_slide_ready";
   await page.getByRole("heading", { name: question.question }).waitFor();
   await page.evaluate(
     () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
   );
-  page.off("response", coldDeckRequest);
-  addSample("cold_deck_load", "navigation_to_dom_2raf_ms", Date.now() - coldStartedAt);
-  if (coldDeckWait !== undefined) addSample("cold_deck_load", "deck_get_wait_ms", coldDeckWait);
+  await collectBrowserResourceTimings(page, "presenter_navigation_same_context");
+  activeAssetWindow = null;
+  page.off("response", presenterDeckRequest);
+  addSample("cold_deck_load", "navigation_to_dom_2raf_ms", Date.now() - presenterStartedAt);
+  if (presenterDeckWait !== undefined) {
+    addSample("cold_deck_load", "deck_get_wait_ms", presenterDeckWait);
+  }
 
   currentStage = "instrumentation_setup";
   await page.evaluate(() => {
@@ -491,6 +621,7 @@ async function main() {
       const primaryRequests = operation.requests.filter(
         (record) => record.order < acceptedNextPost.order,
       );
+      recordRequestCountSample(definition.name, primaryRequests);
       const finishedAt = primaryRequests.reduce(
         (latest, record) => Math.max(latest, record.finishedAt ?? Date.now()),
         inputStartedAt,
@@ -542,15 +673,148 @@ async function main() {
   const output = {};
   for (const [name, metrics] of samples) {
     output[name] = {};
-    for (const [metric, values] of metrics) output[name][metric] = summary(values);
+    for (const [metric, values] of metrics) {
+      output[name][metric] = metric.endsWith("_count") ? countSummary(values) : summary(values);
+    }
+    output[name].request_counts = summarizeRequestCountSamples(requestCountSamples.get(name) ?? []);
   }
+  output.startup_cold_sample = {
+    sample_count: 1,
+    timings_ms: {
+      page_goto_to_pin_visible: pinVisibleAt - startupStartedAt,
+      login_submit_to_authenticated_state: authenticatedStateAt - loginSubmitAt,
+      start_click_to_first_question_state: firstQuestionAt - startClickAt,
+    },
+    requests: startupRequests,
+  };
+  output.authenticated_admin_reload_sample = {
+    sample_count: 1,
+    timings_ms: {
+      navigation_to_state_ready: authenticatedStateReadyAt - authenticatedReloadStartedAt,
+    },
+    requests: authenticatedReloadRequests,
+    limitations: "Single same-context reload; cache state is warm/unknown, not a true cold load.",
+  };
+  output.browser_asset_responses = {
+    byte_measurement:
+      "Content-Length payload bytes when present; excludes response headers and TLS.",
+    limitations:
+      "Same-context reload and presenter navigation are cache-warm/unknown, not true cold loads. Responses without Content-Length are included in counts but not byte sums.",
+    windows: summarizeAssetWindows(assetResponses),
+    responses: assetResponses,
+  };
+  output.browser_resource_timing = {
+    source:
+      "PerformanceResourceTiming entries observed by this browser for script, stylesheet, and font resources; values are not production-wide asset totals.",
+    transfer_size_note:
+      "A transferSize of 0 can indicate cache reuse or unavailable transfer detail; it does not establish a zero-byte resource.",
+    windows: browserResourceTimingWindows,
+  };
   process.stdout.write(`${JSON.stringify(output)}\n`);
   await browser.close();
 }
 
+function recordRequestCountSample(name, requests) {
+  let byName = requestCountSamples.get(name);
+  if (!byName) {
+    byName = [];
+    requestCountSamples.set(name, byName);
+  }
+  const byMethodAndPathname = {};
+  let postCount = 0;
+  let getCount = 0;
+  let deckGetCount = 0;
+  let controlsGetCount = 0;
+  for (const request of requests) {
+    const key = `${request.method} ${request.pathname}`;
+    byMethodAndPathname[key] = (byMethodAndPathname[key] ?? 0) + 1;
+    if (request.method === "POST") postCount += 1;
+    if (request.method === "GET") getCount += 1;
+    if (request.method === "GET" && request.pathname === "/api/admin/presentation/deck") {
+      deckGetCount += 1;
+    }
+    if (
+      request.method === "GET" &&
+      request.pathname === "/api/admin/presentation" &&
+      request.kind === "window_controls_get"
+    ) {
+      controlsGetCount += 1;
+    }
+  }
+  byName.push({
+    total_requests: requests.length,
+    post_count: postCount,
+    get_count: getCount,
+    deck_get_count: deckGetCount,
+    controls_get_count: controlsGetCount,
+    by_method_and_pathname: byMethodAndPathname,
+  });
+}
+
+function summarizeRequestCountSamples(samplesForInteraction) {
+  const metrics = [
+    "total_requests",
+    "post_count",
+    "get_count",
+    "deck_get_count",
+    "controls_get_count",
+  ];
+  const keys = new Set(
+    samplesForInteraction.flatMap((sample) => Object.keys(sample.by_method_and_pathname)),
+  );
+  const byMethodAndPathname = {};
+  for (const key of [...keys].sort()) {
+    byMethodAndPathname[key] = countSummary(
+      samplesForInteraction.map((sample) => sample.by_method_and_pathname[key] ?? 0),
+    );
+  }
+  return {
+    sample_count: samplesForInteraction.length,
+    ...Object.fromEntries(
+      metrics.map((metric) => [
+        metric,
+        countSummary(samplesForInteraction.map((sample) => sample[metric])),
+      ]),
+    ),
+    by_method_and_pathname: byMethodAndPathname,
+    pathname_note:
+      "Query strings are omitted; counts use API requests recorded in this action window.",
+  };
+}
+
+function summarizeAssetWindows(responses) {
+  const windows = {};
+  for (const response of responses) {
+    let window = windows[response.request_window];
+    if (!window) {
+      window = { resource_types: {} };
+      windows[response.request_window] = window;
+    }
+    let type = window.resource_types[response.resource_type];
+    if (!type) {
+      type = { response_count: 0, content_length_bytes_sum: 0, content_length_present_count: 0 };
+      window.resource_types[response.resource_type] = type;
+    }
+    type.response_count += 1;
+    if (response.content_length_bytes !== null) {
+      type.content_length_bytes_sum += response.content_length_bytes;
+      type.content_length_present_count += 1;
+    }
+  }
+  return windows;
+}
+
 function requestKind(url, method) {
   if (url.pathname === "/api/admin/presentation" && method === "POST") return "post";
+  if (url.pathname === "/api/admin/session" && method === "POST") return "session_post";
   if (url.pathname === "/api/admin/session" && method === "GET") return "window_session_get";
+  if (
+    url.pathname === "/api/admin/presentation" &&
+    method === "GET" &&
+    url.searchParams.get("view") !== "controls"
+  ) {
+    return "state_get";
+  }
   if (
     url.pathname === "/api/admin/presentation" &&
     method === "GET" &&
@@ -562,6 +826,22 @@ function requestKind(url, method) {
     return "window_deck_get";
   }
   return null;
+}
+
+function classifiedRequestSequence(pendingRequests, startedAt, endedAt) {
+  return [...pendingRequests.values()]
+    .filter((record) => record.kind && record.startedAt >= startedAt && record.startedAt <= endedAt)
+    .sort((a, b) => a.order - b.order)
+    .map((record) => {
+      const completedAt = record.finishedAt ?? record.responseAt;
+      return {
+        kind: record.kind,
+        http_status: record.status,
+        request_failure: record.failure,
+        response_or_finish_wait_ms:
+          completedAt === undefined ? null : completedAt - record.startedAt,
+      };
+    });
 }
 
 async function waitForOperationQuiet(operation) {
