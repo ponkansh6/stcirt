@@ -67,6 +67,7 @@ describe("ResultsPanel", () => {
     render(<ResultsPanel initial={visibleResult} scope={null} />);
 
     setVisibility("visible");
+    fireEvent.click(screen.getByRole("button", { name: "結果を再読み込み" }));
 
     expect(fetch).not.toHaveBeenCalled();
     expect(screen.getByText("2位")).toBeVisible();
@@ -465,6 +466,47 @@ describe("ResultsPanel", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("starts a manual refresh from the button and queues a duplicate before it settles", async () => {
+    const firstResponse = deferred<{
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }>();
+    const trailingResponse = deferred<{
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(firstResponse.promise)
+      .mockReturnValueOnce(trailingResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ResultsPanel initial={visibleResult} />);
+
+    const button = screen.getByRole("button", { name: "結果を再読み込み" });
+    act(() => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "更新中…" })).toBeDisabled();
+
+    await act(async () => {
+      firstResponse.resolve({ ok: true, status: 200, json: async () => visibleResult });
+      await firstResponse.promise;
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      trailingResponse.resolve({ ok: true, status: 200, json: async () => visibleResult });
+      await trailingResponse.promise;
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
   });
 
   it("keeps the confirmed result and restores manual refresh after a deferred rejection", async () => {

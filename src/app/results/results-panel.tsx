@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/Button";
 import { parseParticipantResult, type ParticipantResult } from "@/lib/participant-results-contract";
@@ -23,8 +23,11 @@ export default function ResultsPanel({
   const [authorized, setAuthorized] = useState(initial.state !== "unauthenticated");
   const [refreshing, setRefreshing] = useState(false);
   const [manuallyRefreshing, setManuallyRefreshing] = useState(false);
-  const refreshRef = useRef<(() => void) | null>(null);
-  const manualRefreshQueuedRef = useRef(false);
+  const pendingRef = useRef(false);
+  const queuedRef = useRef(false);
+  const requestRevisionRef = useRef(0);
+  const requestIdRef = useRef(0);
+  const inFlightRequestRef = useRef<number | null>(null);
 
   const answerStatus = (correctness: "correct" | "incorrect") => {
     if (correctness === "correct") {
@@ -33,22 +36,20 @@ export default function ResultsPanel({
     return { label: "不正解", icon: "×", className: "text-error" };
   };
 
-  useEffect(() => {
-    if (scope === null) return;
-    let active = true;
-    let pending = false;
-    let refreshQueued = false;
-    let requestRevision = 0;
-    const refresh = async (manual = false) => {
-      if (pending) {
-        refreshQueued = true;
-        requestRevision += 1;
+  const refresh = useCallback(
+    async (manual = false) => {
+      if (scope === null) return;
+      if (pendingRef.current) {
+        queuedRef.current = true;
+        requestRevisionRef.current += 1;
         return;
       }
-      pending = true;
+      pendingRef.current = true;
       setRefreshing(true);
       if (manual) setManuallyRefreshing(true);
-      const currentRevision = ++requestRevision;
+      const currentRevision = ++requestRevisionRef.current;
+      const requestId = ++requestIdRef.current;
+      inFlightRequestRef.current = requestId;
       try {
         const response = await fetch(
           scope === "assisted"
@@ -59,23 +60,21 @@ export default function ResultsPanel({
             credentials: "same-origin",
           },
         );
-        if (!active || currentRevision !== requestRevision) return;
+        if (currentRevision !== requestRevisionRef.current) return;
         if (response.status === 401) {
           setAuthorized(false);
           setResult({ state: "waiting" });
           return;
         }
-        if (!response.ok) {
-          return;
-        }
+        if (!response.ok) return;
         let payload: unknown;
         try {
           payload = await response.json();
         } catch {
-          if (!active || currentRevision !== requestRevision) return;
+          if (currentRevision !== requestRevisionRef.current) return;
           return;
         }
-        if (!active || currentRevision !== requestRevision) return;
+        if (currentRevision !== requestRevisionRef.current) return;
         const parsed = parseParticipantResult(payload);
         if (!parsed) return;
         setAuthorized(true);
@@ -83,30 +82,35 @@ export default function ResultsPanel({
       } catch {
         // Keep the last confirmed result view when a refresh fails.
       } finally {
-        pending = false;
-        if (active) setRefreshing(false);
-        if (active && manual) setManuallyRefreshing(false);
-        if (active && refreshQueued) {
-          refreshQueued = false;
-          void refresh();
+        if (inFlightRequestRef.current === requestId) {
+          inFlightRequestRef.current = null;
+          pendingRef.current = false;
+          setRefreshing(false);
+          if (manual) setManuallyRefreshing(false);
+          if (queuedRef.current) {
+            queuedRef.current = false;
+            void refresh();
+          }
         }
       }
-    };
-    refreshRef.current = () => void refresh(true);
-    if (manualRefreshQueuedRef.current) {
-      manualRefreshQueuedRef.current = false;
-      void refresh(true);
-    }
+    },
+    [scope],
+  );
+
+  useEffect(() => {
+    if (scope === null) return;
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void refresh();
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      active = false;
-      refreshRef.current = null;
+      queuedRef.current = false;
+      pendingRef.current = false;
+      inFlightRequestRef.current = null;
+      requestRevisionRef.current += 1;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [scope]);
+  }, [refresh, scope]);
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
@@ -224,16 +228,7 @@ export default function ResultsPanel({
         )}
         <Button
           variant="outline"
-          onClick={() => {
-            if (scope === null) return;
-            if (refreshRef.current) {
-              refreshRef.current();
-              return;
-            }
-            manualRefreshQueuedRef.current = true;
-            setRefreshing(true);
-            setManuallyRefreshing(true);
-          }}
+          onClick={() => void refresh(true)}
           disabled={refreshing}
           className="mt-6 self-start"
         >

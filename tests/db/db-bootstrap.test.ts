@@ -114,6 +114,19 @@ describe("database bootstrap", () => {
     expect(drizzle).not.toHaveBeenCalled();
   });
 
+  it("rejects a malformed local file URL in E2E isolation mode", async () => {
+    process.env.STCIRT_E2E_DB_ISOLATION = "1";
+    process.env.TURSO_DATABASE_URL = "file://[";
+
+    const { db } = await loadDb();
+
+    await expect(Promise.resolve().then(() => db.label)).rejects.toThrow(
+      "E2E database isolation only permits a local file or memory URL without an auth token.",
+    );
+    expect(createClient).not.toHaveBeenCalled();
+    expect(drizzle).not.toHaveBeenCalled();
+  });
+
   it("rejects an auth token before creating a client in E2E isolation mode", async () => {
     process.env.STCIRT_E2E_DB_ISOLATION = "1";
     process.env.TURSO_DATABASE_URL = "file:/tmp/e2e.db";
