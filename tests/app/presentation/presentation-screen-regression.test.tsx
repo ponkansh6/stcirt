@@ -242,6 +242,14 @@ async function flush() {
   });
 }
 
+function expectPollErrorNotice() {
+  const notice = screen.getByText("スライドの状態を確認できません。自動で再試行します", {
+    selector: '[role="note"]',
+  });
+  expect(notice).toBeVisible();
+  expect(notice).toHaveAttribute("aria-live", "off");
+}
+
 function observePresenterControls() {
   const addEventListener = vi.spyOn(window, "addEventListener");
   return async () => {
@@ -462,9 +470,7 @@ describe("PresentationScreen", () => {
 
     expect(projectionCalls).toBe(2);
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "接続を確認しています。自動で再試行します",
-    );
+    expectPollErrorNotice();
   });
 
   it("keeps the displayed stage when a later public projection has an unknown state", async () => {
@@ -487,9 +493,7 @@ describe("PresentationScreen", () => {
 
     expect(projectionCalls).toBe(2);
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "接続を確認しています。自動で再試行します",
-    );
+    expectPollErrorNotice();
   });
 
   it("does not start a queued projection poll after unmount", async () => {
@@ -832,7 +836,7 @@ describe("PresentationScreen", () => {
     await flush();
 
     expect(api.fetchMock).toHaveBeenCalledWith("/api/admin/session", expect.anything());
-    expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
+    expectPollErrorNotice();
     expect(api.fetchMock).not.toHaveBeenCalledWith(
       "/api/admin/presentation?view=controls",
       expect.anything(),
@@ -1120,12 +1124,16 @@ describe("PresentationScreen", () => {
     await act(async () => vi.advanceTimersByTimeAsync(2500));
     await flush();
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
+    expectPollErrorNotice();
 
     await act(async () => vi.advanceTimersByTimeAsync(2500));
     await flush();
     expect(reads).toBe(3);
-    expect(screen.queryAllByRole("status")).toHaveLength(0);
+    expect(
+      screen.queryByText("スライドの状態を確認できません。自動で再試行します", {
+        selector: '[role="note"]',
+      }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
   });
 
@@ -1159,12 +1167,16 @@ describe("PresentationScreen", () => {
     await flush();
     expect(timedOutSignal?.aborted).toBe(true);
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
+    expectPollErrorNotice();
 
     await act(async () => vi.advanceTimersByTimeAsync(2500));
     await flush();
     expect(reads).toBe(3);
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("スライドの状態を確認できません。自動で再試行します", {
+        selector: '[role="note"]',
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("clears the private presenter deck when controls polling returns 401", async () => {
@@ -1219,13 +1231,13 @@ describe("PresentationScreen", () => {
     await act(async () => vi.advanceTimersByTimeAsync(2500));
     await flush();
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
+    expectPollErrorNotice();
     expect(screen.queryByRole("heading", { name: "ただいま休憩中です" })).not.toBeInTheDocument();
 
     await act(async () => vi.advanceTimersByTimeAsync(2500));
     await flush();
     expect(reads).toBe(3);
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("第1問");
   });
 
   it("hides an old slide after controls confirm a new snapshot revision", async () => {
@@ -1656,7 +1668,7 @@ describe("PresentationScreen", () => {
     await flush();
 
     expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("自動で再試行します");
+    expectPollErrorNotice();
     expect(
       api.fetchMock.mock.calls.some(
         ([path]) => String(path) === "/api/admin/presentation?view=controls",
@@ -1681,7 +1693,7 @@ describe("PresentationScreen", () => {
       expect.anything(),
     );
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
-    expect(screen.queryAllByRole("status")).toHaveLength(0);
+    expect(screen.getByRole("status")).toHaveTextContent("第1問");
   });
 
   it("uses keyboard navigation only for slide targets and ignores repeated or modified keys", async () => {

@@ -21,6 +21,18 @@
   outline-offset: -5px;
 }
 
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .fullscreenButton {
   position: absolute;
   z-index: 2;
@@ -852,4 +864,14 @@
 .screen:fullscreen {
   width: 100vw;
   height: 100dvh;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen,
+  .screen * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

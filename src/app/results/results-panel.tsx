@@ -23,6 +23,7 @@ export default function ResultsPanel({
   const [authorized, setAuthorized] = useState(initial.state !== "unauthenticated");
   const [refreshing, setRefreshing] = useState(false);
   const [manuallyRefreshing, setManuallyRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState(false);
   const pendingRef = useRef(false);
   const queuedRef = useRef(false);
   const requestRevisionRef = useRef(0);
@@ -64,23 +65,32 @@ export default function ResultsPanel({
         if (response.status === 401) {
           setAuthorized(false);
           setResult({ state: "waiting" });
+          setRefreshError(false);
           return;
         }
-        if (!response.ok) return;
+        if (!response.ok) {
+          setRefreshError(true);
+          return;
+        }
         let payload: unknown;
         try {
           payload = await response.json();
         } catch {
           if (currentRevision !== requestRevisionRef.current) return;
+          setRefreshError(true);
           return;
         }
         if (currentRevision !== requestRevisionRef.current) return;
         const parsed = parseParticipantResult(payload);
-        if (!parsed) return;
+        if (!parsed) {
+          setRefreshError(true);
+          return;
+        }
         setAuthorized(true);
         setResult(parsed);
+        setRefreshError(false);
       } catch {
-        // Keep the last confirmed result view when a refresh fails.
+        if (currentRevision === requestRevisionRef.current) setRefreshError(true);
       } finally {
         if (inFlightRequestRef.current === requestId) {
           inFlightRequestRef.current = null;
@@ -114,10 +124,7 @@ export default function ResultsPanel({
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-      <section
-        aria-busy={refreshing}
-        className="rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10"
-      >
+      <section className="rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10">
         <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
         {!authorized ? (
           <>
@@ -222,17 +229,24 @@ export default function ResultsPanel({
             </Link>
           </>
         ) : (
-          <div role="status" aria-live="polite">
-            <h1 className="text-3xl font-bold tracking-tight">回答済み</h1>
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">
+              {result.state === "waiting" ? "結果はまだ公開されていません" : "結果を確認できません"}
+            </h1>
           </div>
         )}
+        {refreshError ? (
+          <p role="alert" className="mt-4 text-sm text-error">
+            結果を更新できませんでした。通信状況を確認して、もう一度お試しください。
+          </p>
+        ) : null}
         <Button
           variant="outline"
           onClick={() => void refresh(true)}
           disabled={refreshing}
           className="mt-6 self-start"
         >
-          {manuallyRefreshing ? "更新中…" : "結果を再読み込み"}
+          結果を再読み込み
         </Button>
       </section>
       {manuallyRefreshing ? (

@@ -56,12 +56,10 @@ test("refresh can be activated with Space from the safe state and blocks repeats
   await page.keyboard.press("Space");
   await refreshStarted;
 
-  const updatingButton = page.getByRole("button", { name: "更新中…" });
-  await expect(updatingButton).toBeDisabled();
-  await expect(updatingButton).toHaveAccessibleName("更新中…");
+  await expect(refresh).toBeDisabled();
+  await expect(refresh).toHaveAccessibleName("結果を再読み込み");
   await expect(page.getByRole("status")).toHaveCount(1);
   await expect(page.getByRole("status")).toHaveText("更新中…");
-  await expect(page.locator("main > section")).toHaveAttribute("aria-busy", "true");
   expect(requests).toBe(1);
 
   const focusBeforeRepeat = await page.evaluate(() => {

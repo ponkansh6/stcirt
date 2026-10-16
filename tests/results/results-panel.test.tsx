@@ -179,7 +179,9 @@ describe("ResultsPanel", () => {
       secondResponse.resolve({ ok: true, status: 200, json: async () => ({ state: "waiting" }) });
       await secondResponse.promise;
     });
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("回答済み"));
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+    );
     expect(screen.queryByText("99位")).not.toBeInTheDocument();
   });
 
@@ -227,7 +229,7 @@ describe("ResultsPanel", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("removes rank and score and shows 回答済み when a refresh observes that results are private", async () => {
+  it("removes rank and score and explains that results are not published when private", async () => {
     mockPoll({ state: "waiting" });
 
     render(<ResultsPanel initial={visibleResult} />);
@@ -242,7 +244,9 @@ describe("ResultsPanel", () => {
 
     expect(fetch).not.toHaveBeenCalled();
     setVisibility("visible");
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("回答済み"));
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+    );
     expect(screen.queryByText("2位")).not.toBeInTheDocument();
     expect(screen.queryByText("1.5点")).not.toBeInTheDocument();
     expect(screen.queryByText("最初の問題")).not.toBeInTheDocument();
@@ -296,7 +300,7 @@ describe("ResultsPanel", () => {
       expect(screen.getByText("1.5点")).toBeVisible();
       expect(screen.getByText("最初の問題")).toBeVisible();
       expect(screen.getByText("選択した回答")).toBeVisible();
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
       expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
     },
   );
@@ -319,9 +323,8 @@ describe("ResultsPanel", () => {
 
     render(<ResultsPanel initial={{ state: "unavailable" }} />);
 
-    expect(screen.getByRole("heading", { name: "回答済み" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "結果を確認できません" })).toBeVisible();
     expect(screen.queryByText("0点")).not.toBeInTheDocument();
-    expect(screen.queryByText(/結果.*(確認|準備|公開)/)).not.toBeInTheDocument();
   });
 
   it.each([
@@ -342,8 +345,7 @@ describe("ResultsPanel", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "回答済み" })).toBeVisible();
-    expect(screen.queryByText(/結果.*(確認|準備|公開)/)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "結果を確認できません" })).toBeVisible();
     expect(screen.queryByText("2位")).not.toBeInTheDocument();
   });
 
@@ -356,7 +358,9 @@ describe("ResultsPanel", () => {
     expect(screen.getByRole("link", { name: "回答画面へ戻る" })).toHaveAttribute("href", "/answer");
     setVisibility("visible");
 
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("回答済み"));
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+    );
     expect(screen.queryByText("参加者セッションを確認できません")).not.toBeInTheDocument();
   });
 
@@ -391,7 +395,9 @@ describe("ResultsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "結果を再読み込み" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("回答済み"));
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+    );
     expect(screen.queryByText("2位")).not.toBeInTheDocument();
     expect(screen.queryByText("最初の問題")).not.toBeInTheDocument();
   });
@@ -409,20 +415,29 @@ describe("ResultsPanel", () => {
     setVisibility("visible");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(screen.getByText("2位")).toBeVisible();
+    expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
 
     setVisibility("visible");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(screen.getByText("2位")).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "回答済み" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
+    expect(
+      screen.queryByRole("heading", { name: "結果はまだ公開されていません" }),
+    ).not.toBeInTheDocument();
     expect(unavailableJson).not.toHaveBeenCalled();
 
     setVisibility("visible");
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("回答済み"));
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+    );
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("keeps the confirmed result and exposes retry after a current request rejects", async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new Error("network unavailable"));
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ state: "waiting" }) });
     vi.stubGlobal("fetch", fetchMock);
     render(<ResultsPanel initial={visibleResult} />);
 
@@ -431,9 +446,15 @@ describe("ResultsPanel", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     expect(screen.getByText("2位")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
     expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
-    expect(fetchMock).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: "結果を再読み込み" }));
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("announces a manual refresh once and applies the new result when it resolves", async () => {
@@ -445,13 +466,13 @@ describe("ResultsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "結果を再読み込み" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    const button = screen.getByRole("button", { name: "更新中…" });
+    const button = screen.getByRole("button", { name: "結果を再読み込み" });
     expect(button).toBeDisabled();
     expect(screen.getByText("2位")).toBeVisible();
     const refreshStatus = screen.getByRole("status");
     expect(refreshStatus).toHaveTextContent("更新中…");
     expect(refreshStatus.closest("[aria-busy='true']")).toBeNull();
-    expect(screen.getAllByText("更新中…")).toHaveLength(2);
+    expect(screen.getAllByText("更新中…")).toHaveLength(1);
 
     await act(async () => {
       response.resolve({
@@ -493,7 +514,7 @@ describe("ResultsPanel", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(screen.getByRole("button", { name: "更新中…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeDisabled();
 
     await act(async () => {
       firstResponse.resolve({ ok: true, status: 200, json: async () => visibleResult });
@@ -518,7 +539,7 @@ describe("ResultsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "結果を再読み込み" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    expect(screen.getByRole("button", { name: "更新中…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent("更新中…");
     expect(screen.getByText("2位")).toBeVisible();
 
@@ -579,7 +600,7 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("1.5点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
     expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
   });
 
@@ -595,7 +616,7 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("1.5点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
     expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
   });
 
@@ -656,7 +677,7 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("1.5点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
     expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
   });
 });

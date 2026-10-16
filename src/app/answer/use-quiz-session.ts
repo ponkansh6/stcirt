@@ -58,6 +58,8 @@ export type AssistedScreen = "closed" | "login" | "active";
 
 const ASSISTED_MODE_KEY = "stcirt-answer-scope";
 const ASSISTED_DRAFT_KEY = "stcirt-assisted-answer-draft";
+const ASSISTED_DRAFT_SCHEMA_VERSION = 1;
+const ASSISTED_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 
 type BatchAnswer =
   | { questionId: number; selectedIndex: number }
@@ -190,6 +192,9 @@ function restoreSavedAnswers(
 }
 
 type AssistedDraft = {
+  schemaVersion: number;
+  expiresAt: number;
+  participantId: number;
   quizzes: LoadedQuiz[];
   selections: Record<number, number>;
   freeResponses: Record<number, string>;
@@ -198,42 +203,120 @@ type AssistedDraft = {
   revision: number;
 };
 
-function readAssistedDraft(): AssistedDraft | null {
+function clearAssistedDraft() {
   try {
-    const value: unknown = JSON.parse(window.sessionStorage.getItem(ASSISTED_DRAFT_KEY) ?? "null");
-    if (!value || typeof value !== "object") return null;
+    window.sessionStorage.removeItem(ASSISTED_DRAFT_KEY);
+  } catch {
+    // Storage may be unavailable; the draft then cannot be resumed.
+  }
+}
+
+function readAssistedDraft(expectedParticipantId: number): AssistedDraft | null {
+  try {
+    const raw = window.sessionStorage.getItem(ASSISTED_DRAFT_KEY);
+    if (raw === null) return null;
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      clearAssistedDraft();
+      return null;
+    }
     const draft = value as Partial<AssistedDraft>;
     if (
+      draft.schemaVersion !== ASSISTED_DRAFT_SCHEMA_VERSION ||
+      !Number.isFinite(draft.expiresAt) ||
+      draft.expiresAt! <= Date.now() ||
+      !Number.isInteger(draft.participantId) ||
+      draft.participantId !== expectedParticipantId ||
       !Array.isArray(draft.quizzes) ||
       draft.quizzes.length !== EXAM_SIZE ||
       !draft.selections ||
       typeof draft.selections !== "object" ||
+      Array.isArray(draft.selections) ||
       !draft.freeResponses ||
       typeof draft.freeResponses !== "object" ||
+      Array.isArray(draft.freeResponses) ||
       (draft.legacyAnswerIds !== undefined &&
         (!Array.isArray(draft.legacyAnswerIds) ||
           draft.legacyAnswerIds.some((id) => !Number.isInteger(id) || id <= 0))) ||
       typeof draft.submissionId !== "string" ||
-      !Number.isInteger(draft.revision)
-    )
+      draft.submissionId.length === 0 ||
+      !Number.isInteger(draft.revision) ||
+      draft.revision! < 0
+    ) {
+      clearAssistedDraft();
       return null;
+    }
     const ids = draft.quizzes.map(({ question }) => question.id);
     if (
       new Set(ids).size !== EXAM_SIZE ||
       ids.some((id, index) => index > 0 && id <= ids[index - 1]!) ||
       draft.quizzes.some(
         ({ question, shuffled }) =>
-          !question ||
+          !Number.isInteger(question.id) ||
+          question.id <= 0 ||
+          typeof question.question !== "string" ||
+          !Array.isArray(question.choices) ||
+          question.choices.some((choice) => typeof choice !== "string") ||
+          (question.answerType !== "selected" && question.answerType !== "freeText") ||
+          (question.answerType === "selected" && question.choices.length === 0) ||
+          (question.answerType === "freeText" && question.choices.length !== 0) ||
           !shuffled ||
+          !Array.isArray(shuffled.choices) ||
+          shuffled.choices.length !== question.choices.length ||
+          shuffled.choices.some((choice) => typeof choice !== "string") ||
+          new Set(question.choices).size !== question.choices.length ||
+          new Set(shuffled.choices).size !== shuffled.choices.length ||
+          !question.choices.every((choice) => shuffled.choices.includes(choice)) ||
           !Array.isArray(shuffled.choiceIndices) ||
           shuffled.choiceIndices.length !== question.choices.length ||
-          new Set(shuffled.choiceIndices).size !== shuffled.choiceIndices.length,
-      )
-    )
+          new Set(shuffled.choiceIndices).size !== shuffled.choiceIndices.length ||
+          shuffled.choiceIndices.some(
+            (index, displayIndex) =>
+              !Number.isInteger(index) ||
+              index < 0 ||
+              index >= question.choices.length ||
+              shuffled.choices[displayIndex] !== question.choices[index],
+          ),
+      ) ||
+      Object.entries(draft.selections).some(([questionId, index]) => {
+        const quiz = draft.quizzes!.find(({ question }) => question.id === Number(questionId));
+        return (
+          !quiz ||
+          !Number.isInteger(index) ||
+          index < 0 ||
+          index >= quiz.shuffled.choiceIndices.length
+        );
+      }) ||
+      Object.entries(draft.freeResponses).some(
+        ([questionId, response]) =>
+          !ids.includes(Number(questionId)) ||
+          typeof response !== "string" ||
+          response.length > 1000,
+      ) ||
+      (draft.legacyAnswerIds ?? []).some((id) => !ids.includes(id))
+    ) {
+      clearAssistedDraft();
       return null;
+    }
     return { ...draft, legacyAnswerIds: draft.legacyAnswerIds ?? [] } as AssistedDraft;
   } catch {
+    clearAssistedDraft();
     return null;
+  }
+}
+
+function writeAssistedDraft(draft: Omit<AssistedDraft, "schemaVersion" | "expiresAt">) {
+  try {
+    window.sessionStorage.setItem(
+      ASSISTED_DRAFT_KEY,
+      JSON.stringify({
+        ...draft,
+        schemaVersion: ASSISTED_DRAFT_SCHEMA_VERSION,
+        expiresAt: Date.now() + ASSISTED_DRAFT_TTL_MS,
+      } satisfies AssistedDraft),
+    );
+  } catch {
+    // Storage may be unavailable; in-memory answers remain usable for this visit.
   }
 }
 
@@ -276,7 +359,9 @@ export function useQuizSession() {
   const returnToOwnerRef = useRef<((afterSave?: boolean) => void) | null>(null);
   const ownerReturnAfterAssistedSaveRef = useRef(false);
   const assistedRequestRef = useRef(false);
+  const assistedParticipantIdRef = useRef<number | null>(null);
   const answerModeRef = useRef<AnswerMode>("owner");
+  assistedParticipantIdRef.current = assistedParticipant?.participant?.id ?? null;
   answerModeRef.current = answerMode;
   phaseRef.current = phase;
   accessRef.current = access;
@@ -294,13 +379,26 @@ export function useQuizSession() {
         const savedMode = window.sessionStorage.getItem(ASSISTED_MODE_KEY);
         let initialMode: AnswerMode = savedMode === "assisted" ? "assisted" : "owner";
         const participant = await fetchParticipantSession();
+        let reauthenticationRequired = false;
+        if (!participant) {
+          initialMode = "owner";
+          window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
+          clearAssistedDraft();
+        }
         let assisted: AssistedParticipantState | null = null;
         if (participant && initialMode === "assisted") {
           try {
             assisted = await fetchAssistedParticipant();
-            if (!assisted.participant) initialMode = "owner";
-          } catch {
+            if (!assisted.participant) {
+              initialMode = "owner";
+              clearAssistedDraft();
+            }
+          } catch (error) {
             initialMode = "owner";
+            if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+              clearAssistedDraft();
+              reauthenticationRequired = error.status === 401;
+            }
           }
         }
         if (!mountedRef.current) return;
@@ -310,8 +408,18 @@ export function useQuizSession() {
         setAssistedScreen(initialMode === "assisted" ? "active" : "closed");
         setAssistedParticipant(assisted);
         if (initialMode === "owner") window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
-        setAccess(participant ? { kind: "ready", participant } : { kind: "login" });
-      } catch {
+        setAccess(
+          participant && reauthenticationRequired
+            ? { kind: "reauthentication", participant }
+            : participant
+              ? { kind: "ready", participant }
+              : { kind: "login" },
+        );
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
+          clearAssistedDraft();
+        }
         if (mountedRef.current) {
           setAccess({
             kind: "login",
@@ -390,6 +498,7 @@ export function useQuizSession() {
       participant: Participant,
       scope: AnswerScope = answerModeRef.current,
       editAssistedSubmission = false,
+      assistedParticipantId?: number,
     ) => {
       if (busyRef.current || checkingSubmissionRef.current) return;
       const sessionEpoch = sessionEpochRef.current;
@@ -398,6 +507,8 @@ export function useQuizSession() {
       if (!resumingDraft) preserveDraftOnSavedRefreshRef.current = false;
       checkingSubmissionRef.current = true;
       resolvingParticipantIdRef.current = participant.id;
+      const draftParticipantId =
+        assistedParticipantId ?? assistedParticipantIdRef.current ?? undefined;
       setAccess({ kind: "ready", participant });
       setPhase({ kind: "checking-submission" });
       let returnOwnerAfterReload = false;
@@ -416,7 +527,10 @@ export function useQuizSession() {
           if (scope === "owner") ownerReturnAfterAssistedSaveRef.current = false;
           setRestoreError(null);
           if (scope === "assisted") {
-            const draft = readAssistedDraft();
+            const draft =
+              scope === "assisted" && draftParticipantId
+                ? readAssistedDraft(draftParticipantId)
+                : /* v8 ignore next */ null; // Assisted mode requires its linked participant.
             if (draft) {
               reloadedAssistedRef.current = false;
               quizzesRef.current = draft.quizzes;
@@ -483,7 +597,10 @@ export function useQuizSession() {
         if (resumingDraft) preserveDraftOnSavedRefreshRef.current = false;
 
         if (scope === "assisted") {
-          const draft = readAssistedDraft();
+          const draft =
+            scope === "assisted" && draftParticipantId
+              ? readAssistedDraft(draftParticipantId)
+              : /* v8 ignore next */ null; // Assisted mode requires its linked participant.
           if (
             draft &&
             draft.submissionId === latest.submissionId &&
@@ -514,7 +631,7 @@ export function useQuizSession() {
 
         if (scope === "assisted" && reloadedAssistedRef.current) {
           reloadedAssistedRef.current = false;
-          window.sessionStorage.removeItem(ASSISTED_DRAFT_KEY);
+          clearAssistedDraft();
           returnOwnerAfterReload = true;
           return;
         }
@@ -575,6 +692,9 @@ export function useQuizSession() {
         }
       } catch (error) {
         if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          clearAssistedDraft();
+        }
         const unauthorized = error instanceof ApiError && error.status === 401;
         if (unauthorized) {
           resolvingParticipantIdRef.current = null;
@@ -620,6 +740,9 @@ export function useQuizSession() {
       })
       .catch((error) => {
         if (!active) return;
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          clearAssistedDraft();
+        }
         setAssistedError(
           error instanceof ApiError && error.status === 401
             ? "参加者セッションの有効期限が切れました。再ログインしてください。"
@@ -645,18 +768,16 @@ export function useQuizSession() {
   }, [resolveParticipant]);
 
   const persistAssistedDraft = useCallback(
-    (currentSubmissionId: string, currentQuizzes: LoadedQuiz[]) => {
-      window.sessionStorage.setItem(
-        ASSISTED_DRAFT_KEY,
-        JSON.stringify({
-          quizzes: currentQuizzes,
-          selections: copyAnsweredSelections(selectionsRef.current),
-          freeResponses: freeResponsesRef.current,
-          legacyAnswerIds: legacyAnswerIdsRef.current,
-          submissionId: currentSubmissionId,
-          revision: revisionRef.current,
-        } satisfies AssistedDraft),
-      );
+    (participantId: number, currentSubmissionId: string, currentQuizzes: LoadedQuiz[]) => {
+      writeAssistedDraft({
+        participantId,
+        quizzes: currentQuizzes,
+        selections: copyAnsweredSelections(selectionsRef.current),
+        freeResponses: freeResponsesRef.current,
+        legacyAnswerIds: legacyAnswerIdsRef.current,
+        submissionId: currentSubmissionId,
+        revision: revisionRef.current,
+      });
     },
     [],
   );
@@ -682,6 +803,7 @@ export function useQuizSession() {
       setAnswerMode("assisted");
       setAssistedScreen("active");
       setAssistedParticipant({ participant, hasSubmission, eligible });
+      assistedParticipantIdRef.current = participant.id;
       setAssistedError(null);
       window.sessionStorage.setItem(ASSISTED_MODE_KEY, "assisted");
       quizzesRef.current = [];
@@ -701,7 +823,12 @@ export function useQuizSession() {
       failedAttemptRef.current = null;
       setRestoreError(null);
       resolvingParticipantIdRef.current = null;
-      await resolveParticipant(current.participant, "assisted", editAssistedSubmission);
+      await resolveParticipant(
+        current.participant,
+        "assisted",
+        editAssistedSubmission,
+        participant.id,
+      );
     },
     [resolveParticipant],
   );
@@ -718,6 +845,9 @@ export function useQuizSession() {
         if (!mountedRef.current) return;
         await activateAssisted(result.participant, result.hasSubmission);
       } catch (error) {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          clearAssistedDraft();
+        }
         if (mountedRef.current) {
           if (error instanceof ApiError && error.status === 401) {
             const current = accessRef.current;
@@ -791,6 +921,15 @@ export function useQuizSession() {
         if (currentAccess.kind === "reauthentication") {
           const sameParticipant = participant.id === currentAccess.participant.id;
           resumeAfterAuthRef.current = sameParticipant;
+          if (!sameParticipant) {
+            window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
+            clearAssistedDraft();
+            assistedParticipantIdRef.current = null;
+            setAssistedParticipant(null);
+            setAssistedScreen("closed");
+            answerModeRef.current = "owner";
+            setAnswerMode("owner");
+          }
           if (ownerReturnAfterAssistedSaveRef.current && !sameParticipant) {
             ownerReturnAfterAssistedSaveRef.current = false;
           }
@@ -841,7 +980,8 @@ export function useQuizSession() {
       await deleteParticipantSession();
       if (!mountedRef.current) return;
       window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
-      window.sessionStorage.removeItem(ASSISTED_DRAFT_KEY);
+      clearAssistedDraft();
+      assistedParticipantIdRef.current = null;
       answerModeRef.current = "owner";
       setAnswerMode("owner");
       setAssistedScreen("closed");
@@ -888,17 +1028,20 @@ export function useQuizSession() {
         Object.values(freeResponsesRef.current).filter((value) => value.trim()).length,
     );
     if (answerModeRef.current === "assisted" && quizzesRef.current.length === EXAM_SIZE) {
-      window.sessionStorage.setItem(
-        ASSISTED_DRAFT_KEY,
-        JSON.stringify({
+      const participantId = assistedParticipantIdRef.current;
+      const currentSubmissionId = submissionIdRef.current;
+      /* v8 ignore if -- Five editable assisted questions are reached only after both IDs are initialized. */
+      if (participantId !== null && currentSubmissionId !== null) {
+        writeAssistedDraft({
+          participantId,
           quizzes: quizzesRef.current,
-          selections: next,
+          selections: copyAnsweredSelections(next),
           freeResponses: freeResponsesRef.current,
           legacyAnswerIds: legacyAnswerIdsRef.current,
-          submissionId: submissionIdRef.current,
+          submissionId: currentSubmissionId,
           revision: revisionRef.current,
-        }),
-      );
+        });
+      }
     }
     setPhase({ kind: "answering" });
   }, []);
@@ -912,17 +1055,20 @@ export function useQuizSession() {
         Object.values(next).filter((entry) => entry.trim()).length,
     );
     if (answerModeRef.current === "assisted" && quizzesRef.current.length === EXAM_SIZE) {
-      window.sessionStorage.setItem(
-        ASSISTED_DRAFT_KEY,
-        JSON.stringify({
+      const participantId = assistedParticipantIdRef.current;
+      const currentSubmissionId = submissionIdRef.current;
+      /* v8 ignore if -- Five editable assisted questions are reached only after both IDs are initialized. */
+      if (participantId !== null && currentSubmissionId !== null) {
+        writeAssistedDraft({
+          participantId,
           quizzes: quizzesRef.current,
-          selections: selectionsRef.current,
+          selections: copyAnsweredSelections(selectionsRef.current),
           freeResponses: next,
           legacyAnswerIds: legacyAnswerIdsRef.current,
-          submissionId: submissionIdRef.current,
+          submissionId: currentSubmissionId,
           revision: revisionRef.current,
-        }),
-      );
+        });
+      }
     }
   }, []);
 
@@ -970,7 +1116,9 @@ export function useQuizSession() {
     const sessionEpoch = sessionEpochRef.current;
     const scope = answerModeRef.current;
     let returnToOwnerAfterSave = false;
-    if (scope === "assisted") persistAssistedDraft(currentSubmissionId, currentQuizzes);
+    if (scope === "assisted" && assistedParticipantIdRef.current !== null) {
+      persistAssistedDraft(assistedParticipantIdRef.current, currentSubmissionId, currentQuizzes);
+    }
     busyRef.current = true;
     setPhase({ kind: "submitting" });
     try {
@@ -1002,7 +1150,7 @@ export function useQuizSession() {
       setPhase({ kind: "complete" });
       setRestoreError(null);
       if (scope === "assisted") {
-        window.sessionStorage.removeItem(ASSISTED_DRAFT_KEY);
+        clearAssistedDraft();
         returnToOwnerAfterSave = true;
       }
     } catch (error) {

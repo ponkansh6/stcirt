@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import { cookies } from "next/headers";
+import Link from "next/link";
 import ResultsPanel from "./results-panel";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
 import {
@@ -15,7 +17,6 @@ export default async function ResultsPage({
 }: {
   searchParams: Promise<{ scope?: string | string[] }>;
 }) {
-  let initial: ParticipantResult | { state: "unauthenticated" } = { state: "waiting" };
   let scopeMode: "owner" | "assisted" | null = "owner";
   try {
     const params = await searchParams;
@@ -25,43 +26,86 @@ export default async function ResultsPage({
     const token = (await cookies()).get(PARTICIPANT_COOKIE)?.value;
     const session = verifyParticipantSession(token);
     if (!session || !(await findParticipantById(session.id))) {
-      initial = { state: "unauthenticated" };
-    } else if (scopeMode === null) {
-      initial = { state: "unavailable" };
-    } else {
-      const scope = await resolveAnswerScope(
-        session.id,
-        scopeMode === "assisted" ? "assisted" : null,
-      );
-      const result =
-        "error" in scope
-          ? { state: "unavailable" as const }
-          : await getParticipantResult(scope.participantId);
-      initial =
-        result.state === "visible"
-          ? {
-              state: "visible",
-              rank: result.rank,
-              score: result.score,
-              questions: result.questions.map(({ position, question, answer }) => ({
-                position,
-                question,
-                answer:
-                  answer.kind === "selected"
-                    ? {
-                        kind: "selected" as const,
-                        value: answer.value,
-                        correctness: answer.correctness,
-                      }
-                    : answer.kind === "freeText"
-                      ? { kind: "freeText" as const, value: answer.value, score: answer.score }
-                      : { kind: answer.kind },
-              })),
-            }
-          : result;
+      return <ResultsPanel initial={{ state: "unauthenticated" }} scope={scopeMode} />;
     }
+    if (scopeMode === null) {
+      return <ResultsPanel initial={{ state: "unavailable" }} scope={scopeMode} />;
+    }
+
+    const scope = await resolveAnswerScope(
+      session.id,
+      scopeMode === "assisted" ? "assisted" : null,
+    );
+    if ("error" in scope) {
+      return <ResultsPanel initial={{ state: "unavailable" }} scope={scopeMode} />;
+    }
+
+    return (
+      <Suspense fallback={<ResultsShell scope={scopeMode} />}>
+        <ResultsContent participantId={scope.participantId} scope={scopeMode} />
+      </Suspense>
+    );
   } catch {
     // Fail closed with neutral content when the server cannot verify the session or visibility.
+    return <ResultsPanel initial={{ state: "waiting" }} scope={scopeMode} />;
   }
-  return <ResultsPanel initial={initial} scope={scopeMode} />;
+}
+
+async function ResultsContent({
+  participantId,
+  scope,
+}: {
+  participantId: number;
+  scope: "owner" | "assisted";
+}) {
+  const result = await getParticipantResult(participantId);
+  const initial: ParticipantResult =
+    result.state === "visible"
+      ? {
+          state: "visible",
+          rank: result.rank,
+          score: result.score,
+          questions: result.questions.map(({ position, question, answer }) => ({
+            position,
+            question,
+            answer:
+              answer.kind === "selected"
+                ? {
+                    kind: "selected" as const,
+                    value: answer.value,
+                    correctness: answer.correctness,
+                  }
+                : answer.kind === "freeText"
+                  ? { kind: "freeText" as const, value: answer.value, score: answer.score }
+                  : { kind: answer.kind },
+          })),
+        }
+      : result;
+
+  return <ResultsPanel initial={initial} scope={scope} />;
+}
+
+function ResultsShell({ scope }: { scope: "owner" | "assisted" }) {
+  return (
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+      <section
+        aria-busy="true"
+        className="min-h-[56rem] rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10"
+      >
+        <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+        <h1 className="text-3xl font-bold tracking-tight">
+          {scope === "assisted" ? "代理回答者の結果" : "あなたの結果"}
+        </h1>
+        <p className="mt-8" role="status" aria-live="polite">
+          結果を読み込んでいます。
+        </p>
+        <p className="mt-4 text-muted">
+          結果が表示されるまで、このページを開いたままお待ちください。
+        </p>
+        <Link className="mt-8 inline-flex font-semibold text-primary underline" href="/answer">
+          回答画面へ戻る
+        </Link>
+      </section>
+    </main>
+  );
 }

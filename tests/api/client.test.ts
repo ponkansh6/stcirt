@@ -88,6 +88,21 @@ describe("api client", () => {
     expect(fetchSpy).toHaveBeenCalledWith("/api/answers/latest", { credentials: "same-origin" });
   });
 
+  it("rejects a malformed successful latest-submission response", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          submission: { submissionId: "not-a-uuid", revision: "bad", answers: [] },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(fetchLatestAnswerSubmission()).rejects.toThrow(
+      "Invalid response schema for fetch latest answer submission",
+    );
+  });
+
   it("uses the assisted answer scope for both loading and saving answers", async () => {
     const fetchSpy = vi
       .spyOn(global, "fetch")

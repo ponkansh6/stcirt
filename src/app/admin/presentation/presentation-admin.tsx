@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import styles from "./presentation-admin.module.css";
 
 type AdminState = {
@@ -189,6 +189,15 @@ export default function PresentationAdmin() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const authenticatedRef = useRef(false);
   const [adminState, setAdminState] = useState<AdminState | null>(null);
+  const publishResultsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const hideResultsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const aggregateButtonRef = useRef<HTMLButtonElement | null>(null);
+  const visibilityFocusHandoff = useRef<{
+    action: "publish" | "hideResults";
+    trigger: HTMLButtonElement;
+    mode: "next" | "retry";
+    refreshComplete: boolean;
+  } | null>(null);
   const refreshSequence = useRef(0);
   const pollAbortController = useRef<AbortController | null>(null);
   const refreshFlight = useRef<Promise<boolean | null> | null>(null);
@@ -198,6 +207,50 @@ export default function PresentationAdmin() {
     authenticatedRef.current = value;
     setAuthenticated(value);
   }, []);
+
+  useEffect(() => {
+    const cancelFocusHandoffIfFocusMoves = (event: FocusEvent) => {
+      const handoff = visibilityFocusHandoff.current;
+      if (
+        handoff &&
+        event.target !== handoff.trigger &&
+        event.target !== document.body &&
+        event.target !== document.documentElement
+      )
+        visibilityFocusHandoff.current = null;
+    };
+    document.addEventListener("focusin", cancelFocusHandoffIfFocusMoves);
+    return () => document.removeEventListener("focusin", cancelFocusHandoffIfFocusMoves);
+  }, []);
+
+  useLayoutEffect(() => {
+    const handoff = visibilityFocusHandoff.current;
+    if (!handoff || !handoff.refreshComplete || busy || !adminState) return;
+
+    const shouldBeVisible =
+      handoff.mode === "next" ? handoff.action === "publish" : handoff.action === "hideResults";
+    if (adminState.participantResultsVisible !== shouldBeVisible) {
+      visibilityFocusHandoff.current = null;
+      return;
+    }
+
+    visibilityFocusHandoff.current = null;
+    const targetButton =
+      handoff.mode === "retry"
+        ? handoff.action === "publish"
+          ? publishResultsButtonRef.current
+          : hideResultsButtonRef.current
+        : shouldBeVisible
+          ? hideResultsButtonRef.current
+          : publishResultsButtonRef.current;
+    if (targetButton && !targetButton.disabled) targetButton.focus({ preventScroll: true });
+    else if (
+      handoff.mode === "next" &&
+      aggregateButtonRef.current &&
+      !aggregateButtonRef.current.disabled
+    )
+      aggregateButtonRef.current.focus({ preventScroll: true });
+  }, [adminState, busy]);
 
   const performRefresh = useCallback(
     async (checkSession = false): Promise<boolean | null> => {
@@ -368,7 +421,16 @@ export default function PresentationAdmin() {
     }
   }
 
-  async function runAction(action: "start" | "publish" | "hideResults" | "aggregate" | "reset") {
+  async function runAction(
+    action: "start" | "publish" | "hideResults" | "aggregate" | "reset",
+    trigger?: HTMLButtonElement,
+  ) {
+    visibilityFocusHandoff.current =
+      (action === "publish" || action === "hideResults") &&
+      trigger &&
+      document.activeElement === trigger
+        ? { action, trigger, mode: "next", refreshComplete: false }
+        : null;
     externalOperationInFlight.current = true;
     setBusy(true);
     setBusyAction(action);
@@ -383,9 +445,14 @@ export default function PresentationAdmin() {
         const summary = await postAction(action);
         if (action === "aggregate") setAggregationResult(summary ?? "unavailable");
       }
-      await refresh();
+      const refreshed = await refresh();
+      if (visibilityFocusHandoff.current) {
+        if (refreshed === true) visibilityFocusHandoff.current.refreshComplete = true;
+        else visibilityFocusHandoff.current = null;
+      }
     } catch (error) {
       if ((error as ApiError).status === 401) {
+        visibilityFocusHandoff.current = null;
         refreshSequence.current += 1;
         pollAbortController.current?.abort();
         updateAuthenticated(false);
@@ -398,11 +465,23 @@ export default function PresentationAdmin() {
             : "操作を反映できませんでした。状態を再確認してから再試行してください。";
         const refreshed = await refresh();
         if (refreshed === true) setMessage(failureMessage);
+        const handoff = visibilityFocusHandoff.current;
+        if (handoff) {
+          if (refreshed === true) {
+            handoff.mode = "retry";
+            handoff.refreshComplete = true;
+          } else visibilityFocusHandoff.current = null;
+        }
       }
     } finally {
       externalOperationInFlight.current = false;
       setBusy(false);
       setBusyAction(null);
+      if (
+        visibilityFocusHandoff.current?.action === action &&
+        !visibilityFocusHandoff.current.refreshComplete
+      )
+        visibilityFocusHandoff.current = null;
     }
   }
 
@@ -463,6 +542,7 @@ export default function PresentationAdmin() {
             <button
               className={styles.secondaryButton}
               type="button"
+              ref={aggregateButtonRef}
               disabled={busy}
               onClick={() => void runAction("aggregate")}
             >
@@ -501,8 +581,9 @@ export default function PresentationAdmin() {
                 <button
                   className={styles.secondaryButton}
                   type="button"
+                  ref={hideResultsButtonRef}
                   disabled={busy}
-                  onClick={() => void runAction("hideResults")}
+                  onClick={(event) => void runAction("hideResults", event.currentTarget)}
                 >
                   {busyAction === "hideResults" ? "非公開にしています…" : "参加者結果を非公開"}
                 </button>
@@ -511,8 +592,9 @@ export default function PresentationAdmin() {
               <button
                 className={styles.secondaryButton}
                 type="button"
+                ref={publishResultsButtonRef}
                 disabled={busy || !adminState.participantResultsReady}
-                onClick={() => void runAction("publish")}
+                onClick={(event) => void runAction("publish", event.currentTarget)}
               >
                 {busyAction === "publish" ? "公開しています…" : "参加者結果を公開"}
               </button>

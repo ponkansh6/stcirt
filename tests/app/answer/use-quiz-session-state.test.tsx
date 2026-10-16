@@ -122,6 +122,9 @@ async function enterOwnerComplete() {
 }
 
 type TestAssistedDraft = {
+  schemaVersion: number;
+  expiresAt: number;
+  participantId: number;
   quizzes: {
     question: ReturnType<typeof question>;
     shuffled: { choices: string[]; choiceIndices: number[] };
@@ -142,6 +145,9 @@ function makeAssistedDraft(overrides: Partial<TestAssistedDraft> = {}): TestAssi
     };
   });
   return {
+    schemaVersion: 1,
+    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    participantId: assistedParticipant.id,
     quizzes,
     selections: { 1: 2 },
     freeResponses: {},
@@ -149,6 +155,23 @@ function makeAssistedDraft(overrides: Partial<TestAssistedDraft> = {}): TestAssi
     submissionId: "00000000-0000-4000-8000-000000000018",
     revision: 2,
     ...overrides,
+  };
+}
+
+function makeCurrentAssistedDraft(): TestAssistedDraft {
+  const draft = makeAssistedDraft();
+  return {
+    ...draft,
+    quizzes: draft.quizzes.map((quiz, index) =>
+      index === 4
+        ? {
+            ...quiz,
+            question: { ...quiz.question, answerType: "freeText" as const, choices: [] },
+            shuffled: { choices: [], choiceIndices: [] },
+          }
+        : quiz,
+    ),
+    freeResponses: { 5: "Q5 response" },
   };
 }
 
@@ -479,6 +502,79 @@ describe("useQuizSession state transitions", () => {
     api.fetchLatestAnswerSubmission.mockRejectedValueOnce(new Error("offline"));
     act(() => hook.result.current.retrySubmissionCheck());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+  });
+
+  it("purges the assisted draft and requests reauthentication when latest-submission lookup returns 401", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem(
+      "stcirt-assisted-answer-draft",
+      JSON.stringify(makeCurrentAssistedDraft()),
+    );
+    api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    api.fetchLatestAnswerSubmission.mockRejectedValueOnce(apiError(401, "expired"));
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
+
+    expect(hook.result.current.phase.kind).toBe("ready");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+  });
+
+  it("purges the assisted draft but keeps latest-submission 403 retryable", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem(
+      "stcirt-assisted-answer-draft",
+      JSON.stringify(makeCurrentAssistedDraft()),
+    );
+    api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    api.fetchLatestAnswerSubmission.mockRejectedValueOnce(apiError(403, "forbidden"));
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+
+    expect(hook.result.current.access).toEqual({ kind: "ready", participant });
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+  });
+
+  it("keeps an assisted draft and blocks attempt startup after a malformed successful lookup", async () => {
+    const draft = makeCurrentAssistedDraft();
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    api.fetchLatestAnswerSubmission.mockRejectedValueOnce(
+      new Error("Invalid response schema for fetch latest answer submission"),
+    );
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+
+    expect(hook.result.current.access).toEqual({ kind: "ready", participant });
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).not.toBeNull();
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    expect(hook.result.current.selections).toEqual(draft.selections);
+    expect(hook.result.current.freeResponses).toEqual(draft.freeResponses);
   });
 
   it("ignores repeated submission-check retries while the lookup is pending", async () => {
@@ -1183,6 +1279,8 @@ describe("useQuizSession state transitions", () => {
 
   it("clears a draft when another participant authenticates after reauthentication", async () => {
     const hook = await enterAnswering();
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", "participant-bound-draft");
     [1, 2, 3, 4, 5].forEach((id) => act(() => hook.result.current.select(id, 0)));
     api.submitAnswerBatch.mockRejectedValueOnce(apiError(401, "expired"));
     await act(async () => hook.result.current.saveAnswers());
@@ -1196,6 +1294,73 @@ describe("useQuizSession state transitions", () => {
       participant: otherParticipant,
     });
     expect(hook.result.current.selections).toEqual({});
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+  });
+
+  it("purges an assisted draft after startup authorization expires, including failed reauthentication", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem(
+      "stcirt-assisted-answer-draft",
+      JSON.stringify(makeAssistedDraft()),
+    );
+    api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAssistedParticipant.mockRejectedValueOnce(apiError(401, "expired"));
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+
+    api.createParticipantSession.mockRejectedValueOnce(apiError(401, "invalid credentials"));
+    await act(async () =>
+      expect(hook.result.current.login("参加者", "0000")).rejects.toThrow("invalid credentials"),
+    );
+    expect(hook.result.current.access).toEqual({ kind: "reauthentication", participant });
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+  });
+
+  it("retains an assisted draft when startup status fails only from a transient network error", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    const draft = makeAssistedDraft();
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAssistedParticipant.mockRejectedValueOnce(new Error("offline"));
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+
+    expect(hook.result.current.answerMode).toBe("owner");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).not.toBeNull();
+  });
+
+  it("purges an assisted draft after an explicit startup 403", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem(
+      "stcirt-assisted-answer-draft",
+      JSON.stringify(makeAssistedDraft()),
+    );
+    api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAssistedParticipant.mockRejectedValueOnce(apiError(403, "forbidden"));
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+
+    expect(hook.result.current.answerMode).toBe("owner");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+  });
+
+  it("purges an assisted draft when no participant session remains", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem(
+      "stcirt-assisted-answer-draft",
+      JSON.stringify(makeAssistedDraft()),
+    );
+    api.fetchParticipantSession.mockResolvedValue(null);
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
+
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
   });
 
   it("starts a name-only assisted answer, saves it in its own scope, edits it, and returns to the owner", async () => {
@@ -1632,7 +1797,15 @@ describe("useQuizSession state transitions", () => {
     for (const id of [2, 3, 4, 5]) act(() => hook.result.current.select(id, 1));
     const storedDraft = JSON.parse(
       window.sessionStorage.getItem("stcirt-assisted-answer-draft")!,
-    ) as { selections: Record<number, number> };
+    ) as {
+      schemaVersion: number;
+      expiresAt: number;
+      participantId: number;
+      selections: Record<number, number>;
+    };
+    expect(storedDraft.schemaVersion).toBe(1);
+    expect(storedDraft.expiresAt).toBeGreaterThan(Date.now());
+    expect(storedDraft.participantId).toBe(assistedParticipant.id);
     expect(storedDraft.selections).toEqual({ 1: 2, 2: 1, 3: 1, 4: 1, 5: 1 });
     api.submitAnswerBatch.mockResolvedValueOnce({ submissionId: draft.submissionId, revision: 3 });
     await act(async () => hook.result.current.saveAnswers());
@@ -1660,6 +1833,46 @@ describe("useQuizSession state transitions", () => {
     expect(hook.result.current.selections).toEqual(draft.selections);
     expect(hook.result.current.submissionId).toBe(draft.submissionId);
   });
+
+  const invalidAssistedDraftCases: ReadonlyArray<readonly [string, () => string]> = [
+    ["expired", (): string => JSON.stringify(makeAssistedDraft({ expiresAt: Date.now() - 1 }))],
+    [
+      "unknown schema version",
+      (): string => JSON.stringify(makeAssistedDraft({ schemaVersion: 99 })),
+    ],
+    [
+      "wrong assisted participant",
+      (): string => JSON.stringify(makeAssistedDraft({ participantId: 999 })),
+    ],
+    ["invalid shape", (): string => JSON.stringify(makeAssistedDraft({ selections: { 1: 99 } }))],
+    [
+      "legacy answer for a question outside the loaded exam",
+      (): string => JSON.stringify(makeAssistedDraft({ legacyAnswerIds: [6] })),
+    ],
+    ["malformed JSON", (): string => "{"],
+  ];
+
+  it.each(invalidAssistedDraftCases)(
+    "purges an %s assisted draft and starts a clean attempt",
+    async (_label: string, makeValue: () => string) => {
+      window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+      window.sessionStorage.setItem("stcirt-assisted-answer-draft", makeValue());
+      api.fetchParticipantSession.mockResolvedValue(participant);
+      api.fetchAssistedParticipant.mockResolvedValue({
+        participant: assistedParticipant,
+        hasSubmission: false,
+        eligible: false,
+      });
+      api.fetchLatestAnswerSubmission.mockResolvedValue(null);
+
+      const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+
+      expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+      expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
+      expect(hook.result.current.selections).toEqual({});
+    },
+  );
 
   it("counts saved free-text responses when restoring an assisted draft", async () => {
     const base = makeAssistedDraft();
@@ -1992,6 +2205,52 @@ describe("useQuizSession state transitions", () => {
         }),
       ),
     ],
+    [
+      "selected question without choices",
+      JSON.stringify(
+        makeAssistedDraft({
+          quizzes: makeAssistedDraft().quizzes.map((quiz, index) =>
+            index === 0
+              ? {
+                  ...quiz,
+                  question: { ...quiz.question, choices: [] },
+                  shuffled: { choices: [], choiceIndices: [] },
+                }
+              : quiz,
+          ),
+        }),
+      ),
+    ],
+    [
+      "duplicate shuffled choice",
+      JSON.stringify(
+        makeAssistedDraft({
+          quizzes: makeAssistedDraft().quizzes.map((quiz, index) =>
+            index === 0
+              ? {
+                  ...quiz,
+                  shuffled: { choices: ["A", "A", "C", "D"], choiceIndices: [0, 1, 2, 3] },
+                }
+              : quiz,
+          ),
+        }),
+      ),
+    ],
+    [
+      "different shuffled choice set",
+      JSON.stringify(
+        makeAssistedDraft({
+          quizzes: makeAssistedDraft().quizzes.map((quiz, index) =>
+            index === 0
+              ? {
+                  ...quiz,
+                  shuffled: { choices: ["A", "B", "C", "X"], choiceIndices: [0, 1, 2, 3] },
+                }
+              : quiz,
+          ),
+        }),
+      ),
+    ],
   ])("ignores corrupted assisted draft data: %s", async (_label, rawDraft) => {
     window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
     window.sessionStorage.setItem("stcirt-assisted-answer-draft", String(rawDraft));
@@ -2017,6 +2276,34 @@ describe("useQuizSession state transitions", () => {
 
     await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
     expect(hook.result.current.assistedError).toContain("セッションの有効期限が切れました");
+  });
+
+  it("clears an assisted draft when the completed owner's assisted-status check returns 403", async () => {
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", "stale draft");
+    api.fetchAssistedParticipant.mockRejectedValueOnce(apiError(403, "forbidden"));
+
+    const hook = await enterOwnerComplete();
+
+    await waitFor(() =>
+      expect(hook.result.current.assistedError).toContain("確認できませんでした"),
+    );
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(hook.result.current.access).toEqual({ kind: "ready", participant });
+  });
+
+  it("clears an assisted draft when assisted registration returns 403", async () => {
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", "stale draft");
+    const hook = await enterOwnerComplete();
+    api.createAssistedParticipant.mockRejectedValueOnce(apiError(403, "forbidden"));
+    act(() => hook.result.current.openAssistedLogin());
+
+    await act(async () => {
+      await expect(hook.result.current.startAssisted("代理回答者")).rejects.toThrow("forbidden");
+    });
+
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(hook.result.current.access).toEqual({ kind: "ready", participant });
+    expect(hook.result.current.assistedScreen).toBe("login");
   });
 
   it("keeps the assisted sign-in screen visible and requests owner reauthentication after a 401", async () => {
@@ -2048,6 +2335,37 @@ describe("useQuizSession state transitions", () => {
 
     expect(hook.result.current.assistedError).toBe("代理回答を開始できませんでした。");
     expect(hook.result.current.assistedScreen).toBe("login");
+  });
+
+  it.each([401, 403])(
+    "purges an assisted draft when participant-session lookup returns %i",
+    async (status) => {
+      window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+      window.sessionStorage.setItem(
+        "stcirt-assisted-answer-draft",
+        JSON.stringify(makeAssistedDraft()),
+      );
+      api.fetchParticipantSession.mockRejectedValueOnce(apiError(status, "unauthorized"));
+
+      const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
+
+      expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+      expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    },
+  );
+
+  it("retains an assisted draft when participant-session lookup fails transiently", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    const draft = makeAssistedDraft();
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchParticipantSession.mockRejectedValueOnce(new Error("offline"));
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
+
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).not.toBeNull();
   });
 
   it("clears the assisted login error when returning to the completed owner answer", async () => {

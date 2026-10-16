@@ -940,17 +940,19 @@ export default function QuizRunner() {
           )}
         </header>
 
-        {(phase.kind === "answering" || isSubmitting || isRefreshing) && !authExpired && (
-          <p
-            className={`mb-5 rounded-lg border p-4 text-sm font-medium ${ui.statusRole === "alert" ? "border-error/50 bg-error/10 text-error" : "border-border bg-surface-2"}`}
-            role={ui.statusRole}
-            aria-live={ui.statusRole === "alert" ? "assertive" : "polite"}
-            aria-busy={ui.busy || undefined}
-          >
-            <strong>{ui.status}</strong>
-            <span className="mt-1 block leading-relaxed">{ui.message}</span>
-          </p>
-        )}
+        {(phase.kind === "answering" || isSubmitting || isRefreshing) &&
+          !authExpired &&
+          (ui.busy || ui.statusRole === "alert") && (
+            <p
+              className={`mb-5 rounded-lg border p-4 text-sm font-medium ${ui.statusRole === "alert" ? "border-error/50 bg-error/10 text-error" : "border-border bg-surface-2"}`}
+              role={ui.statusRole}
+              aria-live={ui.statusRole === "alert" ? "assertive" : "polite"}
+              aria-busy={ui.busy || undefined}
+            >
+              <strong>{ui.status}</strong>
+              <span className="mt-1 block leading-relaxed">{ui.message}</span>
+            </p>
+          )}
 
         {authExpired && (
           <section
@@ -1083,7 +1085,7 @@ export default function QuizRunner() {
               {answerer.name}さん（{answerer.kind}）
             </dd>
           </dl>
-          <p className="mt-4 font-semibold" aria-live="polite">
+          <p className="mt-4 font-semibold">
             {unanswered.length === 0 ? "全5問に回答しました。" : `未回答 ${unanswered.length}問`}
           </p>
           {ui.statusRole === "status" && !ui.busy && !authExpired && (

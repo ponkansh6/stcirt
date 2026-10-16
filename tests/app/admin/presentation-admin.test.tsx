@@ -1141,6 +1141,139 @@ describe("presentation admin console", () => {
     );
   });
 
+  it("hands focus between publish and hide after visibility state refresh, without initial autofocus", async () => {
+    let participantResultsVisible = false;
+    const actions: { path: string; body: unknown }[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/participant-results") {
+        const body = JSON.parse(String(init?.body)) as { visible: boolean };
+        participantResultsVisible = body.visible;
+        actions.push({ path, body });
+        return response(200, { visible: participantResultsVisible });
+      }
+      if (path === "/api/admin/presentation")
+        return response(200, {
+          state: "finished",
+          snapshotRevision: 1,
+          questionIndex: 5,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible,
+          participantResultsReady: true,
+        });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+
+    const publishButton = await screen.findByRole("button", { name: "参加者結果を公開" });
+    expect(document.activeElement).not.toBe(publishButton);
+
+    await user.click(publishButton);
+    const hideButton = await screen.findByRole("button", { name: "参加者結果を非公開" });
+    await waitFor(() => expect(document.activeElement).toBe(hideButton));
+
+    await user.click(hideButton);
+    const nextPublishButton = await screen.findByRole("button", { name: "参加者結果を公開" });
+    await waitFor(() => expect(document.activeElement).toBe(nextPublishButton));
+    expect(actions).toEqual([
+      { path: "/api/admin/participant-results", body: { visible: true } },
+      { path: "/api/admin/participant-results", body: { visible: false } },
+    ]);
+  });
+
+  it("returns focus to the same hide action after a retryable hide failure", async () => {
+    apiFetch({
+      state: {
+        state: "finished",
+        questionIndex: 5,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: true,
+        participantResultsReady: true,
+      },
+      publishStatus: 503,
+    });
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    const hide = await screen.findByRole("button", { name: "参加者結果を非公開" });
+
+    await user.click(hide);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("再試行してください");
+    await waitFor(() => expect(document.activeElement).toBe(hide));
+  });
+
+  it("does not move retry focus to aggregate when a failed publish becomes unavailable", async () => {
+    let stateReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/participant-results") return response(503, {});
+      if (path === "/api/admin/presentation") {
+        stateReads += 1;
+        return response(200, {
+          state: "finished",
+          snapshotRevision: 1,
+          questionIndex: 5,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: stateReads === 1,
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    const publish = await screen.findByRole("button", { name: "参加者結果を公開" });
+
+    await user.click(publish);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("再試行してください");
+    expect(screen.getByRole("button", { name: "参加者結果を公開" })).toBeDisabled();
+    await waitFor(() => expect(stateReads).toBe(2));
+    expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "集計" }));
+  });
+
+  it("focuses aggregate when hiding leaves publish unavailable", async () => {
+    let participantResultsVisible = true;
+    let participantResultsReady = true;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/participant-results") {
+        participantResultsVisible = false;
+        participantResultsReady = false;
+        return response(200, { visible: false });
+      }
+      if (path === "/api/admin/presentation")
+        return response(200, {
+          state: "finished",
+          snapshotRevision: 1,
+          questionIndex: 5,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible,
+          participantResultsReady,
+        });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    await user.click(await screen.findByRole("button", { name: "参加者結果を非公開" }));
+
+    expect(await screen.findByRole("button", { name: "参加者結果を公開" })).toBeDisabled();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "集計" })),
+    );
+  });
+
   it("keeps failed publication retryable and clears controls after a 401", async () => {
     const api = apiFetch({
       state: {
@@ -1159,6 +1292,8 @@ describe("presentation admin console", () => {
     await user.click(publish);
     expect(await screen.findByRole("alert")).toHaveTextContent("再試行してください");
     expect(screen.getByRole("button", { name: "参加者結果を公開" })).toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "参加者結果を公開" }));
+    expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "集計" }));
     expect(api.actions).toHaveLength(1);
 
     api.fetchMock.mockImplementation(async (input) => {
@@ -1175,6 +1310,169 @@ describe("presentation admin console", () => {
     });
     await user.click(screen.getByRole("button", { name: "参加者結果を公開" }));
     expect(await screen.findByLabelText("管理者 PIN")).toBeInTheDocument();
+  });
+
+  it("does not restore retry focus after focus moves during a pending publication", async () => {
+    let releasePublish!: () => void;
+    let signalPublishStarted!: () => void;
+    const publishStarted = new Promise<void>((resolve) => {
+      signalPublishStarted = resolve;
+    });
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/participant-results") {
+        signalPublishStarted();
+        await publishGate;
+        return response(503, {});
+      }
+      if (path === "/api/admin/presentation")
+        return response(200, {
+          state: "finished",
+          snapshotRevision: 1,
+          questionIndex: 5,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: true,
+        });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    const publish = await screen.findByRole("button", { name: "参加者結果を公開" });
+    await user.click(publish);
+    await publishStarted;
+
+    const projectionButton = screen.getByRole("button", {
+      name: "投影画面を開く / 投影タブへ戻る",
+    });
+    projectionButton.focus();
+    expect(document.activeElement).toBe(projectionButton);
+
+    releasePublish();
+    expect(await screen.findByRole("alert")).toHaveTextContent("再試行してください");
+    await waitFor(() => expect(document.activeElement).toBe(projectionButton));
+  });
+
+  it("does not hand off focus when the visibility refresh fails", async () => {
+    let stateReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/participant-results") return response(200, { visible: true });
+      if (path === "/api/admin/presentation") {
+        stateReads += 1;
+        if (stateReads > 1) return response(503, {});
+        return response(200, {
+          state: "finished",
+          snapshotRevision: 1,
+          questionIndex: 5,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: true,
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    await user.click(await screen.findByRole("button", { name: "参加者結果を公開" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("自動で再試行しています");
+    expect(screen.queryByRole("button", { name: "参加者結果を非公開" })).not.toBeInTheDocument();
+    expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "集計" }));
+  });
+
+  it("does not hand off focus when visibility succeeds but the refresh expires the session", async () => {
+    let publishPosted = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/participant-results") {
+        publishPosted = true;
+        return response(200, { visible: true });
+      }
+      if (path === "/api/admin/presentation" && publishPosted) return response(401, {});
+      if (path === "/api/admin/presentation")
+        return response(200, {
+          state: "finished",
+          snapshotRevision: 1,
+          questionIndex: 5,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: true,
+        });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    await user.click(await screen.findByRole("button", { name: "参加者結果を公開" }));
+
+    expect(await screen.findByLabelText("管理者 PIN")).toBeInTheDocument();
+  });
+
+  it("clears visibility focus intent when a pending refresh expires authentication", async () => {
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    let stateReads = 0;
+    let finishVisibleRefresh: ((result: Response) => void) | undefined;
+    let publicationRequests = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/admin/session")
+        return Promise.resolve(response(200, { authenticated: true }));
+      if (path === "/api/admin/participant-results") {
+        publicationRequests += 1;
+        return Promise.resolve(response(200, { visible: true }));
+      }
+      if (path === "/api/admin/presentation") {
+        stateReads += 1;
+        if (stateReads === 2)
+          return new Promise<Response>((resolve) => {
+            finishVisibleRefresh = resolve;
+          });
+        return Promise.resolve(
+          stateReads > 2
+            ? response(401, {})
+            : response(200, {
+                state: "finished",
+                snapshotRevision: 1,
+                questionIndex: 5,
+                questionCount: 5,
+                projectionHidden: false,
+                participantResultsVisible: false,
+                participantResultsReady: true,
+              }),
+        );
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    try {
+      render(<PresentationAdmin />);
+      const publish = await screen.findByRole("button", { name: "参加者結果を公開" });
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      await waitFor(() => expect(stateReads).toBe(2));
+      await user.click(publish);
+
+      await act(async () => finishVisibleRefresh?.(response(401, {})));
+      expect(await screen.findByLabelText("管理者 PIN")).toBeInTheDocument();
+      expect(publicationRequests).toBe(0);
+    } finally {
+      if (originalVisibility)
+        Object.defineProperty(document, "visibilityState", originalVisibility);
+      else Reflect.deleteProperty(document, "visibilityState");
+    }
   });
 
   it("keeps publication retryable when the failed response has invalid JSON", async () => {

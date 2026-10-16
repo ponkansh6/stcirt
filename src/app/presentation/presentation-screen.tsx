@@ -850,6 +850,7 @@ export default function PresentationScreen({
       if (!currentControls || !currentDeck || mutationInFlight.current) return;
       const generation = ++mutationGeneration.current;
       mutationInFlight.current = true;
+      let rollbackProjection: ProjectionData | null = null;
       try {
         // Let any active poll finish before starting the mutation. Its result is
         // authoritative for the cursor used by this action.
@@ -857,6 +858,7 @@ export default function PresentationScreen({
         const currentControls = adminControlsRef.current;
         const currentDeck = presenterDeckRef.current;
         if (!currentControls || !currentDeck) return;
+        rollbackProjection = projectionForControl(currentDeck, currentControls);
         adminSequence.current += 1;
         const currentSlideIndex = currentDeck.slides.findIndex(
           (slide) => slide === slideForControl(currentDeck, currentControls),
@@ -893,8 +895,11 @@ export default function PresentationScreen({
         const status = (error as { status?: number })?.status;
         if (status === 401) recoverUnauthorized();
         if (status !== 401) {
-          // A failed or malformed response may follow a committed POST. Keep the
-          // current view until authoritative controls/deck state can be fetched.
+          // Never leave an unconfirmed optimistic slide visible while reconciling.
+          // The poll flight handles read failures; controls and deck are rechecked after it settles.
+          // Their aligned cursor yields a rollback projection before any mutation can fail.
+          /* v8 ignore else */
+          if (rollbackProjection) setData(rollbackProjection);
           applyAdminControls(null);
           try {
             await refreshAdmin();
@@ -1071,6 +1076,20 @@ export default function PresentationScreen({
     (deckSyncPending ||
       deckLoadError ||
       (adminControls !== null && adminControls.state !== "not_started" && presenterDeck === null));
+  const slideAnnouncement = (() => {
+    if (loadingPresenterDeck || !data) return "";
+    if (data.state === "question")
+      return data.question ? `第${data.question.ordinal}問` : "問題スライド";
+    if (data.state === "answer")
+      return data.question ? `第${data.question.ordinal}問の解説` : "解説スライド";
+    if (data.state === "third" || data.state === "second" || data.state === "first")
+      return `${rankTitle[data.state]}を発表します`;
+    if (data.state === "standby") return "休憩中";
+    if (data.state === "opening") return "発表を開始しました";
+    if (data.state === "podium_preview") return "結果発表を開始します";
+    if (data.state === "finished") return "発表が終了しました";
+    return "";
+  })();
 
   useLayoutEffect(() => {
     const viewport = fitViewportRef.current!;
@@ -1168,15 +1187,21 @@ export default function PresentationScreen({
       className={`${styles.screen} ${showFullscreenButton ? styles.screenWithFullscreenButton : ""}`}
       tabIndex={0}
       aria-label="プレゼンテーションスライド"
+      aria-describedby="presentation-keyboard-help"
       onClick={handleSlideClick}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
       onPointerCancel={() => {
         pointerStart.current = null;
       }}
-      aria-live="polite"
-      aria-atomic="true"
     >
+      <span id="presentation-keyboard-help" className={styles.visuallyHidden}>
+        画面にフォーカスして、左右矢印キーで前後のスライドへ移動できます。Enter または Space
+        キーでも次へ進めます。
+      </span>
+      <p className={styles.visuallyHidden} role="status" aria-live="polite" aria-atomic="true">
+        {slideAnnouncement}
+      </p>
       <div className={styles.slideRegion}>
         <div
           className={styles.canvas}
@@ -1215,7 +1240,7 @@ export default function PresentationScreen({
                 style={{ visibility: fit.ready ? "visible" : "hidden" }}
               >
                 {loadingPresenterDeck && (
-                  <section className={styles.waiting} aria-live="polite">
+                  <section className={styles.waiting}>
                     <p className={styles.kicker}>PREPARING PRESENTATION</p>
                     <h1>
                       {deckLoadError
@@ -1368,11 +1393,12 @@ export default function PresentationScreen({
       )}
       {pollError && (
         <p
-          role="status"
+          role="note"
+          aria-live="off"
           className={styles.subtitle}
           style={{ position: "fixed", top: 12, right: 16, zIndex: 40, margin: 0 }}
         >
-          接続を確認しています。自動で再試行します
+          スライドの状態を確認できません。自動で再試行します
         </p>
       )}
     </main>

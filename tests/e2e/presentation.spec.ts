@@ -1553,6 +1553,53 @@ test("rank content is static on every entry and the slide fits the viewport", as
     { width: 480, height: 900 },
   ]) {
     await page.setViewportSize(viewport);
+    await expect
+      .poll(() => page.evaluate(() => window.innerWidth), { timeout: 2_000 })
+      .toBe(viewport.width);
+    let previousLayout: {
+      width: number;
+      height: number;
+      viewportWidth: number;
+      viewportHeight: number;
+      clientWidth: number;
+      clientHeight: number;
+    } | null = null;
+    let stableSamples = 0;
+    await expect
+      .poll(
+        async () => {
+          const layout = await page.getByTestId("presentation-canvas").evaluate((node) => {
+            const rect = node.getBoundingClientRect();
+            return {
+              width: rect.width,
+              height: rect.height,
+              viewportWidth: window.innerWidth,
+              viewportHeight: window.innerHeight,
+              clientWidth: document.documentElement.clientWidth,
+              clientHeight: document.documentElement.clientHeight,
+            };
+          });
+          const viewportMatches =
+            layout.viewportWidth === viewport.width &&
+            Math.abs(layout.clientWidth - viewport.width) <= 1 &&
+            layout.viewportHeight === viewport.height &&
+            Math.abs(layout.clientHeight - viewport.height) <= 1;
+          const fitsViewport =
+            layout.width <= layout.clientWidth + 0.5 && layout.height <= layout.clientHeight + 0.5;
+          const stable =
+            previousLayout !== null &&
+            Math.abs(layout.width - previousLayout.width) < 0.25 &&
+            Math.abs(layout.height - previousLayout.height) < 0.25 &&
+            layout.clientWidth === previousLayout.clientWidth &&
+            layout.clientHeight === previousLayout.clientHeight;
+          stableSamples = viewportMatches && fitsViewport && stable ? stableSamples + 1 : 0;
+          previousLayout = layout;
+          return stableSamples;
+        },
+        { timeout: 5_000, intervals: [50, 100, 200] },
+      )
+      .toBeGreaterThanOrEqual(2);
+    await waitForRenderFrames(page);
     const geometry = await page.getByTestId("presentation-canvas").evaluate((node) => {
       const rect = node.getBoundingClientRect();
       return {

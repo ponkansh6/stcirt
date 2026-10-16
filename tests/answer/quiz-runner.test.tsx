@@ -109,6 +109,32 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
   });
 
+  it("announces ordinary answer progress only from the header", () => {
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "answering" }, { selections: { 1: 0 }, answeredCount: 1 }),
+    );
+    render(<RunnerPage />);
+
+    const main = screen.getByRole("main");
+    const liveRegions = main.querySelectorAll('[aria-live], [role="status"], [role="alert"]');
+    expect(liveRegions).toHaveLength(1);
+    expect(liveRegions[0]).toHaveTextContent("回答済み 1/5");
+    expect(liveRegions[0]).toHaveAttribute("aria-live", "polite");
+
+    const finalReview = main.querySelector<HTMLElement>('[aria-labelledby="final-check-title"]');
+    expect(finalReview).not.toBeNull();
+    const ordinaryStatus = within(finalReview as HTMLElement)
+      .getByText("未回答の設問へ移動して回答してください。回答は最後にまとめて確定します。")
+      .closest("p");
+    expect(ordinaryStatus).not.toHaveAttribute("role");
+    expect(ordinaryStatus).not.toHaveAttribute("aria-live");
+    expect(
+      within(finalReview as HTMLElement)
+        .getByText("未回答 4問")
+        .closest("p"),
+    ).not.toHaveAttribute("aria-live");
+  });
+
   it("uses the same answered status in navigation and final review", () => {
     const freeResponseQuizzes = quizzes.map((quiz, index) =>
       index === 4
@@ -137,9 +163,12 @@ describe("QuizRunner batch answer sheet", () => {
       '[aria-labelledby="final-check-title"]',
     );
     expect(finalReview).not.toBeNull();
-    expect(finalReview?.querySelector(':scope > p[aria-live="polite"]')).toHaveTextContent(
-      "未回答 4問",
-    );
+    expect(within(finalReview as HTMLElement).getByText("未回答 4問")).toBeInTheDocument();
+    expect(
+      within(finalReview as HTMLElement)
+        .getByText("未回答 4問")
+        .closest("p"),
+    ).not.toHaveAttribute("aria-live");
   });
 
   it("renders the fifth-question free-response field, max length, and legacy guidance", () => {
@@ -240,7 +269,9 @@ describe("QuizRunner batch answer sheet", () => {
       ),
     );
     render(<RunnerPage />);
-    expect(screen.getByText("回答済み 5/5")).toBeInTheDocument();
+    const progressHeader = screen.getByRole("main").querySelector("header");
+    expect(progressHeader).not.toBeNull();
+    expect(within(progressHeader as HTMLElement).getByText("回答済み 5/5")).toBeInTheDocument();
     const finalReview = document.querySelector<HTMLElement>(
       '[aria-labelledby="final-check-title"]',
     );
@@ -266,6 +297,8 @@ describe("QuizRunner batch answer sheet", () => {
     );
     render(<RunnerPage />);
     expect(screen.getByRole("status")).toHaveTextContent("回答を送信しています");
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
     expect(screen.getAllByRole("radio").every((radio) => radio.hasAttribute("disabled"))).toBe(
       true,
     );
@@ -513,6 +546,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "回答案は保持しています。同じ内容を再送してください。",
     );
+    expect(screen.getByRole("alert")).toHaveAttribute("aria-live", "assertive");
     expect(screen.getAllByRole("radio").every((radio) => radio.hasAttribute("disabled"))).toBe(
       true,
     );
@@ -557,6 +591,7 @@ describe("QuizRunner batch answer sheet", () => {
     );
     render(<RunnerPage />);
     expect(screen.getByRole("status")).toHaveTextContent("保存済み回答を確認しています");
+    expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
     expect(screen.getByRole("button", { name: "保存済み回答を確認しています…" })).toBeDisabled();
   });
 
