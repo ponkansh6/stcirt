@@ -796,6 +796,7 @@ test("opening cover geometry matches before and after presentation start", async
             : 4.5;
         return {
           text: textElement.textContent?.trim() ?? "",
+          color: style.color,
           fontSize: effectiveFontSize,
           background,
           ratio:
@@ -943,6 +944,11 @@ test("opening cover geometry matches before and after presentation start", async
       "検定",
       "解答解説・表彰",
     ]);
+    expect(geometry.textContrasts.map((entry) => entry.color)).toEqual([
+      "rgb(23, 62, 39)",
+      "rgb(23, 62, 39)",
+      "rgb(55, 66, 76)",
+    ]);
     for (const entry of geometry.textContrasts) {
       expect(
         entry.ratio,
@@ -955,9 +961,10 @@ test("opening cover geometry matches before and after presentation start", async
     const geometry = await inspectOpening(page);
     expect(geometry.heading.lineCount).toBe(1);
     expect(geometry.titleSpans).toHaveLength(2);
-    expect(geometry.titleSpans.find((span) => span.content === "検定")?.color).toBe(
+    expect(geometry.titleSpans.map((span) => span.color)).toEqual([
       "rgb(23, 62, 39)",
-    );
+      "rgb(23, 62, 39)",
+    ]);
     expect(geometry.titleDividerColor).toBe("rgb(23, 62, 39)");
     expect(geometry.openingStampCount).toBe(0);
     expectOpeningTextContrast(geometry, "not_started");
@@ -1037,9 +1044,10 @@ test("opening cover geometry matches before and after presentation start", async
     expect(geometry.titleSpans.map((span) => span.content)).toEqual(
       beforeStart.titleSpans.map((span) => span.content),
     );
-    expect(geometry.titleSpans.find((span) => span.content === "検定")?.color).toBe(
+    expect(geometry.titleSpans.map((span) => span.color)).toEqual([
       "rgb(23, 62, 39)",
-    );
+      "rgb(23, 62, 39)",
+    ]);
     expect(geometry.titleDividerColor).toBe("rgb(23, 62, 39)");
     expect(geometry.openingStampCount).toBe(0);
     for (const span of geometry.titleSpans) {

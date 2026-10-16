@@ -210,7 +210,7 @@ async function signIn(page: Page, name = "Test Participant", pin = "0123") {
   await page.getByRole("button", { name: "はじめる" }).click();
   await expect(
     page.getByRole("heading", {
-      name: /5問検定|しゅんたま検定|受検票|問題が足りません|問題を読み込めませんでした/,
+      name: /しゅんたま検定|受検票|問題が足りません|問題を読み込めませんでした/,
     }),
   ).toBeVisible();
 }
@@ -331,7 +331,7 @@ test("participant login follows name, PIN, and submit Tab order and submits once
 
   await expect(
     page.getByRole("heading", {
-      name: /5問検定|しゅんたま検定|受検票|問題が足りません|問題を読み込めませんでした/,
+      name: /しゅんたま検定|受検票|問題が足りません|問題を読み込めませんでした/,
     }),
   ).toBeVisible();
   expect(loginRequests).toEqual([{ name: "Aki", pin: "0123" }]);

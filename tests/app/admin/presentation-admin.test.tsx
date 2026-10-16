@@ -67,6 +67,8 @@ describe("presentation admin console", () => {
     apiFetch({ stateStatus: 401 });
     render(<PresentationAdminPage />);
     expect(screen.getByRole("heading", { name: "披露宴 発表操作" })).toBeInTheDocument();
+    expect(screen.getByText("HOST CONSOLE")).toBeInTheDocument();
+    expect(screen.queryByText("STCIRT")).not.toBeInTheDocument();
     expect(await screen.findByLabelText("管理者 PIN")).toHaveAttribute("type", "password");
   });
 

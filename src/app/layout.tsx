@@ -16,7 +16,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "5問検定",
+  title: "しゅんたま検定",
   description: "保存済みの問題を順番に解いて学習するアプリ",
 };
 

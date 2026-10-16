@@ -92,7 +92,7 @@ function ResultsShell({ scope }: { scope: "owner" | "assisted" }) {
         aria-busy="true"
         className="min-h-[56rem] rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10"
       >
-        <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+        <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
         <h1 className="text-3xl font-bold tracking-tight">
           {scope === "assisted" ? "代理回答者の結果" : "あなたの結果"}
         </h1>

@@ -29,6 +29,11 @@ export default function ResultsPanel({
   const requestRevisionRef = useRef(0);
   const requestIdRef = useRef(0);
   const inFlightRequestRef = useRef<number | null>(null);
+  const currentStatusKey = authorized ? result.state : "session-expired";
+  const previousStatusKeyRef = useRef(currentStatusKey);
+  const pendingStatusAnnouncementRef = useRef<string | null>(null);
+  const waitingNoticeIssuedRef = useRef(false);
+  const [statusAnnouncement, setStatusAnnouncement] = useState("");
 
   const answerStatus = (correctness: "correct" | "incorrect") => {
     if (correctness === "correct") {
@@ -47,7 +52,10 @@ export default function ResultsPanel({
       }
       pendingRef.current = true;
       setRefreshing(true);
-      if (manual) setManuallyRefreshing(true);
+      if (manual) {
+        setStatusAnnouncement("");
+        setManuallyRefreshing(true);
+      }
       const currentRevision = ++requestRevisionRef.current;
       const requestId = ++requestIdRef.current;
       inFlightRequestRef.current = requestId;
@@ -88,6 +96,10 @@ export default function ResultsPanel({
         }
         setAuthorized(true);
         setResult(parsed);
+        if (manual && parsed.state === "waiting" && !waitingNoticeIssuedRef.current) {
+          waitingNoticeIssuedRef.current = true;
+          pendingStatusAnnouncementRef.current = "集計期間中です。結果は公開後に確認できます。";
+        }
         setRefreshError(false);
       } catch {
         if (currentRevision === requestRevisionRef.current) setRefreshError(true);
@@ -122,10 +134,38 @@ export default function ResultsPanel({
     };
   }, [refresh, scope]);
 
+  useEffect(() => {
+    if (currentStatusKey !== previousStatusKeyRef.current) {
+      previousStatusKeyRef.current = currentStatusKey;
+      if (authorized && result.state !== "waiting") {
+        waitingNoticeIssuedRef.current = false;
+      }
+      if (!authorized) {
+        pendingStatusAnnouncementRef.current =
+          "参加者セッションを確認できません。回答画面からもう一度参加してください。";
+      } else if (result.state === "waiting") {
+        if (!waitingNoticeIssuedRef.current) {
+          waitingNoticeIssuedRef.current = true;
+          pendingStatusAnnouncementRef.current = "集計期間中です。結果は公開後に確認できます。";
+        }
+      } else {
+        pendingStatusAnnouncementRef.current =
+          result.state === "unavailable"
+            ? "あなたの結果を確認できません。時間をおいて再読み込みしてください。"
+            : "結果を表示しました。";
+      }
+    }
+
+    if (!manuallyRefreshing && pendingStatusAnnouncementRef.current) {
+      setStatusAnnouncement(pendingStatusAnnouncementRef.current);
+      pendingStatusAnnouncementRef.current = null;
+    }
+  }, [authorized, currentStatusKey, manuallyRefreshing, result.state]);
+
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
       <section className="rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10">
-        <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+        <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
         {!authorized ? (
           <>
             <h1 className="text-3xl font-bold tracking-tight">参加者セッションを確認できません</h1>
@@ -228,11 +268,12 @@ export default function ResultsPanel({
               回答画面へ戻る
             </Link>
           </>
-        ) : (
+        ) : result.state === "waiting" ? null : (
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">
-              {result.state === "waiting" ? "結果はまだ公開されていません" : "結果を確認できません"}
-            </h1>
+            <h1 className="text-3xl font-bold tracking-tight">結果を確認できません</h1>
+            <p className="mt-4 rounded-xl border border-border bg-surface-2 p-4 text-sm text-muted">
+              あなたの結果を確認できません。時間をおいて再読み込みしてください。
+            </p>
           </div>
         )}
         {refreshError ? (
@@ -249,6 +290,11 @@ export default function ResultsPanel({
           結果を再読み込み
         </Button>
       </section>
+      {statusAnnouncement ? (
+        <p role="status" aria-live="polite" className="sr-only">
+          {statusAnnouncement}
+        </p>
+      ) : null}
       {manuallyRefreshing ? (
         <p role="status" aria-live="polite" className="sr-only">
           更新中…

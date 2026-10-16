@@ -528,7 +528,7 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">
             {ui.primaryAction === "reauthenticate" ? ui.status : "ほかの人の回答"}
           </h1>
@@ -612,7 +612,7 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{ui.status}</h1>
           <p className="mt-4 text-muted" role={ui.statusRole}>
             {ui.message}
@@ -631,7 +631,7 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{ui.status}</h1>
           <p className="mt-4 text-muted" role={ui.statusRole}>
             {ui.message}
@@ -648,7 +648,7 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{ui.status}</h1>
           <p className="mt-4 text-muted" role={ui.statusRole}>
             {ui.message}
@@ -698,7 +698,7 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{ui.status}</h1>
           <p className="mt-4 text-muted">{ui.message}</p>
         </ParticipantCard>
@@ -711,7 +711,7 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{ui.status}</h1>
           <p className="mt-4 text-muted" role={ui.statusRole}>
             {ui.message}
@@ -742,7 +742,7 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">5問検定</p>
+          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1
             ref={completionHeadingRef}
             tabIndex={-1}

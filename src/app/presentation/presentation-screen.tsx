@@ -1241,7 +1241,6 @@ export default function PresentationScreen({
               >
                 {loadingPresenterDeck && (
                   <section className={styles.waiting}>
-                    <p className={styles.kicker}>PREPARING PRESENTATION</p>
                     <h1>
                       {deckLoadError
                         ? "スライドを読み込めませんでした"
@@ -1257,7 +1256,6 @@ export default function PresentationScreen({
 
                 {state === "standby" && (
                   <section className={styles.waiting} aria-labelledby="standby-title">
-                    <p className={styles.kicker}>TAKE A MOMENT</p>
                     <h1 id="standby-title">ただいま休憩中です</h1>
                     <p className={styles.subtitle}>まもなく再開します</p>
                   </section>
@@ -1304,7 +1302,6 @@ export default function PresentationScreen({
 
                 {state === "podium_preview" && (
                   <section className={styles.podiumPreview} aria-labelledby="podium-title">
-                    <p className={styles.kicker}>THE MOMENT IS HERE</p>
                     <h1 id="podium-title">いよいよ、結果発表です</h1>
                     <p className={styles.subtitle}>これから入賞者を発表します。どうぞお楽しみに</p>
                   </section>
@@ -1364,7 +1361,6 @@ export default function PresentationScreen({
 
                 {state === "finished" && (
                   <section className={styles.finished} aria-labelledby="finished-title">
-                    <p className={styles.kicker}>WITH LOVE AND GRATITUDE</p>
                     <h1 id="finished-title">
                       ご参加
                       <br />

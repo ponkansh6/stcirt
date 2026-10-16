@@ -493,7 +493,7 @@ export default function PresentationAdmin() {
     return (
       <main className={styles.shell}>
         <section className={styles.console} aria-labelledby="admin-title">
-          <p className={styles.eyebrow}>STCIRT · HOST CONSOLE</p>
+          <p className={styles.eyebrow}>HOST CONSOLE</p>
           <h1 id="admin-title">披露宴 発表操作</h1>
           {message ? (
             <p className={styles.error} role="alert">
@@ -521,7 +521,7 @@ export default function PresentationAdmin() {
     return (
       <main className={styles.shell}>
         <section className={styles.console} aria-labelledby="admin-title">
-          <p className={styles.eyebrow}>STCIRT · HOST CONSOLE</p>
+          <p className={styles.eyebrow}>HOST CONSOLE</p>
           <h1 id="admin-title">披露宴 発表操作</h1>
           <p className={styles.state} role="status">
             現在の状態：{label}
@@ -651,7 +651,7 @@ export default function PresentationAdmin() {
   return (
     <main className={styles.shell}>
       <section className={styles.loginCard} aria-labelledby="admin-title">
-        <p className={styles.eyebrow}>STCIRT · HOST CONSOLE</p>
+        <p className={styles.eyebrow}>HOST CONSOLE</p>
         <h1 id="admin-title">披露宴 発表操作</h1>
         <p className={styles.loginIntro}>司会者用 PIN を入力して、発表を管理します。</p>
         <form className={styles.loginForm} onSubmit={handleLogin}>

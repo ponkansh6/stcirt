@@ -196,7 +196,7 @@
   margin: 0;
   padding: 0 0 0.18em;
   border-bottom: 3px solid #173e27;
-  color: #252a2f;
+  color: #173e27;
   font-family:
     "Yu Mincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", "Noto Serif CJK JP",
     "Noto Serif JP", serif;
@@ -217,7 +217,6 @@
 }
 
 .openingTitle h1 span:last-child {
-  color: #173e27;
   font-size: 0.64em;
   letter-spacing: 0.28em;
 }
@@ -285,15 +284,6 @@
 
 .openingWaitSlot[aria-hidden="true"] > .openingWait {
   visibility: hidden;
-}
-
-.kicker {
-  margin: 0 0 clamp(10px, 1.5cqh, 24px);
-  color: #505b66;
-  font-size: clamp(0.72rem, 1.05cqw, 1rem);
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-align: center;
 }
 
 .waiting h1,
@@ -545,10 +535,6 @@
 
 .winners > * {
   flex-shrink: 0;
-}
-
-.winners .kicker {
-  margin-bottom: clamp(8px, 1.3cqh, 18px);
 }
 
 .rank {

@@ -180,8 +180,11 @@ describe("ResultsPanel", () => {
       await secondResponse.promise;
     });
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "集計期間中です。結果は公開後に確認できます。",
+      ),
     );
+    expect(screen.queryByRole("heading", { name: "結果を確認できません" })).not.toBeInTheDocument();
     expect(screen.queryByText("99位")).not.toBeInTheDocument();
   });
 
@@ -229,7 +232,7 @@ describe("ResultsPanel", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("removes rank and score and explains that results are not published when private", async () => {
+  it("removes protected details and announces the transition into private waiting", async () => {
     mockPoll({ state: "waiting" });
 
     render(<ResultsPanel initial={visibleResult} />);
@@ -245,7 +248,9 @@ describe("ResultsPanel", () => {
     expect(fetch).not.toHaveBeenCalled();
     setVisibility("visible");
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "集計期間中です。結果は公開後に確認できます。",
+      ),
     );
     expect(screen.queryByText("2位")).not.toBeInTheDocument();
     expect(screen.queryByText("1.5点")).not.toBeInTheDocument();
@@ -327,6 +332,19 @@ describe("ResultsPanel", () => {
     expect(screen.queryByText("0点")).not.toBeInTheDocument();
   });
 
+  it("keeps the initial waiting state free of a persistent message and live announcement", () => {
+    mockPoll({ state: "waiting" });
+
+    render(<ResultsPanel initial={{ state: "waiting" }} />);
+
+    expect(screen.queryByRole("heading")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("集計期間中です。結果は公開後に確認できます。"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
+  });
+
   it.each([
     { label: "unknown state", initial: { state: "unexpected" } },
     {
@@ -359,8 +377,11 @@ describe("ResultsPanel", () => {
     setVisibility("visible");
 
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "集計期間中です。結果は公開後に確認できます。",
+      ),
     );
+    expect(screen.queryByRole("heading", { name: "結果を確認できません" })).not.toBeInTheDocument();
     expect(screen.queryByText("参加者セッションを確認できません")).not.toBeInTheDocument();
   });
 
@@ -396,8 +417,11 @@ describe("ResultsPanel", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "集計期間中です。結果は公開後に確認できます。",
+      ),
     );
+    expect(screen.queryByRole("heading", { name: "結果を確認できません" })).not.toBeInTheDocument();
     expect(screen.queryByText("2位")).not.toBeInTheDocument();
     expect(screen.queryByText("最初の問題")).not.toBeInTheDocument();
   });
@@ -421,15 +445,16 @@ describe("ResultsPanel", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(screen.getByText("2位")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
-    expect(
-      screen.queryByRole("heading", { name: "結果はまだ公開されていません" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "結果を確認できません" })).not.toBeInTheDocument();
     expect(unavailableJson).not.toHaveBeenCalled();
 
     setVisibility("visible");
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "集計期間中です。結果は公開後に確認できます。",
+      ),
     );
+    expect(screen.queryByRole("heading", { name: "結果を確認できません" })).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -451,8 +476,11 @@ describe("ResultsPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "結果を再読み込み" }));
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "結果はまだ公開されていません" })).toBeVisible(),
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "集計期間中です。結果は公開後に確認できます。",
+      ),
     );
+    expect(screen.queryByRole("heading", { name: "結果を確認できません" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
