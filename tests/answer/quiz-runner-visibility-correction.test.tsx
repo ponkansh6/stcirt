@@ -244,9 +244,11 @@ describe("QuizRunner batch answer sheet", () => {
     const fetchMock = vi.fn().mockReturnValue(pending.promise);
     vi.stubGlobal("fetch", fetchMock);
     let intervalCallback: (() => void) | undefined;
+    const intervalHandle = window.setInterval(() => {}, 60_000);
     vi.spyOn(window, "setInterval").mockImplementation((handler) => {
       intervalCallback = handler as () => void;
-      return 0;
+      // The test's window handle is numeric, while Vitest uses Node's Timeout type here.
+      return intervalHandle as unknown as ReturnType<typeof setInterval>;
     });
     mockUseQuizSession.mockReturnValue(
       session({ kind: "answering" }, { revision: 1, submissionId: "submission-pending" }),
