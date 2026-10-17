@@ -1738,6 +1738,7 @@ describe("PresentationScreen", () => {
   });
 
   it("rebases a conflicted local target with a fresh operation ID and confirmed version", async () => {
+    vi.useFakeTimers();
     vi.mocked(crypto.randomUUID)
       .mockReturnValueOnce("presentation-operation-conflict")
       .mockReturnValueOnce("presentation-operation-rebase");
@@ -1766,7 +1767,10 @@ describe("PresentationScreen", () => {
     expect(api.actions).toHaveLength(1);
     const staleEnvelope = api.actions[0] as Record<string, unknown>;
 
-    await waitFor(() => expect(api.actions).toHaveLength(2));
+    // Keep the conflict refresh and the writer's follow-up timer deterministic.
+    await act(async () => vi.advanceTimersByTimeAsync(10));
+    await flush();
+    expect(api.actions).toHaveLength(2);
     const rebasedEnvelope = api.actions[1] as Record<string, unknown>;
     expect(rebasedEnvelope).toMatchObject({
       action: "position",
