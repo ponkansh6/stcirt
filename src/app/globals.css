@@ -60,9 +60,11 @@
       opacity 180ms var(--ease-out-soft),
       transform 180ms var(--ease-out-soft);
   }
-  .banner-entry::starting-style {
-    opacity: 0;
-    transform: scale(0.97);
+  @starting-style {
+    .banner-entry {
+      opacity: 0;
+      transform: scale(0.97);
+    }
   }
 }
 @supports not (transition-behavior: allow-discrete) {
