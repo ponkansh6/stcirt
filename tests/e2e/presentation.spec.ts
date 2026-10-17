@@ -7,7 +7,7 @@ declare global {
     __fullscreenRequests: number;
     __wakeRequests: number[];
     __releaseWakeLock: () => void;
-    __rankOrnamentAnimations: { rank: string | null; name: string }[];
+    __rankRevealAnimations: { rank: string | null; name: string }[];
   }
 
   interface Document {
@@ -597,92 +597,291 @@ async function advanceTo(page: import("@playwright/test").Page, target: Presenta
   await expect(slideFor(page, target)).toBeVisible();
 }
 
-async function expectRankOrnamentGeometry(region: import("@playwright/test").Locator) {
-  const geometry = await region.evaluate((rankRegion) => {
-    const ornament = rankRegion.querySelector<HTMLElement>("[class*='rankEntranceOrnament']");
-    const rankStamp = rankRegion.querySelector<HTMLElement>("[class*='rankStamp']");
-    const canvas = document.querySelector<HTMLElement>("[data-testid='presentation-canvas']");
-    const content = document.querySelector<HTMLElement>(
-      "[data-testid='presentation-fit-viewport']",
-    );
-    const ornamentRect = ornament?.getBoundingClientRect();
-    const canvasRect = canvas?.getBoundingClientRect();
-    const contentRect = content?.getBoundingClientRect();
-    const meaningfulElements = Array.from(
-      rankRegion.querySelectorAll<HTMLElement>(
-        [
-          "[class*='rankHeader'] > h1[class*='rank']",
-          "article h1",
-          "[class*='winnerScore']",
-          "[aria-label='設問別の回答']",
-          "[class*='additionalWinners']",
-          "[class*='rankStamp']",
-        ].join(", "),
-      ),
-    );
-    const rects = meaningfulElements.map((element) => {
-      const rect = element.getBoundingClientRect();
+async function pauseRankRevealBeforeEntry(page: import("@playwright/test").Page) {
+  return page.addStyleTag({
+    content: rankRevealPauseStyles,
+  });
+}
+
+const rankRevealPauseStyles = `
+  @media (prefers-reduced-motion: no-preference) {
+    [class*="winnerReveal"] {
+      animation-play-state: paused !important;
+    }
+  }
+`;
+
+async function pauseRankRevealOnNextDocument(page: import("@playwright/test").Page) {
+  await page.addInitScript((content) => {
+    const installKey = "rank-reveal-test-pause-installed";
+    if (sessionStorage.getItem(installKey)) return;
+    sessionStorage.setItem(installKey, "true");
+    const install = () => {
+      if (document.getElementById("rank-reveal-test-pause")) return;
+      const style = document.createElement("style");
+      style.id = "rank-reveal-test-pause";
+      style.textContent = content;
+      (document.head ?? document.documentElement).append(style);
+    };
+    if (document.head) install();
+    else document.addEventListener("DOMContentLoaded", install, { once: true });
+  }, rankRevealPauseStyles);
+  return page.locator("#rank-reveal-test-pause");
+}
+
+async function expectRankRevealGeometry(
+  region: import("@playwright/test").Locator,
+  phase: "during-delay" | "after-reveal" = "after-reveal",
+  pauseStyle?:
+    | import("@playwright/test").Locator
+    | Awaited<ReturnType<typeof pauseRankRevealBeforeEntry>>,
+) {
+  const revealLocator = region.locator("[class*='winnerReveal']");
+  let primaryError: unknown;
+  let hasPrimaryError = false;
+  try {
+    if (phase === "during-delay") {
+      if (!pauseStyle) throw new Error("during-delay geometry requires a pre-armed pause style");
+      await expect
+        .poll(
+          () =>
+            revealLocator.evaluate((element) =>
+              element
+                .getAnimations()
+                .some((candidate) =>
+                  (candidate as CSSAnimation).animationName.includes("rankWinnerReveal"),
+                ),
+            ),
+          { timeout: 3000 },
+        )
+        .toBe(true);
+      const pausedAnimation = await revealLocator.evaluate(async (element) => {
+        const animation = element
+          .getAnimations()
+          .find((candidate) =>
+            (candidate as CSSAnimation).animationName.includes("rankWinnerReveal"),
+          );
+        if (!animation) return null;
+        animation.pause();
+        await animation.ready;
+        animation.currentTime = 0;
+        return true;
+      });
+      expect(pausedAnimation).toBe(true);
+
+      await expect(revealLocator).toHaveCSS("opacity", "0");
+      const cssTiming = await revealLocator.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { delay: style.animationDelay, duration: style.animationDuration };
+      });
+      const milliseconds = (value: string) => {
+        const numericValue = Number.parseFloat(value);
+        return value.trim().endsWith("ms") ? numericValue : numericValue * 1000;
+      };
+      expect(cssTiming.delay).toBe("0.4s");
+      expect(cssTiming.duration).toBe("0.4s");
+      expect(milliseconds(cssTiming.delay) + milliseconds(cssTiming.duration)).toBeLessThanOrEqual(
+        900,
+      );
+      await expect(region.locator("[class*='certificateLabel']")).toHaveCSS("opacity", "1");
+      await expect(region.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveCSS(
+        "opacity",
+        "1",
+      );
+    } else {
+      await expect(revealLocator).toHaveCSS("opacity", "1");
+    }
+
+    const geometry = await region.evaluate((rankRegion) => {
+      const reveal = rankRegion.querySelector<HTMLElement>("[class*='winnerReveal']");
+      const header = rankRegion.querySelector<HTMLElement>("[class*='rankHeader']");
+      const canvas = document.querySelector<HTMLElement>("[data-testid='presentation-canvas']");
+      const content = document.querySelector<HTMLElement>(
+        "[data-testid='presentation-fit-viewport']",
+      );
+      const revealRect = reveal?.getBoundingClientRect();
+      const headerRect = header?.getBoundingClientRect();
+      const regionRect = rankRegion.getBoundingClientRect();
+      const canvasRect = canvas?.getBoundingClientRect();
+      const contentRect = content?.getBoundingClientRect();
+      const measuredElements = Array.from(
+        rankRegion.querySelectorAll<HTMLElement>(
+          [
+            "winnerReveal",
+            "winnerRankGroup",
+            "winnerNames",
+            "winnerIdentity",
+            "winnerScore",
+            "winnerQuestionResults",
+            "additionalWinners",
+            "noWinner",
+          ]
+            .map((name) => `[class*='${name}']`)
+            .join(", ") + ", article, article h1, [aria-label='設問別の回答'] li",
+        ),
+      );
+      const inside = (rect: DOMRect, bounds: DOMRect | undefined) =>
+        Boolean(
+          bounds &&
+          rect.left >= bounds.left - 1 &&
+          rect.right <= bounds.right + 1 &&
+          rect.top >= bounds.top - 1 &&
+          rect.bottom <= bounds.bottom + 1,
+        );
+      const overlaps = (left: DOMRect | undefined, right: DOMRect | undefined) =>
+        Boolean(
+          left &&
+          right &&
+          left.left < right.right - 1 &&
+          left.right > right.left + 1 &&
+          left.top < right.bottom - 1 &&
+          left.bottom > right.top + 1,
+        );
+      const measured = measuredElements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        const classes = element.className.toString();
+        const isFitContainer = [
+          "winnerReveal",
+          "winnerRankGroup",
+          "winnerNames",
+          "winner__",
+          "winnerIdentity",
+          "winnerQuestionResults",
+        ].some((name) => classes.includes(name));
+        return {
+          rect,
+          visible: getComputedStyle(element).visibility === "visible",
+          overflows:
+            isFitContainer &&
+            (element.scrollWidth > element.clientWidth + 1 ||
+              element.scrollHeight > element.clientHeight + 1),
+        };
+      });
+      const cardRects = Array.from(rankRegion.querySelectorAll<HTMLElement>("article"), (card) =>
+        card.getBoundingClientRect(),
+      );
+      const additionalWinnerRects = Array.from(
+        rankRegion.querySelectorAll<HTMLElement>("[class*='additionalWinners']"),
+        (summary) => summary.getBoundingClientRect(),
+      );
+      const nameScorePairs = Array.from(
+        rankRegion.querySelectorAll<HTMLElement>("article"),
+        (card) => ({
+          name: card.querySelector<HTMLElement>("h1")?.getBoundingClientRect(),
+          score: card.querySelector<HTMLElement>("[class*='winnerScore']")?.getBoundingClientRect(),
+        }),
+      );
+      const identityResultPairs = Array.from(
+        rankRegion.querySelectorAll<HTMLElement>("article"),
+        (card) => ({
+          identity: card
+            .querySelector<HTMLElement>("[class*='winnerIdentity']")
+            ?.getBoundingClientRect(),
+          answerList: card
+            .querySelector<HTMLElement>("[aria-label='設問別の回答']")
+            ?.getBoundingClientRect(),
+        }),
+      );
+      const answerRows = Array.from(
+        rankRegion.querySelectorAll<HTMLElement>("[aria-label='設問別の回答'] li"),
+        (row) => row.getBoundingClientRect(),
+      );
+      const textRects = Array.from(
+        rankRegion.querySelectorAll<HTMLElement>(
+          "[class*='winnerName'], [class*='winnerQuestionAnswer']",
+        ),
+      ).flatMap((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return Array.from(range.getClientRects());
+      });
+      const pairsDoNotOverlap = (rects: DOMRect[]) =>
+        rects.every((rect, index) =>
+          rects.slice(index + 1).every((other) => !overlaps(rect, other)),
+        );
+
       return {
-        text: (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 80),
-        left: rect.left,
-        right: rect.right,
-        top: rect.top,
-        bottom: rect.bottom,
-        width: rect.width,
-        height: rect.height,
-        visible: getComputedStyle(element).visibility === "visible",
+        revealFound: Boolean(reveal),
+        noOrnament: !rankRegion.querySelector("[class*='rankEntranceOrnament']"),
+        revealInsideCanvas: Boolean(revealRect && inside(revealRect, canvasRect)),
+        revealInsideContent: Boolean(revealRect && inside(revealRect, contentRect)),
+        headerDoesNotOverlapReveal: !overlaps(headerRect, revealRect),
+        descendantsInsideRegionAndViewport:
+          measured.length > 0 &&
+          measured.every(({ rect }) => inside(rect, regionRect) && inside(rect, contentRect)),
+        descendantsHaveAreaAndAreVisible:
+          measured.length > 0 &&
+          measured.every(({ rect, visible }) => rect.width > 0 && rect.height > 0 && visible),
+        noClippedContainerContent: measured.every(({ overflows }) => !overflows),
+        textInsideRegionAndViewport:
+          (textRects.length > 0 || Boolean(rankRegion.querySelector("[class*='noWinner']"))) &&
+          textRects.every((rect) => inside(rect, regionRect) && inside(rect, contentRect)),
+        cardsDoNotOverlap: pairsDoNotOverlap(cardRects),
+        remainingCountDoesNotOverlapCards: additionalWinnerRects.every((summary) =>
+          cardRects.every((card) => !overlaps(summary, card)),
+        ),
+        namesDoNotOverlapScores: nameScorePairs.every(({ name, score }) =>
+          score ? !overlaps(name, score) : true,
+        ),
+        identitiesDoNotOverlapAnswerLists: identityResultPairs.every(({ identity, answerList }) =>
+          answerList ? !overlaps(identity, answerList) : true,
+        ),
+        answerRowsDoNotOverlap: pairsDoNotOverlap(answerRows),
       };
     });
-    const hasArea = (rect: DOMRect | undefined) =>
-      Boolean(rect && rect.width > 0 && rect.height > 0);
-    const overlaps = (left: DOMRect, right: DOMRect) =>
-      left.left < right.right &&
-      left.right > right.left &&
-      left.top < right.bottom &&
-      left.bottom > right.top;
-    return {
-      ornamentFound: Boolean(ornamentRect),
-      rankStampFound: Boolean(rankStamp),
-      insideCanvas: Boolean(
-        ornamentRect &&
-        canvasRect &&
-        ornamentRect.left >= canvasRect.left - 1 &&
-        ornamentRect.right <= canvasRect.right + 1 &&
-        ornamentRect.top >= canvasRect.top - 1 &&
-        ornamentRect.bottom <= canvasRect.bottom + 1,
-      ),
-      insideContent: Boolean(
-        ornamentRect &&
-        contentRect &&
-        ornamentRect.left >= contentRect.left - 1 &&
-        ornamentRect.right <= contentRect.right + 1 &&
-        ornamentRect.top >= contentRect.top - 1 &&
-        ornamentRect.bottom <= contentRect.bottom + 1,
-      ),
-      allMeasuredElementsAreVisibleAndHaveArea: Boolean(
-        hasArea(ornamentRect) &&
-        hasArea(canvasRect) &&
-        hasArea(contentRect) &&
-        hasArea(rankStamp?.getBoundingClientRect()) &&
-        rects.length > 0 &&
-        rects.every(({ width, height, visible }) => width > 0 && height > 0 && visible),
-      ),
-      meaningfulElementsDoNotOverlap: Boolean(
-        ornamentRect &&
-        meaningfulElements.length > 0 &&
-        meaningfulElements.every(
-          (element) => !overlaps(ornamentRect, element.getBoundingClientRect()),
-        ),
-      ),
-      meaningfulTexts: rects.map(({ text }) => text),
-    };
-  });
-  expect(geometry.ornamentFound).toBe(true);
-  expect(geometry.rankStampFound).toBe(true);
-  expect(geometry.insideCanvas).toBe(true);
-  expect(geometry.insideContent).toBe(true);
-  expect(geometry.allMeasuredElementsAreVisibleAndHaveArea).toBe(true);
-  expect(geometry.meaningfulElementsDoNotOverlap).toBe(true);
+    expect(geometry.revealFound).toBe(true);
+    expect(geometry.noOrnament).toBe(true);
+    expect(geometry.revealInsideCanvas).toBe(true);
+    expect(geometry.revealInsideContent).toBe(true);
+    expect(geometry.headerDoesNotOverlapReveal).toBe(true);
+    expect(geometry.descendantsInsideRegionAndViewport).toBe(true);
+    expect(geometry.descendantsHaveAreaAndAreVisible).toBe(true);
+    expect(geometry.noClippedContainerContent).toBe(true);
+    expect(geometry.textInsideRegionAndViewport).toBe(true);
+    expect(geometry.cardsDoNotOverlap).toBe(true);
+    expect(geometry.remainingCountDoesNotOverlapCards).toBe(true);
+    expect(geometry.namesDoNotOverlapScores).toBe(true);
+    expect(geometry.identitiesDoNotOverlapAnswerLists).toBe(true);
+    expect(geometry.answerRowsDoNotOverlap).toBe(true);
+  } catch (error) {
+    primaryError = error;
+    hasPrimaryError = true;
+  }
+
+  let cleanupError: unknown;
+  let hasCleanupError = false;
+  if (pauseStyle) {
+    try {
+      if ("evaluateAll" in pauseStyle) {
+        await pauseStyle.evaluateAll((styles) => styles.forEach((style) => style.remove()));
+      } else {
+        await pauseStyle.evaluate((style) => style.parentNode?.removeChild(style));
+      }
+    } catch (error) {
+      cleanupError = error;
+      hasCleanupError = true;
+    }
+  }
+  if (phase === "during-delay") {
+    try {
+      await revealLocator.evaluate((element) => {
+        const animation = element
+          .getAnimations()
+          .find((candidate) =>
+            (candidate as CSSAnimation).animationName.includes("rankWinnerReveal"),
+          );
+        if (!animation) return;
+        animation.play();
+      });
+      await expect(revealLocator).toHaveCSS("opacity", "1", { timeout: 1500 });
+    } catch (error) {
+      cleanupError = error;
+      hasCleanupError = true;
+    }
+  }
+
+  if (hasPrimaryError) throw primaryError;
+  if (hasCleanupError) throw cleanupError;
 }
 
 test("@chromium public and presenter routes are read-only unless an authenticated presenter progresses", async ({
@@ -1237,17 +1436,14 @@ test("@chromium all rank entries fit on the slide without vertical scrolling und
   const winners = page.getByRole("region", { name: "第三位の勝者一覧" });
   await expect(winners).toBeVisible();
   await expect(winners).not.toHaveClass(/announce/);
-  const ornament = winners.locator("[class*='rankEntranceOrnament']");
-  await expectRankOrnamentGeometry(winners);
-  await expect(ornament).toHaveAttribute("aria-hidden", "true");
-  await expect(ornament).toHaveCSS("position", "absolute");
-  await expect(ornament).toHaveCSS("pointer-events", "none");
+  const reveal = winners.locator("[class*='winnerReveal']");
+  await expectRankRevealGeometry(winners);
+  await expect(reveal).toHaveCSS("animation-name", "none");
+  await expect(reveal).toHaveCSS("opacity", "1");
+  await expect(reveal).toHaveCSS("transform", "none");
   await expect
-    .poll(() => ornament.evaluate((node) => getComputedStyle(node).animationName))
-    .toBe("none");
-  await expect
-    .poll(() => ornament.evaluate((node) => getComputedStyle(node).transitionProperty))
-    .toBe("none");
+    .poll(() => reveal.evaluate((node) => getComputedStyle(node).animationDelay))
+    .toBe("0s");
   const conciseAnnouncement = await page.getByRole("status").textContent();
   expect(conciseAnnouncement?.trim()).toBe("第三位を発表します");
   expect(conciseAnnouncement).not.toContain("受賞者");
@@ -1414,7 +1610,7 @@ test("@chromium all rank entries fit on the slide without vertical scrolling und
     await page.locator("main").press("ArrowRight");
     await expect(slideFor(page, state)).toBeVisible();
     await entry;
-    await expectRankOrnamentGeometry(
+    await expectRankRevealGeometry(
       page.getByRole("region", {
         name: state === "second" ? "第二位の勝者一覧" : "第一位の勝者一覧",
       }),
@@ -1422,18 +1618,18 @@ test("@chromium all rank entries fit on the slide without vertical scrolling und
   }
 });
 
-test("@chromium rank ornament animates once per rank-stage entry and not on same-stage refresh", async ({
+test("@chromium rank winner reveal plays once per stage entry and not on same-stage refresh", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.addInitScript(() => {
-    window.__rankOrnamentAnimations = [];
+    window.__rankRevealAnimations = [];
     document.addEventListener(
       "animationstart",
       (event) => {
         const target = event.target;
-        if (!(target instanceof HTMLElement) || !target.matches("[class*='rankEntranceOrnament']"))
-          return;
-        window.__rankOrnamentAnimations.push({
+        if (!(target instanceof HTMLElement) || !target.matches("[class*='winnerReveal']")) return;
+        window.__rankRevealAnimations.push({
           rank: target.closest("[data-rank]")?.getAttribute("data-rank") ?? null,
           name: (event as AnimationEvent).animationName,
         });
@@ -1442,33 +1638,67 @@ test("@chromium rank ornament animates once per rank-stage entry and not on same
     );
   });
   const mock = await installAdminApiMock(page);
+  mock.setWinnerEntries([
+    { displayName: "第三位の受賞者", score: 0.5, rank: 3 },
+    { displayName: "太郎", score: 0, rank: 2 },
+    { displayName: "花子", score: 1, rank: 1 },
+  ]);
   await signIn(page);
   await startPresentation(page);
+  mock.setPresentationPosition("third");
+  const initialPauseStyle = await pauseRankRevealOnNextDocument(page);
   await openPresenter(page);
-  await advanceTo(page, "third");
-  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(1);
-  await expect(page.getByRole("heading", { name: "第三位" })).toBeVisible();
+  const thirdRegion = page.getByRole("region", { name: "第三位の勝者一覧" });
+  await expect(thirdRegion.getByRole("heading", { name: "第三位", exact: true })).toBeVisible();
+  const thirdReveal = thirdRegion.locator("[class*='winnerReveal']");
+  await expect(thirdReveal).toHaveCount(1);
+  await expect(thirdReveal.locator("article").first()).toBeAttached();
+  expect(await thirdReveal.getAttribute("aria-hidden")).toBeNull();
+  await expect(thirdReveal).toHaveCSS("animation-delay", "0.4s");
+  await expect(thirdReveal).toHaveCSS("animation-duration", "0.4s");
+  await expectRankRevealGeometry(thirdRegion, "during-delay", initialPauseStyle);
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(1);
+  await expect(thirdReveal).toHaveCSS("opacity", "1");
+  await expectRankRevealGeometry(thirdRegion);
 
+  const secondPauseStyle = await pauseRankRevealBeforeEntry(page);
   const secondEntry = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "second")).toBeVisible();
+  await expectRankRevealGeometry(
+    page.getByRole("region", { name: "第二位の勝者一覧" }),
+    "during-delay",
+    secondPauseStyle,
+  );
   await secondEntry;
-  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(2);
 
+  const firstPauseStyle = await pauseRankRevealBeforeEntry(page);
   const firstEntry = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "first")).toBeVisible();
+  await expectRankRevealGeometry(
+    page.getByRole("region", { name: "第一位の勝者一覧" }),
+    "during-delay",
+    firstPauseStyle,
+  );
   await firstEntry;
-  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(3);
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(3);
 
+  const backPauseStyle = await pauseRankRevealBeforeEntry(page);
   const backEntry = nextAdminMutation(page);
   await page.locator("main").press("ArrowLeft");
   await expect(slideFor(page, "second")).toBeVisible();
+  await expectRankRevealGeometry(
+    page.getByRole("region", { name: "第二位の勝者一覧" }),
+    "during-delay",
+    backPauseStyle,
+  );
   await backEntry;
-  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(4);
-  const keyboardEntries = await page.evaluate(() => window.__rankOrnamentAnimations);
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(4);
+  const keyboardEntries = await page.evaluate(() => window.__rankRevealAnimations);
   expect(keyboardEntries.map(({ rank }) => rank)).toEqual(["third", "second", "first", "second"]);
-  expect(keyboardEntries.every(({ name }) => name.includes("rankOrnamentEntrance"))).toBe(true);
+  expect(keyboardEntries.every(({ name }) => name.includes("rankWinnerReveal"))).toBe(true);
 
   const controlsReadsBeforeRefresh = mock
     .getPresentationRouteEvents()
@@ -1479,19 +1709,19 @@ test("@chromium rank ornament animates once per rank-stage entry and not on same
       () => mock.getPresentationRouteEvents().filter((event) => event === "controls:get").length,
     )
     .toBeGreaterThan(controlsReadsBeforeRefresh);
-  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(4);
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(4);
 
   // Reloading a presenter already positioned on a rank stage is a direct stage entry.
   await page.reload();
   await expect(slideFor(page, "second")).toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(1);
-  expect(await page.evaluate(() => window.__rankOrnamentAnimations[0]?.rank)).toBe("second");
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(1);
+  expect(await page.evaluate(() => window.__rankRevealAnimations[0]?.rank)).toBe("second");
 
   const previousRank = nextAdminMutation(page);
   await page.locator("main").press("ArrowLeft");
   await expect(slideFor(page, "third")).toBeVisible();
   await previousRank;
-  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(2);
   const previousPodium = nextAdminMutation(page);
   await page.locator("main").press("ArrowLeft");
   await expect(slideFor(page, "podium_preview")).toBeVisible();
@@ -1502,7 +1732,7 @@ test("@chromium rank ornament animates once per rank-stage entry and not on same
   await page.getByTestId("presentation-canvas").click();
   await expect(slideFor(page, "third")).toBeVisible();
   await tapEntry;
-  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(3);
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(3);
 
   const canvasBounds = await page.getByTestId("presentation-canvas").boundingBox();
   expect(canvasBounds).not.toBeNull();
@@ -1514,9 +1744,43 @@ test("@chromium rank ornament animates once per rank-stage entry and not on same
   await page.mouse.up();
   await expect(slideFor(page, "second")).toBeVisible();
   await swipeEntry;
-  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(4);
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(4);
 
-  // Absolute position writes are also stage entries and must replay only the ornament.
+  // Reasserting the same rank by absolute position does not replay the reveal.
+  const sameRankPosition = await page.evaluate(async () => {
+    const controlsResponse = await fetch("/api/admin/presentation?view=controls");
+    if (!controlsResponse.ok) return { ok: false, status: controlsResponse.status };
+    const controls = (await controlsResponse.json()) as {
+      version: number;
+      snapshotRevision: number;
+    };
+    const response = await fetch("/api/admin/presentation", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        operationId: crypto.randomUUID(),
+        action: "position",
+        state: "second",
+        questionIndex: 0,
+        expectedSnapshotRevision: controls.snapshotRevision,
+        expectedSessionVersion: controls.version,
+      }),
+    });
+    return { ok: response.ok, status: response.status };
+  });
+  expect(sameRankPosition.ok, `Same-rank position failed: ${sameRankPosition.status}`).toBe(true);
+  const controlsReadsBeforeSameRankRefresh = mock
+    .getPresentationRouteEvents()
+    .filter((event) => event === "controls:get").length;
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect
+    .poll(
+      () => mock.getPresentationRouteEvents().filter((event) => event === "controls:get").length,
+    )
+    .toBeGreaterThan(controlsReadsBeforeSameRankRefresh);
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(4);
+
+  // A direct position to a different rank is a new stage entry and replays the reveal.
   const directPosition = await page.evaluate(async () => {
     const controlsResponse = await fetch("/api/admin/presentation?view=controls");
     if (!controlsResponse.ok) return { ok: false, status: controlsResponse.status };
@@ -1540,22 +1804,21 @@ test("@chromium rank ornament animates once per rank-stage entry and not on same
   });
   expect(directPosition.ok, `Direct position failed: ${directPosition.status}`).toBe(true);
   await expect(slideFor(page, "first")).toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(5);
-  const inputEntries = await page.evaluate(() => window.__rankOrnamentAnimations.slice(1));
+  await expect.poll(() => page.evaluate(() => window.__rankRevealAnimations.length)).toBe(5);
+  const inputEntries = await page.evaluate(() => window.__rankRevealAnimations.slice(1));
   expect(inputEntries.map(({ rank }) => rank)).toEqual(["third", "third", "second", "first"]);
-  expect(inputEntries.every(({ name }) => name.includes("rankOrnamentEntrance"))).toBe(true);
+  expect(inputEntries.every(({ name }) => name.includes("rankWinnerReveal"))).toBe(true);
 
   mock.setPresentationPosition("second");
   const spectator = await page.context().newPage();
   await spectator.addInitScript(() => {
-    window.__rankOrnamentAnimations = [];
+    window.__rankRevealAnimations = [];
     document.addEventListener(
       "animationstart",
       (event) => {
         const target = event.target;
-        if (!(target instanceof HTMLElement) || !target.matches("[class*='rankEntranceOrnament']"))
-          return;
-        window.__rankOrnamentAnimations.push({
+        if (!(target instanceof HTMLElement) || !target.matches("[class*='winnerReveal']")) return;
+        window.__rankRevealAnimations.push({
           rank: target.closest("[data-rank]")?.getAttribute("data-rank") ?? null,
           name: (event as AnimationEvent).animationName,
         });
@@ -1565,8 +1828,8 @@ test("@chromium rank ornament animates once per rank-stage entry and not on same
   });
   await spectator.goto("/presentation");
   await expect(spectator.getByRole("region", { name: "第二位の勝者一覧" })).toBeVisible();
-  await expect.poll(() => spectator.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(1);
-  expect(await spectator.evaluate(() => window.__rankOrnamentAnimations[0]?.rank)).toBe("second");
+  await expect.poll(() => spectator.evaluate(() => window.__rankRevealAnimations.length)).toBe(1);
+  expect(await spectator.evaluate(() => window.__rankRevealAnimations[0]?.rank)).toBe("second");
   await spectator.close();
 });
 
@@ -1651,6 +1914,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
 test("@chromium reference-size long presentation content stays readable after fitting", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   const longQuestion =
     "ふたりが初めて出会った場所で、どのような会話をして、その後どんな思い出につながったのでしょうか？";
   const longChoices = [
@@ -1808,16 +2072,26 @@ test("@chromium reference-size long presentation content stays readable after fi
   await expectMainContentAt20pt("opening");
 
   const next = async (state: PresentationState) => {
+    const pauseStyle = state === "third" ? await pauseRankRevealBeforeEntry(page) : undefined;
     const refresh = nextAdminMutation(page);
     await page.locator("main").press("ArrowRight");
+    const rankRegion =
+      state === "third" ? page.getByRole("region", { name: "第三位の勝者一覧" }) : null;
     if (state === "question") {
       await expect(page.getByRole("heading", { name: longQuestion })).toBeVisible();
     } else {
       await expect(slideFor(page, state)).toBeVisible();
     }
+    if (rankRegion) {
+      await expectRankRevealGeometry(rankRegion, "during-delay", pauseStyle);
+    }
     await refresh;
-    if (state === "third") await expectTwoWinnerLongContentFitException();
-    else await expectMainContentAt20pt(state);
+    if (state === "third") {
+      await expectTwoWinnerLongContentFitException();
+      await expectRankRevealGeometry(rankRegion!);
+    } else {
+      await expectMainContentAt20pt(state);
+    }
   };
   await next("question");
   await expect(page.getByRole("heading", { name: longQuestion })).toBeVisible();
@@ -1869,7 +2143,7 @@ test("@chromium reference-size long presentation content stays readable after fi
   await next("third");
 
   const region = page.getByRole("region", { name: "第三位の勝者一覧" });
-  await expectRankOrnamentGeometry(region);
+  await expectRankRevealGeometry(region);
   await expect(region.locator("article")).toHaveCount(2);
   await expectTwoWinnerLongContentFitException();
   const cardGeometry = await region.evaluate((region) => {
@@ -1955,13 +2229,13 @@ test("@chromium reference-size long presentation content stays readable after fi
   await expect(region.locator("article")).toHaveCount(2);
   await next("second");
   const secondPlaceRegion = page.getByRole("region", { name: "第二位の勝者一覧" });
-  await expectRankOrnamentGeometry(secondPlaceRegion);
+  await expectRankRevealGeometry(secondPlaceRegion);
   const secondPlaceHeading = secondPlaceRegion.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(secondPlaceHeading).toBeVisible();
   await expect(secondPlaceHeading).toHaveText("第二位");
   await next("first");
   const firstPlaceRegion = page.getByRole("region", { name: "第一位の勝者一覧" });
-  await expectRankOrnamentGeometry(firstPlaceRegion);
+  await expectRankRevealGeometry(firstPlaceRegion);
   const firstPlaceHeading = firstPlaceRegion.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(firstPlaceHeading).toBeVisible();
   await expect(firstPlaceHeading).toHaveText("第一位");
@@ -1969,6 +2243,8 @@ test("@chromium reference-size long presentation content stays readable after fi
 });
 
 test("@mobile a single long winner name wraps fully inside the slide", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   const mock = await installAdminApiMock(page);
   const longName = "とても長い氏名を折り返して最後まで表示する受賞者の名前".repeat(3);
   mock.setWinnerEntries([
@@ -2012,16 +2288,21 @@ test("@mobile a single long winner name wraps fully inside the slide", async ({ 
     await waitForRenderFrames(page);
     if (viewportIndex > 0) {
       for (const state of ["second", "third"] as const) {
+        const pauseStyle = await pauseRankRevealBeforeEntry(page);
         const previousRefresh = nextAdminMutation(page);
         await page.locator("main").press("ArrowLeft");
         await expect(slideFor(page, state)).toBeVisible();
+        const label = state === "second" ? "第二位" : "第三位";
+        const region = page.getByRole("region", { name: `${label}の勝者一覧` });
+        await expectRankRevealGeometry(region, "during-delay", pauseStyle);
         await previousRefresh;
+        await expectRankRevealGeometry(region);
       }
     }
 
     for (const [rankIndex, rankStage] of ranks.entries()) {
       const region = page.getByRole("region", { name: `${rankStage.label}の勝者一覧` });
-      await expectRankOrnamentGeometry(region);
+      await expectRankRevealGeometry(region);
       const name = region.locator("article h1");
       await expect(region.locator("article")).toHaveCount(1);
       await expect(region.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveCount(1);
@@ -2440,6 +2721,9 @@ test("@mobile a single long winner name wraps fully inside the slide", async ({ 
         await page.locator("main").press("ArrowRight");
         await expect(slideFor(page, nextRank.state)).toBeVisible();
         await nextRefresh;
+        await expect(
+          spectator.getByRole("region", { name: `${nextRank.label}の勝者一覧` }),
+        ).toBeVisible();
       }
     }
   }

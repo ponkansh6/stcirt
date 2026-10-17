@@ -2009,10 +2009,12 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.getByText("葵", { exact: false })).toBeInTheDocument();
     const region = screen.getByRole("region", { name: "第三位の勝者一覧" });
     expect(region).not.toHaveClass(/announce/);
-    const ornament = region.querySelector("[aria-hidden='true'][class*='rankEntranceOrnament']");
-    expect(ornament).toBeInTheDocument();
-    expect(ornament).not.toHaveAttribute("tabindex");
-    expect(region.querySelectorAll("[class*='rankEntranceOrnament']")).toHaveLength(1);
+    expect(region.querySelector("[class*='rankEntranceOrnament']")).not.toBeInTheDocument();
+    const reveal = region.querySelector("[class*='winnerReveal']");
+    expect(reveal).toBeInTheDocument();
+    expect(reveal).toHaveTextContent("葵");
+    expect(reveal).toHaveTextContent("12.50 ポイント");
+    expect(reveal).not.toHaveAttribute("aria-hidden");
   });
 
   it("limits visible tied winners to two and reports the remaining count", async () => {
@@ -2252,15 +2254,18 @@ describe("presentation projection and presenter progression", () => {
     expect(within(answerRow).getByLabelText("正解")).toBeVisible();
     expect(within(region).getByText("ほか 1 名")).toBeVisible();
     expect(region).not.toHaveClass(/announce/);
-    const ornament = region.querySelector("[class*='rankEntranceOrnament']");
-    expect(ornament).toHaveAttribute("aria-hidden", "true");
-    expect(ornament).not.toHaveAttribute("tabindex");
+    expect(region.querySelector("[class*='rankEntranceOrnament']")).not.toBeInTheDocument();
+    const reveal = region.querySelector("[class*='winnerReveal']");
+    expect(reveal).toHaveTextContent("葵");
+    expect(reveal).toHaveTextContent("12.50 ポイント");
+    expect(reveal).toHaveTextContent("ほか 1 名");
+    expect(reveal).not.toHaveAttribute("aria-hidden");
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowLeft" });
     await settled();
     expect(region).not.toHaveClass(/announce/);
   });
 
-  it("keeps rank content static under reduced motion", async () => {
+  it("renders rank content immediately under reduced motion without the removed ornament", async () => {
     vi.stubGlobal(
       "matchMedia",
       vi.fn(() => ({ matches: true, addListener: vi.fn(), removeListener: vi.fn() })),
@@ -2282,9 +2287,8 @@ describe("presentation projection and presenter progression", () => {
     expect(within(region).getByRole("heading", { name: "第三位" })).toBeInTheDocument();
     expect(within(region).getByText("葵", { exact: false })).toBeInTheDocument();
     expect(within(region).getByText("12.50 ポイント")).toBeInTheDocument();
-    expect(
-      region.querySelector("[aria-hidden='true'][class*='rankEntranceOrnament']"),
-    ).toBeInTheDocument();
+    expect(region.querySelector("[class*='winnerReveal']")).toHaveTextContent("葵");
+    expect(region.querySelector("[class*='rankEntranceOrnament']")).not.toBeInTheDocument();
   });
 
   it("does not write position when mutation is in flight during operate", async () => {

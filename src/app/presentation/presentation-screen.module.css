@@ -528,51 +528,27 @@
   width: clamp(58px, 7cqw, 100px);
 }
 
-.rankEntranceOrnament {
-  position: absolute;
-  top: clamp(20px, 3cqh, 36px);
-  left: 50%;
-  width: 38px;
-  height: 14px;
-  animation: none;
-  transform: translateX(-50%);
-  pointer-events: none;
+.winnerReveal {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
 }
 
-.rankEntranceOrnament::before,
-.rankEntranceOrnament::after {
-  position: absolute;
-  top: 50%;
-  width: 7px;
-  height: 7px;
-  border: 1px solid var(--rank-metal, #8e6e31);
-  content: "";
-  transform: translateY(-50%) rotate(45deg);
-}
-
-.rankEntranceOrnament::before {
-  left: 3px;
-}
-
-.rankEntranceOrnament::after {
-  right: 3px;
-}
-
-@keyframes rankOrnamentEntrance {
+@keyframes rankWinnerReveal {
   from {
     opacity: 0;
-    transform: translate(-50%, -3px);
   }
 
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
   }
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .rankEntranceOrnament {
-    animation: rankOrnamentEntrance 300ms ease-out both;
+  .winnerReveal {
+    animation: rankWinnerReveal 400ms ease-out 400ms both;
   }
 }
 
@@ -909,8 +885,7 @@
     transition-duration: 0.01ms !important;
   }
 
-  .screen .rankEntranceOrnament {
+  .screen .winnerReveal {
     animation: none !important;
-    transition: none !important;
   }
 }

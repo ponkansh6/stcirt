@@ -1478,47 +1478,50 @@ export default function PresentationScreen({
                     tabIndex={0}
                   >
                     <ExamStamp className={styles.rankStamp} />
-                    <span className={styles.rankEntranceOrnament} key={state} aria-hidden="true" />
                     <div className={styles.rankHeader}>
                       <span className={styles.certificateLabel}>認定証</span>
                       <h1 className={styles.rank}>{rankTitle[state]}</h1>
                     </div>
-                    {winnerGroups.length ? (
-                      winnerGroups.map(({ rank, winners }) => (
-                        <div className={styles.winnerRankGroup} key={rank}>
-                          <div
-                            className={`${styles.winnerNames} ${winners.length === 1 ? styles.singleWinner : ""}`}
-                          >
-                            {winners.slice(0, 2).map((winner, index) => (
-                              <article
-                                className={styles.winner}
-                                key={`${winner.rank}-${winner.displayName}-${index}`}
-                              >
-                                <div className={styles.winnerIdentity}>
-                                  <h1>
-                                    <span className={styles.winnerName}>
-                                      {winner.displayName}
-                                      <span className={styles.winnerHonorific}>&nbsp;殿</span>
-                                    </span>
-                                  </h1>
-                                  <p className={styles.winnerScore}>
-                                    {winner.score.toFixed(2)} ポイント
-                                  </p>
-                                </div>
-                                {winner.questionResults && (
-                                  <WinnerQuestionBreakdown results={winner.questionResults} />
-                                )}
-                              </article>
-                            ))}
+                    <div className={styles.winnerReveal} key={state}>
+                      {winnerGroups.length ? (
+                        winnerGroups.map(({ rank, winners }) => (
+                          <div className={styles.winnerRankGroup} key={rank}>
+                            <div
+                              className={`${styles.winnerNames} ${winners.length === 1 ? styles.singleWinner : ""}`}
+                            >
+                              {winners.slice(0, 2).map((winner, index) => (
+                                <article
+                                  className={styles.winner}
+                                  key={`${winner.rank}-${winner.displayName}-${index}`}
+                                >
+                                  <div className={styles.winnerIdentity}>
+                                    <h1>
+                                      <span className={styles.winnerName}>
+                                        {winner.displayName}
+                                        <span className={styles.winnerHonorific}>&nbsp;殿</span>
+                                      </span>
+                                    </h1>
+                                    <p className={styles.winnerScore}>
+                                      {winner.score.toFixed(2)} ポイント
+                                    </p>
+                                  </div>
+                                  {winner.questionResults && (
+                                    <WinnerQuestionBreakdown results={winner.questionResults} />
+                                  )}
+                                </article>
+                              ))}
+                            </div>
+                            {winners.length > 2 && (
+                              <p className={styles.additionalWinners}>
+                                ほか {winners.length - 2} 名
+                              </p>
+                            )}
                           </div>
-                          {winners.length > 2 && (
-                            <p className={styles.additionalWinners}>ほか {winners.length - 2} 名</p>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
-                    )}
+                        ))
+                      ) : (
+                        <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
+                      )}
+                    </div>
                   </section>
                 )}
 

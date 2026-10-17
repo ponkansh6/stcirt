@@ -57,45 +57,45 @@ export function installPresentationFitLayout() {
     "scrollHeight",
   )?.get;
 
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
-    function (this: HTMLElement) {
-      if (this.dataset.testid === "presentation-fit-viewport") {
-        return {
-          x: 0,
-          y: 0,
-          left: 0,
-          top: 0,
-          right: viewport.width,
-          bottom: viewport.height,
-          width: viewport.width,
-          height: viewport.height,
-          toJSON: () => ({}),
-        } as DOMRect;
-      }
-      return originalRect.call(this);
-    },
-  );
-  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(
-    function (this: HTMLElement) {
-      return this.dataset.testid === "presentation-natural-layer"
-        ? natural.width
-        : (originalOffsetWidth?.call(this) ?? 0);
-    },
-  );
-  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
-    function (this: HTMLElement) {
-      return this.dataset.testid === "presentation-natural-layer"
-        ? natural.height
-        : (originalOffsetHeight?.call(this) ?? 0);
-    },
-  );
-  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
-    function (this: HTMLElement) {
-      return this.dataset.testid === "presentation-natural-layer"
-        ? natural.height
-        : (originalScrollHeight?.call(this) ?? 0);
-    },
-  );
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (this.dataset.testid === "presentation-fit-viewport") {
+      return {
+        x: 0,
+        y: 0,
+        left: 0,
+        top: 0,
+        right: viewport.width,
+        bottom: viewport.height,
+        width: viewport.width,
+        height: viewport.height,
+        toJSON: () => ({}),
+      } as DOMRect;
+    }
+    return originalRect.call(this);
+  });
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.dataset.testid === "presentation-natural-layer"
+      ? natural.width
+      : (originalOffsetWidth?.call(this) ?? 0);
+  });
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.dataset.testid === "presentation-natural-layer"
+      ? natural.height
+      : (originalOffsetHeight?.call(this) ?? 0);
+  });
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.dataset.testid === "presentation-natural-layer"
+      ? natural.height
+      : (originalScrollHeight?.call(this) ?? 0);
+  });
 
   return {
     setViewport(width: number, height: number) {

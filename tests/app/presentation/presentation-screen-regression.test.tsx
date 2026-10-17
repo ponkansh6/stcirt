@@ -2328,7 +2328,7 @@ describe("PresentationScreen", () => {
     await waitFor(() => expect(api.actions).toHaveLength(2));
   });
 
-  it("renders tied winners immediately when the podium advances", async () => {
+  it("keeps the rank reveal group stable through same-rank presenter rerenders", async () => {
     const waitForControls = observePresenterControls();
     vi.stubGlobal(
       "matchMedia",
@@ -2344,11 +2344,12 @@ describe("PresentationScreen", () => {
         state: "third",
         winners: [{ displayName: "悠", score: 10, rank: 3 }],
       },
+      actionProjection: { state: "second", winners },
       deckSlides: [{ state: "second", questionIndex: 0, projection: { state: "second", winners } }],
       admin: controls({ state: "third" }),
       actionAdmin: controls({ state: "second" }),
     });
-    render(<PresentationScreen presenterRequested />);
+    const view = render(<PresentationScreen presenterRequested />);
     const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
     const initialWinnerRegion = await screen.findByRole("region", { name: "第三位の勝者一覧" });
     expect(initialWinnerRegion).toHaveTextContent("悠");
@@ -2370,6 +2371,13 @@ describe("PresentationScreen", () => {
       winnerRegion.textContent!.indexOf("葵"),
     );
     expect(winnerRegion.className).not.toContain("announce");
+    const reveal = winnerRegion.querySelector("[class*='winnerReveal']");
+    expect(reveal).toBeInTheDocument();
+
+    view.rerender(<PresentationScreen presenterRequested />);
+    await flush();
+    const rerenderedRegion = screen.getByRole("region", { name: "第二位の勝者一覧" });
+    expect(rerenderedRegion.querySelector("[class*='winnerReveal']")).toBe(reveal);
   });
 
   it("renders the first-place winner immediately when advancing from second place", async () => {
@@ -2799,7 +2807,7 @@ describe("PresentationScreen", () => {
     expect(await screen.findByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
   });
 
-  it("renders podium content immediately without an announcement timer", async () => {
+  it("keeps rank winner content in the initial DOM and groups it under a rank-stable reveal", async () => {
     vi.useFakeTimers();
     const setTimeoutSpy = vi.spyOn(window, "setTimeout");
     installApi({
@@ -2841,9 +2849,12 @@ describe("PresentationScreen", () => {
     expect(winnerRegion).toHaveTextContent("長い回答もすぐ表示");
     expect(winnerRegion).toHaveTextContent("ほか 1 名");
     expect(winnerRegion.className).not.toContain("announce");
-    expect(
-      winnerRegion.querySelector("[aria-hidden='true'][class*='rankEntranceOrnament']"),
-    ).toBeInTheDocument();
+    expect(winnerRegion.querySelector("[class*='rankEntranceOrnament']")).not.toBeInTheDocument();
+    const reveal = winnerRegion.querySelector("[class*='winnerReveal']");
+    expect(reveal).toBeInTheDocument();
+    expect(reveal).toHaveTextContent("長い回答もすぐ表示");
+    expect(reveal).toHaveTextContent("ほか 1 名");
+    expect(reveal).not.toHaveAttribute("aria-hidden");
     expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 1200)).toBe(false);
     setTimeoutSpy.mockRestore();
   });
