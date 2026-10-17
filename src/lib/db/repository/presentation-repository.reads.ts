@@ -22,6 +22,7 @@ export type PresentationAction =
   | "start"
   | "advance"
   | "previous"
+  | "position"
   | "hide"
   | "show"
   | "aggregate"
@@ -554,6 +555,7 @@ export async function getAdminPresentationDeck() {
       questionIndex: number;
       projection: PublicProjection;
     }[] = [];
+    const terminalQuestionIndex = Math.max(admin.questionCount - 1, 0);
     slides.push({
       state: "opening",
       questionIndex: 0,
@@ -575,11 +577,11 @@ export async function getAdminPresentationDeck() {
     }
     slides.push({
       state: "podium_preview",
-      questionIndex: admin.questionIndex,
+      questionIndex: terminalQuestionIndex,
       projection: buildPublicProjection(
         admin,
         "podium_preview",
-        admin.questionIndex,
+        terminalQuestionIndex,
         sourceQuestions,
       ),
     });
@@ -591,15 +593,15 @@ export async function getAdminPresentationDeck() {
       if (admin.entries.some((entry) => entry.rank === rank)) {
         slides.push({
           state,
-          questionIndex: admin.questionIndex,
-          projection: buildPublicProjection(admin, state, admin.questionIndex, sourceQuestions),
+          questionIndex: terminalQuestionIndex,
+          projection: buildPublicProjection(admin, state, terminalQuestionIndex, sourceQuestions),
         });
       }
     }
     slides.push({
       state: "finished",
-      questionIndex: admin.questionIndex,
-      projection: buildPublicProjection(admin, "finished", admin.questionIndex, sourceQuestions),
+      questionIndex: terminalQuestionIndex,
+      projection: buildPublicProjection(admin, "finished", terminalQuestionIndex, sourceQuestions),
     });
     return {
       snapshotRevision: admin.snapshotRevision,

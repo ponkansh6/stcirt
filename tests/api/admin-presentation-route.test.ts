@@ -11,6 +11,7 @@ vi.mock("@/lib/db/repository/presentation-repository", () => ({
   getAdminPresentation: vi.fn(),
   getAdminPresentationControls: vi.fn(),
   operatePresentationControls: vi.fn(),
+  setPresentationPosition: vi.fn(),
   PresentationConflictError: class PresentationConflictError extends Error {
     readonly status = 409;
   },
@@ -20,6 +21,7 @@ import {
   getAdminPresentation,
   getAdminPresentationControls,
   operatePresentationControls,
+  setPresentationPosition,
   PresentationConflictError,
 } from "@/lib/db/repository/presentation-repository";
 import {
@@ -80,6 +82,7 @@ beforeEach(() => {
     projectionHidden: false,
   });
   vi.mocked(operatePresentationControls).mockResolvedValue(controlsPayload);
+  vi.mocked(setPresentationPosition).mockResolvedValue(controlsPayload);
 });
 
 afterEach(() => {
@@ -187,6 +190,21 @@ describe("/api/admin/presentation route", () => {
       { operationId, action: "start", expectedSnapshotRevision: -1 },
       { operationId, action: "start", expectedSnapshotRevision: 1.5 },
       { operationId, action: "start", expectedSnapshotRevision: "1" },
+      {
+        operationId,
+        action: "position",
+        state: "question",
+        questionIndex: 0,
+        expectedSnapshotRevision: 1,
+      },
+      {
+        operationId,
+        action: "position",
+        state: "question",
+        questionIndex: 0,
+        expectedSnapshotRevision: 1,
+        expectedSessionVersion: -1,
+      },
       { operationId, action: "setMode" },
       { operationId, action: "setMode", mode: "fast" },
       { operationId, action: "setMode", mode: "full" },
@@ -259,6 +277,25 @@ describe("/api/admin/presentation route", () => {
 
     expect(response.status).toBe(200);
     expect(operatePresentationControls).toHaveBeenCalledWith(operationId, "advance", 3);
+  });
+
+  it("forwards an absolute presenter cursor with its snapshot revision", async () => {
+    const response = await POST(
+      request("POST", {
+        body: {
+          operationId,
+          action: "position",
+          state: "answer",
+          questionIndex: 2,
+          expectedSnapshotRevision: 3,
+          expectedSessionVersion: 7,
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(setPresentationPosition).toHaveBeenCalledWith(operationId, "answer", 2, 3, 7);
+    expect(operatePresentationControls).not.toHaveBeenCalled();
   });
 
   it("returns state conflicts as 409", async () => {

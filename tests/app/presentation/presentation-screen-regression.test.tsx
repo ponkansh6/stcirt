@@ -89,7 +89,10 @@ function installApi(
     deckSlide("opening", 0, { state: "opening" }),
     ...Array.from({ length: Number(admin.questionCount ?? 0) }, (_, questionIndex) => [
       deckSlide("question", questionIndex, { state: "question", question }),
-      deckSlide("answer", questionIndex, { state: "answer", question }),
+      deckSlide("answer", questionIndex, {
+        state: "answer",
+        question: { ...question, correctIndex: 0, explanation: "ふたりの思い出です。" },
+      }),
     ]).flat(),
     deckSlide("podium_preview", Number(admin.questionIndex ?? 0), { state: "podium_preview" }),
     deckSlide("third", Number(admin.questionIndex ?? 0), { state: "third", winners: [] }),
@@ -140,14 +143,9 @@ function installApi(
         if (status === 401) options.authenticated = false;
         return response({}, false, status);
       }
-      const currentSlideIndex = deckSlides.findIndex(
-        (slide) => slide.state === admin.state && slide.questionIndex === admin.questionIndex,
+      const nextSlide = deckSlides.find(
+        (slide) => slide.state === action.state && slide.questionIndex === action.questionIndex,
       );
-      const nextSlide =
-        deckSlides[
-          currentSlideIndex +
-            (action.action === "advance" ? 1 : action.action === "previous" ? -1 : 0)
-        ];
       const nextControls = actionAdmin
         ? controls({ ...admin, ...actionAdmin, version: Number(admin.version ?? 0) + 1 })
         : nextSlide
@@ -212,6 +210,9 @@ function installApi(
   return {
     actions,
     fetchMock,
+    setActionError(status: number) {
+      actionError = status;
+    },
     setDeckSlide(
       state: DeckProjectionFixture["state"],
       questionIndex: number,
@@ -894,7 +895,7 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowLeft" });
     await flush();
     expect(api.actions).toHaveLength(1);
-    expect(api.actions[0]).toMatchObject({ action: "previous" });
+    expect(api.actions[0]).toMatchObject({ action: "position" });
     expect(api.fetchMock).toHaveBeenCalledWith(
       "/api/admin/presentation?view=controls",
       expect.anything(),
@@ -1503,10 +1504,10 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
     expect(api.actions).toHaveLength(1);
-    expect(api.actions[0]).toMatchObject({ action: "advance" });
+    expect(api.actions[0]).toMatchObject({ action: "position" });
   });
 
-  it("waits for the active poll before sending navigation and uses its latest controls", async () => {
+  it("sends navigation during an active poll and ignores its stale cursor", async () => {
     vi.useFakeTimers();
     let controlReads = 0;
     let resolveSecondControls!: (value: Response) => void;
@@ -1534,24 +1535,26 @@ describe("PresentationScreen", () => {
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
-    expect(api.actions).toHaveLength(0);
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({ action: "position", state: "answer", questionIndex: 0 });
     await act(async () => {
       resolveSecondControls(response(controls({ state: "answer", questionIndex: 0 })));
       await Promise.resolve();
     });
     await flush();
     expect(api.actions).toHaveLength(1);
-    expect(api.actions[0]).toMatchObject({ action: "advance", expectedSnapshotRevision: 1 });
-    expect(screen.getByText("いよいよ、結果発表です")).toBeInTheDocument();
+    expect(api.actions[0]).toMatchObject({ action: "position", expectedSnapshotRevision: 1 });
+    expect(screen.getByText("正解")).toBeInTheDocument();
   });
 
-  it("does not send a queued operation when the protected refresh resolves with 401", async () => {
+  it("clears auth and drops a scheduled cursor retry when an older poll resolves with 401", async () => {
     vi.useFakeTimers();
     let controlReads = 0;
     let resolveSecondControls!: (value: Response) => void;
     const api = installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 0 }),
+      actionError: 503,
       adminResponse: () => {
         controlReads += 1;
         if (controlReads === 2)
@@ -1568,15 +1571,211 @@ describe("PresentationScreen", () => {
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
-    expect(api.actions).toHaveLength(0);
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({ action: "position", state: "answer", questionIndex: 0 });
     await act(async () => {
       resolveSecondControls(response({}, false, 401));
       await Promise.resolve();
     });
     await flush();
 
-    expect(api.actions).toHaveLength(0);
+    expect(api.actions).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "ただいま休憩中です" })).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(api.actions).toHaveLength(1);
+  });
+
+  it("retries an ambiguous position write with the exact operation envelope", async () => {
+    vi.useFakeTimers();
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, version: 6 }),
+      actionError: 503,
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    const firstEnvelope = api.actions[0] as Record<string, unknown>;
+    expect(firstEnvelope).toMatchObject({
+      action: "position",
+      state: "answer",
+      questionIndex: 0,
+      expectedSnapshotRevision: 1,
+      expectedSessionVersion: 6,
+    });
+
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    await flush();
+    expect(api.actions).toHaveLength(2);
+    expect(api.actions[1]).toEqual(firstEnvelope);
+  });
+
+  it("keeps an ambiguous position retry single flight while sending newer navigation", async () => {
+    vi.useFakeTimers();
+    let postCount = 0;
+    let concurrentPosts = 0;
+    let maxConcurrentPosts = 0;
+    let resolveRetry!: (value: Response) => void;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, version: 6 }),
+      actionResponse: async () => {
+        postCount += 1;
+        concurrentPosts += 1;
+        maxConcurrentPosts = Math.max(maxConcurrentPosts, concurrentPosts);
+        try {
+          if (postCount === 1) return response({}, false, 503);
+          if (postCount === 2)
+            return await new Promise<Response>((resolve) => {
+              resolveRetry = resolve;
+            });
+          return response(controls({ state: "question", questionIndex: 1, version: 8 }));
+        } finally {
+          concurrentPosts -= 1;
+        }
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(api.actions).toHaveLength(2);
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(2);
+    expect(maxConcurrentPosts).toBe(1);
+
+    await act(async () => {
+      resolveRetry(response(controls({ state: "answer", questionIndex: 0, version: 7 })));
+      await Promise.resolve();
+    });
+    await flush();
+    expect(api.actions).toHaveLength(3);
+    expect(api.actions[2]).toMatchObject({
+      action: "position",
+      state: "question",
+      questionIndex: 1,
+      expectedSessionVersion: 7,
+    });
+    expect(maxConcurrentPosts).toBe(1);
+  });
+
+  it("drops a scheduled position retry when the presenter unmounts", async () => {
+    vi.useFakeTimers();
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      actionError: 503,
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+
+    view.unmount();
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(api.actions).toHaveLength(1);
+  });
+
+  it("preserves an uncertain retry target through 409 recovery and resaves it", async () => {
+    vi.useFakeTimers();
+    vi.mocked(crypto.randomUUID)
+      .mockReturnValueOnce("presentation-operation-uncertain")
+      .mockReturnValueOnce("presentation-operation-rebased");
+    let controlReads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, version: 6 }),
+      actionError: 503,
+      adminResponse: () => {
+        controlReads += 1;
+        return Promise.resolve(
+          response(
+            controls(
+              controlReads > 1
+                ? { state: "answer", questionIndex: 0, version: 7 }
+                : { state: "question", questionIndex: 0, version: 6 },
+            ),
+          ),
+        );
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    const originalEnvelope = api.actions[0] as Record<string, unknown>;
+
+    api.setActionError(409);
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    await flush();
+    expect(api.actions).toHaveLength(2);
+    expect(api.actions[1]).toEqual(originalEnvelope);
+
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    await flush();
+    // The recovery poll and its nested writer flush each add one timer hop.
+    await act(async () => vi.advanceTimersByTimeAsync(10));
+    await flush();
+    expect(api.actions).toHaveLength(3);
+    expect(api.actions[2]).toMatchObject({
+      action: "position",
+      state: "answer",
+      questionIndex: 0,
+      expectedSnapshotRevision: 1,
+      expectedSessionVersion: 7,
+      operationId: "presentation-operation-rebased",
+    });
+  });
+
+  it("rebases a conflicted local target with a fresh operation ID and confirmed version", async () => {
+    vi.mocked(crypto.randomUUID)
+      .mockReturnValueOnce("presentation-operation-conflict")
+      .mockReturnValueOnce("presentation-operation-rebase");
+    let controlReads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, version: 6 }),
+      actionError: 409,
+      adminResponse: () => {
+        controlReads += 1;
+        return Promise.resolve(
+          response(
+            controls(
+              controlReads > 1
+                ? { state: "answer", questionIndex: 0, version: 7 }
+                : { state: "question", questionIndex: 0, version: 6 },
+            ),
+          ),
+        );
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    const staleEnvelope = api.actions[0] as Record<string, unknown>;
+
+    await waitFor(() => expect(api.actions).toHaveLength(2));
+    const rebasedEnvelope = api.actions[1] as Record<string, unknown>;
+    expect(rebasedEnvelope).toMatchObject({
+      action: "position",
+      state: "answer",
+      questionIndex: 0,
+      expectedSnapshotRevision: 1,
+      expectedSessionVersion: 7,
+    });
+    expect(rebasedEnvelope.operationId).not.toBe(staleEnvelope.operationId);
   });
 
   it("drops presenter controls after an expired admin session", async () => {
@@ -1597,7 +1796,7 @@ describe("PresentationScreen", () => {
     await waitForControls();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(1));
-    expect(api.actions[0]).toMatchObject({ action: "advance", expectedSnapshotRevision: 1 });
+    expect(api.actions[0]).toMatchObject({ action: "position", expectedSnapshotRevision: 1 });
     await flush();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
@@ -1742,7 +1941,7 @@ describe("PresentationScreen", () => {
         expect(api.actions).toHaveLength(1);
         expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
       });
-      expect(api.actions[0]).toMatchObject({ action: "advance" });
+      expect(api.actions[0]).toMatchObject({ action: "position" });
     } finally {
       windowAddSpy.mockRestore();
     }
@@ -1801,7 +2000,7 @@ describe("PresentationScreen", () => {
 
     await waitFor(() => expect(api.actions).toHaveLength(1));
     expect(await screen.findByText("問")).toBeInTheDocument();
-    expect(screen.queryByText("THE STORY BEHIND IT")).not.toBeInTheDocument();
+    expect(await screen.findByText("正解")).toBeInTheDocument();
     expect(
       api.fetchMock.mock.calls.filter(
         ([path]) => String(path) === "/api/admin/presentation?view=controls",
@@ -1913,7 +2112,7 @@ describe("PresentationScreen", () => {
     );
   });
 
-  it("resynchronizes controls and deck when an action returns another snapshot revision", async () => {
+  it("keeps navigation local until polling observes a new snapshot revision", async () => {
     const waitForControls = observePresenterControls();
     let actionResponses = 0;
     const api = installApi({
@@ -1942,18 +2141,17 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(main, { key: "ArrowRight" });
 
     await waitFor(() => expect(api.actions).toHaveLength(1));
-    expect(api.actions[0]).toMatchObject({ action: "advance", expectedSnapshotRevision: 1 });
+    expect(api.actions[0]).toMatchObject({ action: "position", expectedSnapshotRevision: 1 });
     expect(
       api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/admin/presentation/deck"),
-    ).toHaveLength(deckReadsBeforeAction + 1);
-    expect(await screen.findByText("問")).toBeInTheDocument();
-    expect(screen.queryByText("THE STORY BEHIND IT")).not.toBeInTheDocument();
+    ).toHaveLength(deckReadsBeforeAction);
+    expect(screen.getByText("正解")).toBeInTheDocument();
 
     fireEvent.keyDown(main, { key: "ArrowLeft" });
     await waitFor(() => expect(api.actions).toHaveLength(2));
   });
 
-  it("fails closed on an invalid successful action payload and resynchronizes controls", async () => {
+  it("keeps optimistic navigation when an absolute cursor response is malformed", async () => {
     const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
@@ -1971,18 +2169,17 @@ describe("PresentationScreen", () => {
 
     fireEvent.keyDown(main, { key: "ArrowRight" });
 
-    await waitFor(() =>
-      expect(
-        api.fetchMock.mock.calls.filter(
-          ([path]) => String(path) === "/api/admin/presentation?view=controls",
-        ),
-      ).toHaveLength(readsBeforeAction + 1),
-    );
+    await waitFor(() => expect(api.actions).toHaveLength(1));
     expect(api.actions).toHaveLength(1);
-    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(
+      api.fetchMock.mock.calls.filter(
+        ([path]) => String(path) === "/api/admin/presentation?view=controls",
+      ),
+    ).toHaveLength(readsBeforeAction);
+    expect(screen.getByText("正解")).toBeInTheDocument();
   });
 
-  it("waits for an active controls poll before sending a successful action", async () => {
+  it("sends navigation during an active controls poll and ignores its stale response", async () => {
     vi.useFakeTimers();
     let resolveStaleControls!: (value: Response) => void;
     let controlReads = 0;
@@ -2005,7 +2202,7 @@ describe("PresentationScreen", () => {
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await flush();
-    expect(api.actions).toHaveLength(0);
+    expect(api.actions).toHaveLength(1);
     await act(async () => {
       resolveStaleControls(response(controls({ state: "question", questionIndex: 0 })));
       await Promise.resolve();
@@ -2013,12 +2210,11 @@ describe("PresentationScreen", () => {
     await flush();
     expect(api.actions).toHaveLength(1);
 
-    expect(screen.getByText("問")).toBeInTheDocument();
-    expect(screen.queryByText("THE STORY BEHIND IT")).not.toBeInTheDocument();
+    expect(screen.getByText("正解")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
   });
 
-  it("resynchronizes after an action error and accepts a later action", async () => {
+  it("keeps navigation available after a write error without control resynchronization", async () => {
     const waitForControls = observePresenterControls();
     const api = installApi({
       projection: { state: "question", question },
@@ -2035,15 +2231,14 @@ describe("PresentationScreen", () => {
     ).length;
 
     fireEvent.keyDown(main, { key: "ArrowRight" });
-    await waitFor(() =>
-      expect(
-        api.fetchMock.mock.calls.filter(
-          ([path]) => String(path) === "/api/admin/presentation?view=controls",
-        ),
-      ).toHaveLength(readsBeforeAction + 1),
-    );
+    await waitFor(() => expect(api.actions).toHaveLength(1));
     expect(api.actions).toHaveLength(1);
-    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(
+      api.fetchMock.mock.calls.filter(
+        ([path]) => String(path) === "/api/admin/presentation?view=controls",
+      ),
+    ).toHaveLength(readsBeforeAction);
+    expect(screen.getByText("正解")).toBeInTheDocument();
 
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(2));
@@ -2083,7 +2278,7 @@ describe("PresentationScreen", () => {
     await waitForControls();
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(1));
-    expect(api.actions[0]).toMatchObject({ action: "advance" });
+    expect(api.actions[0]).toMatchObject({ action: "position" });
     const winnerRegion = await screen.findByRole("region", { name: "第二位の勝者一覧" });
     expect(winnerRegion).toHaveTextContent("凛");
     expect(winnerRegion).toHaveTextContent("葵");
@@ -2132,7 +2327,7 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(main, { key: "ArrowRight" });
 
     await waitFor(() => expect(api.actions).toHaveLength(1));
-    expect(api.actions[0]).toMatchObject({ action: "advance" });
+    expect(api.actions[0]).toMatchObject({ action: "position" });
     const winnerRegion = await screen.findByRole("region", { name: "第一位の勝者一覧" });
     expect(winnerRegion).toHaveTextContent("葵");
     expect(winnerRegion.className).not.toContain("announce");
@@ -2160,7 +2355,7 @@ describe("PresentationScreen", () => {
     expect(api.actions).toHaveLength(0);
     fireEvent.click(screen.getByTestId("presentation-canvas"));
     await waitFor(() => expect(api.actions).toHaveLength(1));
-    expect(api.actions[0]).toMatchObject({ action: "advance" });
+    expect(api.actions[0]).toMatchObject({ action: "position" });
   });
 
   it("allows a click event from non-element slide text to advance", async () => {
@@ -2183,7 +2378,7 @@ describe("PresentationScreen", () => {
 
     fireEvent.click(textTarget);
     await waitFor(() => expect(api.actions).toHaveLength(1));
-    expect(api.actions[0]).toMatchObject({ action: "advance" });
+    expect(api.actions[0]).toMatchObject({ action: "position" });
     expect(main.contains(textTarget)).toBe(true);
   });
 
@@ -2208,7 +2403,7 @@ describe("PresentationScreen", () => {
 
     fireEvent.keyDown(textTarget, { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(1));
-    expect(api.actions[0]).toMatchObject({ action: "advance" });
+    expect(api.actions[0]).toMatchObject({ action: "position" });
     expect(main.contains(textTarget)).toBe(true);
   });
 
@@ -2270,7 +2465,7 @@ describe("PresentationScreen", () => {
       fireEvent.keyDown(main, { key: "ArrowLeft" });
       fireEvent.click(screen.getByTestId("presentation-canvas"));
       expect(api.actions).toHaveLength(1);
-      expect(api.actions[0]).toMatchObject({ action: "previous" });
+      expect(api.actions[0]).toMatchObject({ action: "position" });
       releaseAction();
       await flush();
     } finally {
@@ -2310,8 +2505,8 @@ describe("PresentationScreen", () => {
     await flush();
     expect(api.actions).toHaveLength(2);
     expect(api.actions.map((action) => (action as { action: string }).action)).toEqual([
-      "advance",
-      "advance",
+      "position",
+      "position",
     ]);
 
     // The original 450ms deadline has passed, but the restarted deadline has not.
@@ -2348,7 +2543,7 @@ describe("PresentationScreen", () => {
     fireEvent.click(main);
     await flush();
     expect(api.actions).toHaveLength(2);
-    expect(api.actions[1]).toMatchObject({ action: "advance" });
+    expect(api.actions[1]).toMatchObject({ action: "position" });
   });
 
   it("allows a right swipe to go previous after the first question", async () => {
@@ -2373,7 +2568,7 @@ describe("PresentationScreen", () => {
     fireEvent.pointerUp(main, { pointerId: 15, isPrimary: true, clientX: 160, clientY: 101 });
     await flush();
     expect(api.actions).toHaveLength(1);
-    expect(api.actions[0]).toMatchObject({ action: "previous" });
+    expect(api.actions[0]).toMatchObject({ action: "position" });
   });
 
   it("swipes previous from the first question to opening", async () => {
@@ -2396,7 +2591,7 @@ describe("PresentationScreen", () => {
     fireEvent.pointerUp(main, { pointerId: 16, isPrimary: true, clientX: 160, clientY: 101 });
     await flush();
     expect(api.actions).toHaveLength(1);
-    expect(api.actions[0]).toMatchObject({ action: "previous" });
+    expect(api.actions[0]).toMatchObject({ action: "position" });
   });
 
   it("does not advance a finished presentation when the slide is clicked", async () => {
@@ -2456,7 +2651,7 @@ describe("PresentationScreen", () => {
     fireEvent.pointerUp(main, { pointerId: 20, isPrimary: true, clientX: 160, clientY: 101 });
     await flush();
     expect(api.actions).toHaveLength(1);
-    expect(api.actions[0]).toMatchObject({ action: "previous" });
+    expect(api.actions[0]).toMatchObject({ action: "position" });
     expect(await screen.findByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
   });
 
@@ -2834,8 +3029,11 @@ describe("PresentationScreen", () => {
       await flush();
       expect(api.actions).toEqual([
         {
-          action: "advance",
+          action: "position",
+          state: "answer",
+          questionIndex: 1,
           expectedSnapshotRevision: 1,
+          expectedSessionVersion: 0,
           operationId: "presentation-operation",
         },
       ]);
@@ -2857,8 +3055,11 @@ describe("PresentationScreen", () => {
       expect(screen.getByRole("button", { name: "全画面表示" })).toBeVisible();
       expect(unsupportedApi.actions).toEqual([
         {
-          action: "advance",
+          action: "position",
+          state: "answer",
+          questionIndex: 1,
           expectedSnapshotRevision: 1,
+          expectedSessionVersion: 0,
           operationId: "presentation-operation",
         },
       ]);

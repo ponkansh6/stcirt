@@ -77,31 +77,12 @@ function setup(
     ...options.admin,
   };
   let actionCallCount = 0;
-  const transition = (action: "advance" | "previous") => {
-    const { state, questionIndex, questionCount } = admin as {
-      state: string;
-      questionIndex: number;
-      questionCount: number;
-      version: number;
-      projectionHidden: boolean;
-    };
-    const order = Array.from({ length: questionCount }, (_, index) => [
-      { state: "question", questionIndex: index },
-      { state: "answer", questionIndex: index },
-    ]).flat();
-    order.unshift({ state: "opening", questionIndex: 0 });
-    order.push(
-      { state: "podium_preview", questionIndex: questionCount },
-      { state: "third", questionIndex: questionCount },
-      { state: "second", questionIndex: questionCount },
-      { state: "first", questionIndex: questionCount },
-      { state: "finished", questionIndex: questionCount },
+  let deckSlides: DeckSlideFixture[] = [];
+  const transition = (targetState: string, targetIndex: number) => {
+    const next = deckSlides.find(
+      (slide) => slide.state === targetState && slide.questionIndex === targetIndex,
     );
-    const current = order.findIndex(
-      (slide) => slide.state === state && slide.questionIndex === questionIndex,
-    );
-    const next = order[current + (action === "advance" ? 1 : -1)];
-    if (current < 0 || !next) return admin;
+    if (!next) return admin;
     return {
       ...admin,
       ...next,
@@ -128,7 +109,7 @@ function setup(
       : state === "third" || state === "second" || state === "first"
         ? { state, winners: [] }
         : { state };
-  const deckSlides: DeckSlideFixture[] = [
+  deckSlides = [
     deckSlide("opening", 0, { state: "opening" }),
     ...Array.from({ length: Number(admin.questionCount ?? 0) }, (_, questionIndex) => [
       deckSlide("question", questionIndex, slideProjection("question")),
@@ -181,14 +162,22 @@ function setup(
       await options.actionGate?.();
       const status = options.actionStatuses?.[actionCallCount++] ?? options.actionStatus ?? 200;
       if ((status >= 200 && status < 300) || options.commitBeforeActionError) {
-        const action = JSON.parse(String(init.body)).action as "advance" | "previous";
+        const action = JSON.parse(String(init.body)) as {
+          action: string;
+          state?: string;
+          questionIndex?: number;
+        };
         admin = options.actionAdmin
           ? {
               ...admin,
               ...options.actionAdmin,
               version: Number((admin as { version?: number }).version ?? 0) + 1,
             }
-          : transition(action);
+          : action.action === "position" &&
+              typeof action.state === "string" &&
+              typeof action.questionIndex === "number"
+            ? transition(action.state, action.questionIndex)
+            : admin;
       }
       if (options.actionInvalidJson && status >= 200 && status < 300)
         return new Response("not-json", { status });
@@ -305,11 +294,13 @@ describe("presentation projection and presenter progression", () => {
     fireEvent.keyDown(main, { key: "ArrowLeft" });
     await settled();
 
-    expect(
-      api.calls
-        .filter(({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST")
-        .map(({ init }) => JSON.parse(String(init?.body)).action),
-    ).toEqual(["advance", "previous"]);
+    const positionWrites = api.calls
+      .filter(({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST")
+      .map(({ init }) => JSON.parse(String(init?.body)));
+    expect(positionWrites).toMatchObject([
+      { action: "position", state: "answer", questionIndex: 1 },
+      { action: "position", state: "question", questionIndex: 1 },
+    ]);
   });
 
   it.each(["Enter", " "])("advances with the focused surface %s key", async (key) => {
@@ -327,7 +318,7 @@ describe("presentation projection and presenter progression", () => {
       api.calls
         .filter(({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST")
         .map(({ init }) => JSON.parse(String(init?.body)).action),
-    ).toEqual(["advance"]);
+    ).toEqual(["position"]);
   });
 
   it("does not navigate when the fullscreen button is activated", async () => {
@@ -651,12 +642,12 @@ describe("presentation projection and presenter progression", () => {
     const actions = api.calls
       .filter(({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST")
       .map(({ init }) => JSON.parse(String(init?.body)).action);
-    expect(actions).toEqual(["advance", "previous", "advance", "advance", "advance"]);
+    expect(actions).toEqual(["position", "position", "position", "position", "position"]);
     const firstAction = api.calls.find(
       ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
     );
     expect(JSON.parse(String(firstAction?.init?.body))).toMatchObject({
-      action: "advance",
+      action: "position",
       expectedSnapshotRevision: 1,
     });
   });
@@ -760,7 +751,7 @@ describe("presentation projection and presenter progression", () => {
     await settled();
   });
 
-  it("loads the presenter deck once and refreshes only controls while a mutation is in flight", async () => {
+  it("keeps local navigation responsive while its cursor write is in flight", async () => {
     vi.useFakeTimers();
     let release!: () => void;
     let started!: () => void;
@@ -794,8 +785,8 @@ describe("presentation projection and presenter progression", () => {
     await settled();
     expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(1);
     expect(
-      api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls"),
-    ).toHaveLength(1);
+      api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls").length,
+    ).toBeGreaterThanOrEqual(1);
     expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(0);
   });
 
@@ -1360,7 +1351,7 @@ describe("presentation projection and presenter progression", () => {
     }
   });
 
-  it("reschedules spectator polling while a presenter mutation is in flight", async () => {
+  it("keeps spectator polling independent from a presenter cursor write", async () => {
     vi.useFakeTimers();
     let release!: () => void;
     let started!: () => void;
@@ -1382,11 +1373,13 @@ describe("presentation projection and presenter progression", () => {
     await actionStarted;
 
     view.rerender(<PresentationScreen />);
-    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(0);
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(1);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1400);
     });
-    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(0);
+    expect(
+      api.calls.filter(({ path }) => path === "/api/presentation").length,
+    ).toBeGreaterThanOrEqual(2);
 
     await act(async () => {
       release();
@@ -1396,21 +1389,26 @@ describe("presentation projection and presenter progression", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1400);
     });
-    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(1);
+    expect(
+      api.calls.filter(({ path }) => path === "/api/presentation").length,
+    ).toBeGreaterThanOrEqual(2);
   });
 
-  it("refreshes controls after a 409 without refetching slides or retrying the operation", async () => {
-    const api = setup({ actionStatus: 409 });
+  it("reconciles a 409 and retries the latest cursor without refetching slides", async () => {
+    vi.useFakeTimers();
+    const api = setup({ actionStatuses: [409, 200] });
     render(<PresentationScreen presenterRequested />);
+    await act(async () => vi.advanceTimersByTimeAsync(10));
     await settled();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    await waitFor(() =>
-      expect(
-        api.calls.filter(
-          ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
-        ),
-      ).toHaveLength(1),
-    );
+    await settled();
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+    await settled();
+    await act(async () => vi.advanceTimersByTimeAsync(10));
     await settled();
     expect(api.calls.filter(({ path }) => path === "/api/admin/presentation/deck")).toHaveLength(1);
     expect(
@@ -1421,14 +1419,14 @@ describe("presentation projection and presenter progression", () => {
       api.calls.filter(
         ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
-  it("rolls back a rejected optimistic slide when a 409 reconciliation refresh also fails", async () => {
+  it("keeps the latest local cursor while a 409 reconciliation poll is unavailable", async () => {
     vi.useFakeTimers();
     let controlsReads = 0;
     const api = setup({
-      actionStatus: 409,
+      actionStatuses: [409, 200],
       controlsGetter: async () => {
         controlsReads += 1;
         if (controlsReads === 2) return response({ error: "offline" }, 503);
@@ -1448,33 +1446,24 @@ describe("presentation projection and presenter progression", () => {
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await settled();
 
-    expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
-    expect(screen.queryByText("正解")).not.toBeInTheDocument();
-    const staleProjectionCue = screen.getByRole("note");
-    expect(staleProjectionCue).toHaveTextContent(
-      "スライドの状態を確認できません。自動で再試行します",
-    );
-    expect(staleProjectionCue).toHaveAttribute("aria-live", "off");
-    expect(screen.getAllByRole("status")).toHaveLength(1);
-    expect(screen.queryByRole("status")).toBeInTheDocument();
+    expect(screen.getByText("正解")).toBeInTheDocument();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2500);
     });
+    await act(async () => vi.advanceTimersByTimeAsync(10));
     await settled();
 
     expect(controlsReads).toBeGreaterThanOrEqual(3);
-    expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
-    expect(screen.queryByText("正解")).not.toBeInTheDocument();
-    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(screen.getByText("正解")).toBeInTheDocument();
     expect(
       api.calls.filter(
         ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
-  it("rolls back an ambiguous 503 then converges and retries from refreshed server controls", async () => {
+  it("retries an ambiguous 503 with the same absolute cursor while navigation stays local", async () => {
     vi.useFakeTimers();
     let controlsReads = 0;
     const api = setup({
@@ -1510,15 +1499,10 @@ describe("presentation projection and presenter progression", () => {
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await settled();
-    expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
-    expect(screen.queryByText("正解")).not.toBeInTheDocument();
-    expect(screen.getByRole("note")).toHaveTextContent(
-      "スライドの状態を確認できません。自動で再試行します",
-    );
-    expect(screen.queryByRole("status")).toBeInTheDocument();
+    expect(screen.getByText("正解")).toBeInTheDocument();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2500);
+      await vi.advanceTimersByTimeAsync(1000);
     });
     await settled();
     expect(screen.getByText("正解")).toBeInTheDocument();
@@ -1529,7 +1513,7 @@ describe("presentation projection and presenter progression", () => {
     const actions = api.calls.filter(
       ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
     );
-    expect(actions).toHaveLength(2);
+    expect(actions).toHaveLength(3);
     expect(
       actions
         .map(({ init }) => JSON.parse(String(init?.body)))
@@ -1538,8 +1522,9 @@ describe("presentation projection and presenter progression", () => {
           expectedSnapshotRevision: body.expectedSnapshotRevision,
         })),
     ).toEqual([
-      { action: "advance", expectedSnapshotRevision: 1 },
-      { action: "advance", expectedSnapshotRevision: 1 },
+      { action: "position", expectedSnapshotRevision: 1 },
+      { action: "position", expectedSnapshotRevision: 1 },
+      { action: "position", expectedSnapshotRevision: 1 },
     ]);
     expect(screen.getByRole("heading", { name: "次の設問" })).toBeInTheDocument();
     expect(screen.queryByText("正解")).not.toBeInTheDocument();
@@ -1561,7 +1546,7 @@ describe("presentation projection and presenter progression", () => {
     ).toHaveLength(1);
     expect(
       api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls").length,
-    ).toBeGreaterThanOrEqual(2);
+    ).toBe(1);
   });
 
   it("reconciles a successful mutation response with invalid JSON", async () => {
@@ -1580,15 +1565,12 @@ describe("presentation projection and presenter progression", () => {
     ).toHaveLength(1);
     expect(
       api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
-  it.each([
-    ["question", "問題スライド"],
-    ["answer", "解説スライド"],
-  ] as const)(
-    "announces a concise %s stage while reconciling a confirmed cursor absent from the cached deck",
-    async (confirmedState, expectedAnnouncement) => {
+  it.each(["question", "answer"] as const)(
+    "keeps the cached cursor local when the server reports another %s cursor",
+    async (confirmedState) => {
       let deckReads = 0;
       let controlsReads = 0;
       let releaseAction!: () => void;
@@ -1643,6 +1625,21 @@ describe("presentation projection and presenter progression", () => {
                         },
                       },
                     },
+                    {
+                      state: "answer",
+                      questionIndex: 0,
+                      projection: {
+                        state: "answer",
+                        question: {
+                          id: 1,
+                          ordinal: 1,
+                          total: 5,
+                          question: "現在の質問",
+                          choices: ["A"],
+                          correctIndex: 0,
+                        },
+                      },
+                    },
                   ]
                 : [
                     {
@@ -1682,31 +1679,16 @@ describe("presentation projection and presenter progression", () => {
         await settled();
         fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
         await settled();
-        expect(screen.getByText("現在の質問")).toBeInTheDocument();
-        expect(screen.queryByText("同期後カーソル")).not.toBeInTheDocument();
+        expect(screen.getByText("正解")).toBeInTheDocument();
         await act(async () => {
           releaseAction();
           await Promise.resolve();
         });
 
-        expect(await screen.findByRole("status")).toHaveTextContent(expectedAnnouncement);
+        expect(screen.getByText("正解")).toBeInTheDocument();
         expect(screen.queryByText("同期後カーソル")).not.toBeInTheDocument();
-        await act(async () => {
-          releaseControls(
-            response({
-              state: confirmedState,
-              version: 1,
-              snapshotRevision: 1,
-              questionIndex: 1,
-              questionCount: 5,
-              projectionHidden: false,
-            }),
-          );
-          await Promise.resolve();
-        });
-
-        expect(await screen.findByText("同期後カーソル")).toBeInTheDocument();
-        expect(deckReads).toBe(2);
+        expect(deckReads).toBe(1);
+        expect(controlsReads).toBe(1);
         expect(
           api.calls.filter(
             ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
@@ -1730,32 +1712,90 @@ describe("presentation projection and presenter progression", () => {
     },
   );
 
-  it("uses the not-started projection returned by a protected mutation", async () => {
+  it("applies not-started controls through polling after navigation", async () => {
+    vi.useFakeTimers();
     setup({ actionAdmin: { state: "not_started", questionIndex: 0 } });
     render(<PresentationScreen presenterRequested />);
     await settled();
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    expect(await screen.findByText("発表が始まるまで、少々お待ちください")).toBeInTheDocument();
+    expect(screen.getByText("正解")).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(screen.getByText("発表が始まるまで、少々お待ちください")).toBeInTheDocument();
   });
 
-  it("reconciles a failed response after a possibly committed mutation without retrying", async () => {
-    const api = setup({ actionStatus: 503, commitBeforeActionError: true });
+  it("retries an ambiguously failed absolute position write idempotently", async () => {
+    vi.useFakeTimers();
+    const api = setup({ actionStatuses: [503, 200], commitBeforeActionError: true });
     render(<PresentationScreen presenterRequested />);
     await settled();
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    expect(await screen.findByText("正解")).toBeInTheDocument();
+    expect(screen.getByText("正解")).toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
     await settled();
 
     expect(
       api.calls.filter(
         ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expect(
       api.calls.filter(({ path }) => path === "/api/admin/presentation?view=controls").length,
-    ).toBeGreaterThanOrEqual(2);
+    ).toBe(1);
+  });
+
+  it("drops an outstanding position write when presenter mode is disabled", async () => {
+    vi.useFakeTimers();
+    let rejectAction!: (error: Error) => void;
+    const actionGate = new Promise<void>((_resolve, reject) => {
+      rejectAction = reject;
+    });
+    const api = setup({
+      actionGate: () => actionGate,
+      controlsGetter: async () =>
+        response({
+          state: "answer",
+          version: 1,
+          snapshotRevision: 1,
+          questionIndex: 0,
+          questionCount: 5,
+          projectionHidden: false,
+        }),
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+
+    try {
+      await settled();
+      fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+      expect(screen.getByText("第1問")).toBeInTheDocument();
+      expect(
+        api.calls.filter(
+          ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+        ),
+      ).toHaveLength(1);
+
+      view.rerender(<PresentationScreen presenterRequested={false} />);
+      view.rerender(<PresentationScreen presenterRequested />);
+      await settled();
+      expect(screen.getByText("正解")).toBeInTheDocument();
+
+      await act(async () => {
+        rejectAction(new Error("aborted position write"));
+        await actionGate.catch(() => undefined);
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+      await settled();
+
+      expect(
+        api.calls.filter(
+          ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+        ),
+      ).toHaveLength(1);
+      expect(screen.getByText("正解")).toBeInTheDocument();
+    } finally {
+      view.unmount();
+    }
   });
 
   it("retries a failed public projection poll and keeps the viewport shell", async () => {
@@ -1873,7 +1913,7 @@ describe("presentation projection and presenter progression", () => {
     );
     expect(mutations).toHaveLength(1);
     const mutation = mutations[0];
-    expect(mutation?.init?.body).toContain('"action":"previous"');
+    expect(mutation?.init?.body).toContain('"action":"position"');
     expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
   });
 

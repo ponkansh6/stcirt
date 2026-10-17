@@ -24,6 +24,7 @@ import {
   getPublicPresentation,
   operatePresentation,
   operatePresentationControls,
+  setPresentationPosition,
   PresentationConflictError,
   setParticipantResultsVisible,
 } from "@/lib/db/repository/presentation-repository";
@@ -608,6 +609,16 @@ describe("presentation repository", () => {
       .set({ state: "podium_preview", questionCount: 0 })
       .where(eq(schema.presentationSessions.id, 1));
 
+    const deck = await getAdminPresentationDeck();
+    expect(
+      deck.slides
+        .filter(({ state }) => state === "podium_preview" || state === "finished")
+        .map(({ questionIndex }) => questionIndex),
+    ).toEqual([0, 0]);
+    await expect(
+      setPresentationPosition("empty-preview-position", "podium_preview", 0, 1, 1),
+    ).resolves.toMatchObject({ state: "podium_preview", questionIndex: 0 });
+
     await expect(op("previous", "empty-preview-previous")).resolves.toMatchObject({
       state: "opening",
       questionIndex: 0,
@@ -1085,10 +1096,10 @@ describe("presentation repository", () => {
       ["answer", 0],
       ["question", 1],
       ["answer", 1],
-      ["podium_preview", 0],
-      ["third", 0],
-      ["first", 0],
-      ["finished", 0],
+      ["podium_preview", 1],
+      ["third", 1],
+      ["first", 1],
+      ["finished", 1],
     ]);
     expect(deck.slides[1]?.projection).toMatchObject({
       state: "question",
@@ -1816,6 +1827,108 @@ describe("presentation repository", () => {
     });
     expect(fullSnapshot.questions).toHaveLength(2);
     expect(fullSnapshot.entries).toEqual([]);
+  });
+
+  it("accepts only slide positions present in the active presentation deck", async () => {
+    await addQuestions();
+    await operatePresentationControls("position-validation-aggregate", "aggregate");
+    await operatePresentationControls("position-validation-start", "start");
+
+    await expect(
+      setPresentationPosition("position-validation-valid", "question", 1, 1, 2),
+    ).resolves.toMatchObject({ state: "question", questionIndex: 1 });
+    await expect(
+      setPresentationPosition("position-validation-valid", "question", 0, 1, 2),
+    ).rejects.toMatchObject({ status: 409, message: "Operation ID conflict" });
+    await expect(
+      setPresentationPosition("position-validation-question-overflow", "answer", 2, 1, 3),
+    ).rejects.toMatchObject({ status: 409, message: "Invalid presentation position" });
+    await expect(
+      setPresentationPosition("position-validation-opening-index", "opening", 1, 1, 3),
+    ).rejects.toMatchObject({ status: 409, message: "Invalid presentation position" });
+    await expect(
+      setPresentationPosition("position-validation-podium-index", "podium_preview", 0, 1, 3),
+    ).rejects.toMatchObject({ status: 409, message: "Invalid presentation position" });
+    await expect(
+      setPresentationPosition("position-validation-missing-rank", "third", 1, 1, 3),
+    ).rejects.toMatchObject({ status: 409, message: "Invalid presentation position" });
+  });
+
+  it("fences delayed position writes by session version and binds replay IDs to the request", async () => {
+    await addQuestions();
+    await operatePresentationControls("position-fence-aggregate", "aggregate");
+    await operatePresentationControls("position-fence-start", "start");
+
+    const first = await setPresentationPosition("position-fence-a", "question", 0, 1, 2);
+    const newer = await setPresentationPosition("position-fence-b", "answer", 0, 1, first.version);
+    await expect(
+      setPresentationPosition("position-fence-a", "question", 0, 1, 2),
+    ).resolves.toMatchObject({ state: "answer", questionIndex: 0, version: newer.version });
+    await expect(
+      setPresentationPosition("position-fence-a", "answer", 0, 1, 2),
+    ).rejects.toMatchObject({ status: 409, message: "Operation ID conflict" });
+    await expect(getAdminPresentationControls()).resolves.toMatchObject({
+      state: "answer",
+      questionIndex: 0,
+      version: newer.version,
+    });
+    await expect(
+      setPresentationPosition("position-fence-delayed", "question", 1, 1, 2),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(getAdminPresentationControls()).resolves.toMatchObject({
+      state: "answer",
+      questionIndex: 0,
+      version: newer.version,
+    });
+  });
+
+  it("uses cached terminal deck cursors for jumps and backward navigation", async () => {
+    await addRankFixture();
+    await startWithAggregate("terminal-deck-cursor");
+    const deck = await getAdminPresentationDeck();
+    const terminalSlides = deck.slides.filter(({ state }) =>
+      ["podium_preview", "third", "first", "finished"].includes(state),
+    );
+    expect(deck.questionIndex).toBe(0);
+    expect(terminalSlides.map(({ state, questionIndex }) => [state, questionIndex])).toEqual([
+      ["podium_preview", 1],
+      ["third", 1],
+      ["first", 1],
+      ["finished", 1],
+    ]);
+
+    const confirmedBeforePosition = await getAdminPresentationControls();
+    const preview = await setPresentationPosition(
+      "terminal-deck-jump-preview",
+      "podium_preview",
+      1,
+      1,
+      confirmedBeforePosition.version,
+    );
+    expect(preview).toMatchObject({ state: "podium_preview", questionIndex: 1 });
+    const third = await setPresentationPosition(
+      "terminal-deck-jump-third",
+      "third",
+      1,
+      1,
+      preview.version,
+    );
+    expect(third).toMatchObject({ state: "third", questionIndex: 1 });
+    await expect(
+      setPresentationPosition("terminal-deck-jump-finished", "finished", 1, 1, third.version),
+    ).resolves.toMatchObject({ state: "finished", questionIndex: 1 });
+    await expect(op("previous", "terminal-deck-finished-back")).resolves.toMatchObject({
+      state: "first",
+      questionIndex: 1,
+    });
+    await expect(op("previous", "terminal-deck-rank-back")).resolves.toMatchObject({
+      state: "third",
+      questionIndex: 1,
+    });
+    await expect(op("previous", "terminal-deck-third-back")).resolves.toMatchObject({
+      state: "podium_preview",
+      questionIndex: 1,
+    });
   });
 
   it("rebuilds the shared snapshot only on aggregate while publication and start reuse it", async () => {

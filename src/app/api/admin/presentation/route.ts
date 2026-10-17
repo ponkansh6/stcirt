@@ -8,8 +8,10 @@ import {
   getAdminPresentation,
   getAdminPresentationControls,
   operatePresentationControls,
+  setPresentationPosition,
   PresentationConflictError,
 } from "@/lib/db/repository/presentation-repository";
+import type { PresentationState } from "@/lib/db/repository/presentation-repository";
 
 export const runtime = "nodejs";
 const noStore = { "Cache-Control": "no-store, private" };
@@ -57,6 +59,9 @@ export async function POST(request: Request) {
     action?: unknown;
     mode?: unknown;
     expectedSnapshotRevision?: unknown;
+    expectedSessionVersion?: unknown;
+    state?: unknown;
+    questionIndex?: unknown;
   } | null;
   if (
     !value ||
@@ -67,6 +72,7 @@ export async function POST(request: Request) {
     (value.action !== "start" &&
       value.action !== "advance" &&
       value.action !== "previous" &&
+      value.action !== "position" &&
       value.action !== "hide" &&
       value.action !== "show" &&
       value.action !== "aggregate" &&
@@ -75,19 +81,46 @@ export async function POST(request: Request) {
       (typeof value.expectedSnapshotRevision !== "number" ||
         !Number.isInteger(value.expectedSnapshotRevision) ||
         value.expectedSnapshotRevision < 0)) ||
-    value.mode !== undefined
+    value.mode !== undefined ||
+    (value.action === "position" &&
+      (typeof value.state !== "string" ||
+        ![
+          "opening",
+          "question",
+          "answer",
+          "podium_preview",
+          "third",
+          "second",
+          "first",
+          "finished",
+        ].includes(value.state) ||
+        typeof value.questionIndex !== "number" ||
+        !Number.isInteger(value.questionIndex) ||
+        value.questionIndex < 0 ||
+        typeof value.expectedSnapshotRevision !== "number" ||
+        typeof value.expectedSessionVersion !== "number" ||
+        !Number.isInteger(value.expectedSessionVersion) ||
+        value.expectedSessionVersion < 0))
   ) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400, headers: noStore });
   }
   try {
-    const result =
-      value.expectedSnapshotRevision === undefined
-        ? await operatePresentationControls(value.operationId, value.action)
-        : await operatePresentationControls(
+    const result: Awaited<ReturnType<typeof operatePresentationControls>> =
+      value.action === "position"
+        ? await setPresentationPosition(
             value.operationId,
-            value.action,
-            value.expectedSnapshotRevision,
-          );
+            value.state as PresentationState,
+            value.questionIndex as number,
+            value.expectedSnapshotRevision as number,
+            value.expectedSessionVersion as number,
+          )
+        : value.expectedSnapshotRevision === undefined
+          ? await operatePresentationControls(value.operationId, value.action)
+          : await operatePresentationControls(
+              value.operationId,
+              value.action,
+              value.expectedSnapshotRevision,
+            );
     return NextResponse.json(
       {
         state: result.state,

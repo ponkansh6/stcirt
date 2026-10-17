@@ -88,6 +88,7 @@ const presentationActions = new Set<string>([
   "start",
   "advance",
   "previous",
+  "position",
   "hide",
   "show",
   "aggregate",
@@ -555,6 +556,38 @@ async function previousState(
   throw new PresentationConflictError("Presentation is already at its first state");
 }
 
+async function isValidPresentationPosition(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  state: PresentationState,
+  questionIndex: number,
+  session: { questionCount: number; questionIndex: number },
+) {
+  const knownStates: PresentationState[] = [
+    "opening",
+    "question",
+    "answer",
+    "podium_preview",
+    "third",
+    "second",
+    "first",
+    "finished",
+  ];
+  if (!knownStates.includes(state) || !Number.isInteger(questionIndex)) return false;
+  if (state === "opening") return questionIndex === 0;
+  if (state === "question" || state === "answer") {
+    return questionIndex >= 0 && questionIndex < session.questionCount;
+  }
+  if (questionIndex !== Math.max(session.questionCount - 1, 0)) return false;
+  const rank = rankForStage(state);
+  if (rank === null) return true;
+  const [winner] = await tx
+    .select({ participantId: presentationEntries.participantId })
+    .from(presentationEntries)
+    .where(and(eq(presentationEntries.sessionId, 1), eq(presentationEntries.rank, rank)))
+    .limit(1);
+  return Boolean(winner);
+}
+
 export async function operatePresentation(operationId: string, action: PresentationAction) {
   return operatePresentationWithResponse(operationId, action, readAdminPresentation);
 }
@@ -572,14 +605,37 @@ export async function operatePresentationControls(
   );
 }
 
+export async function setPresentationPosition(
+  operationId: string,
+  state: PresentationState,
+  questionIndex: number,
+  expectedSnapshotRevision: number,
+  expectedSessionVersion: number,
+): Promise<AdminPresentationControls> {
+  return operatePresentationWithResponse(
+    operationId,
+    "position",
+    readAdminPresentationControls,
+    expectedSnapshotRevision,
+    { state, questionIndex },
+    expectedSessionVersion,
+  );
+}
+
 async function operatePresentationWithResponse<T>(
   operationId: string,
   action: PresentationAction,
   readResponse: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>,
   expectedSnapshotRevision?: number,
+  target?: { state: PresentationState; questionIndex: number },
+  expectedSessionVersion?: number,
 ): Promise<T & { aggregationSummary?: PresentationAggregationSummary }> {
   if (!presentationActions.has(action))
     throw new PresentationConflictError("Unsupported presentation action");
+  const operationKey =
+    action === "position" && target
+      ? `position:${target.state}:${target.questionIndex}:${expectedSessionVersion}:${expectedSnapshotRevision}`
+      : action;
   let phase: PresentationOperationPhase = "transaction_begin";
   try {
     return await withTransactionRetry(() => {
@@ -592,7 +648,7 @@ async function operatePresentationWithResponse<T>(
           .from(presentationOperations)
           .where(eq(presentationOperations.operationId, operationId));
         if (operation) {
-          if (operation.action !== action)
+          if (operation.action !== operationKey)
             throw new PresentationConflictError("Operation ID conflict");
           return {
             ...(await readResponse(tx)),
@@ -606,6 +662,9 @@ async function operatePresentationWithResponse<T>(
           session.snapshotRevision !== expectedSnapshotRevision
         ) {
           throw new PresentationConflictError("Presentation snapshot changed concurrently");
+        }
+        if (action === "position" && session.version !== expectedSessionVersion) {
+          throw new PresentationConflictError("Presentation session version changed concurrently");
         }
 
         if (action === "start") {
@@ -679,10 +738,19 @@ async function operatePresentationWithResponse<T>(
         if (session.state === "not_started")
           throw new PresentationConflictError("Presentation has not started");
         const cursorState = session.state as PresentationState;
+        if (
+          action === "position" &&
+          (!target ||
+            !(await isValidPresentationPosition(tx, target.state, target.questionIndex, session)))
+        ) {
+          throw new PresentationConflictError("Invalid presentation position");
+        }
         const next =
-          action === "previous"
-            ? await previousState(tx, cursorState, session.questionIndex, session.questionCount)
-            : await advanceState(tx, cursorState, session.questionIndex, session.questionCount);
+          action === "position"
+            ? target!
+            : action === "previous"
+              ? await previousState(tx, cursorState, session.questionIndex, session.questionCount)
+              : await advanceState(tx, cursorState, session.questionIndex, session.questionCount);
         const changed = await tx
           .update(presentationSessions)
           .set({
@@ -698,7 +766,7 @@ async function operatePresentationWithResponse<T>(
           throw new PresentationConflictError("Presentation state changed concurrently");
         await tx
           .insert(presentationOperations)
-          .values({ operationId, action, version: session.version + 1 });
+          .values({ operationId, action: operationKey, version: session.version + 1 });
         return (await readResponse(tx)) as T & {
           aggregationSummary?: PresentationAggregationSummary;
         };
@@ -722,7 +790,7 @@ async function operatePresentationWithResponse<T>(
         .from(presentationOperations)
         .where(eq(presentationOperations.operationId, operationId));
       if (operation) {
-        if (operation.action !== action)
+        if (operation.action !== operationKey)
           throw new PresentationConflictError("Operation ID conflict");
         return {
           ...(await readResponse(tx)),

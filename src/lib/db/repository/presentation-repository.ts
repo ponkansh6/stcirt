@@ -15,6 +15,7 @@ export type {
 export {
   operatePresentation,
   operatePresentationControls,
+  setPresentationPosition,
   setParticipantResultsVisible,
   PresentationConflictError,
 } from "./presentation-repository.mutations";

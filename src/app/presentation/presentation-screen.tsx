@@ -11,6 +11,7 @@ import {
   type PointerEvent,
 } from "react";
 import Image from "next/image";
+import { canApplyPresenterPoll } from "@/lib/presentation/presenter-position";
 import styles from "./presentation-screen.module.css";
 
 type State =
@@ -129,7 +130,11 @@ type PresenterDeck = {
   snapshotRevision: number;
   slides: { state: AdminState; questionIndex: number; projection: ProjectionData }[];
 };
-type AdminAction = "advance" | "previous";
+type AdminPosition = Pick<AdminControls, "state" | "questionIndex" | "snapshotRevision">;
+type PositionWriteEnvelope = AdminPosition & {
+  operationId: string;
+  expectedSessionVersion: number;
+};
 type ScreenLock = {
   released: boolean;
   release: () => Promise<void>;
@@ -287,16 +292,20 @@ function slideForControl(
   );
 }
 
-async function requestAdminAction(action: AdminAction, expectedSnapshotRevision: number) {
+async function requestAdminPosition(position: PositionWriteEnvelope, signal?: AbortSignal) {
   const response = await fetch("/api/admin/presentation", {
     method: "POST",
     cache: "no-store",
     credentials: "same-origin",
+    signal,
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      operationId: crypto.randomUUID(),
-      action,
-      expectedSnapshotRevision,
+      operationId: position.operationId,
+      action: "position",
+      state: position.state,
+      questionIndex: position.questionIndex,
+      expectedSnapshotRevision: position.snapshotRevision,
+      expectedSessionVersion: position.expectedSessionVersion,
     }),
   });
   const payload: unknown = await response.json().catch(() => null);
@@ -517,11 +526,50 @@ export default function PresentationScreen({
   const suppressClickTimer = useRef<number | undefined>(undefined);
   const adminSequence = useRef(0);
   const presenterAuthenticated = useRef(false);
+  const presenterRequestedRef = useRef(presenterRequested);
+  presenterRequestedRef.current = presenterRequested;
   const adminPollAbort = useRef<AbortController | null>(null);
   const adminPollFlight = useRef<Promise<void> | null>(null);
   const mutationInFlight = useRef(false);
   const mutationGeneration = useRef(0);
+  const pendingPosition = useRef<AdminPosition | null>(null);
+  const uncertainPositionWrite = useRef<PositionWriteEnvelope | null>(null);
+  const confirmedSessionVersion = useRef(0);
+  const presenterIntentGeneration = useRef(0);
+  const positionUnconfirmed = useRef(false);
+  const positionConflictRecovery = useRef(false);
+  const positionWriterRunning = useRef(false);
+  const positionWriterGeneration = useRef(0);
+  const positionRetryTimer = useRef<number | null>(null);
+  const positionAbortController = useRef<AbortController | null>(null);
+  const flushPositionRef = useRef<(() => void) | null>(null);
+  const clearPendingPosition = useCallback(() => {
+    presenterIntentGeneration.current += 1;
+    positionWriterGeneration.current += 1;
+    pendingPosition.current = null;
+    uncertainPositionWrite.current = null;
+    positionUnconfirmed.current = false;
+    positionConflictRecovery.current = false;
+    positionWriterRunning.current = false;
+    if (positionRetryTimer.current !== null) {
+      window.clearTimeout(positionRetryTimer.current);
+      positionRetryTimer.current = null;
+    }
+    positionAbortController.current?.abort();
+  }, []);
+  useEffect(
+    () => () => {
+      if (positionRetryTimer.current !== null) {
+        window.clearTimeout(positionRetryTimer.current);
+        positionRetryTimer.current = null;
+      }
+    },
+    [],
+  );
   const applyAdminControls = useCallback((controls: AdminControls | null) => {
+    if (controls && controls.version < confirmedSessionVersion.current) return;
+    if (controls)
+      confirmedSessionVersion.current = Math.max(confirmedSessionVersion.current, controls.version);
     adminControlsRef.current = controls;
     setAdminControls(controls);
   }, []);
@@ -566,6 +614,19 @@ export default function PresentationScreen({
   const performRefreshAdmin = useCallback(
     async (checkSession = false) => {
       const sequence = ++adminSequence.current;
+      const intentGeneration = presenterIntentGeneration.current;
+      const startedWhilePositionPending =
+        positionUnconfirmed.current ||
+        pendingPosition.current !== null ||
+        positionWriterRunning.current;
+      const canApply = () =>
+        sequence === adminSequence.current &&
+        canApplyPresenterPoll(
+          intentGeneration,
+          presenterIntentGeneration.current,
+          startedWhilePositionPending,
+          positionConflictRecovery.current,
+        );
       const controller = new AbortController();
       adminPollAbort.current = controller;
       const timeout = window.setTimeout(() => controller.abort(), POLL_TIMEOUT_MS);
@@ -587,32 +648,45 @@ export default function PresentationScreen({
             sessionResponse.status === 401 ||
             (sessionResponse.ok && session?.authenticated !== true)
           ) {
-            if (sequence === adminSequence.current) {
-              presenterAuthenticated.current = false;
-              presenterDeckRef.current = null;
-              presenterDeckRequest.current = null;
-              setPresenterDeck(null);
-              applyAdminControls(null);
-              setDeckSyncPending(false);
-              setDeckLoadError(false);
-              setData({ state: "standby" });
-              setPollError(false);
-            }
+            // Authentication loss is authoritative even while optimistic position
+            // persistence is pending; never retain presenter access on a 401.
+            if (!presenterRequestedRef.current) return;
+            clearPendingPosition();
+            presenterAuthenticated.current = false;
+            presenterDeckRef.current = null;
+            presenterDeckRequest.current = null;
+            setPresenterDeck(null);
+            applyAdminControls(null);
+            setDeckSyncPending(false);
+            setDeckLoadError(false);
+            setData({ state: "standby" });
+            setPollError(false);
             return;
           }
           if (!sessionResponse.ok)
             throw Object.assign(new Error("管理者セッションを確認できませんでした。"), {
               status: sessionResponse.status,
             });
-          if (sequence !== adminSequence.current) return;
+          if (!canApply()) return;
           presenterAuthenticated.current = true;
         }
         // Session checks return on unauthenticated outcomes or set this ref before continuing; ordinary polls run only after authentication.
         /* v8 ignore if */
         if (!presenterAuthenticated.current) return;
         controls = await getAdminControls(controller.signal);
-        if (sequence !== adminSequence.current) return;
+        if (!canApply()) return;
+        if (controls.version < confirmedSessionVersion.current) return;
+        if (
+          !positionConflictRecovery.current &&
+          (pendingPosition.current || positionWriterRunning.current || positionUnconfirmed.current)
+        )
+          return;
         if (controls.state === "not_started") {
+          if (positionConflictRecovery.current) {
+            pendingPosition.current = null;
+            positionUnconfirmed.current = false;
+            positionConflictRecovery.current = false;
+          }
           applyAdminControls(controls);
           setDeckSyncPending(false);
           setDeckLoadError(false);
@@ -637,7 +711,7 @@ export default function PresentationScreen({
             /* v8 ignore else */
             if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
           }
-          if (sequence !== adminSequence.current) return;
+          if (!canApply()) return;
           if (deck.snapshotRevision !== controls.snapshotRevision) {
             setDeckSyncPending(false);
             setDeckLoadError(true);
@@ -670,7 +744,7 @@ export default function PresentationScreen({
             /* v8 ignore else */
             if (presenterDeckRequest.current === request) presenterDeckRequest.current = null;
           }
-          if (sequence !== adminSequence.current) return;
+          if (!canApply()) return;
           const recoveredProjection =
             deck.snapshotRevision === controls.snapshotRevision
               ? projectionForControl(deck, controls)
@@ -684,18 +758,58 @@ export default function PresentationScreen({
           setPresenterDeck(deck);
           setDeckSyncPending(false);
           setDeckLoadError(false);
+          if (positionConflictRecovery.current) {
+            pendingPosition.current = null;
+            positionUnconfirmed.current = false;
+            positionConflictRecovery.current = false;
+          }
           setData(recoveredProjection);
           applyAdminControls(controls);
           setPollError(false);
           return;
+        }
+        if (positionConflictRecovery.current) {
+          const target = pendingPosition.current;
+          const targetSlide = target
+            ? deck.slides.find(
+                (slide) =>
+                  slide.state === target.state && slide.questionIndex === target.questionIndex,
+              )
+            : undefined;
+          if (target && target.snapshotRevision === controls.snapshotRevision && targetSlide) {
+            pendingPosition.current = { ...target, snapshotRevision: controls.snapshotRevision };
+            positionConflictRecovery.current = false;
+            positionUnconfirmed.current = true;
+            applyAdminControls({
+              ...controls,
+              state: target.state,
+              questionIndex: target.questionIndex,
+            });
+            setDeckLoadError(false);
+            setPollError(false);
+            setData(targetSlide.projection);
+            window.setTimeout(() => {
+              if (pendingPosition.current && !positionWriterRunning.current) {
+                positionWriterRunning.current = true;
+                flushPositionRef.current?.();
+              }
+            }, 0);
+            return;
+          }
+          pendingPosition.current = null;
+          positionUnconfirmed.current = false;
+          positionConflictRecovery.current = false;
         }
         applyAdminControls(controls);
         setDeckLoadError(false);
         setPollError(false);
         setData(projection);
       } catch (error) {
-        if (sequence === adminSequence.current) {
-          if ((error as { status?: number })?.status === 401) {
+        const unauthorized = (error as { status?: number })?.status === 401;
+        if (unauthorized || (sequence === adminSequence.current && canApply())) {
+          if (unauthorized) {
+            if (!presenterRequestedRef.current) return;
+            clearPendingPosition();
             presenterAuthenticated.current = false;
             presenterDeckRef.current = null;
             presenterDeckRequest.current = null;
@@ -720,11 +834,12 @@ export default function PresentationScreen({
         if (adminPollAbort.current === controller) adminPollAbort.current = null;
       }
     },
-    [applyAdminControls],
+    [applyAdminControls, clearPendingPosition],
   );
 
   const refreshAdmin = useCallback(
     (checkSession = false): Promise<void> => {
+      if (!presenterRequestedRef.current) return Promise.resolve();
       if (adminPollFlight.current) {
         const current = adminPollFlight.current;
         // Timer polls await the prior flight, while visible refreshes set checkSession.
@@ -750,6 +865,7 @@ export default function PresentationScreen({
   useEffect(() => {
     if (!presenterRequested) {
       presenterAuthenticated.current = false;
+      clearPendingPosition();
       applyAdminControls(null);
       setDeckSyncPending(false);
       setDeckLoadError(false);
@@ -804,10 +920,11 @@ export default function PresentationScreen({
         timer = undefined;
       }
     };
-  }, [applyAdminControls, presenterRequested, refreshAdmin]);
+  }, [applyAdminControls, clearPendingPosition, presenterRequested, refreshAdmin]);
 
   const recoverUnauthorized = useCallback(() => {
     adminSequence.current += 1;
+    clearPendingPosition();
     presenterAuthenticated.current = false;
     adminPollAbort.current?.abort();
     applyAdminControls(null);
@@ -818,7 +935,7 @@ export default function PresentationScreen({
     setDeckLoadError(false);
     setPollError(false);
     setData({ state: "standby" });
-  }, [applyAdminControls]);
+  }, [applyAdminControls, clearPendingPosition]);
 
   useLayoutEffect(() => {
     const syncFullscreenState = () => setIsFullscreen(Boolean(document.fullscreenElement));
@@ -844,78 +961,133 @@ export default function PresentationScreen({
   }, []);
 
   const operate = useCallback(
-    async (action: AdminAction) => {
+    async (action: "advance" | "previous") => {
       const currentControls = adminControlsRef.current;
       const currentDeck = presenterDeckRef.current;
       if (!currentControls || !currentDeck || mutationInFlight.current) return;
-      const generation = ++mutationGeneration.current;
-      mutationInFlight.current = true;
-      let rollbackProjection: ProjectionData | null = null;
-      try {
-        // Let any active poll finish before starting the mutation. Its result is
-        // authoritative for the cursor used by this action.
-        await adminPollFlight.current;
-        const currentControls = adminControlsRef.current;
-        const currentDeck = presenterDeckRef.current;
-        if (!currentControls || !currentDeck) return;
-        rollbackProjection = projectionForControl(currentDeck, currentControls);
-        adminSequence.current += 1;
-        const currentSlideIndex = currentDeck.slides.findIndex(
-          (slide) => slide === slideForControl(currentDeck, currentControls),
-        );
-        const optimisticSlide =
-          currentSlideIndex < 0
-            ? /* v8 ignore next */ undefined // Unreachable: operate requires an aligned controls/deck cursor.
-            : currentDeck.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
-        if (optimisticSlide) setData(optimisticSlide.projection);
-        const confirmedControls = await requestAdminAction(
-          action,
-          currentControls.snapshotRevision,
-        );
-        const confirmedProjection =
-          confirmedControls.snapshotRevision !== currentDeck.snapshotRevision
-            ? null
-            : confirmedControls.state === "not_started" || confirmedControls.projectionHidden
-              ? projectionForControl(currentDeck, confirmedControls)
-              : slideForControl(currentDeck, confirmedControls)?.projection;
-        if (!confirmedProjection) {
-          // The server cursor does not belong to this cached deck. Re-fetch both
-          // controls and deck before allowing another operation.
-          applyAdminControls(null);
-          presenterDeckRef.current = null;
-          setPresenterDeck(null);
-          setDeckLoadError(false);
-          setData({ state: confirmedControls.state });
-          await refreshAdmin();
-        } else {
-          applyAdminControls(confirmedControls);
-          setData(confirmedProjection);
-        }
-      } catch (error) {
-        const status = (error as { status?: number })?.status;
-        if (status === 401) recoverUnauthorized();
-        if (status !== 401) {
-          // Never leave an unconfirmed optimistic slide visible while reconciling.
-          // The poll flight handles read failures; controls and deck are rechecked after it settles.
-          // Their aligned cursor yields a rollback projection before any mutation can fail.
-          /* v8 ignore else */
-          if (rollbackProjection) setData(rollbackProjection);
-          applyAdminControls(null);
-          try {
-            await refreshAdmin();
-          } catch {
-            /* The next session poll will retry. */
-          }
-        }
-      } finally {
-        // Single-flight prevents another mutation from changing this generation.
-        /* v8 ignore else */
-        if (generation === mutationGeneration.current) {
-          mutationInFlight.current = false;
-        }
+      const currentSlideIndex = currentDeck.slides.findIndex(
+        (slide) => slide === slideForControl(currentDeck, currentControls),
+      );
+      const targetSlide = currentDeck.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
+      if (!targetSlide) return;
+      adminSequence.current += 1;
+      presenterIntentGeneration.current += 1;
+      positionUnconfirmed.current = true;
+      const position = {
+        state: targetSlide.state,
+        questionIndex: targetSlide.questionIndex,
+        snapshotRevision: currentControls.snapshotRevision,
+      };
+      // Update the local cursor immediately so rapid input is based on the latest slide.
+      adminControlsRef.current = { ...currentControls, ...position };
+      setAdminControls(adminControlsRef.current);
+      setData(targetSlide.projection);
+      pendingPosition.current = position;
+      if (positionConflictRecovery.current) {
+        window.setTimeout(() => void refreshAdmin(true), 0);
+        return;
       }
+      if (positionWriterRunning.current) return;
+      if (positionRetryTimer.current !== null) {
+        window.clearTimeout(positionRetryTimer.current);
+        positionRetryTimer.current = null;
+      }
+      positionWriterRunning.current = true;
+      const writerGeneration = ++positionWriterGeneration.current;
+      const flushPosition = () => {
+        void (async () => {
+          try {
+            while (
+              writerGeneration === positionWriterGeneration.current &&
+              (pendingPosition.current || uncertainPositionWrite.current)
+            ) {
+              const next = pendingPosition.current;
+              const writeGeneration = presenterIntentGeneration.current;
+              pendingPosition.current = null;
+              const envelope = next
+                ? {
+                    ...next,
+                    operationId: crypto.randomUUID(),
+                    expectedSessionVersion: confirmedSessionVersion.current,
+                  }
+                : uncertainPositionWrite.current!;
+              uncertainPositionWrite.current = null;
+              const controller = new AbortController();
+              positionAbortController.current = controller;
+              try {
+                const acknowledged = await requestAdminPosition(envelope, controller.signal);
+                if (writerGeneration !== positionWriterGeneration.current) return;
+                confirmedSessionVersion.current = Math.max(
+                  confirmedSessionVersion.current,
+                  acknowledged.version,
+                );
+                if (
+                  pendingPosition.current === null &&
+                  presenterIntentGeneration.current === writeGeneration
+                ) {
+                  positionUnconfirmed.current = false;
+                }
+              } catch (error) {
+                if (writerGeneration !== positionWriterGeneration.current) return;
+                if (!presenterAuthenticated.current) return;
+                const status = (error as { status?: number })?.status;
+                if (status === 401) {
+                  pendingPosition.current = null;
+                  recoverUnauthorized();
+                  return;
+                }
+                if (status === 409) {
+                  pendingPosition.current = pendingPosition.current ?? {
+                    state: envelope.state,
+                    questionIndex: envelope.questionIndex,
+                    snapshotRevision: envelope.snapshotRevision,
+                  };
+                  uncertainPositionWrite.current = null;
+                  positionConflictRecovery.current = true;
+                  positionUnconfirmed.current = true;
+                  adminSequence.current += 1;
+                  window.setTimeout(() => void refreshAdmin(), 0);
+                  return;
+                }
+                // Retain the latest target and retry in the background; navigation stays local.
+                if (pendingPosition.current === null) {
+                  uncertainPositionWrite.current = envelope;
+                }
+                const retryTimer = window.setTimeout(() => {
+                  if (
+                    writerGeneration !== positionWriterGeneration.current ||
+                    positionRetryTimer.current !== retryTimer
+                  )
+                    return;
+                  positionRetryTimer.current = null;
+                  if (
+                    !presenterRequestedRef.current ||
+                    !presenterAuthenticated.current ||
+                    (!pendingPosition.current && !uncertainPositionWrite.current)
+                  )
+                    return;
+                  positionWriterRunning.current = true;
+                  flushPosition();
+                }, 1000);
+                positionRetryTimer.current = retryTimer;
+                return;
+              } finally {
+                if (positionAbortController.current === controller) {
+                  positionAbortController.current = null;
+                }
+              }
+            }
+          } finally {
+            if (writerGeneration === positionWriterGeneration.current) {
+              positionWriterRunning.current = false;
+            }
+          }
+        })();
+      };
+      flushPositionRef.current = flushPosition;
+      flushPosition();
     },
-    [applyAdminControls, recoverUnauthorized, refreshAdmin],
+    [recoverUnauthorized, refreshAdmin],
   );
 
   useEffect(() => {
