@@ -1615,7 +1615,7 @@ test("keeps a stale second-tab draft distinct from the canonical submission afte
   const handleBatchRoute = async (route: Route) => {
     if (route.request().method() === "GET") {
       visibilityReads += 1;
-      if (conflictReturned) {
+      if (conflictReturned && canonicalReads.length === 0) {
         canonicalReads.push({ revision: canonical.revision, answers: canonical.answers });
       }
       await route.fulfill({
