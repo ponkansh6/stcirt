@@ -574,6 +574,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.answeredCount).toBe(5);
     expect(result.current.freeResponses[5]).toBe("  監査済みの端末を利用します。  ");
     expect(vi.mocked(fetchLatestAnswerSubmission)).toHaveBeenCalledTimes(2);
+    expect(attempts).toHaveLength(1);
 
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase.kind).toBe("complete");
@@ -692,6 +693,108 @@ describe("useQuizSession hook", () => {
     expect(posts[1]).toMatchObject({ expectedRevision: canonicalRevision });
     expect(posts[1]?.answers).toContainEqual({ questionId: 5, freeText: localFreeResponse });
     expect(result.current.phase.kind).toBe("complete");
+  });
+
+  it("refreshes a saved correction after 401 and retries it explicitly at the latest revision", async () => {
+    const canonicalAnswers = [1, 2, 3, 4, 5].map((questionId) =>
+      questionId === 5
+        ? {
+            questionId,
+            answerKind: "freeText" as const,
+            selectedIndex: null,
+            freeText: "保存済みの自由記述",
+          }
+        : {
+            questionId,
+            answerKind: "selected" as const,
+            selectedIndex: 1,
+            freeText: null,
+          },
+    );
+    vi.mocked(fetchLatestAnswerSubmission)
+      .mockResolvedValueOnce({ submissionId, revision: 2, answers: canonicalAnswers })
+      .mockResolvedValueOnce({ submissionId, revision: 4, answers: canonicalAnswers });
+    const posts: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && init?.method === "POST")
+        return {
+          ok: true,
+          json: async () => ({ participant, expiresAt: "2030-01-01T00:00:00.000Z" }),
+        };
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/questions/batch")
+        return { ok: true, json: async () => ({ questions: batchQuestions(true) }) };
+      if (url === "/api/answers/batch" && init?.method === "POST") {
+        posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return posts.length === 1
+          ? { ok: false, status: 401, json: async () => ({ message: "expired" }) }
+          : { ok: true, json: async () => ({ submissionId, revision: 5 }) };
+      }
+      if (url.startsWith("/api/answers/batch?"))
+        return {
+          ok: true,
+          json: async () => ({ submissionId, revision: 4, answers: canonicalAnswers }),
+        };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    expect(result.current.revision).toBe(2);
+    act(() => result.current.editAnswers());
+    act(() => result.current.select(1, 3));
+    const localFreeResponse = "  修正した自由記述  ";
+    act(() => result.current.setFreeResponse(5, localFreeResponse));
+    expect(result.current.selections[1]).toBe(3);
+    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    const correctionDraft = { ...result.current.selections };
+    const expectedAnswers = result.current.quizzes.map(({ question, shuffled }) =>
+      question.answerType === "freeText"
+        ? { questionId: question.id, freeText: localFreeResponse.trim() }
+        : {
+            questionId: question.id,
+            selectedIndex: shuffled.choiceIndices[correctionDraft[question.id]!],
+          },
+    );
+
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.access).toEqual({ kind: "reauthentication", participant });
+    expect(result.current.selections).toEqual(correctionDraft);
+    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
+    expect(posts).toHaveLength(1);
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase).toMatchObject({ refreshRequired: true }));
+    expect(result.current.revision).toBe(4);
+    expect(result.current.selections).toEqual(correctionDraft);
+    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(posts).toHaveLength(1);
+
+    await act(async () => result.current.refreshSavedAnswers());
+    expect(result.current.revision).toBe(4);
+    expect(result.current.savedSelections[1]).toBe(
+      result.current.quizzes[0]!.shuffled.choiceIndices.indexOf(1),
+    );
+    expect(result.current.selections).toEqual(correctionDraft);
+    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(posts).toHaveLength(1);
+
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase.kind).toBe("complete");
+    expect(posts).toHaveLength(2);
+    expect(posts[0]?.submissionId).toBe(submissionId);
+    expect(posts[0]?.expectedRevision).toBe(2);
+    const retryOperationId = posts[1]?.operationId;
+    expect(retryOperationId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(posts[1]).toEqual({
+      submissionId,
+      operationId: retryOperationId,
+      expectedRevision: 4,
+      answers: expectedAnswers,
+    });
   });
 
   it("clears reauthentication draft preservation when the saved submission changes", async () => {

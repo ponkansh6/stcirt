@@ -264,4 +264,23 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByRole("status")).toHaveTextContent("取得済みの2問は保持しています");
     expect(screen.getByRole("button", { name: "不足分を再読み込み" })).toBeInTheDocument();
   });
+
+  it("shows the exact partial-batch recovery guidance and retries the missing questions", () => {
+    const retryLoad = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "load-error", message: "残りの問題を読み込めませんでした。" },
+        { quizzes: quizzes.slice(0, 1), retryLoad },
+      ),
+    );
+    render(<RunnerPage />);
+
+    expect(screen.getByRole("heading", { name: "問題を読み込めませんでした" })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("残りの問題を読み込めませんでした。");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "取得済みの1問は保持しています。不足分から再開できます。",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "不足分を再読み込み" }));
+    expect(retryLoad).toHaveBeenCalledOnce();
+  });
 });

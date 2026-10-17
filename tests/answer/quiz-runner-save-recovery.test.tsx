@@ -149,34 +149,47 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByRole("button", { name: "保存済み回答を確認しています…" })).toBeDisabled();
   });
 
-  it("keeps the answer draft through reauthentication and requires an explicit save afterward", async () => {
+  it("keeps a new-submission draft through 401 reauthentication and waits for explicit save", async () => {
     const login = vi.fn(async () => {});
     const saveAnswers = vi.fn();
+    const selections = { 1: 1, 2: 0, 3: 0, 4: 0, 5: 0 };
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering", retryRequired: true },
         {
           access: { kind: "reauthentication", participant: { id: 7, name: "参加者" } },
-          selections: { 1: 1, 2: 0, 3: 0, 4: 0, 5: 0 },
+          selections,
           answeredCount: 5,
           login,
           saveAnswers,
         },
       ),
     );
-    render(<RunnerPage />);
+    const view = render(<RunnerPage />);
     expect(screen.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeInTheDocument();
     expect(screen.getByLabelText("お名前")).toHaveValue("参加者");
     expect(screen.getAllByRole("radio")[1]).toBeChecked();
-    expect(screen.getByRole("button", { name: "再ログイン後に回答を確定する" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(screen.queryByRole("button", { name: "同じ回答を再送する" })).not.toBeInTheDocument();
+    expect(saveAnswers).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText("4桁PIN"), { target: { value: "0123" } });
     fireEvent.click(screen.getByRole("button", { name: "再ログインする" }));
     await waitFor(() => expect(login).toHaveBeenCalledWith("参加者", "0123"));
     expect(screen.getAllByRole("radio")[1]).toBeChecked();
     expect(saveAnswers).not.toHaveBeenCalled();
+
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering", retryRequired: true },
+        { selections, answeredCount: 5, login, saveAnswers },
+      ),
+    );
+    view.rerender(<RunnerPage />);
+    expect(screen.getAllByRole("radio")[1]).toBeChecked();
+    expect(saveAnswers).not.toHaveBeenCalled();
+    const retry = screen.getByRole("button", { name: "同じ回答を再送する" });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(saveAnswers).toHaveBeenCalledOnce();
   });
 });

@@ -201,9 +201,7 @@ fi
 if [ "$NEED_E2E" = "1" ]; then
   echo ""
   echo "[pre-push] Phase 2: E2E (Playwright)"
-  # HTML reporter の既定は open='on-failure'。stdin が TTY のときだけ
-  # レポートサーバを起動して hook をハングさせうるので明示的に無効化する。
-  PLAYWRIGHT_HTML_OPEN=never playwright test --workers=1 --reporter=list,html
+  pnpm test:e2e:push
   echo "  OK    e2e"
 else
   echo "  SKIP  e2e (UI / API / DB 層に変更なし)"

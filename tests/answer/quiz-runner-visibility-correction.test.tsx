@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { cleanup, render, screen, fireEvent, within, act, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import QuizRunner from "@/app/answer/quiz-runner";
 import GlobalHeader from "@/app/GlobalHeader";
 import { ApiError } from "@/lib/api/client";
@@ -451,5 +452,91 @@ describe("QuizRunner batch answer sheet", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存済み回答を再確認する" }));
     expect(refreshSavedAnswers).toHaveBeenCalledOnce();
     expect(screen.getByRole("button", { name: "保存済み回答を再確認してください" })).toBeDisabled();
+  });
+
+  it("renders the 409 conflict guidance with the exact local draft and retries only on explicit action", () => {
+    const conflictMessage =
+      "保存済み回答が更新されています。回答案を保持しました。内容を確認して再度確定してください。";
+    const quizzesWithFreeText = quizzes.map((quiz, index) =>
+      index === 4
+        ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
+        : quiz,
+    );
+    const retryDrafts: Array<{
+      selections: Record<number, number>;
+      freeResponses: Record<number, string>;
+    }> = [];
+    function ConflictAnswerSheet() {
+      const [phase, setPhase] = useState<object>({ kind: "answering" });
+      const [selections, setSelections] = useState<Record<number, number>>({
+        1: 1,
+        2: 2,
+        3: 0,
+        4: 3,
+      });
+      const [freeResponses, setFreeResponses] = useState<Record<number, string>>({
+        5: "競合後も保持する記述回答",
+      });
+      const saveAnswers = vi.fn(async () => {
+        retryDrafts.push({ selections: { ...selections }, freeResponses: { ...freeResponses } });
+        if (retryDrafts.length === 1) setPhase({ kind: "answering", message: conflictMessage });
+      });
+      mockUseQuizSession.mockReturnValue(
+        session(phase, {
+          quizzes: quizzesWithFreeText,
+          selections,
+          freeResponses,
+          savedSelections: { 1: 0, 2: 0, 3: 0, 4: 0 },
+          answeredCount: 5,
+          select: (questionId: number, choiceIndex: number) =>
+            setSelections((current) => ({ ...current, [questionId]: choiceIndex })),
+          setFreeResponse: (questionId: number, value: string) =>
+            setFreeResponses((current) => ({ ...current, [questionId]: value })),
+          saveAnswers,
+        }),
+      );
+      return <QuizRunner />;
+    }
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <>
+        <GlobalHeader />
+        <ConflictAnswerSheet />
+      </>,
+    );
+
+    const question2 = within(document.getElementById("question-2") as HTMLElement);
+    expect(question2.getByRole("radio", { name: /D2/ })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: "回答（1000字以内）" })).toHaveValue(
+      "競合後も保持する記述回答",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "修正内容を確定する" }));
+    expect(retryDrafts).toHaveLength(1);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      `${conflictMessage}回答案は保持しています。内容を確認して、もう一度確定してください。`,
+    );
+    expect(document.getElementById("answer-1-1")).toBeChecked();
+    expect(question2.getByRole("radio", { name: /D2/ })).toBeChecked();
+    expect(document.getElementById("answer-3-0")).toBeChecked();
+    expect(document.getElementById("answer-4-3")).toBeChecked();
+    expect(screen.getByRole("textbox", { name: "回答（1000字以内）" })).toHaveValue(
+      "競合後も保持する記述回答",
+    );
+    expect(screen.getByRole("list", { name: "回答内容" })).toHaveTextContent(
+      "競合後も保持する記述回答",
+    );
+    expect(retryDrafts).toHaveLength(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "修正内容を確定する" }));
+    expect(retryDrafts).toHaveLength(2);
+    expect(retryDrafts[1]).toEqual({
+      selections: { 1: 1, 2: 2, 3: 0, 4: 3 },
+      freeResponses: { 5: "競合後も保持する記述回答" },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

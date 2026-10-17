@@ -132,6 +132,54 @@ describe("QuizRunner batch answer sheet", () => {
     expect(openAssistedLogin).toHaveBeenCalledOnce();
   });
 
+  it("reopens a completed answer set for editing with its saved radio answer and neutral copy", async () => {
+    const editAnswers = vi.fn();
+    const saveAnswers = vi.fn();
+    const savedSelections = { 1: 3, 2: 0, 3: 2, 4: 3, 5: 0 };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ resultsVisible: false }),
+      }),
+    );
+    let currentSession = session(
+      { kind: "complete" },
+      {
+        revision: 1,
+        submissionId: "submission-1",
+        savedSelections,
+        editAnswers,
+        saveAnswers,
+      },
+    );
+    mockUseQuizSession.mockImplementation(() => currentSession);
+    const { rerender } = render(<RunnerPage />);
+
+    expect(screen.getByRole("heading", { name: "回答済み" })).toBeVisible();
+    expect(screen.queryByText(/正解|不正解|合格|得点|正答率/)).not.toBeInTheDocument();
+    const editButton = await screen.findByRole("button", { name: "回答を修正する" });
+    await waitFor(() => expect(editButton).toBeEnabled());
+    fireEvent.click(editButton);
+    expect(editAnswers).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      currentSession = {
+        ...currentSession,
+        phase: { kind: "answering" },
+        selections: { ...savedSelections },
+        answeredCount: 5,
+      };
+      rerender(<RunnerPage />);
+    });
+
+    const firstQuestion = within(screen.getByRole("group", { name: /Question 1\?/ }));
+    expect(firstQuestion.getByRole("radio", { name: /B1/ })).toBeChecked();
+    expect(screen.queryByText(/正解|不正解|合格|得点|正答率/)).not.toBeInTheDocument();
+    expect(saveAnswers).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["private results", { ok: true, status: 200, json: async () => ({ state: "waiting" }) }],
     ["unknown results", { ok: true, status: 200, json: async () => ({ state: "unknown" }) }],

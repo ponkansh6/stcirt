@@ -683,7 +683,9 @@ Participant failed sign-in and assisted-name registration share the database-bac
 
 ## Testing
 
-Vitest covers core logic, API/client behavior, the sequential question repository, answer session state, shared components, and statistics repositories. Playwright covers the home, answer, and answer submission flows.
+Vitest covers core logic, API/client behavior, the sequential question repository, answer session state, shared components, and statistics repositories. DOM tests cover semantic UI state and recovery behavior, including answer review and correction, authentication recovery, explicit retries, presentation ordering, and rendered content. API and database tests cover request validation, persistence, authorization, and state transitions at their respective boundaries.
+
+Playwright covers behavior that depends on a real browser boundary: routing and cookie-backed sessions across navigation or reloads, isolation between tabs, native keyboard behavior, viewport and font-dependent layout, reduced-motion and reduced-transparency rendering, named tab reuse, and native fullscreen behavior including mobile geometry. DOM or mocked tests do not substitute for those browser checks, and browser tests do not substitute for API or database persistence coverage.
 
 ## Environment
 

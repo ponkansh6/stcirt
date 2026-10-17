@@ -5,7 +5,7 @@ import { expectPrimaryTargetGeometry } from "./target-geometry";
 
 test.use({ trace: "off" });
 
-test("an existing admin session opens the dashboard when revisiting the admin route", async ({
+test("@chromium an existing admin session opens the dashboard when revisiting the admin route", async ({
   page,
 }) => {
   await page.route("**/api/admin/presentation", async (route) => {
@@ -54,7 +54,9 @@ test("an existing admin session opens the dashboard when revisiting the admin ro
   await expect(page.getByLabel("管理者 PIN")).toHaveCount(0);
 });
 
-test("admin PIN login follows Tab order and submits once with Enter", async ({ page }) => {
+test("@chromium admin PIN login follows Tab order and submits once with Enter", async ({
+  page,
+}) => {
   let authenticated = false;
   let releaseLogin!: () => void;
   let announceLoginStarted!: () => void;

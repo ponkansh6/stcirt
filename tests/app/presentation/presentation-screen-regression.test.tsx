@@ -622,6 +622,28 @@ describe("PresentationScreen", () => {
     expect(screen.getByText("山")).toBeInTheDocument();
   });
 
+  it("renders the complete long explanation including its repeated closing paragraph", async () => {
+    const repeatedClosing = "この出来事は、今でもふたりにとって大切な思い出です。";
+    const explanation = [
+      "初めて訪れたのは、まだ少し肌寒い春の日でした。駅から続く坂道を歩きながら、ふたりで次の休みにどこへ行こうか話していました。",
+      "景色を眺めているうちに時間を忘れ、帰り道には近くのお店で温かい飲み物を買いました。そのときに撮った写真は、今も大切に残しています。",
+      repeatedClosing,
+      repeatedClosing,
+    ].join("\n\n");
+    installApi({
+      projection: {
+        state: "answer",
+        question: { ...question, correctIndex: 0, explanation },
+      },
+    });
+    render(<PresentationScreen />);
+    const slide = await screen.findByRole("region", { name: "現在のスライド" });
+    const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
+    await waitFor(() => {
+      expect(normalize(slide.textContent ?? "")).toContain(normalize(explanation));
+    });
+  });
+
   it("renders free-text responses with missing optional scores and empty response lists", async () => {
     installApi({
       projection: {
@@ -2016,6 +2038,59 @@ describe("PresentationScreen", () => {
     );
   });
 
+  it("uses the returned controls state for the next cursor mutation", async () => {
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, version: 3, questionCount: 2 }),
+      actionAdmin: controls({
+        state: "answer",
+        questionIndex: 0,
+        version: 4,
+        questionCount: 2,
+        snapshotRevision: 1,
+        projectionHidden: false,
+      }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+    await flush();
+    const controlsReads = () =>
+      api.fetchMock.mock.calls.filter(
+        ([path]) => String(path) === "/api/admin/presentation?view=controls",
+      ).length;
+    const controlsReadsBeforeMutation = controlsReads();
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await waitFor(() => expect(api.actions).toHaveLength(1));
+    await screen.findByText("正解");
+    expect(controlsReads()).toBe(controlsReadsBeforeMutation);
+    expect(api.actions[0]).toMatchObject({
+      action: "position",
+      state: "answer",
+      questionIndex: 0,
+      expectedSnapshotRevision: 1,
+    });
+    api.setActionAdmin({
+      state: "question",
+      questionIndex: 1,
+      version: 5,
+      questionCount: 2,
+      snapshotRevision: 1,
+      projectionHidden: false,
+    });
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await waitFor(() => expect(api.actions).toHaveLength(2));
+
+    expect(api.actions[1]).toMatchObject({
+      action: "position",
+      state: "question",
+      questionIndex: 1,
+    });
+    expect(api.actions[1]).toMatchObject({ expectedSnapshotRevision: 1 });
+    expect(controlsReads()).toBe(controlsReadsBeforeMutation);
+    expect(screen.getByRole("status")).toHaveTextContent("第1問");
+  });
+
   it("reloads the presenter deck when aggregation advances the snapshot revision", async () => {
     vi.useFakeTimers();
     const api = installApi({
@@ -2635,6 +2710,66 @@ describe("PresentationScreen", () => {
     fireEvent.pointerUp(main, { pointerId: 19, isPrimary: true, clientX: 100, clientY: 101 });
     await flush();
     expect(api.actions).toHaveLength(0);
+  });
+
+  it("moves backward from finished to the last existing rank slide", async () => {
+    const api = installApi({
+      projection: { state: "finished" },
+      admin: controls({ state: "finished", questionCount: 0 }),
+      deckSlides: [
+        deckSlide("third", 0, {
+          state: "third",
+          winners: [{ displayName: "蓮", score: 8, rank: 3 }],
+        }),
+        deckSlide("second", 0, {
+          state: "second",
+          winners: [{ displayName: "凛", score: 9, rank: 2 }],
+        }),
+        deckSlide("first", 0, {
+          state: "first",
+          winners: [{ displayName: "悠", score: 10, rank: 1 }],
+        }),
+      ],
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowLeft" });
+    await flush();
+
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({ action: "position", state: "first", questionIndex: 0 });
+    expect(await screen.findByText("第一位")).toBeInTheDocument();
+    expect(screen.getByText("悠", { exact: false })).toBeInTheDocument();
+  });
+
+  it("moves from an empty opening to podium preview and reverses to opening", async () => {
+    const api = installApi({
+      projection: { state: "opening" },
+      admin: controls({ state: "opening", questionCount: 0 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main");
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions[0]).toMatchObject({
+      action: "position",
+      state: "podium_preview",
+      questionIndex: 0,
+    });
+    expect(await screen.findByText("いよいよ、結果発表です")).toBeInTheDocument();
+
+    fireEvent.keyDown(main, { key: "ArrowLeft" });
+    await flush();
+    expect(api.actions).toHaveLength(2);
+    expect(api.actions[1]).toMatchObject({
+      action: "position",
+      state: "opening",
+      questionIndex: 0,
+    });
+    expect(await screen.findByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
   });
 
   it("swipes previous from an empty podium preview to opening", async () => {
@@ -3304,6 +3439,101 @@ describe("PresentationScreen", () => {
     await flush();
 
     expect(pendingActions).toHaveLength(2);
+  });
+
+  it("collapses repeated deferred cursor writes to the latest absolute target", async () => {
+    const pendingActions: Array<(value: Response) => void> = [];
+    let secondActionStarted!: () => void;
+    const secondStarted = new Promise<void>((resolve) => {
+      secondActionStarted = resolve;
+    });
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, questionCount: 2 }),
+      actionResponse: () =>
+        new Promise<Response>((resolve) => {
+          pendingActions.push(resolve);
+          if (pendingActions.length === 2) secondActionStarted();
+        }),
+    });
+    api.setDeckSlide("question", 1, {
+      state: "question",
+      question: { ...question, ordinal: 2 },
+    });
+    api.setDeckSlide("answer", 1, {
+      state: "answer",
+      question: { ...question, ordinal: 2, correctIndex: 0, explanation: "ふたりの思い出です。" },
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    try {
+      const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+      await flush();
+
+      fireEvent.keyDown(main, { key: "ArrowRight" });
+      await waitFor(() => expect(pendingActions).toHaveLength(1));
+      fireEvent.keyDown(main, { key: "ArrowRight" });
+      fireEvent.keyDown(main, { key: "ArrowRight" });
+      expect(api.actions).toHaveLength(1);
+
+      await act(async () => {
+        pendingActions[0]!(
+          response(
+            controls({
+              state: "answer",
+              questionIndex: 0,
+              version: 1,
+              questionCount: 2,
+            }),
+          ),
+        );
+        await Promise.resolve();
+      });
+      await secondStarted;
+
+      expect(api.actions).toHaveLength(2);
+      expect(api.actions[1]).toMatchObject({
+        action: "position",
+        state: "answer",
+        questionIndex: 1,
+      });
+      expect(api.actions[1]).not.toMatchObject({ state: "question", questionIndex: 1 });
+      await act(async () => {
+        pendingActions[1]!(
+          response(
+            controls({
+              state: "answer",
+              questionIndex: 1,
+              version: 2,
+              questionCount: 2,
+            }),
+          ),
+        );
+        await Promise.resolve();
+      });
+      await flush();
+      expect(screen.getByRole("status")).toHaveTextContent("第2問の解説");
+    } finally {
+      let resolved = 0;
+      while (resolved < pendingActions.length) {
+        const resolveAction = pendingActions[resolved]!;
+        resolved += 1;
+        await act(async () => {
+          resolveAction(
+            response(
+              controls({
+                state: "answer",
+                questionIndex: 1,
+                version: resolved,
+                questionCount: 2,
+              }),
+            ),
+          );
+          await Promise.resolve();
+        });
+        await flush();
+      }
+      view.unmount();
+    }
   });
 
   it("falls back to standard application when recovery target has no pending position", async () => {

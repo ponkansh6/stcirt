@@ -2,7 +2,7 @@ import { expect, test } from "./fixtures/test";
 import { expectNoAccessibilityViolations } from "./axe";
 import { expectPrimaryTargetGeometry } from "./target-geometry";
 
-test("unauthenticated results show the safe return state", async ({ page }) => {
+test("@chromium unauthenticated results show the safe return state", async ({ page }) => {
   await page.route(/^https?:\/\/[^/]+\/api\/participants\/results(?:\?.*)?$/, async (route) => {
     await route.fulfill({ status: 401 });
   });
@@ -20,7 +20,7 @@ test("unauthenticated results show the safe return state", async ({ page }) => {
   await expectNoAccessibilityViolations(page, "unauthenticated results");
 });
 
-test("refresh can be activated with Space from the safe state and blocks repeats while a 401 is pending", async ({
+test("@chromium refresh can be activated with Space from the safe state and blocks repeats while a 401 is pending", async ({
   page,
 }) => {
   let requests = 0;

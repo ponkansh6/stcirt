@@ -2033,7 +2033,35 @@ describe("presentation projection and presenter progression", () => {
     expect(within(region).getByText("ほか 2 名")).toHaveClass(/additionalWinners/);
   });
 
-  it("renders each winner's question answers and distinguishes unavailable scores", async () => {
+  it("shows two cards for 24 shared-rank winners with paired names and scores", async () => {
+    const winners = Array.from({ length: 24 }, (_, index) => ({
+      displayName: `受賞者${String(index + 1).padStart(2, "0")}`,
+      score: 12.5,
+      rank: 3,
+    }));
+    setup({
+      projection: { state: "third", winners },
+      admin: { state: "third", questionIndex: 5, questionCount: 5 },
+    });
+    render(<PresentationScreen />);
+
+    expect(await screen.findByRole("heading", { name: "第三位" })).toBeInTheDocument();
+    const region = screen.getByRole("region", { name: "第三位の勝者一覧" });
+    const cards = Array.from(region.querySelectorAll("article"));
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toHaveTextContent("受賞者01");
+    expect(cards[0]).toHaveTextContent("12.50 ポイント");
+    expect(cards[1]).toHaveTextContent("受賞者02");
+    expect(cards[1]).toHaveTextContent("12.50 ポイント");
+    expect(within(region).getByText("ほか 22 名")).toBeVisible();
+    for (const hiddenWinner of winners.slice(2)) {
+      expect(
+        within(region).queryByText(hiddenWinner.displayName, { exact: false }),
+      ).not.toBeInTheDocument();
+    }
+  });
+
+  it("keeps compact rank answers private while preserving free text and score states", async () => {
     setup({
       projection: {
         state: "third",
@@ -2137,6 +2165,15 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.getByText("0点の回答")).toBeInTheDocument();
     expect(screen.getByText("未採点の回答")).toBeInTheDocument();
     expect(screen.getByText("得点 0.25")).toBeInTheDocument();
+    const savedFreeText = within(region).getByText("Q5").closest("li") as HTMLLIElement;
+    expect(within(savedFreeText).getByText("保存された回答")).toBeInTheDocument();
+    expect(within(savedFreeText).getByText("得点を確認できません")).toBeInTheDocument();
+    const zeroScoreFreeText = within(region).getByText("Q6").closest("li") as HTMLLIElement;
+    expect(within(zeroScoreFreeText).getByText("0点の回答")).toBeInTheDocument();
+    expect(within(zeroScoreFreeText).getByText("得点 0.00")).toBeInTheDocument();
+    const unscoredFreeText = within(region).getByText("Q7").closest("li") as HTMLLIElement;
+    expect(within(unscoredFreeText).getByText("未採点の回答")).toBeInTheDocument();
+    expect(within(unscoredFreeText).getByText("未採点")).toBeInTheDocument();
     for (const hiddenText of [
       "一番の問題",
       "未回答の設問",

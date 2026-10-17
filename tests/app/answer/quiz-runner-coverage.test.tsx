@@ -186,6 +186,68 @@ describe("QuizRunner remaining coverage states", () => {
     );
   });
 
+  it("reviews all five selected and free-text answers and reflects an edited selection", () => {
+    const quizzes = selectedQuizzes.map((quiz, index) =>
+      index === 1 || index === 3
+        ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
+        : quiz,
+    );
+    function EditableAnswerSheet() {
+      const [selections, setSelections] = useState<Record<number, number>>({ 1: 0, 3: 2, 5: 1 });
+      const [freeResponses, setFreeResponses] = useState<Record<number, string>>({
+        2: "記述回答その二",
+        4: "記述回答その四",
+      });
+      mockUseQuizSession.mockReturnValue(
+        session(
+          { kind: "answering" },
+          {
+            quizzes,
+            selections,
+            freeResponses,
+            answeredCount: 5,
+            select: (questionId: number, choiceIndex: number) =>
+              setSelections((current) => ({ ...current, [questionId]: choiceIndex })),
+            setFreeResponse: (questionId: number, value: string) =>
+              setFreeResponses((current) => ({ ...current, [questionId]: value })),
+          },
+        ),
+      );
+      return <QuizRunner />;
+    }
+
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    try {
+      render(<EditableAnswerSheet />);
+
+      const review = screen.getByRole("list", { name: "回答内容" });
+      const questionCards = within(review).getAllByRole("listitem");
+      expect(within(questionCards[0]).getByText("A. A", { exact: true })).toBeInTheDocument();
+      expect(
+        within(questionCards[1]).getByText("記述回答その二", { exact: true }),
+      ).toBeInTheDocument();
+      expect(within(questionCards[2]).getByText("C. C", { exact: true })).toBeInTheDocument();
+      expect(
+        within(questionCards[3]).getByText("記述回答その四", { exact: true }),
+      ).toBeInTheDocument();
+      expect(within(questionCards[4]).getByText("B. B", { exact: true })).toBeInTheDocument();
+
+      fireEvent.click(
+        within(questionCards[0]).getByRole("button", { name: "第1問「設問1」を編集" }),
+      );
+      fireEvent.click(document.getElementById("answer-1-1") as HTMLInputElement);
+
+      expect(document.getElementById("answer-1-1")).toBeChecked();
+      expect(within(questionCards[0]).getByText("B. B", { exact: true })).toBeInTheDocument();
+      expect(within(questionCards[0]).queryByText("A. A", { exact: true })).not.toBeInTheDocument();
+      expect(within(questionCards[4]).getByText("B. B", { exact: true })).toBeInTheDocument();
+    } finally {
+      if (originalScrollIntoView) HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+      else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
+  });
+
   it("renders an empty free-response field and forwards typed values", () => {
     const quizzes = selectedQuizzes.map((quiz, index) =>
       index === 4

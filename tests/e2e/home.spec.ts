@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures/test";
 
-test("root is a compatibility redirect to participant entry", async ({ page }) => {
+test("@chromium root is a compatibility redirect to participant entry", async ({ page }) => {
   await page.route("**/api/participants/session", async (route) => {
     if (route.request().method() !== "GET") {
       await route.fallback();

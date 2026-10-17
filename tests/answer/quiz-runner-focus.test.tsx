@@ -251,6 +251,48 @@ describe("QuizRunner batch answer sheet", () => {
     expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答済み" }));
   });
 
+  it("preserves the focused element while a pending submission check returns to answering", async () => {
+    const checkRequest = deferred<void>();
+    let currentPhase: object = {
+      kind: "submission-error",
+      message: "回答状況を確認できませんでした。",
+    };
+    let rerenderRunner = () => {};
+    const retrySubmissionCheck = vi.fn(() => {
+      currentPhase = { kind: "checking-submission" };
+      rerenderRunner();
+      return checkRequest.promise.then(() => {
+        currentPhase = { kind: "answering" };
+        rerenderRunner();
+      });
+    });
+    mockUseQuizSession.mockImplementation(() => session(currentPhase, { retrySubmissionCheck }));
+    const { rerender } = render(<RunnerPage />);
+    rerenderRunner = () => rerender(<RunnerPage />);
+    const externalControl = document.createElement("button");
+    externalControl.textContent = "ページ内の別操作";
+    document.body.append(externalControl);
+    try {
+      externalControl.focus();
+      fireEvent.click(screen.getByRole("button", { name: "もう一度確認する" }));
+      expect(retrySubmissionCheck).toHaveBeenCalledOnce();
+
+      expect(screen.getByRole("status")).toHaveTextContent("保存済みの回答状況を確認しています");
+      expect(document.activeElement).toBe(externalControl);
+
+      await act(async () => {
+        checkRequest.resolve();
+        await checkRequest.promise;
+        await retrySubmissionCheck.mock.results[0].value;
+      });
+      expect(screen.getByRole("navigation", { name: "設問へ移動" })).toBeInTheDocument();
+      expect(document.activeElement).toBe(externalControl);
+    } finally {
+      checkRequest.resolve();
+      externalControl.remove();
+    }
+  });
+
   it("does not reuse a failed submission focus handoff on an unfocused retry", async () => {
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
