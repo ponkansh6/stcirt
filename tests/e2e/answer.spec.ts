@@ -428,6 +428,97 @@ test("@chromium root-to-answer flow keeps choices local, blocks an incomplete ba
   expect(submitted[0].cookie).toContain("stcirt_participant_session=mock-session");
 });
 
+test("@chromium pending batch preserves accessible motion behavior and locks the answer sheet", async ({
+  page,
+}) => {
+  await mockParticipantSession(page);
+  await mockQuestions(page);
+
+  let releasePost!: () => void;
+  let announcePostStarted!: () => void;
+  let finishPostRoute!: () => void;
+  const postGate = new Promise<void>((resolve) => {
+    releasePost = resolve;
+  });
+  const postStarted = new Promise<void>((resolve) => {
+    announcePostStarted = resolve;
+  });
+  const postHandled = new Promise<void>((resolve) => {
+    finishPostRoute = resolve;
+  });
+  let hasPendingPost = false;
+  await page.route("**/api/answers/batch**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ json: { resultsVisible: false } });
+      return;
+    }
+
+    hasPendingPost = true;
+    announcePostStarted();
+    try {
+      await postGate;
+      const body = route.request().postDataJSON() as BatchPayload;
+      await route.fulfill({
+        json: { submissionId: body.submissionId, revision: 1 },
+      });
+    } finally {
+      finishPostRoute();
+    }
+  });
+
+  try {
+    await page.goto("/answer");
+    await signIn(page, "Aki");
+    await startQuiz(page);
+    for (let id = 1; id <= 4; id += 1) await answerQuestion(page, id, "B");
+    await page.getByRole("textbox", { name: "回答（1000字以内）" }).fill("pending animation state");
+    await page.getByRole("button", { name: "5問の回答を確定する" }).click();
+    await postStarted;
+
+    const submit = page.getByRole("button", { name: "回答を送信しています…" });
+    const spinner = submit.locator('span[aria-hidden="true"]');
+    const selectedChoice = page.getByRole("radio", { name: /Option 1B/ });
+    const nextChoice = page.getByRole("radio", { name: /Option 2B/ });
+    const assertPendingAnswerState = async () => {
+      await expect(submit).toBeDisabled();
+      await expect(submit).toContainText("回答を送信しています");
+      await expect(selectedChoice).toBeChecked();
+      await expect(selectedChoice).toBeDisabled();
+      await expect(nextChoice).toBeDisabled();
+    };
+
+    await assertPendingAnswerState();
+    await expect(spinner).toHaveCSS("animation-name", "spin");
+    await expect(submit).toHaveCSS("transition-duration", "0.2s");
+    await expect(selectedChoice.locator("xpath=ancestor::label")).toHaveCSS(
+      "transition-duration",
+      "0.2s",
+    );
+    await expectNoAccessibilityViolations(page, "pending answer batch");
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await assertPendingAnswerState();
+    await expect(spinner).toHaveCSS("animation-name", "none");
+    await expect(submit).toHaveCSS("transition-duration", "0s");
+    await expect(selectedChoice.locator("xpath=ancestor::label")).toHaveCSS(
+      "transition-duration",
+      "0s",
+    );
+
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await assertPendingAnswerState();
+    await expect(spinner).toHaveCSS("animation-name", "spin");
+    await expect(submit).toHaveCSS("transition-duration", "0.2s");
+    await expect(selectedChoice.locator("xpath=ancestor::label")).toHaveCSS(
+      "transition-duration",
+      "0.2s",
+    );
+  } finally {
+    releasePost();
+    if (hasPendingPost) await postHandled;
+  }
+});
+
 test("@mobile supports native radio keyboard operation and reflows long Japanese text at 320px", async ({
   page,
 }) => {
