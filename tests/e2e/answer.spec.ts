@@ -1196,7 +1196,16 @@ test("shows neutral completion after one batch and can reopen the same answer se
   await mockParticipantSession(page);
   await mockQuestions(page);
   const submissions: BatchPayload[] = [];
-  await page.route("**/api/answers/batch", async (route) => {
+  await page.route("**/api/answers/batch**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resultsVisible: false }),
+      });
+      return;
+    }
+
     const request = route.request().postDataJSON() as BatchPayload;
     submissions.push(request);
     await route.fulfill({
@@ -1250,7 +1259,16 @@ test("revisits a saved submission, restores it, and posts a correction to the sa
   });
   await mockQuestions(page);
   const updates: BatchPayload[] = [];
-  await page.route("**/api/answers/batch", async (route) => {
+  await page.route("**/api/answers/batch**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resultsVisible: false }),
+      });
+      return;
+    }
+
     updates.push(route.request().postDataJSON() as BatchPayload);
     await route.fulfill({
       status: 200,
