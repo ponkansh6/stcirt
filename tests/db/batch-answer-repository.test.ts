@@ -549,6 +549,29 @@ describe("saveAnswerSubmission", () => {
     expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);
   });
 
+  it("returns not found for an operation owned by another participant committed after preflight", async () => {
+    const [otherParticipant] = await testDb.db
+      .insert(schema.examParticipants)
+      .values({ normalizedName: "別の参加者", displayName: "別の参加者" })
+      .returning({ id: schema.examParticipants.id });
+    const winnerInput = {
+      submissionId: "00000000-0000-4000-8000-000000000006",
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId: otherParticipant!.id,
+      answers,
+    };
+    const retryInput = {
+      ...winnerInput,
+      submissionId,
+      participantId,
+    };
+
+    await expect(
+      commitOperationBetweenPreflightAndLockedRead(winnerInput, retryInput),
+    ).rejects.toMatchObject({ status: 404, message: "Submission not found" });
+  });
+
   it("rejects an initial same-submission race and preserves only the winner's complete set", async () => {
     const winnerAnswers = answers.map((answer) => ({ ...answer, selectedIndex: 1 }));
     const retryAnswers = answers.map((answer) => ({ ...answer, selectedIndex: 2 }));

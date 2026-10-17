@@ -440,6 +440,15 @@ describe("useQuizSession hook", () => {
     expect(result.current.selections).toEqual(draft);
   });
 
+  it("leaves an unlocked answering phase unchanged when clearing a published lock", async () => {
+    setupFetch();
+    const { result } = await start();
+
+    act(() => result.current.clearPublishedLock());
+
+    expect(result.current.phase).toEqual({ kind: "answering" });
+  });
+
   it("shows login after session lookup failure and keeps login errors visible", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       if (init?.method === "POST")

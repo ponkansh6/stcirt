@@ -81,6 +81,7 @@ describe("QuizRunner batch answer sheet", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     if (visibilityStateDescriptor) {
       Object.defineProperty(document, "visibilityState", visibilityStateDescriptor);
     } else {
@@ -218,6 +219,158 @@ describe("QuizRunner batch answer sheet", () => {
         screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).disabled),
       ).toBe(true),
     );
+  });
+
+  it("locks correction on the completed page after visibility is confirmed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ resultsVisible: true }),
+      }),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { revision: 1, submissionId: "submission-complete" }),
+    );
+
+    render(<RunnerPage />);
+
+    expect(await screen.findByText(/結果が公開されているため、回答は修正できません/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "回答を修正する" })).toBeDisabled();
+  });
+
+  it("skips interval refreshes while a visibility request is pending", async () => {
+    const pending = deferred<{ ok: boolean; json: () => Promise<unknown> }>();
+    const fetchMock = vi.fn().mockReturnValue(pending.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    let intervalCallback: (() => void) | undefined;
+    vi.spyOn(window, "setInterval").mockImplementation((handler) => {
+      intervalCallback = handler as () => void;
+      return 0;
+    });
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "answering" }, { revision: 1, submissionId: "submission-pending" }),
+    );
+
+    render(<RunnerPage />);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(intervalCallback).toBeDefined();
+    act(() => intervalCallback?.());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pending.resolve({ ok: true, json: async () => ({ resultsVisible: false }) });
+      await pending.promise;
+    });
+  });
+
+  it("ignores a visibility response that arrives after the effect becomes inactive", async () => {
+    const pending = deferred<{ ok: boolean; json: () => Promise<unknown> }>();
+    const fetchMock = vi.fn().mockReturnValue(pending.promise);
+    const clearPublishedLock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        { revision: 1, submissionId: "submission-inactive-fetch", clearPublishedLock },
+      ),
+    );
+    const { rerender } = render(<RunnerPage />);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        {
+          access: { kind: "checking" },
+          revision: 1,
+          submissionId: "submission-inactive-fetch",
+          clearPublishedLock,
+        },
+      ),
+    );
+    rerender(<RunnerPage />);
+    await act(async () => {
+      pending.resolve({ ok: true, json: async () => ({ resultsVisible: false }) });
+      await pending.promise;
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(clearPublishedLock).not.toHaveBeenCalled();
+  });
+
+  it("ignores visibility JSON that resolves after the effect becomes inactive", async () => {
+    const pendingJson = deferred<unknown>();
+    const json = vi.fn(() => pendingJson.promise);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json });
+    const clearPublishedLock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        { revision: 1, submissionId: "submission-inactive-json", clearPublishedLock },
+      ),
+    );
+    const { rerender } = render(<RunnerPage />);
+    await waitFor(() => expect(json).toHaveBeenCalledOnce());
+
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        {
+          access: { kind: "checking" },
+          revision: 1,
+          submissionId: "submission-inactive-json",
+          clearPublishedLock,
+        },
+      ),
+    );
+    rerender(<RunnerPage />);
+    await act(async () => {
+      pendingJson.resolve({ resultsVisible: false });
+      await pendingJson.promise;
+    });
+
+    expect(clearPublishedLock).not.toHaveBeenCalled();
+  });
+
+  it("does not update visibility state when an inactive request rejects", async () => {
+    let rejectRequest!: (error: Error) => void;
+    const pending = new Promise<{ ok: boolean; json: () => Promise<unknown> }>(
+      (_resolve, reject) => {
+        rejectRequest = reject;
+      },
+    );
+    const fetchMock = vi.fn().mockReturnValue(pending);
+    const clearPublishedLock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        { revision: 1, submissionId: "submission-inactive-error", clearPublishedLock },
+      ),
+    );
+    const { rerender } = render(<RunnerPage />);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        {
+          access: { kind: "checking" },
+          revision: 1,
+          submissionId: "submission-inactive-error",
+          clearPublishedLock,
+        },
+      ),
+    );
+    rerender(<RunnerPage />);
+    await act(async () => {
+      rejectRequest(new Error("request failed"));
+      await pending.catch(() => undefined);
+    });
+
+    expect(clearPublishedLock).not.toHaveBeenCalled();
   });
 
   it("queues one tab-return refresh and ignores the stale in-flight completion response", async () => {
