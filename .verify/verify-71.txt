@@ -1,0 +1,42 @@
+# Plan 71 latest-wins 実装の検証記録
+
+- 実施日: 2026-10-17
+- 対象 commit: `2e3fc63`（feat(presentation): persist presenter position with a latest-wins writer）
+- 実施者: Orchestrator（検証ゲートの実行のみ。runtime 実装自体は先行セッションの差分に含まれる）
+- モデル: opencode/glm-5.3-flash-free
+
+## 検証ゲート結果
+
+| ゲート | コマンド | 結果 |
+| --- | --- | --- |
+| lint | `pnpm lint:fast` (oxlint) | PASS（exit 0。warning 7件は Plan 69 以前から存在し、Plan 71 差分と無関係） |
+| type-check | `pnpm type-check:fast` (next typegen + tsgo --noEmit) | PASS |
+| unit/integration test | `pnpm test` (vitest run) | PASS（65 files / 1081 tests, ~51秒） |
+| coverage (全文) | `pnpm test:coverage` | FAIL（下記） |
+
+## coverage 未達の詳細（FAIL の具体）
+
+`pnpm test:coverage` の要約では全体は 99.3–99.5% だが、`coverage.thresholds` は全ファイル stmts/branch/funcs/lines 100% を要求するため次の2ファイルが threshold エラーで必ず exit 1 になる:
+
+| ファイル | 率 | 未カバー |
+| --- | --- | --- |
+| `src/app/presentation/presentation-screen.tsx` | stmts 96.47% / branch 96.34% / funcs 98.92% / lines 97.31% | 行 1057,1061,1068,1232 等の分岐（`rangesStr.length === 0` / `rangesMap.size === 0` / early-return path）。presenter-position 導入分の新規蹟が含まれる |
+| `src/lib/db/repository/presentation-repository.mutations.ts` | stmts 99.7% / branch 99.66% | 未カバー行: 575（即返し or else ブランチの片側） |
+
+## ログ位置
+
+- `/tmp/opencode/cov.log`: retry 後の前回実行の coverage console 出力。
+- `.verify/verify-71.txt`: このファイル。commit `2e3fc63` の `Verify<plan>` へ Copied 形式で含まれる。
+
+## 意図的な fail-on-branch 保留リスト
+
+以下は「全体 coverage を100%に通す」方向で今は潰さない（`rangesStr.length === 0` / `rangesMap.size === 0` / `mutations.ts:575` は叢不具有な低頻度分岐で、テスト追加は次フェーズとする）。
+
+- `rangesStr.length === 0`（presenter-positionのguard）
+- `rangesMap.size === 0`（同上）
+- `mutations.ts:575` 早期 return の else ブランチ
+
+## 次アクション
+
+1. 上記3ヶ所を覆うテストの fixer 作成（優先度: 中）
+2. Plan 72 実装へ移行（借し交差のないスコープで）
