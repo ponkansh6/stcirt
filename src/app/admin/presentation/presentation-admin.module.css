@@ -1,3 +1,9 @@
+@supports (interpolate-size: allow-keywords) {
+  .confirmDialog {
+    interpolate-size: allow-keywords;
+  }
+}
+
 .shell {
   position: fixed;
   z-index: 30;

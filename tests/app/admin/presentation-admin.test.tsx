@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import PresentationAdminPage from "@/app/admin/presentation/page";
 import PresentationAdmin from "@/app/admin/presentation/presentation-admin";
 
@@ -56,6 +56,20 @@ function apiFetch(options: {
 }
 
 describe("presentation admin console", () => {
+  beforeAll(() => {
+    if (typeof HTMLDialogElement.prototype.showModal !== "function") {
+      HTMLDialogElement.prototype.showModal = function () {
+        this.setAttribute("open", "");
+      };
+    }
+    if (typeof HTMLDialogElement.prototype.close !== "function") {
+      HTMLDialogElement.prototype.close = function () {
+        this.removeAttribute("open");
+        this.dispatchEvent(new Event("close"));
+      };
+    }
+  });
+
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
@@ -665,6 +679,7 @@ describe("presentation admin console", () => {
 
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    await user.click(screen.getByRole("button", { name: "実行" }));
     await waitFor(() => expect(finishAction).toBeDefined());
     act(() => document.dispatchEvent(new Event("visibilitychange")));
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
@@ -746,6 +761,45 @@ describe("presentation admin console", () => {
     else Reflect.deleteProperty(document, "visibilityState");
   });
 
+  it("opens confirmation dialog on reset, cancels without mutation, and executes once on confirm", async () => {
+    const api = apiFetch({
+      state: {
+        state: "question",
+        snapshotRevision: 1,
+        questionIndex: 0,
+        questionCount: 5,
+        projectionHidden: false,
+        participantResultsVisible: false,
+        participantResultsReady: true,
+      },
+    });
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+
+    await screen.findByText("現在の状態：進行中：問題");
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+
+    // Dialog should be open
+    const dialog = screen.getByText("最初に戻る確認").closest("dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(api.actions).toHaveLength(0);
+
+    // Cancel
+    await user.click(screen.getByRole("button", { name: "キャンセル" }));
+    expect(api.actions).toHaveLength(0);
+
+    // Open again and execute
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    await user.click(screen.getByRole("button", { name: "実行" }));
+
+    await waitFor(() =>
+      expect(api.actions).toContainEqual({
+        path: "/api/admin/presentation",
+        body: expect.objectContaining({ action: "reset" }),
+      }),
+    );
+    expect(api.actions.filter((a) => (a.body as any).action === "reset")).toHaveLength(1);
+  });
   it("requires aggregation before starting or publishing and resets without rebuilding", async () => {
     const api = apiFetch({
       state: {
@@ -803,6 +857,7 @@ describe("presentation admin console", () => {
     });
     render(<PresentationAdmin />);
     await user.click(await screen.findByRole("button", { name: "最初に戻る" }));
+    await user.click(screen.getByRole("button", { name: "実行" }));
     await waitFor(() =>
       expect(startedApi.actions).toContainEqual({
         path: "/api/admin/presentation",
@@ -1787,6 +1842,7 @@ describe("presentation admin console", () => {
 
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    await user.click(screen.getByRole("button", { name: "実行" }));
     expect(await screen.findByLabelText("管理者 PIN")).toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent("セッションの有効期限が切れました");
   });
@@ -2139,6 +2195,7 @@ describe("presentation admin console", () => {
     act(() => poll?.());
     await waitFor(() => expect(presentationReads).toBe(2));
     fireEvent.click(screen.getByRole("button", { name: "最初に戻る" }));
+    fireEvent.click(screen.getByRole("button", { name: "実行" }));
     expect(mutationReads).toBe(0);
 
     await act(async () => {
@@ -2199,6 +2256,7 @@ describe("presentation admin console", () => {
 
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    await user.click(screen.getByRole("button", { name: "実行" }));
     await waitFor(() => expect(mutationReads).toBe(1));
     expect(poll).toBeDefined();
 
@@ -2517,6 +2575,7 @@ describe("presentation admin console", () => {
     act(() => poll?.());
     await waitFor(() => expect(stateReads).toBe(2));
     await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    await user.click(screen.getByRole("button", { name: "実行" }));
     expect(actionPosts).toBe(0);
 
     await act(async () => finishPoll?.(response(401, {})));
@@ -2600,6 +2659,7 @@ describe("presentation admin console", () => {
 
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    await user.click(screen.getByRole("button", { name: "実行" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("自動で再試行しています");
     expect(screen.getByText("現在の状態：進行中：問題")).toBeInTheDocument();
   });
@@ -2717,11 +2777,100 @@ describe("presentation admin console", () => {
 
     expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    await user.click(screen.getByRole("button", { name: "実行" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "操作を反映できませんでした。状態を再確認してから再試行してください。",
     );
     expect(actionAttempts).toBe(1);
     expect(screen.getByText("現在の状態：進行中：問題")).toBeInTheDocument();
+  });
+
+  it("handles dialog cancel event and subsequent execution correctly", async () => {
+    const api = apiFetch({
+      state: { state: "question", questionIndex: 0 },
+    });
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    const dialog = screen.getByText("最初に戻る確認").closest("dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveAttribute("open");
+
+    act(() => {
+      dialog?.dispatchEvent(new Event("cancel", { cancelable: true }));
+    });
+    expect(dialog).not.toHaveAttribute("open");
+    expect(api.actions).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    const dialog2 = screen.getByText("最初に戻る確認").closest("dialog");
+    expect(dialog2).toHaveAttribute("open");
+    await user.click(screen.getByRole("button", { name: "実行" }));
+    await waitFor(() => expect(api.actions).toHaveLength(1));
+  });
+
+  it("handles dialog background click to close without mutation", async () => {
+    const api = apiFetch({
+      state: { state: "question", questionIndex: 0 },
+    });
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    const dialog = screen.getByText("最初に戻る確認").closest("dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveAttribute("open");
+
+    fireEvent.click(dialog!, { clientX: 200, clientY: 200 });
+    expect(dialog).not.toHaveAttribute("open");
+    expect(api.actions).toHaveLength(0);
+  });
+
+  it("ignores onClose event when dialog is already closed", async () => {
+    const api = apiFetch({
+      state: { state: "question", questionIndex: 0 },
+    });
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    const dialog = screen.getByText("最初に戻る確認").closest("dialog");
+    expect(dialog).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "キャンセル" }));
+    expect(dialog).not.toHaveAttribute("open");
+
+    act(() => {
+      dialog?.dispatchEvent(new Event("close"));
+    });
+    expect(dialog).not.toHaveAttribute("open");
+    expect(api.actions).toHaveLength(0);
+  });
+
+  it("re-syncs dialog state when an external close event arrives while the confirmation is pending", async () => {
+    const api = apiFetch({
+      state: { state: "question", questionIndex: 0 },
+    });
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+    expect(await screen.findByText("現在の状態：進行中：問題")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    const dialog = screen.getByText("最初に戻る確認").closest("dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveAttribute("open");
+
+    act(() => {
+      dialog?.dispatchEvent(new Event("close"));
+    });
+    expect(dialog).not.toHaveAttribute("open");
+    expect(api.actions).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "最初に戻る" }));
+    const dialog2 = screen.getByText("最初に戻る確認").closest("dialog");
+    expect(dialog2).toHaveAttribute("open");
+    await user.click(screen.getByRole("button", { name: "実行" }));
+    await waitFor(() => expect(api.actions).toHaveLength(1));
   });
 
   it("shows the loading console while the authenticated admin state is pending", async () => {

@@ -168,29 +168,34 @@ export default function ResultsPanel({
         <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
         {!authorized ? (
           <>
-            <h1 className="text-3xl font-bold tracking-tight">参加者セッションを確認できません</h1>
-            <p className="mt-4 text-muted">回答画面からもう一度参加してください。</p>
+            <h1 className="text-3xl font-bold tracking-tight text-balance">
+              参加者セッションを確認できません
+            </h1>
+            <p className="mt-4 text-muted text-pretty">回答画面からもう一度参加してください。</p>
             <Link className="mt-8 inline-flex font-semibold text-primary underline" href="/answer">
               回答画面へ戻る
             </Link>
           </>
         ) : result.state === "visible" ? (
           <>
-            <h1 className="text-3xl font-bold tracking-tight">
+            <h1 className="text-3xl font-bold tracking-tight text-balance">
               {scope === "assisted" ? "代理回答者の結果" : "あなたの結果"}
             </h1>
             <dl className="mt-8 grid grid-cols-2 gap-4">
               <div className="rounded-xl bg-surface-2 p-5">
-                <dt className="text-sm text-muted">順位</dt>
+                <dt className="text-sm text-muted text-balance">順位</dt>
                 <dd className="mt-1 text-3xl font-bold">{result.rank}位</dd>
               </div>
               <div className="rounded-xl bg-surface-2 p-5">
-                <dt className="text-sm text-muted">得点</dt>
+                <dt className="text-sm text-muted text-balance">得点</dt>
                 <dd className="mt-1 text-3xl font-bold">{result.score}点</dd>
               </div>
             </dl>
             <section className="mt-10" aria-labelledby="answer-details-heading">
-              <h2 id="answer-details-heading" className="text-xl font-bold tracking-tight">
+              <h2
+                id="answer-details-heading"
+                className="text-xl font-bold tracking-tight text-balance"
+              >
                 回答明細
               </h2>
               <ol className="mt-4 space-y-3">
@@ -199,22 +204,24 @@ export default function ResultsPanel({
                     key={item.position}
                     className="min-w-0 rounded-xl border border-border bg-surface-2 p-4 sm:p-5"
                   >
-                    <p className="break-words text-sm font-semibold text-muted [overflow-wrap:anywhere]">
+                    <p className="break-words text-sm font-semibold text-muted [overflow-wrap:anywhere] text-pretty">
                       問題 {item.position + 1}
                     </p>
-                    <p className="mt-2 whitespace-pre-wrap break-words font-medium [overflow-wrap:anywhere]">
+                    <p className="mt-2 whitespace-pre-wrap break-words font-medium [overflow-wrap:anywhere] text-pretty">
                       {item.question}
                     </p>
                     <div className="mt-4 border-t border-border/70 pt-3">
                       {item.answer.kind === "selected" &&
                       item.answer.correctness === "unavailable" ? (
-                        <p className="text-sm font-medium text-muted">回答を確認できません</p>
+                        <p className="text-sm font-medium text-muted text-pretty">
+                          回答を確認できません
+                        </p>
                       ) : item.answer.kind === "selected" ? (
                         <>
-                          <p className="text-xs font-semibold tracking-wide text-muted">
+                          <p className="text-xs font-semibold tracking-wide text-muted text-balance">
                             あなたの回答
                           </p>
-                          <p className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                          <p className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-pretty">
                             {item.answer.value}
                           </p>
                           {(() => {
@@ -235,27 +242,27 @@ export default function ResultsPanel({
                         </>
                       ) : item.answer.kind === "freeText" ? (
                         <>
-                          <p className="text-xs font-semibold tracking-wide text-muted">
+                          <p className="text-xs font-semibold tracking-wide text-muted text-balance">
                             あなたの回答
                           </p>
-                          <p className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                          <p className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-pretty">
                             {item.answer.value}
                           </p>
                           {typeof item.answer.score === "number" ? (
-                            <p className="mt-3 text-sm text-muted">
+                            <p className="mt-3 text-sm text-muted text-pretty">
                               記録済みスコア:{" "}
                               <span className="font-semibold text-text">{item.answer.score}</span>
                             </p>
                           ) : (
-                            <p className="mt-3 text-sm text-muted">
+                            <p className="mt-3 text-sm text-muted text-pretty">
                               設問別スコアは記録されていません
                             </p>
                           )}
                         </>
                       ) : item.answer.kind === "unanswered" ? (
-                        <p className="text-sm font-medium text-muted">未回答</p>
+                        <p className="text-sm font-medium text-muted text-pretty">未回答</p>
                       ) : (
-                        <p className="text-sm font-medium text-muted">
+                        <p className="text-sm font-medium text-muted text-pretty">
                           この回答の詳細は確認できません
                         </p>
                       )}
@@ -270,14 +277,14 @@ export default function ResultsPanel({
           </>
         ) : result.state === "waiting" ? null : (
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">結果を確認できません</h1>
-            <p className="mt-4 rounded-xl border border-border bg-surface-2 p-4 text-sm text-muted">
+            <h1 className="text-3xl font-bold tracking-tight text-balance">結果を確認できません</h1>
+            <p className="mt-4 rounded-xl border border-border bg-surface-2 p-4 text-sm text-muted text-pretty">
               あなたの結果を確認できません。時間をおいて再読み込みしてください。
             </p>
           </div>
         )}
         {refreshError ? (
-          <p role="alert" className="mt-4 text-sm text-error">
+          <p role="alert" className="mt-4 text-sm text-error text-pretty">
             結果を更新できませんでした。通信状況を確認して、もう一度お試しください。
           </p>
         ) : null}

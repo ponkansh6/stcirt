@@ -7,6 +7,7 @@ describe("ResultBanner", () => {
     render(<ResultBanner isCorrect={true} />);
     const banner = screen.getByRole("status");
     expect(banner).toBeInTheDocument();
+    expect(banner).toHaveClass("banner-entry");
     expect(screen.getByText("正解！")).toBeInTheDocument();
     expect(screen.getByText("✓")).toBeInTheDocument();
   });

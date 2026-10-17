@@ -7,6 +7,7 @@ import ChoiceButton from "@/components/ChoiceButton";
 import { choiceLabel } from "@/lib/choice-label";
 import { Button } from "@/components/Button";
 import { Spinner } from "@/components/Spinner";
+import styles from "./quiz-runner.module.css";
 import { ApiError } from "@/lib/api/client";
 import { parseParticipantResult } from "@/lib/participant-results-contract";
 import { HeaderPortal } from "./header-portal";
@@ -1037,7 +1038,7 @@ export default function QuizRunner() {
                         onChange={(event) =>
                           setFreeResponse(question.id, event.currentTarget.value)
                         }
-                        className="min-h-36 w-full resize-y rounded-lg border border-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+                        className={`min-h-36 w-full resize-y rounded-lg border border-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 ${styles.freeText}`}
                         disabled={isLocked}
                       />
                     </div>

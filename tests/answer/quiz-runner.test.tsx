@@ -193,6 +193,8 @@ describe("QuizRunner batch answer sheet", () => {
 
     const response = screen.getByRole("textbox", { name: "回答（1000字以内）" });
     expect(response).toHaveAttribute("maxLength", "1000");
+    expect(response).toHaveAttribute("rows", "6");
+    expect(response.className).toContain("freeText");
     expect(response).toHaveValue("draft");
     expect(screen.getByText(/以前の保存回答は旧選択式です/)).toBeVisible();
     fireEvent.change(response, { target: { value: "新しい自由記載" } });

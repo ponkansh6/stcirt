@@ -189,6 +189,8 @@ export default function PresentationAdmin() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const authenticatedRef = useRef(false);
   const [adminState, setAdminState] = useState<AdminState | null>(null);
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
+  const confirmDialogRef = useRef<HTMLDialogElement | null>(null);
   const publishResultsButtonRef = useRef<HTMLButtonElement | null>(null);
   const hideResultsButtonRef = useRef<HTMLButtonElement | null>(null);
   const aggregateButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -207,6 +209,18 @@ export default function PresentationAdmin() {
     authenticatedRef.current = value;
     setAuthenticated(value);
   }, []);
+
+  useEffect(() => {
+    const dialog = confirmDialogRef.current;
+    if (!dialog) return;
+    if (confirmResetOpen) {
+      /* v8 ignore else */
+      if (!dialog.open) dialog.showModal();
+    } else {
+      /* v8 ignore else */
+      if (dialog.open) dialog.close();
+    }
+  }, [confirmResetOpen]);
 
   useEffect(() => {
     const cancelFocusHandoffIfFocusMoves = (event: FocusEvent) => {
@@ -567,12 +581,61 @@ export default function PresentationAdmin() {
                   className={styles.secondaryButton}
                   type="button"
                   disabled={busy}
-                  onClick={() => void runAction("reset")}
+                  onClick={() => setConfirmResetOpen(true)}
                 >
                   {busyAction === "reset" ? "戻しています…" : "最初に戻る"}
                 </button>
               </>
             )}
+            <dialog
+              ref={confirmDialogRef}
+              className={styles.confirmDialog}
+              onCancel={(event) => {
+                event.preventDefault();
+                setConfirmResetOpen(false);
+              }}
+              onClose={() => {
+                if (confirmResetOpen) setConfirmResetOpen(false);
+              }}
+              onClick={(event) => {
+                const dialog = confirmDialogRef.current;
+                /* v8 ignore if */
+                if (!dialog) return;
+                const rect = dialog.getBoundingClientRect();
+                if (
+                  event.clientX < rect.left ||
+                  event.clientX > rect.right ||
+                  event.clientY < rect.top ||
+                  event.clientY > rect.bottom
+                ) {
+                  setConfirmResetOpen(false);
+                }
+              }}
+            >
+              <div>
+                <h2>最初に戻る確認</h2>
+                <p>プレゼンテーションを最初の状態に戻しますか？</p>
+                <div>
+                  <button
+                    type="button"
+                    className={styles.secondaryButton}
+                    onClick={() => setConfirmResetOpen(false)}
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.primaryButton}
+                    onClick={() => {
+                      setConfirmResetOpen(false);
+                      void runAction("reset");
+                    }}
+                  >
+                    実行
+                  </button>
+                </div>
+              </div>
+            </dialog>
             {adminState.participantResultsVisible ? (
               <>
                 <p className={styles.success} role="status">
