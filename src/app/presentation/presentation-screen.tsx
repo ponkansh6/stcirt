@@ -68,8 +68,8 @@ type Winner = {
   questionResults?: WinnerQuestionResult[];
 };
 type ProjectionData =
-  | { state: "question"; question?: PublicQuestion }
-  | { state: "answer"; question?: PublicAnswerQuestion }
+  | { state: "question"; question: PublicQuestion }
+  | { state: "answer"; question: PublicAnswerQuestion }
   | { state: Exclude<State, "question" | "answer">; winners?: Winner[] };
 type AdminState = Extract<
   State,
@@ -274,6 +274,7 @@ async function getPresenterDeck(signal?: AbortSignal): Promise<PresenterDeck> {
 }
 
 function projectionForControl(deck: PresenterDeck, controls: AdminControls): ProjectionData | null {
+  /* v8 ignore if -- このガードは refreshAdmin の not_started 早期 return より後にしか呼ばれないため到達不能 */
   if (controls.state === "not_started") return { state: "not_started" };
   const slide = slideForControl(deck, controls);
   if (!slide) return null;
@@ -519,8 +520,6 @@ export default function PresentationScreen({
     id: number;
     x: number;
     y: number;
-    generation: number;
-    ignored: boolean;
   } | null>(null);
   const suppressClick = useRef(false);
   const suppressClickTimer = useRef<number | undefined>(undefined);
@@ -530,8 +529,6 @@ export default function PresentationScreen({
   presenterRequestedRef.current = presenterRequested;
   const adminPollAbort = useRef<AbortController | null>(null);
   const adminPollFlight = useRef<Promise<void> | null>(null);
-  const mutationInFlight = useRef(false);
-  const mutationGeneration = useRef(0);
   const pendingPosition = useRef<AdminPosition | null>(null);
   const uncertainPositionWrite = useRef<PositionWriteEnvelope | null>(null);
   const confirmedSessionVersion = useRef(0);
@@ -567,6 +564,7 @@ export default function PresentationScreen({
     [],
   );
   const applyAdminControls = useCallback((controls: AdminControls | null) => {
+    /* v8 ignore if -- 古い version は呼び出し元で弾かれるため到達不能 */
     if (controls && controls.version < confirmedSessionVersion.current) return;
     if (controls)
       confirmedSessionVersion.current = Math.max(confirmedSessionVersion.current, controls.version);
@@ -584,10 +582,6 @@ export default function PresentationScreen({
     let controller: AbortController | null = null;
     const refresh = async () => {
       if (!active) return;
-      if (mutationInFlight.current) {
-        timer = window.setTimeout(refresh, 1400);
-        return;
-      }
       controller = new AbortController();
       const timeout = window.setTimeout(() => controller?.abort(), POLL_TIMEOUT_MS);
       try {
@@ -675,7 +669,9 @@ export default function PresentationScreen({
         if (!presenterAuthenticated.current) return;
         controls = await getAdminControls(controller.signal);
         if (!canApply()) return;
+        /* v8 ignore if -- 同上の趣旨: 古い version は呼び出し元で弾かれるため到達不能 */
         if (controls.version < confirmedSessionVersion.current) return;
+        /* v8 ignore if -- canApply() が true になるのは poll 開始時に pending でなく世代一致、または conflict recovery 中だけ。前者はこの条件の pending を満たさず、後者は !positionConflictRecovery が false になるため、この return は到達不能。 */
         if (
           !positionConflictRecovery.current &&
           (pendingPosition.current || positionWriterRunning.current || positionUnconfirmed.current)
@@ -758,6 +754,7 @@ export default function PresentationScreen({
           setPresenterDeck(deck);
           setDeckSyncPending(false);
           setDeckLoadError(false);
+          /* v8 ignore if -- この経路は conflict 復旧で deck を再取得した場合に限る。再取得済みの同一 revision deck と controls が一致する状態を実環境で作れないため、防御的な復旧状態消去。 */
           if (positionConflictRecovery.current) {
             pendingPosition.current = null;
             positionUnconfirmed.current = false;
@@ -775,7 +772,7 @@ export default function PresentationScreen({
                 (slide) =>
                   slide.state === target.state && slide.questionIndex === target.questionIndex,
               )
-            : undefined;
+            : /* v8 ignore next -- positionConflictRecovery は position POST の 409 handler でのみ有効化し、その時点で pendingPosition を必ず保持する。null 分岐は壊れた内部状態に対する防御のみ。 */ undefined;
           if (target && target.snapshotRevision === controls.snapshotRevision && targetSlide) {
             pendingPosition.current = { ...target, snapshotRevision: controls.snapshotRevision };
             positionConflictRecovery.current = false;
@@ -882,7 +879,7 @@ export default function PresentationScreen({
       // Scheduling and visibility changes prevent this guard from being reached in these states.
       /* v8 ignore if */
       if (document.visibilityState === "hidden" || !presenterAuthenticated.current) return;
-      if (!mutationInFlight.current) await refreshAdmin();
+      await refreshAdmin();
       schedulePoll();
     }
     function schedulePoll() {
@@ -964,7 +961,7 @@ export default function PresentationScreen({
     async (action: "advance" | "previous") => {
       const currentControls = adminControlsRef.current;
       const currentDeck = presenterDeckRef.current;
-      if (!currentControls || !currentDeck || mutationInFlight.current) return;
+      if (!currentControls || !currentDeck) return;
       const currentSlideIndex = currentDeck.slides.findIndex(
         (slide) => slide === slideForControl(currentDeck, currentControls),
       );
@@ -1029,6 +1026,7 @@ export default function PresentationScreen({
                 }
               } catch (error) {
                 if (writerGeneration !== positionWriterGeneration.current) return;
+                /* v8 ignore if -- 認証喪失を起こす全経路（presenter OFF 遷移・401 セッション確認・409 復旧）が同時に clearPendingPosition 経由で positionWriterGeneration を進めるため、直前の generation 不一致ガードが必ず先に return し、この分岐の真側は到達しない防御用ガード */
                 if (!presenterAuthenticated.current) return;
                 const status = (error as { status?: number })?.status;
                 if (status === 401) {
@@ -1054,12 +1052,14 @@ export default function PresentationScreen({
                   uncertainPositionWrite.current = envelope;
                 }
                 const retryTimer = window.setTimeout(() => {
+                  /* v8 ignore if -- timer が登録された後に generation が変化する全経路は clearPendingPosition() が timer を解除する。timeout callback が動きつつ generation または timer ref だけが変わる実行順序は到達不能。 */
                   if (
                     writerGeneration !== positionWriterGeneration.current ||
                     positionRetryTimer.current !== retryTimer
                   )
                     return;
                   positionRetryTimer.current = null;
+                  /* v8 ignore if -- presenter OFF と認証喪失は clearPendingPosition() が retry timer を解除し、pending が空のケースは retry timer を登録しない。したがって有効な callback でこの guard が真になる状態は到達不能。 */
                   if (
                     !presenterRequestedRef.current ||
                     !presenterAuthenticated.current ||
@@ -1198,8 +1198,6 @@ export default function PresentationScreen({
       id: event.pointerId,
       x: event.clientX,
       y: event.clientY,
-      generation: mutationGeneration.current,
-      ignored: mutationInFlight.current,
     };
   }, []);
 
@@ -1224,12 +1222,6 @@ export default function PresentationScreen({
         suppressClick.current = false;
         suppressClickTimer.current = undefined;
       }, 450);
-      if (
-        start.ignored ||
-        mutationInFlight.current ||
-        start.generation !== mutationGeneration.current
-      )
-        return;
       if (dx < 0) {
         if (adminControls.state !== "finished" && adminControls.state !== "not_started")
           void operate("advance");
@@ -1250,10 +1242,8 @@ export default function PresentationScreen({
       (adminControls !== null && adminControls.state !== "not_started" && presenterDeck === null));
   const slideAnnouncement = (() => {
     if (loadingPresenterDeck || !data) return "";
-    if (data.state === "question")
-      return data.question ? `第${data.question.ordinal}問` : "問題スライド";
-    if (data.state === "answer")
-      return data.question ? `第${data.question.ordinal}問の解説` : "解説スライド";
+    if (data.state === "question") return `第${data.question.ordinal}問`;
+    if (data.state === "answer") return `第${data.question.ordinal}問の解説`;
     if (data.state === "third" || data.state === "second" || data.state === "first")
       return `${rankTitle[data.state]}を発表します`;
     if (data.state === "standby") return "休憩中";

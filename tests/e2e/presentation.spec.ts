@@ -667,6 +667,7 @@ test("start and reset use the opening slide with reversible first-question bound
 
   await page.goto("/admin/presentation");
   await page.getByRole("button", { name: "最初に戻る" }).click();
+  await page.getByRole("button", { name: "実行" }).click();
   await expect(page.getByText("現在の状態：進行中：オープニング")).toBeVisible();
   expect(mock.getPresentationState().state).toBe("opening");
 });
@@ -1224,6 +1225,7 @@ test("aggregation refreshes the shared snapshot and reset returns to its first s
   expect(mock.getPresentationState().state).toBe("answer");
 
   await page.getByRole("button", { name: "最初に戻る" }).click();
+  await page.getByRole("button", { name: "実行" }).click();
   await expect(page.getByText("現在の状態：進行中：オープニング")).toBeVisible();
   expect(mock.getPresentationState().state).toBe("opening");
   expect(mock.getSnapshotRevision()).toBe(2);

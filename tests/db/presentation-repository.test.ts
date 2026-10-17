@@ -1854,6 +1854,20 @@ describe("presentation repository", () => {
     ).rejects.toMatchObject({ status: 409, message: "Invalid presentation position" });
   });
 
+  it("rejects unknown presentation states and non-integer question indices", async () => {
+    await addQuestions();
+    await operatePresentationControls("position-unknown-aggregate", "aggregate");
+    await operatePresentationControls("position-unknown-start", "start");
+
+    await expect(
+      setPresentationPosition("position-unknown-state", "bogus_state" as never, 1, 1, 2),
+    ).rejects.toMatchObject({ status: 409, message: "Invalid presentation position" });
+
+    await expect(
+      setPresentationPosition("position-fractional-index", "question", 1.5, 1, 2),
+    ).rejects.toMatchObject({ status: 409, message: "Invalid presentation position" });
+  });
+
   it("fences delayed position writes by session version and binds replay IDs to the request", async () => {
     await addQuestions();
     await operatePresentationControls("position-fence-aggregate", "aggregate");

@@ -2207,4 +2207,349 @@ describe("presentation projection and presenter progression", () => {
     await settled();
     expect(region).not.toHaveClass(/announce/);
   });
+
+  it("does not write position when mutation is in flight during operate", async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const actionStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const actionGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const api = setup({
+      actionGate: () => {
+        started();
+        return actionGate;
+      },
+      admin: { state: "question", questionIndex: 1, questionCount: 5 },
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = screen.getByRole("main");
+    await settled();
+    main.focus();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await actionStarted;
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    await settled();
+  });
+
+  it("triggers admin refresh after timer during position conflict recovery", async () => {
+    vi.useFakeTimers();
+    let controlsReads = 0;
+    const api = setup({
+      actionStatuses: [409],
+      controlsGetter: async () => {
+        controlsReads += 1;
+        return response({
+          state: "question",
+          version: 1,
+          snapshotRevision: 1,
+          questionIndex: 1,
+          questionCount: 5,
+          projectionHidden: false,
+        });
+      },
+      admin: { state: "question", questionIndex: 1, questionCount: 5 },
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = screen.getByRole("main");
+    await settled();
+    main.focus();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await settled();
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await settled();
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await settled();
+    expect(controlsReads).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not retry position when unauthenticated after failure", async () => {
+    vi.useFakeTimers();
+    let releaseAction!: () => void;
+    const actionGate = new Promise<void>((r) => {
+      releaseAction = r;
+    });
+    const api = setup({
+      actionGate: () => actionGate,
+      admin: { state: "question", questionIndex: 1, questionCount: 5 },
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    const main = screen.getByRole("main");
+    await settled();
+    main.focus();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await settled();
+
+    view.rerender(<PresentationScreen presenterRequested={false} />);
+    await settled();
+
+    await act(async () => {
+      releaseAction();
+      await Promise.resolve();
+    });
+    await settled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await settled();
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("ignores stale retry when generation changes", async () => {
+    vi.useFakeTimers();
+    const api = setup({
+      actionStatuses: [503, 200],
+      commitBeforeActionError: true,
+      admin: { state: "question", questionIndex: 1, questionCount: 5 },
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = screen.getByRole("main");
+    await settled();
+    main.focus();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await settled();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await settled();
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ).length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("is no-op on retry when presenter is not requested or authenticated", async () => {
+    vi.useFakeTimers();
+    const api = setup({
+      actionStatus: 503,
+      commitBeforeActionError: true,
+      admin: { state: "question", questionIndex: 1, questionCount: 5 },
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    const main = screen.getByRole("main");
+    await settled();
+    main.focus();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await settled();
+    view.rerender(<PresentationScreen presenterRequested={false} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await settled();
+  });
+
+  it("does not nullify current controller in writer finally when controller was replaced", async () => {
+    let releaseFirst!: () => void;
+    let startedFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      startedFirst = resolve;
+    });
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const api = setup({
+      actionGate: () => {
+        startedFirst();
+        return firstGate;
+      },
+      admin: { state: "question", questionIndex: 1, questionCount: 5 },
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = screen.getByRole("main");
+    await settled();
+    main.focus();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await firstStarted;
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await act(async () => {
+      releaseFirst();
+      await Promise.resolve();
+    });
+    await settled();
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("coalesces a gesture during an in-flight position write into a single POST", async () => {
+    let releaseAction!: () => void;
+    const actionGate = new Promise<void>((resolve) => {
+      releaseAction = resolve;
+    });
+    const api = setup({
+      actionGate: () => actionGate,
+      admin: { state: "question", questionIndex: 1, questionCount: 5 },
+    });
+    render(<PresentationScreen presenterRequested />);
+    const main = screen.getByRole("main");
+    await settled();
+    main.focus();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await settled();
+
+    fireEvent.pointerDown(main, {
+      pointerId: 1,
+      isPrimary: true,
+      button: 0,
+      clientX: 200,
+      clientY: 100,
+    });
+    fireEvent.pointerUp(main, { pointerId: 1, isPrimary: true, clientX: 300, clientY: 100 });
+    await settled();
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+
+    await act(async () => {
+      releaseAction();
+      await Promise.resolve();
+    });
+    await settled();
+  });
+
+  it("keeps progression inert while a refreshed revision has not loaded its deck", async () => {
+    let controlsReads = 0;
+    let deckReads = 0;
+    let resolveRefreshedDeck!: (value: Response) => void;
+    const refreshedDeck = new Promise<Response>((resolve) => {
+      resolveRefreshedDeck = resolve;
+    });
+    const api = setup({
+      admin: { state: "question", questionIndex: 0, questionCount: 5 },
+      controlsGetter: async () => {
+        controlsReads += 1;
+        return response({
+          state: "question",
+          version: controlsReads,
+          snapshotRevision: controlsReads === 1 ? 1 : 2,
+          questionIndex: 0,
+          questionCount: 5,
+          projectionHidden: false,
+        });
+      },
+      deckGetter: () => {
+        deckReads += 1;
+        return deckReads === 1
+          ? Promise.resolve(
+              response({
+                snapshotRevision: 1,
+                slides: [
+                  {
+                    state: "question",
+                    questionIndex: 0,
+                    projection: {
+                      state: "question",
+                      question: {
+                        id: 1,
+                        ordinal: 1,
+                        total: 5,
+                        question: "思い出の場所は？",
+                        choices: ["海", "山"],
+                      },
+                    },
+                  },
+                  {
+                    state: "answer",
+                    questionIndex: 0,
+                    projection: {
+                      state: "answer",
+                      question: {
+                        id: 1,
+                        ordinal: 1,
+                        total: 5,
+                        question: "思い出の場所は？",
+                        choices: ["海", "山"],
+                        correctIndex: 0,
+                      },
+                    },
+                  },
+                ],
+              }),
+            )
+          : refreshedDeck;
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await settled();
+
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(deckReads).toBe(2));
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(0);
+
+    resolveRefreshedDeck(
+      response({
+        snapshotRevision: 2,
+        slides: [
+          {
+            state: "question",
+            questionIndex: 0,
+            projection: {
+              state: "question",
+              question: {
+                id: 1,
+                ordinal: 1,
+                total: 5,
+                question: "思い出の場所は？",
+                choices: ["海", "山"],
+              },
+            },
+          },
+          {
+            state: "answer",
+            questionIndex: 0,
+            projection: {
+              state: "answer",
+              question: {
+                id: 1,
+                ordinal: 1,
+                total: 5,
+                question: "思い出の場所は？",
+                choices: ["海", "山"],
+                correctIndex: 0,
+              },
+            },
+          },
+        ],
+      }),
+    );
+    await settled();
+  });
 });

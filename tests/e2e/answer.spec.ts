@@ -38,6 +38,39 @@ test("answer login controls meet the selected target geometry at representative 
   }
 });
 
+test("disables the answer glass header for stronger contrast and reduced transparency", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "Reduced transparency emulation uses Chromium CDP.");
+  await mockParticipantSession(page);
+  await mockQuestions(page);
+  await page.goto("/answer");
+
+  const glassHeader = page.locator("header.glass-header");
+  await expect(glassHeader).toHaveCount(1);
+  await expect(glassHeader).toHaveCSS("backdrop-filter", /blur/);
+
+  await page.emulateMedia({ contrast: "more" });
+  await expect(glassHeader).toHaveCSS("backdrop-filter", "none");
+
+  await page.emulateMedia({ contrast: "no-preference" });
+  await expect(glassHeader).toHaveCSS("backdrop-filter", /blur/);
+
+  const cdpSession = await page.context().newCDPSession(page);
+  try {
+    await cdpSession.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-transparency", value: "reduce" }],
+    });
+    expect(
+      await page.evaluate(() => matchMedia("(prefers-reduced-transparency: reduce)").matches),
+    ).toBe(true);
+    await expect(glassHeader).toHaveCSS("backdrop-filter", "none");
+  } finally {
+    await cdpSession.detach();
+  }
+});
+
 type BatchAnswer =
   | { questionId: number; selectedIndex: number }
   | { questionId: number; freeText: string };

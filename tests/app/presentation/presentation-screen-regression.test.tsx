@@ -1939,7 +1939,7 @@ describe("PresentationScreen", () => {
       });
       await waitFor(() => {
         expect(api.actions).toHaveLength(1);
-        expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+        expect(screen.getByText("正解")).toBeInTheDocument();
       });
       expect(api.actions[0]).toMatchObject({ action: "position" });
     } finally {
@@ -3121,5 +3121,416 @@ describe("PresentationScreen", () => {
       clearTimeoutSpy.mockRestore();
       setTimeoutSpy.mockRestore();
     }
+  });
+
+  it("ignores admin controls update when position write or conflict recovery is active", async () => {
+    vi.useFakeTimers();
+    let adminCalls = 0;
+    let resolveAction!: (value: Response) => void;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      adminResponse: async () => {
+        adminCalls += 1;
+        return response(controls({ state: "answer", questionIndex: 0, version: 10 + adminCalls }));
+      },
+      actionResponse: () =>
+        new Promise<Response>((resolve) => {
+          resolveAction = resolve;
+        }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+
+    const versionBefore = screen.getByRole("status").textContent;
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+
+    expect(screen.getByRole("status").textContent).toBe(versionBefore);
+
+    await act(async () => {
+      resolveAction(response(controls({ state: "answer", questionIndex: 0, version: 12 })));
+      await Promise.resolve();
+    });
+    await flush();
+  });
+
+  it("resets recovery state and proceeds when server returns not_started during recovery", async () => {
+    vi.useFakeTimers();
+    let controlReads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+      actionError: 409,
+      adminResponse: () => {
+        controlReads += 1;
+        if (controlReads === 2) {
+          return Promise.resolve(response(controls({ state: "not_started", snapshotRevision: 2 })));
+        }
+        return Promise.resolve(
+          response(controls({ state: "question", questionIndex: 0, snapshotRevision: 1 })),
+        );
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    await flush();
+
+    expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
+  });
+
+  it("applies conflict recovery successfully when revision matches deck and slides match", async () => {
+    vi.useFakeTimers();
+    let controlReads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+      actionError: 409,
+      adminResponse: () => {
+        controlReads += 1;
+        if (controlReads === 2) {
+          return Promise.resolve(
+            response(controls({ state: "answer", questionIndex: 0, snapshotRevision: 1 })),
+          );
+        }
+        return Promise.resolve(
+          response(controls({ state: "question", questionIndex: 0, snapshotRevision: 1 })),
+        );
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(100));
+    await flush();
+
+    expect(screen.getByText("正解")).toBeInTheDocument();
+  });
+
+  it("skips a recovered position flush after presenter mode is disabled", async () => {
+    vi.useFakeTimers();
+    let controlReads = 0;
+    let resolveRecoveryControls!: (value: Response) => void;
+    const recoveryControls = new Promise<Response>((resolve) => {
+      resolveRecoveryControls = resolve;
+    });
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+      actionError: 409,
+      adminResponse: () => {
+        controlReads += 1;
+        return controlReads === 1
+          ? Promise.resolve(response(controls({ state: "question", questionIndex: 0 })))
+          : recoveryControls;
+      },
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    await flush();
+    expect(controlReads).toBe(2);
+
+    await act(async () => {
+      resolveRecoveryControls(
+        response(controls({ state: "answer", questionIndex: 0, snapshotRevision: 1 })),
+      );
+      await recoveryControls;
+    });
+    await flush();
+
+    view.rerender(<PresentationScreen presenterRequested={false} />);
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    await flush();
+
+    expect(api.actions).toHaveLength(1);
+  });
+
+  it("keeps a newer position controller when an aborted writer settles", async () => {
+    vi.useFakeTimers();
+    const pendingActions: Array<(value: Response) => void> = [];
+    let secondActionStarted!: () => void;
+    const secondStarted = new Promise<void>((resolve) => {
+      secondActionStarted = resolve;
+    });
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+      actionResponse: () =>
+        new Promise<Response>((resolve) => {
+          pendingActions.push(resolve);
+          if (pendingActions.length === 2) secondActionStarted();
+        }),
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(pendingActions).toHaveLength(1);
+
+    view.rerender(<PresentationScreen presenterRequested={false} />);
+    await flush();
+    view.rerender(<PresentationScreen presenterRequested />);
+    await flush();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await secondStarted;
+
+    await act(async () => {
+      pendingActions[0]!(response({}, false, 409));
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(pendingActions).toHaveLength(2);
+  });
+
+  it("falls back to standard application when recovery target has no pending position", async () => {
+    vi.useFakeTimers();
+    let controlReads = 0;
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+      adminResponse: () => {
+        controlReads += 1;
+        return Promise.resolve(
+          response(controls({ state: "answer", questionIndex: 0, snapshotRevision: 1 })),
+        );
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+
+    expect(screen.getByText("正解")).toBeInTheDocument();
+  });
+
+  it("surfaces the deck retry state when the recovery target does not match the refreshed controls revision", async () => {
+    vi.useFakeTimers();
+    let controlReads = 0;
+    installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+      actionError: 409,
+      adminResponse: () => {
+        controlReads += 1;
+        if (controlReads === 2) {
+          return Promise.resolve(
+            response(controls({ state: "answer", questionIndex: 0, snapshotRevision: 99 })),
+          );
+        }
+        return Promise.resolve(
+          response(controls({ state: "question", questionIndex: 0, snapshotRevision: 1 })),
+        );
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(100));
+    await flush();
+
+    expect(screen.getByText("スライドを読み込めませんでした")).toBeInTheDocument();
+  });
+
+  it("adopts the server cursor and drops a conflicted target after the deck revision changes", async () => {
+    vi.useFakeTimers();
+    let controlReads = 0;
+    let deckReads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+      actionError: 409,
+      adminResponse: () => {
+        controlReads += 1;
+        return Promise.resolve(
+          response(
+            controls({
+              state: "question",
+              questionIndex: 0,
+              snapshotRevision: controlReads === 1 ? 1 : 2,
+            }),
+          ),
+        );
+      },
+      deckResponse: () => {
+        deckReads += 1;
+        const snapshotRevision = deckReads === 1 ? 1 : 2;
+        return Promise.resolve(
+          response({
+            snapshotRevision,
+            slides: [
+              {
+                state: "question",
+                questionIndex: 0,
+                projection: { state: "question", question },
+              },
+              ...(snapshotRevision === 1
+                ? [
+                    {
+                      state: "answer",
+                      questionIndex: 0,
+                      projection: {
+                        state: "answer",
+                        question: { ...question, correctIndex: 0 },
+                      },
+                    },
+                  ]
+                : []),
+            ],
+          }),
+        );
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    await flush();
+
+    expect(controlReads).toBe(2);
+    expect(deckReads).toBe(2);
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(api.actions).toHaveLength(1);
+  });
+
+  it("does not flush immediately if writer is running or pending position is missing on recovery success", async () => {
+    vi.useFakeTimers();
+    let controlReads = 0;
+    let resolveAction!: (value: Response) => void;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
+      actionResponse: () =>
+        new Promise<Response>((resolve) => {
+          resolveAction = resolve;
+        }),
+      adminResponse: () => {
+        controlReads += 1;
+        if (controlReads === 2) {
+          return Promise.resolve(
+            response(controls({ state: "answer", questionIndex: 0, snapshotRevision: 1 })),
+          );
+        }
+        return Promise.resolve(
+          response(controls({ state: "question", questionIndex: 0, snapshotRevision: 1 })),
+        );
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await flush();
+
+    expect(api.actions).toHaveLength(1);
+
+    await act(async () => {
+      resolveAction(response({}, false, 409));
+      await Promise.resolve();
+    });
+    await flush();
+  });
+
+  it("returns early from 401 handler if presenterRequestedRef is false", async () => {
+    installApi({
+      visibilityError: 401,
+      visibilityErrorBody: {},
+    });
+    render(<PresentationScreen presenterRequested={false} />);
+    await flush();
+    expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
+  });
+
+  it("returns resolved promise early from refreshAdmin when presenterRequestedRef is false", async () => {
+    const api = installApi({
+      projection: { state: "standby" },
+    });
+    render(<PresentationScreen presenterRequested={false} />);
+    await flush();
+    expect(
+      api.fetchMock.mock.calls.filter(([path]) => String(path).includes("/api/admin/")),
+    ).toHaveLength(0);
+  });
+
+  it("skips a queued conflict refresh after presenter mode is disabled", async () => {
+    vi.useFakeTimers();
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      actionError: 409,
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    await flush();
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+
+    view.rerender(<PresentationScreen presenterRequested={false} />);
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    await flush();
+
+    expect(
+      api.fetchMock.mock.calls.filter(([path]) =>
+        String(path).includes("/api/admin/presentation?view=controls"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("ignores a late unauthorized controls response after presenter mode is disabled", async () => {
+    let rejectControls!: (value: Response) => void;
+    const controlsPending = new Promise<Response>((resolve) => {
+      rejectControls = resolve;
+    });
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      adminResponse: () => controlsPending,
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    await flush();
+    expect(
+      api.fetchMock.mock.calls.some(([path]) =>
+        String(path).includes("/api/admin/presentation?view=controls"),
+      ),
+    ).toBe(true);
+
+    view.rerender(<PresentationScreen presenterRequested={false} />);
+    await act(async () => {
+      rejectControls(response({}, false, 401));
+      await controlsPending;
+    });
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
   });
 });
