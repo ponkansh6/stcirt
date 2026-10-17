@@ -23,7 +23,8 @@ vi.mock("@/lib/db/repository/answer-repository", () => ({
   BatchSubmissionError: class BatchSubmissionError extends Error {
     constructor(
       message: string,
-      readonly status: 400 | 404 | 409,
+      readonly status: 400 | 404 | 409 | 423 | 503,
+      readonly code?: "SUBMISSION_LOCKED" | "DATABASE_LOCKED",
     ) {
       super(message);
     }
@@ -102,6 +103,7 @@ describe("/api/answers/batch route handlers", () => {
     const submission = {
       submissionId,
       revision: 1,
+      resultsVisible: false,
       answers: answers.map((answer) => ({
         ...answer,
         answerKind: "selected" as const,
@@ -117,7 +119,9 @@ describe("/api/answers/batch route handlers", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual(submission);
+    const body = await response.json();
+    expect(body).toEqual(submission);
+    expect(body).not.toHaveProperty("participantId");
     expect(getAnswerSubmission).toHaveBeenCalledWith(submissionId, 42);
   });
 
@@ -125,6 +129,7 @@ describe("/api/answers/batch route handlers", () => {
     const submission = {
       submissionId,
       revision: 2,
+      resultsVisible: true,
       answers: answers.map((answer) => ({
         ...answer,
         answerKind: "selected" as const,
@@ -134,13 +139,15 @@ describe("/api/answers/batch route handlers", () => {
     vi.mocked(getAnswerSubmission).mockResolvedValueOnce(submission);
     const response = await GET(
       new Request(
-        `http://localhost/api/answers/batch?submissionId=${submissionId}&scope=assisted`,
+        `http://localhost/api/answers/batch?submissionId=${submissionId}&scope=assisted&participantId=42`,
         { headers: { Cookie: headers.Cookie } },
       ),
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual(submission);
+    const body = await response.json();
+    expect(body).toEqual(submission);
+    expect(body).not.toHaveProperty("participantId");
     expect(getAnswerSubmission).toHaveBeenCalledWith(submissionId, 99);
   });
 
@@ -253,7 +260,7 @@ describe("/api/answers/batch route handlers", () => {
       assessmentTarget: null,
     });
     const response = await POST(
-      new Request("http://localhost/api/answers/batch?scope=assisted", {
+      new Request("http://localhost/api/answers/batch?scope=assisted&participantId=42", {
         method: "POST",
         headers,
         body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
@@ -261,9 +268,13 @@ describe("/api/answers/batch route handlers", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(saveAnswerSubmission).toHaveBeenCalledWith(
-      expect.objectContaining({ participantId: 99 }),
-    );
+    expect(saveAnswerSubmission).toHaveBeenCalledWith({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      answers,
+      participantId: 99,
+    });
   });
 
   it("POST rejects unknown and unlinked answer scopes before saving", async () => {
@@ -358,6 +369,54 @@ describe("/api/answers/batch route handlers", () => {
       expectedRevision: 0,
       answers,
       participantId: 42,
+    });
+    expect(afterRef.callback).toBeNull();
+  });
+
+  it("maps a published submission lock to its own API error code", async () => {
+    vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(
+      new BatchSubmissionError("Submission is published", 423, "SUBMISSION_LOCKED"),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/answers/batch", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
+      }),
+    );
+
+    expect(response.status).toBe(423);
+    await expect(response.json()).resolves.toEqual({
+      message: "Submission is published",
+      error: "SUBMISSION_LOCKED",
+    });
+  });
+
+  it("returns the lock classification for an assisted revision using the server-resolved target", async () => {
+    vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(
+      new BatchSubmissionError("Submission is published", 423, "SUBMISSION_LOCKED"),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/answers/batch?scope=assisted&participantId=42", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ submissionId, operationId, expectedRevision: 1, answers }),
+      }),
+    );
+
+    expect(response.status).toBe(423);
+    await expect(response.json()).resolves.toEqual({
+      message: "Submission is published",
+      error: "SUBMISSION_LOCKED",
+    });
+    expect(saveAnswerSubmission).toHaveBeenCalledWith({
+      submissionId,
+      operationId,
+      expectedRevision: 1,
+      answers,
+      participantId: 99,
     });
     expect(afterRef.callback).toBeNull();
   });

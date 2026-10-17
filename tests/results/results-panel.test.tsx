@@ -84,7 +84,26 @@ describe("ResultsPanel", () => {
       cache: "no-store",
       credentials: "same-origin",
     });
-    expect(screen.getByRole("heading", { name: "代理回答者の結果" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "代理回答の結果" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "自分の結果を見る" })).toHaveAttribute(
+      "href",
+      "/results",
+    );
+    expect(
+      screen.getByRole("link", { name: "自分の結果を見る" }).getAttribute("href"),
+    ).not.toContain("18");
+  });
+
+  it("shows the assisted result switch only when an assisted submission exists and keeps IDs out of links", () => {
+    const { rerender } = render(
+      <ResultsPanel initial={{ state: "waiting" }} scope="owner" hasAssistedSubmission={false} />,
+    );
+    expect(screen.queryByRole("link", { name: "代理回答の結果を見る" })).not.toBeInTheDocument();
+
+    rerender(<ResultsPanel initial={{ state: "waiting" }} scope="owner" hasAssistedSubmission />);
+    const assistedLink = screen.getByRole("link", { name: "代理回答の結果を見る" });
+    expect(assistedLink).toHaveAttribute("href", "/results?scope=assisted");
+    expect(assistedLink.getAttribute("href")).not.toMatch(/\d/);
   });
 
   it("uses the server state initially, skips hidden-tab changes, and refreshes on return", async () => {
@@ -469,7 +488,8 @@ describe("ResultsPanel", () => {
     );
     render(<ResultsPanel initial={visibleResult} />);
 
-    setVisibility("visible");
+    act(() => setVisibility("visible"));
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     await waitFor(() =>
       expect(
         screen.getByRole("heading", { name: "参加者セッションを確認できません" }),
@@ -586,9 +606,11 @@ describe("ResultsPanel", () => {
       await response.promise;
     });
 
-    expect(screen.getByText("1位")).toBeVisible();
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByText("1位")).toBeVisible());
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeEnabled(),
+    );
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 

@@ -357,6 +357,48 @@ describe("useQuizSession hook", () => {
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/answers/batch")).toHaveLength(2);
   });
 
+  it("preserves the correction draft and avoids conflict refresh when the server reports SUBMISSION_LOCKED", async () => {
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue({
+      submissionId,
+      revision: 1,
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/questions/batch")
+        return { ok: true, json: async () => ({ questions: batchQuestions() }) };
+      if (url === "/api/answers/batch" && init?.method === "POST")
+        return {
+          ok: false,
+          status: 423,
+          json: async () => ({ message: "Submission is published", error: "SUBMISSION_LOCKED" }),
+        };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    act(() => result.current.editAnswers());
+    act(() => result.current.select(1, 3));
+    const draft = { ...result.current.selections };
+    await act(async () => result.current.saveAnswers());
+
+    expect(result.current.phase).toMatchObject({ kind: "answering", publishedLock: true });
+    expect(result.current.selections).toEqual(draft);
+    expect(result.current.revision).toBe(1);
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/answers/batch?")),
+    ).toHaveLength(0);
+    expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(1);
+  });
+
   it("shows login after session lookup failure and keeps login errors visible", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       if (init?.method === "POST")

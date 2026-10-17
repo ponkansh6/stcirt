@@ -133,7 +133,7 @@ function deriveAnswerUi({
   if (surface === "assisted-login") {
     return {
       surface,
-      status: "ほかの人の回答",
+      status: "代理回答",
       message: "回答する人のお名前を入力してください。この画面からは、お一人分の回答を行えます。",
       statusRole: "status",
       busy: false,
@@ -319,8 +319,11 @@ export default function QuizRunner() {
     select,
     setFreeResponse,
     saveAnswers,
+    submissionId,
+    revision,
     refreshSavedAnswers,
     editAnswers,
+    clearPublishedLock,
     retryLoad,
     retrySubmissionCheck,
     login,
@@ -337,6 +340,20 @@ export default function QuizRunner() {
   const [reauthenticationSuccessCount, setReauthenticationSuccessCount] = useState(0);
   const [participantResultsVisible, setParticipantResultsVisible] = useState(false);
   const [participantResultsAuthExpired, setParticipantResultsAuthExpired] = useState(false);
+  const [submissionVisibility, setSubmissionVisibility] = useState<{
+    key: string;
+    status: "unknown" | "locked" | "unlocked";
+  } | null>(null);
+  const currentVisibilityKey = [
+    access.kind === "ready" ? access.participant.id : "unauthenticated",
+    answerMode,
+    answerMode === "assisted"
+      ? (assistedParticipant?.participant?.id ?? "missing-target")
+      : "owner",
+    submissionId ?? "missing-submission",
+  ].join(":");
+  const visibilityStatus =
+    submissionVisibility?.key === currentVisibilityKey ? submissionVisibility.status : "unknown";
   const retryRequired = phase.kind === "answering" && phase.retryRequired;
   useEffect(() => {
     if (phase.kind !== "complete" || access.kind !== "ready") {
@@ -398,6 +415,75 @@ export default function QuizRunner() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [access.kind, answerMode, phase.kind]);
+  useEffect(() => {
+    const editingSubmission = phase.kind === "answering" || phase.kind === "complete";
+    const visibilityKey = currentVisibilityKey;
+    const markVisibilityUnknown = () =>
+      setSubmissionVisibility((current) =>
+        current?.key === visibilityKey && current.status === "unknown"
+          ? current
+          : { key: visibilityKey, status: "unknown" },
+      );
+    if (!submissionId || revision === 0 || !editingSubmission || access.kind !== "ready") {
+      markVisibilityUnknown();
+      return;
+    }
+    let active = true;
+    let pending = false;
+    const refreshLock = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const scope = answerMode === "assisted" ? "&scope=assisted" : "";
+        const response = await fetch(
+          `/api/answers/batch?submissionId=${encodeURIComponent(submissionId)}${scope}`,
+          { cache: "no-store", credentials: "same-origin" },
+        );
+        if (!active) return;
+        if (!response.ok) throw new Error("Visibility lookup failed");
+        const payload: unknown = await response.json();
+        if (!active) return;
+        if (typeof payload !== "object" || payload === null) {
+          markVisibilityUnknown();
+          return;
+        }
+        const resultsVisible = (payload as { resultsVisible?: unknown }).resultsVisible;
+        if (typeof resultsVisible === "boolean") {
+          setSubmissionVisibility({
+            key: visibilityKey,
+            status: resultsVisible ? "locked" : "unlocked",
+          });
+          if (!resultsVisible) clearPublishedLock?.();
+        } else {
+          markVisibilityUnknown();
+        }
+      } catch {
+        if (active) markVisibilityUnknown();
+      } finally {
+        pending = false;
+      }
+    };
+    void refreshLock();
+    const interval = window.setInterval(() => void refreshLock(), 5000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refreshLock();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [
+    access,
+    answerMode,
+    assistedParticipant?.participant?.id,
+    clearPublishedLock,
+    phase.kind,
+    revision,
+    submissionId,
+    currentVisibilityKey,
+  ]);
   useEffect(() => {
     const previousKind = previousPhaseKind.current;
     previousPhaseKind.current = phase.kind;
@@ -531,7 +617,7 @@ export default function QuizRunner() {
         <ParticipantCard>
           <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">
-            {ui.primaryAction === "reauthenticate" ? ui.status : "ほかの人の回答"}
+            {ui.primaryAction === "reauthenticate" ? ui.status : "代理回答"}
           </h1>
           <p className="mt-4 max-w-xl leading-relaxed text-muted">{ui.message}</p>
           <AssistedParticipantForm
@@ -784,7 +870,7 @@ export default function QuizRunner() {
                 </p>
               )}
               <p className="mt-2 text-sm leading-relaxed text-muted">
-                再ログイン後、回答の修正やほかの人の回答を続けられます。
+                再ログイン後、回答の修正や代理回答を続けられます。
               </p>
               <ParticipantForm
                 onLogin={login}
@@ -797,11 +883,21 @@ export default function QuizRunner() {
           <Button
             onClick={editAnswers}
             className="mt-8"
-            disabled={Boolean(restoreError)}
+            disabled={Boolean(restoreError) || visibilityStatus !== "unlocked"}
             variant={ui.primaryAction === "edit-answers" ? "primary" : "outline"}
           >
             回答を修正する
           </Button>
+          {visibilityStatus === "locked" && (
+            <p className="mt-3 text-sm leading-relaxed text-muted" role="status" aria-live="polite">
+              結果が公開されているため、回答は修正できません。主催者が結果を非公開にすると、再び修正できます。
+            </p>
+          )}
+          {visibilityStatus === "unknown" && !restoreError && (
+            <p className="mt-3 text-sm leading-relaxed text-muted" role="status" aria-live="polite">
+              回答の公開状態を確認しています。確認できるまで編集はできません。
+            </p>
+          )}
           {answeringForAssisted && (
             <Button variant="outline" className="mt-3" onClick={() => returnToOwner()}>
               自分の回答に戻る
@@ -835,13 +931,23 @@ export default function QuizRunner() {
               )}
             </div>
           )}
-          {participantResultsVisible && (
-            <Link
-              href={answeringForAssisted ? "/results?scope=assisted" : "/results"}
-              className="mt-3 inline-flex min-h-11 items-center justify-center rounded-md border border-primary px-5 font-semibold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            >
-              {answeringForAssisted ? "代理回答者の結果を見る" : "自分の結果を見る"}
-            </Link>
+          {participantResultsVisible && !participantResultsAuthExpired && (
+            <div className="mt-3 flex flex-col items-start gap-2">
+              <Link
+                href="/results"
+                className="inline-flex min-h-11 items-center justify-center rounded-md border border-primary px-5 font-semibold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                自分の結果を見る
+              </Link>
+              {assistedParticipant?.hasSubmission && (
+                <Link
+                  href="/results?scope=assisted"
+                  className="inline-flex min-h-11 items-center justify-center rounded-md border border-primary px-5 font-semibold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                >
+                  代理回答の結果を見る
+                </Link>
+              )}
+            </div>
           )}
         </ParticipantCard>
       </main>
@@ -849,7 +955,20 @@ export default function QuizRunner() {
   }
 
   const refreshRequired = phase.kind === "answering" && phase.refreshRequired;
-  const isLocked = isSubmitting || isRefreshing || retryRequired || refreshRequired;
+  const visibilityRequired = revision > 0 || phase.kind === "complete";
+  const publishedLock =
+    (visibilityRequired && visibilityStatus === "locked") ||
+    (phase.kind === "answering" && phase.publishedLock === true);
+  const visibilityUnknown = visibilityRequired && visibilityStatus === "unknown";
+  const submissionBlocked =
+    isSubmitting || isRefreshing || refreshRequired || publishedLock || visibilityUnknown;
+  const isLocked =
+    isSubmitting ||
+    isRefreshing ||
+    retryRequired ||
+    refreshRequired ||
+    publishedLock ||
+    visibilityUnknown;
   const authExpired = access.kind === "reauthentication";
   const reauthenticationParticipantId = authExpired ? access.participant.id : null;
   const hasSavedAnswers =
@@ -864,7 +983,7 @@ export default function QuizRunner() {
   const canSubmit =
     canRunRecoveryAction && (ui.primaryAction === "submit" || ui.primaryAction === "retry-submit");
   function submitAnswers() {
-    if (!canSubmit || isSubmitting || isRefreshing) return;
+    if (!canSubmit || submissionBlocked) return;
     shouldFocusSubmissionRef.current = true;
     void Promise.resolve(saveAnswers()).finally(() => {
       shouldFocusSubmissionRef.current = false;
@@ -1069,6 +1188,20 @@ export default function QuizRunner() {
           aria-labelledby="final-check-title"
         >
           <p className="text-sm font-semibold tracking-widest text-primary">最終確認</p>
+          {publishedLock && (
+            <p
+              className="mt-3 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm leading-relaxed text-text"
+              role="status"
+              aria-live="polite"
+            >
+              結果が公開されているため、回答を修正できません。主催者が結果を非公開にすると、再び編集できます。
+            </p>
+          )}
+          {visibilityUnknown && !publishedLock && (
+            <p className="mt-3 text-sm text-muted" role="status" aria-live="polite">
+              公開状態を確認できません。確認できるまで編集はできません。
+            </p>
+          )}
           <h2
             id="final-check-title"
             ref={finalCheckHeadingRef}
@@ -1205,8 +1338,8 @@ export default function QuizRunner() {
           <Button
             ref={submitButtonRef}
             onClick={submitAnswers}
-            disabled={!canSubmit || isSubmitting || isRefreshing}
-            aria-disabled={isSubmitting || isRefreshing || !canSubmit || undefined}
+            disabled={!canSubmit || submissionBlocked}
+            aria-disabled={submissionBlocked || !canSubmit || undefined}
             variant={canSubmit ? "primary" : "outline"}
             className={`mt-6 min-h-12 w-full sm:w-auto ${isSubmitting || isRefreshing ? "cursor-wait opacity-80" : ""}`}
           >

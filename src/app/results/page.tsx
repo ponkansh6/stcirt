@@ -8,6 +8,8 @@ import {
   type ParticipantResult,
 } from "@/lib/db/repository/presentation-repository";
 import { resolveAnswerScope } from "@/lib/participants/answer-scope";
+import { getAssistedParticipant } from "@/lib/db/repository/assisted-participant-repository";
+import { getLatestAnswerSubmission } from "@/lib/db/repository/answer-repository";
 import { PARTICIPANT_COOKIE, verifyParticipantSession } from "@/lib/participants/security";
 
 export const dynamic = "force-dynamic";
@@ -40,9 +42,18 @@ export default async function ResultsPage({
       return <ResultsPanel initial={{ state: "unavailable" }} scope={scopeMode} />;
     }
 
+    const assistedTarget = scopeMode === "owner" ? await getAssistedParticipant(session.id) : null;
+    const hasAssistedSubmission = assistedTarget
+      ? Boolean(await getLatestAnswerSubmission(assistedTarget.id))
+      : false;
+
     return (
       <Suspense fallback={<ResultsShell scope={scopeMode} />}>
-        <ResultsContent participantId={scope.participantId} scope={scopeMode} />
+        <ResultsContent
+          participantId={scope.participantId}
+          scope={scopeMode}
+          hasAssistedSubmission={hasAssistedSubmission}
+        />
       </Suspense>
     );
   } catch {
@@ -54,9 +65,11 @@ export default async function ResultsPage({
 async function ResultsContent({
   participantId,
   scope,
+  hasAssistedSubmission,
 }: {
   participantId: number;
   scope: "owner" | "assisted";
+  hasAssistedSubmission: boolean;
 }) {
   const result = await getParticipantResult(participantId);
   const initial: ParticipantResult =
@@ -82,7 +95,9 @@ async function ResultsContent({
         }
       : result;
 
-  return <ResultsPanel initial={initial} scope={scope} />;
+  return (
+    <ResultsPanel initial={initial} scope={scope} hasAssistedSubmission={hasAssistedSubmission} />
+  );
 }
 
 function ResultsShell({ scope }: { scope: "owner" | "assisted" }) {
@@ -94,7 +109,7 @@ function ResultsShell({ scope }: { scope: "owner" | "assisted" }) {
       >
         <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
         <h1 className="text-3xl font-bold tracking-tight">
-          {scope === "assisted" ? "代理回答者の結果" : "あなたの結果"}
+          {scope === "assisted" ? "代理回答の結果" : "あなたの結果"}
         </h1>
         <p className="mt-8" role="status" aria-live="polite">
           結果を読み込んでいます。

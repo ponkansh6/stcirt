@@ -377,47 +377,20 @@ describe("answer-repository", () => {
       // The schema cascades deletes from submissions to operations, so emulate
       // a stale read to cover the defensive missing-owner response.
       const database = dbRef.db!;
-      const originalTransaction = database.transaction.bind(database);
-      const transactionSpy = vi.spyOn(database, "transaction");
-      transactionSpy.mockImplementation((callback, config) =>
-        originalTransaction((tx) => {
-          const wrappedTx = new Proxy(tx, {
-            get(target, property, receiver) {
-              if (property !== "select") return Reflect.get(target, property, receiver);
-              return (...args: unknown[]) => {
-                const select = Reflect.apply(
-                  Reflect.get(target, property, target) as (...args: unknown[]) => object,
-                  target,
-                  args,
-                );
-                return new Proxy(select, {
-                  get(selectTarget, selectProperty, selectReceiver) {
-                    if (selectProperty !== "from")
-                      return Reflect.get(selectTarget, selectProperty, selectReceiver);
-                    return (table: unknown) => {
-                      const query = Reflect.apply(
-                        Reflect.get(selectTarget, selectProperty, selectTarget) as (
-                          table: unknown,
-                        ) => object,
-                        selectTarget,
-                        [table],
-                      );
-                      if (table !== schema.examAnswerSubmissions) return query;
-                      return new Proxy(query, {
-                        get(queryTarget, queryProperty, queryReceiver) {
-                          if (queryProperty === "where") return async () => [];
-                          return Reflect.get(queryTarget, queryProperty, queryReceiver);
-                        },
-                      });
-                    };
-                  },
-                });
-              };
-            },
-          });
-          return callback(wrappedTx);
-        }, config),
-      );
+      const selectSpy = vi.spyOn(database, "select").mockImplementationOnce((() => ({
+        from: () => ({
+          leftJoin: () => ({
+            where: async () => [
+              {
+                submissionId: "orphaned-operation-submission",
+                payload: "{}",
+                revision: 1,
+                ownerParticipantId: null,
+              },
+            ],
+          }),
+        }),
+      })) as never);
       try {
         await expect(
           saveAnswerSubmission({
@@ -429,7 +402,7 @@ describe("answer-repository", () => {
           }),
         ).rejects.toMatchObject({ name: "BatchSubmissionError", status: 404 });
       } finally {
-        transactionSpy.mockRestore();
+        selectSpy.mockRestore();
       }
     });
 
@@ -508,12 +481,21 @@ describe("answer-repository", () => {
   });
 
   describe("saveAnswerSubmission conflict recovery", () => {
-    function failNextTransactionWithBusy() {
-      return vi
-        .spyOn(dbRef.db!, "transaction")
-        .mockRejectedValueOnce(
-          Object.assign(new Error("database is busy"), { code: "SQLITE_BUSY" }),
-        );
+    function failWriteTransactionsWithBusy(
+      failure: unknown = Object.assign(new Error("database is busy"), { code: "SQLITE_BUSY" }),
+    ) {
+      const database = dbRef.db!;
+      const originalTransaction = database.transaction.bind(database);
+      const transactionSpy = vi.spyOn(database, "transaction");
+      let calls = 0;
+      transactionSpy.mockImplementation((callback, config) => {
+        calls += 1;
+        // The replay preflight is a single autocommit SELECT. Transaction calls
+        // are the write attempt and its retries.
+        if (calls > 6) return originalTransaction(callback, config);
+        return Promise.reject(failure);
+      });
+      return transactionSpy;
     }
 
     function failRevisionCompareAndSwap(latestExists: boolean) {
@@ -583,8 +565,8 @@ describe("answer-repository", () => {
         })) as never);
     }
 
-    it("rethrows the adapter conflict when recovery finds no submission", async () => {
-      const transaction = failNextTransactionWithBusy();
+    it("classifies exhausted write lock retries when recovery finds no submission", async () => {
+      const transaction = failWriteTransactionsWithBusy();
       try {
         await expect(
           saveAnswerSubmission({
@@ -594,7 +576,7 @@ describe("answer-repository", () => {
             participantId: 1,
             answers: [],
           }),
-        ).rejects.toMatchObject({ code: "SQLITE_BUSY" });
+        ).rejects.toMatchObject({ status: 503, code: "DATABASE_LOCKED" });
       } finally {
         transaction.mockRestore();
       }
@@ -602,7 +584,9 @@ describe("answer-repository", () => {
 
     it("rethrows an unclassified SQLite error without starting recovery", async () => {
       const failure = Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR" });
-      const transaction = vi.spyOn(dbRef.db!, "transaction").mockRejectedValueOnce(failure);
+      const database = dbRef.db!;
+      const transaction = vi.spyOn(database, "transaction");
+      transaction.mockRejectedValueOnce(failure);
       try {
         await expect(
           saveAnswerSubmission({
@@ -634,20 +618,15 @@ describe("answer-repository", () => {
         payload: "{}",
         revision: 1,
       });
-      const transaction = failNextTransactionWithBusy();
-      try {
-        await expect(
-          saveAnswerSubmission({
-            submissionId: "operation-submission",
-            operationId: "foreign-operation",
-            expectedRevision: 0,
-            participantId: otherId,
-            answers: [],
-          }),
-        ).rejects.toMatchObject({ name: "BatchSubmissionError", status: 404 });
-      } finally {
-        transaction.mockRestore();
-      }
+      await expect(
+        saveAnswerSubmission({
+          submissionId: "operation-submission",
+          operationId: "foreign-operation",
+          expectedRevision: 0,
+          participantId: otherId,
+          answers: [],
+        }),
+      ).rejects.toMatchObject({ name: "BatchSubmissionError", status: 404 });
     });
 
     it("reports an owner mismatch when recovering a submission without an operation", async () => {
@@ -659,7 +638,7 @@ describe("answer-repository", () => {
         participantId: ownerId,
         questionIds: [questionId],
       });
-      const transaction = failNextTransactionWithBusy();
+      const transaction = failWriteTransactionsWithBusy();
       try {
         await expect(
           saveAnswerSubmission({
@@ -684,7 +663,7 @@ describe("answer-repository", () => {
         questionIds: [questionId],
         revision: 2,
       });
-      const transaction = failNextTransactionWithBusy();
+      const transaction = failWriteTransactionsWithBusy();
       try {
         await expect(
           saveAnswerSubmission({
@@ -711,18 +690,13 @@ describe("answer-repository", () => {
         answers: selectedAnswers(questionIds),
       };
       const committed = await saveAnswerSubmission(input);
-      const transaction = failNextTransactionWithBusy();
-      try {
-        await expect(saveAnswerSubmission(input)).resolves.toEqual({
-          ...committed,
-          assessmentTarget: null,
-        });
-      } finally {
-        transaction.mockRestore();
-      }
+      await expect(saveAnswerSubmission(input)).resolves.toEqual({
+        ...committed,
+        assessmentTarget: null,
+      });
     });
 
-    it("rejects a different payload when recovery finds the same operation ID", async () => {
+    it("rejects a different payload in the operation replay preflight", async () => {
       const questionIds = await insertFiveQuestions();
       const participantId = await insertParticipant("payload-owner");
       const input = {
@@ -733,23 +707,18 @@ describe("answer-repository", () => {
         answers: selectedAnswers(questionIds),
       };
       await saveAnswerSubmission(input);
-      const transaction = failNextTransactionWithBusy();
-      try {
-        await expect(
-          saveAnswerSubmission({
-            ...input,
-            answers: questionIds.map((questionId, index) => ({
-              questionId,
-              selectedIndex: index === 0 ? 1 : 0,
-            })),
-          }),
-        ).rejects.toMatchObject({ name: "BatchSubmissionError", status: 409 });
-      } finally {
-        transaction.mockRestore();
-      }
+      await expect(
+        saveAnswerSubmission({
+          ...input,
+          answers: questionIds.map((questionId, index) => ({
+            questionId,
+            selectedIndex: index === 0 ? 1 : 0,
+          })),
+        }),
+      ).rejects.toMatchObject({ name: "BatchSubmissionError", status: 409 });
     });
 
-    it("rethrows the conflict when recovery finds the same revision", async () => {
+    it("classifies exhausted write lock retries when recovery finds the same revision", async () => {
       const questionIds = await insertFiveQuestions();
       const participantId = await insertParticipant("unchanged-revision-owner");
       await insertSubmission({
@@ -757,8 +726,7 @@ describe("answer-repository", () => {
         participantId,
         questionIds,
       });
-      const conflict = Object.assign(new Error("database is busy"), { code: "SQLITE_BUSY" });
-      const transaction = vi.spyOn(dbRef.db!, "transaction").mockRejectedValueOnce(conflict);
+      const transaction = failWriteTransactionsWithBusy();
       try {
         await expect(
           saveAnswerSubmission({
@@ -768,7 +736,7 @@ describe("answer-repository", () => {
             participantId,
             answers: selectedAnswers(questionIds),
           }),
-        ).rejects.toBe(conflict);
+        ).rejects.toMatchObject({ status: 503, code: "DATABASE_LOCKED" });
       } finally {
         transaction.mockRestore();
       }
@@ -820,7 +788,7 @@ describe("answer-repository", () => {
       wrapper.cause = wrapper;
       wrapper.originalError = "opaque adapter detail";
       wrapper.error = nestedConflict;
-      const transaction = vi.spyOn(dbRef.db!, "transaction").mockRejectedValueOnce(wrapper);
+      const transaction = failWriteTransactionsWithBusy(wrapper);
       try {
         await expect(
           saveAnswerSubmission({
@@ -830,8 +798,10 @@ describe("answer-repository", () => {
             participantId: 1,
             answers: [],
           }),
-        ).rejects.toBe(wrapper);
-        expect(transaction).toHaveBeenCalledTimes(2);
+        ).rejects.toMatchObject({ status: 503, code: "DATABASE_LOCKED" });
+        // Six write attempts exhaust the retry budget; the final call reads
+        // for a committed operation before returning DATABASE_LOCKED.
+        expect(transaction).toHaveBeenCalledTimes(7);
       } finally {
         transaction.mockRestore();
       }
@@ -841,7 +811,9 @@ describe("answer-repository", () => {
       const conflict = Object.assign(new Error("unique constraint failed: table.key"), {
         code: "SQLITE_CONSTRAINT",
       });
-      const transaction = vi.spyOn(dbRef.db!, "transaction").mockRejectedValueOnce(conflict);
+      const database = dbRef.db!;
+      const transaction = vi.spyOn(database, "transaction");
+      transaction.mockRejectedValueOnce(conflict);
       try {
         await expect(
           saveAnswerSubmission({

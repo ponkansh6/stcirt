@@ -19,7 +19,9 @@ function isConstraintError(error: unknown) {
   return error instanceof Error && /unique|constraint/i.test(error.message);
 }
 
-export async function getAssistedParticipant(ownerParticipantId: number) {
+export async function getAssistedParticipant(
+  ownerParticipantId: number,
+): Promise<AssistedParticipant | null> {
   const [row] = await db
     .select({ id: examParticipants.id, name: examParticipants.displayName })
     .from(assistedParticipants)

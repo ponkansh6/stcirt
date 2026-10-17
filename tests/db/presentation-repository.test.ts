@@ -28,6 +28,7 @@ import {
   PresentationConflictError,
   setParticipantResultsVisible,
 } from "@/lib/db/repository/presentation-repository";
+import { saveAnswerSubmission } from "@/lib/db/repository/answer-repository";
 import {
   getPresentationOperationDiagnostics,
   PresentationOperationError,
@@ -273,6 +274,118 @@ async function returnNoSelectedRows<T>(table: unknown, run: () => Promise<T>, re
   } finally {
     transactionSpy.mockRestore();
   }
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function raceWithFirstCommitHeld<T, U>(
+  holdWriteTable: unknown,
+  first: () => Promise<T>,
+  second: () => Promise<U>,
+) {
+  const database = dbRef.db!;
+  const originalTransaction = database.transaction.bind(database);
+  const transactionSpy = vi.spyOn(database, "transaction");
+  const held = deferred();
+  const release = deferred();
+  const contenderAtSerializationPoint = deferred();
+  const contenderMayEnterTransaction = deferred();
+  let heldOnce = false;
+  let contenderStarted = false;
+  transactionSpy.mockImplementation(async (callback, config) => {
+    if (contenderStarted) {
+      // Let the test release and await the first commit before the contender
+      // starts its BEGIN IMMEDIATE transaction. SQLite may otherwise report
+      // SQLITE_BUSY before the contender callback can reach the shared row.
+      contenderAtSerializationPoint.resolve();
+      await contenderMayEnterTransaction.promise;
+    }
+    const transaction = originalTransaction(async (tx) => {
+      let touchedHoldTable = false;
+      const wrappedTx = new Proxy(tx, {
+        get(target, property, receiver) {
+          if (property !== "insert" && property !== "update") {
+            return Reflect.get(target, property, receiver);
+          }
+          return (table: unknown) => {
+            if (table === holdWriteTable) touchedHoldTable = true;
+            const method = Reflect.get(target, property, target) as (table: unknown) => unknown;
+            return Reflect.apply(method, target, [table]);
+          };
+        },
+      });
+      const result = await callback(wrappedTx);
+      if (!heldOnce && touchedHoldTable) {
+        heldOnce = true;
+        held.resolve();
+        await release.promise;
+      }
+      return result;
+    }, config);
+    return transaction;
+  });
+  try {
+    const firstResult = first().then(
+      (result) => {
+        if (!heldOnce) held.resolve();
+        return result;
+      },
+      (error: unknown) => {
+        held.resolve();
+        throw error;
+      },
+    );
+    await held.promise;
+    if (!heldOnce) {
+      await firstResult;
+      throw new Error("Expected the first operation to write the barrier table");
+    }
+    contenderStarted = true;
+    const secondResult = second();
+    void secondResult.then(
+      () => contenderAtSerializationPoint.resolve(),
+      () => contenderAtSerializationPoint.resolve(),
+    );
+    await contenderAtSerializationPoint.promise;
+    release.resolve();
+    await firstResult.then(
+      () => undefined,
+      () => undefined,
+    );
+    contenderMayEnterTransaction.resolve();
+    return await Promise.allSettled([firstResult, secondResult]);
+  } finally {
+    release.resolve();
+    contenderMayEnterTransaction.resolve();
+    transactionSpy.mockRestore();
+  }
+}
+
+async function completeConcurrentQ5Assessment(submissionId: string, revision: number) {
+  await dbRef
+    .db!.update(schema.examAnswerAssessments)
+    .set({
+      revision,
+      answerText: "Q5 answer",
+      questionVersion: "tamami-egg-v1",
+      state: "graded",
+      rawScore: 9,
+      normalizedScore: 1,
+      rubricVersion: "jev-q5-fulfillment-v3-02",
+      gradedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.examAnswerAssessments.submissionId, submissionId),
+        eq(schema.examAnswerAssessments.questionId, 5),
+      ),
+    );
 }
 
 async function countTableSelectCalls<T>(run: () => Promise<T>) {
@@ -2042,6 +2155,152 @@ describe("presentation repository", () => {
     });
   });
 
+  it("rejects an answer update when the publication transaction commits first", async () => {
+    await addCurrentFiveQuestions();
+    const participantId = await addParticipant("Contended participant");
+    const submissionId = `submission-${participantId}-latest`;
+    const answers = [
+      { questionId: 1, selectedIndex: 0 },
+      { questionId: 2, selectedIndex: 0 },
+      { questionId: 3, selectedIndex: 0 },
+      { questionId: 4, selectedIndex: 0 },
+      { questionId: 5, freeText: "Q5 answer" },
+    ];
+    await saveAnswerSubmission({
+      submissionId,
+      operationId: "concurrent-show-initial-save",
+      expectedRevision: 0,
+      participantId,
+      answers,
+    });
+    await completeConcurrentQ5Assessment(submissionId, 1);
+    await operatePresentation("concurrent-show-initial-aggregate", "aggregate");
+
+    const nextAnswers = answers.map((answer) =>
+      answer.questionId === 1 && "selectedIndex" in answer
+        ? { ...answer, selectedIndex: 1 }
+        : answer,
+    );
+    const [show, update] = await raceWithFirstCommitHeld(
+      schema.participantResultSettings,
+      () => setParticipantResultsVisible(true),
+      () =>
+        saveAnswerSubmission({
+          submissionId,
+          operationId: "concurrent-show-update-after",
+          expectedRevision: 1,
+          participantId,
+          answers: nextAnswers,
+        }),
+    );
+
+    expect(show.status).toBe("fulfilled");
+    expect(update).toMatchObject({
+      status: "rejected",
+      reason: { code: "SUBMISSION_LOCKED" },
+    });
+    await expect(
+      testDb.db
+        .select({ revision: schema.examAnswerSubmissions.revision })
+        .from(schema.examAnswerSubmissions)
+        .where(eq(schema.examAnswerSubmissions.id, submissionId)),
+    ).resolves.toEqual([{ revision: 1 }]);
+    const [settings] = await testDb.db
+      .select()
+      .from(schema.participantResultSettings)
+      .where(eq(schema.participantResultSettings.id, 1));
+    const [session] = await testDb.db
+      .select({ snapshotRevision: schema.presentationSessions.snapshotRevision })
+      .from(schema.presentationSessions)
+      .where(eq(schema.presentationSessions.id, 1));
+    expect(settings).toMatchObject({ visible: true, everPublished: true });
+    expect(session).toMatchObject({ snapshotRevision: 1 });
+  });
+
+  it("publishes after an answer update commits first and republishes its explicit aggregate", async () => {
+    await addCurrentFiveQuestions();
+    const participantId = await addParticipant("Contended participant");
+    const submissionId = `submission-${participantId}-latest`;
+    const answers = [
+      { questionId: 1, selectedIndex: 0 },
+      { questionId: 2, selectedIndex: 0 },
+      { questionId: 3, selectedIndex: 0 },
+      { questionId: 4, selectedIndex: 0 },
+      { questionId: 5, freeText: "Q5 answer" },
+    ];
+    await saveAnswerSubmission({
+      submissionId,
+      operationId: "concurrent-update-initial-save",
+      expectedRevision: 0,
+      participantId,
+      answers,
+    });
+    await completeConcurrentQ5Assessment(submissionId, 1);
+    await operatePresentation("concurrent-update-initial-aggregate", "aggregate");
+    const nextAnswers = answers.map((answer) =>
+      answer.questionId === 1 && "selectedIndex" in answer
+        ? { ...answer, selectedIndex: 1 }
+        : answer,
+    );
+
+    const [update, show] = await raceWithFirstCommitHeld(
+      schema.examAnswerSubmissions,
+      () =>
+        saveAnswerSubmission({
+          submissionId,
+          operationId: "concurrent-update-before-show",
+          expectedRevision: 1,
+          participantId,
+          answers: nextAnswers,
+        }),
+      () => setParticipantResultsVisible(true),
+    );
+
+    expect(update.status).toBe("fulfilled");
+    if (show.status === "rejected") throw show.reason;
+    expect(show).toMatchObject({ status: "fulfilled", value: { visible: true } });
+    await expect(
+      testDb.db
+        .select({ revision: schema.examAnswerSubmissions.revision })
+        .from(schema.examAnswerSubmissions)
+        .where(eq(schema.examAnswerSubmissions.id, submissionId)),
+    ).resolves.toEqual([{ revision: 2 }]);
+    const [settings] = await testDb.db
+      .select()
+      .from(schema.participantResultSettings)
+      .where(eq(schema.participantResultSettings.id, 1));
+    const [session] = await testDb.db
+      .select({ snapshotRevision: schema.presentationSessions.snapshotRevision })
+      .from(schema.presentationSessions)
+      .where(eq(schema.presentationSessions.id, 1));
+    expect(settings).toMatchObject({ visible: true, everPublished: true });
+    expect(session).toMatchObject({ snapshotRevision: 1 });
+
+    // Showing reuses the old explicit snapshot. Reaggregate after hiding, then
+    // republish and verify the snapshot reflects the committed revision.
+    await setParticipantResultsVisible(false);
+    await completeConcurrentQ5Assessment(submissionId, 2);
+    await operatePresentation("concurrent-update-refreshed-aggregate", "aggregate");
+    await setParticipantResultsVisible(true);
+    const [refreshedEntry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(
+        and(
+          eq(schema.presentationEntries.sessionId, 1),
+          eq(schema.presentationEntries.participantId, participantId),
+        ),
+      );
+    const [refreshedSession] = await testDb.db
+      .select({ snapshotRevision: schema.presentationSessions.snapshotRevision })
+      .from(schema.presentationSessions)
+      .where(eq(schema.presentationSessions.id, 1));
+    expect(refreshedEntry?.answers).toContainEqual(
+      expect.objectContaining({ questionId: 1, answerKind: "selected", selectedIndex: 1 }),
+    );
+    expect(refreshedSession).toMatchObject({ snapshotRevision: 2 });
+  });
+
   it("keeps the old hidden snapshot when republishing fails during recalculation", async () => {
     await addQuestions();
     const participant = await addParticipant("Participant");
@@ -2105,7 +2364,7 @@ describe("presentation repository", () => {
 
     try {
       await expect(operatePresentation("nested-lock-exhaustion", "hide")).rejects.toBe(nestedLock);
-      expect(transactionSpy).toHaveBeenCalledTimes(4);
+      expect(transactionSpy).toHaveBeenCalledTimes(6);
     } finally {
       transactionSpy.mockRestore();
     }
@@ -2117,7 +2376,7 @@ describe("presentation repository", () => {
 
     try {
       await expect(operatePresentation("hide-lock-exhaustion", "hide")).rejects.toBe(lockError);
-      expect(transactionSpy).toHaveBeenCalledTimes(4);
+      expect(transactionSpy).toHaveBeenCalledTimes(6);
     } finally {
       transactionSpy.mockRestore();
     }
@@ -2133,7 +2392,7 @@ describe("presentation repository", () => {
       );
       expect(error).toBeInstanceOf(PresentationOperationError);
       expect(error).toMatchObject({ phase: "transaction_begin", databaseCode: "SQLITE_BUSY" });
-      expect(transactionSpy).toHaveBeenCalledTimes(4);
+      expect(transactionSpy).toHaveBeenCalledTimes(6);
     } finally {
       transactionSpy.mockRestore();
     }

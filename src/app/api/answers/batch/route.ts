@@ -1,4 +1,4 @@
-import { after } from "next/server";
+import { after, NextResponse } from "next/server";
 import { fail, ok, withErrorHandling } from "@/lib/api/response";
 import { submitAnswerBatchSchema } from "@/lib/api/schemas";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
@@ -90,6 +90,12 @@ export const POST = withErrorHandling(async function (request: Request) {
     return ok({ submissionId: saved.submissionId, revision: saved.revision });
   } catch (error) {
     if (error instanceof BatchSubmissionError) {
+      if (error.code) {
+        return NextResponse.json(
+          { message: error.message, error: error.code },
+          { status: error.status },
+        );
+      }
       return fail(error.message, error.status);
     }
     throw error;

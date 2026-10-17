@@ -22,6 +22,7 @@ import {
   getLatestAnswerSubmission,
   saveAnswerSubmission,
 } from "@/lib/db/repository/answer-repository";
+import { setParticipantResultsVisible } from "@/lib/db/repository/presentation-repository.mutations";
 
 async function commitWinnerThenRaiseAdapterUniqueConflict(
   winnerInput: Parameters<typeof saveAnswerSubmission>[0],
@@ -29,10 +30,12 @@ async function commitWinnerThenRaiseAdapterUniqueConflict(
 ) {
   const database = dbRef.db!;
   const originalTransaction = database.transaction.bind(database);
+  let calls = 0;
   let intercept = true;
   const transactionSpy = vi.spyOn(database, "transaction");
   transactionSpy.mockImplementation((callback, config) => {
-    if (!intercept) return originalTransaction(callback, config);
+    calls += 1;
+    if (!intercept || calls !== 1) return originalTransaction(callback, config);
     intercept = false;
     return (async () => {
       await saveAnswerSubmission(winnerInput);
@@ -358,6 +361,111 @@ describe("saveAnswerSubmission", () => {
     );
     expect(await testDb.db.select().from(schema.examAnswerSubmissions)).toHaveLength(1);
     expect(await testDb.db.select().from(schema.examAnswerLogs)).toHaveLength(0);
+  });
+
+  it("blocks visible revisions but keeps matching operation replays idempotent", async () => {
+    const input = {
+      submissionId,
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId,
+      answers,
+    };
+    await testDb.db.insert(schema.presentationSessions).values({
+      id: 1,
+      state: "not_started",
+      version: 0,
+      questionIndex: 0,
+      questionCount: 5,
+      snapshotRevision: 1,
+      projectionHidden: false,
+    });
+    await setParticipantResultsVisible(true);
+
+    // A first submission is permitted even while results are visible.
+    await expect(saveAnswerSubmission(input)).resolves.toMatchObject({ revision: 1 });
+    // If replay tried to acquire the presentation lock, it would recreate this row.
+    await testDb.db.delete(schema.presentationSessions);
+    // A matching replay stays successful while visible; a new operation is blocked.
+    await expect(saveAnswerSubmission(input)).resolves.toMatchObject({ revision: 1 });
+    expect(await testDb.db.select().from(schema.presentationSessions)).toHaveLength(0);
+    await expect(
+      saveAnswerSubmission({ ...input, operationId: secondOperationId }),
+    ).rejects.toMatchObject({ status: 423, code: "SUBMISSION_LOCKED" });
+    await expect(getAnswerSubmission(submissionId, participantId)).resolves.toMatchObject({
+      resultsVisible: true,
+      revision: 1,
+    });
+  });
+
+  it("serializes answer updates after publication and after hiding", async () => {
+    const [session] = await testDb.db
+      .insert(schema.presentationSessions)
+      .values({
+        id: 1,
+        state: "not_started",
+        version: 0,
+        questionIndex: 0,
+        questionCount: 5,
+        snapshotRevision: 1,
+        projectionHidden: false,
+      })
+      .returning();
+    expect(session).toBeDefined();
+
+    await saveAnswerSubmission({
+      submissionId,
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId,
+      answers,
+    });
+    await setParticipantResultsVisible(true);
+    await expect(
+      saveAnswerSubmission({
+        submissionId,
+        operationId: secondOperationId,
+        expectedRevision: 1,
+        participantId,
+        answers,
+      }),
+    ).rejects.toMatchObject({ code: "SUBMISSION_LOCKED" });
+
+    await setParticipantResultsVisible(false);
+    await expect(
+      saveAnswerSubmission({
+        submissionId,
+        operationId: secondOperationId,
+        expectedRevision: 1,
+        participantId,
+        answers,
+      }),
+    ).resolves.toMatchObject({ revision: 2 });
+  });
+
+  it("allows an existing submission revision after results are hidden", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId,
+      answers,
+    });
+    await testDb.db.insert(schema.participantResultSettings).values({ id: 1, visible: true });
+    await testDb.db
+      .update(schema.participantResultSettings)
+      .set({ visible: false })
+      .where(eq(schema.participantResultSettings.id, 1));
+
+    await expect(
+      saveAnswerSubmission({
+        submissionId,
+        operationId: secondOperationId,
+        expectedRevision: 1,
+        participantId,
+        answers,
+      }),
+    ).resolves.toMatchObject({ revision: 2 });
   });
 
   it("recovers a same-operation retry after an adapter conflict as idempotent success", async () => {

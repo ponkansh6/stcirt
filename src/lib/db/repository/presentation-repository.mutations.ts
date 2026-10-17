@@ -121,6 +121,8 @@ export async function setParticipantResultsVisible(visible: boolean) {
               set: { visible: true, everPublished: true },
             });
         } else {
+          phase = "acquire_session";
+          await acquirePresentationSession(tx);
           phase = "hide_results";
           await tx
             .update(participantResultSettings)
@@ -137,7 +139,7 @@ export async function setParticipantResultsVisible(visible: boolean) {
   }
 }
 
-async function acquirePresentationSession(
+export async function acquirePresentationSession(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
 ): Promise<typeof presentationSessions.$inferSelect> {
   await tx
@@ -805,13 +807,13 @@ async function operatePresentationWithResponse<T>(
 }
 
 async function withTransactionRetry<T>(run: () => Promise<T>): Promise<T> {
-  const maxAttempts = 4;
+  const maxAttempts = 6;
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await run();
     } catch (error) {
       if (!isSqliteLockRace(error) || attempt >= maxAttempts - 1) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+      await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
     }
   }
 }

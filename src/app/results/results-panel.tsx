@@ -11,9 +11,11 @@ type PollResult = ParticipantResult;
 export default function ResultsPanel({
   initial,
   scope = "owner",
+  hasAssistedSubmission = false,
 }: {
   initial: InitialResult;
   scope?: "owner" | "assisted" | null;
+  hasAssistedSubmission?: boolean;
 }) {
   const [result, setResult] = useState<PollResult>(
     initial.state === "unauthenticated"
@@ -179,7 +181,7 @@ export default function ResultsPanel({
         ) : result.state === "visible" ? (
           <>
             <h1 className="text-3xl font-bold tracking-tight text-balance">
-              {scope === "assisted" ? "代理回答者の結果" : "あなたの結果"}
+              {scope === "assisted" ? "代理回答の結果" : "あなたの結果"}
             </h1>
             <dl className="mt-8 grid grid-cols-2 gap-4">
               <div className="rounded-xl bg-surface-2 p-5">
@@ -290,6 +292,19 @@ export default function ResultsPanel({
             結果を更新できませんでした。通信状況を確認して、もう一度お試しください。
           </p>
         ) : null}
+        {scope !== null && authorized && (
+          <nav aria-label="結果の切り替え" className="mt-6 flex flex-wrap gap-x-5 gap-y-2">
+            {scope === "assisted" ? (
+              <Link className="font-semibold text-primary underline" href="/results">
+                自分の結果を見る
+              </Link>
+            ) : hasAssistedSubmission ? (
+              <Link className="font-semibold text-primary underline" href="/results?scope=assisted">
+                代理回答の結果を見る
+              </Link>
+            ) : null}
+          </nav>
+        )}
         <Button
           variant="outline"
           onClick={() => void refresh(true)}

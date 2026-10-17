@@ -33,7 +33,13 @@ export type Phase =
   | { kind: "loading" }
   | { kind: "shortage" }
   | { kind: "load-error"; message: string }
-  | { kind: "answering"; message?: string; retryRequired?: boolean; refreshRequired?: boolean }
+  | {
+      kind: "answering";
+      message?: string;
+      retryRequired?: boolean;
+      refreshRequired?: boolean;
+      publishedLock?: boolean;
+    }
   | { kind: "submitting" }
   | { kind: "refreshing" }
   | { kind: "complete" };
@@ -746,7 +752,7 @@ export function useQuizSession() {
         setAssistedError(
           error instanceof ApiError && error.status === 401
             ? "参加者セッションの有効期限が切れました。再ログインしてください。"
-            : "ほかの人の回答状態を確認できませんでした。時間をおいて再読み込みしてください。",
+            : "代理回答の状態を確認できませんでした。時間をおいて再読み込みしてください。",
         );
         if (error instanceof ApiError && error.status === 401) {
           setAccess((current) => requireParticipantReauthentication(current, requestOwnerId));
@@ -1160,6 +1166,19 @@ export function useQuizSession() {
           if (currentAccess.kind === "ready")
             setAccess({ kind: "reauthentication", participant: currentAccess.participant });
         }
+        if (
+          error instanceof ApiError &&
+          error.status === 423 &&
+          error.code === "SUBMISSION_LOCKED"
+        ) {
+          setPhase({
+            kind: "answering",
+            message:
+              "結果が公開されているため、回答を修正できません。主催者が結果を非公開にすると再び編集できます。",
+            publishedLock: true,
+          });
+          return;
+        }
         if (error instanceof ApiError && error.status === 409) {
           try {
             const persisted = await fetchAnswerSubmission(currentSubmissionId, scope);
@@ -1306,6 +1325,13 @@ export function useQuizSession() {
     setPhase({ kind: "answering" });
   }, [restoreError, savedSelections]);
 
+  const clearPublishedLock = useCallback(() => {
+    const currentPhase = phaseRef.current;
+    if (currentPhase.kind === "answering" && currentPhase.publishedLock) {
+      setPhase({ kind: "answering" });
+    }
+  }, []);
+
   const retryLoad = useCallback(() => {
     if (phaseRef.current.kind === "load-error") void loadQuestions();
   }, [loadQuestions]);
@@ -1336,6 +1362,7 @@ export function useQuizSession() {
     saveAnswers,
     refreshSavedAnswers,
     editAnswers,
+    clearPublishedLock,
     retryLoad,
     retrySubmissionCheck,
     login,

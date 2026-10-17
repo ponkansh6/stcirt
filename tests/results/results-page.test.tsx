@@ -6,6 +6,8 @@ import { cookies } from "next/headers";
 import { getParticipantResult } from "@/lib/db/repository/presentation-repository";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
 import { resolveAnswerScope } from "@/lib/participants/answer-scope";
+import { getAssistedParticipant } from "@/lib/db/repository/assisted-participant-repository";
+import { getLatestAnswerSubmission } from "@/lib/db/repository/answer-repository";
 
 const cookieState = vi.hoisted(() => ({ token: "valid-session" as string | undefined }));
 vi.mock("next/headers", () => ({
@@ -15,6 +17,10 @@ vi.mock("next/headers", () => ({
 }));
 vi.mock("@/lib/db/repository/participant-repository", () => ({ findParticipantById: vi.fn() }));
 vi.mock("@/lib/db/repository/presentation-repository", () => ({ getParticipantResult: vi.fn() }));
+vi.mock("@/lib/db/repository/assisted-participant-repository", () => ({
+  getAssistedParticipant: vi.fn(),
+}));
+vi.mock("@/lib/db/repository/answer-repository", () => ({ getLatestAnswerSubmission: vi.fn() }));
 vi.mock("@/lib/participants/answer-scope", () => ({ resolveAnswerScope: vi.fn() }));
 vi.mock("@/lib/participants/security", () => ({
   PARTICIPANT_COOKIE: "stcirt_participant_session",
@@ -28,6 +34,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(findParticipantById).mockResolvedValue({ id: 12, name: "Participant" });
   vi.mocked(resolveAnswerScope).mockResolvedValue({ participantId: 12 });
+  vi.mocked(getAssistedParticipant).mockResolvedValue(null);
+  vi.mocked(getLatestAnswerSubmission).mockResolvedValue(null);
 });
 
 async function renderProtectedResult(element: ReactElement) {
@@ -72,7 +80,7 @@ describe("/results server entry", () => {
     expect(getParticipantResult).not.toHaveBeenCalled();
     const fallback = (element.props as { fallback: ReactElement }).fallback;
     const markup = renderToStaticMarkup(fallback);
-    expect(markup).toContain("代理回答者の結果");
+    expect(markup).toContain("代理回答の結果");
     expect(markup).toContain('role="status"');
     expect(markup).toContain('aria-busy="true"');
     expect(markup).toContain("min-h-[56rem]");
@@ -100,6 +108,7 @@ describe("/results server entry", () => {
     expect(findParticipantById).toHaveBeenCalledWith(12);
     expect(resolveAnswerScope).toHaveBeenCalledWith(12, "assisted");
     expect(getParticipantResult).toHaveBeenCalledWith(18);
+    expect(getAssistedParticipant).not.toHaveBeenCalled();
   });
 
   it("fails closed for an invalid scope without resolving or querying a result", async () => {
@@ -127,11 +136,48 @@ describe("/results server entry", () => {
     }>;
 
     expect(markup).toContain("あなたの結果");
-    expect(markup).not.toContain("代理回答者の結果");
+    expect(markup).not.toContain("代理回答の結果");
     expect(panel.props.scope).toBe("owner");
     expect(panel.props.initial).toEqual({ state: "waiting" });
     expect(resolveAnswerScope).toHaveBeenCalledWith(12, null);
     expect(getParticipantResult).toHaveBeenCalledWith(12);
+  });
+
+  it("enables the assisted switch from the authenticated owner's target without exposing its ID", async () => {
+    vi.mocked(getAssistedParticipant).mockResolvedValueOnce({ id: 18, name: "Assistant" });
+    vi.mocked(getLatestAnswerSubmission).mockResolvedValueOnce({
+      submissionId: "00000000-0000-4000-8000-000000000018",
+      revision: 1,
+      answers: [],
+    });
+    vi.mocked(getParticipantResult).mockResolvedValueOnce({ state: "waiting" });
+
+    const element = (await ResultsPage({ searchParams: Promise.resolve({}) })) as ReactElement;
+    const panel = (await renderProtectedResult(element)) as ReactElement<{
+      participantId?: unknown;
+      hasAssistedSubmission?: boolean;
+    }>;
+
+    expect(getAssistedParticipant).toHaveBeenCalledWith(12);
+    expect(getLatestAnswerSubmission).toHaveBeenCalledWith(18);
+    expect(panel.props.hasAssistedSubmission).toBe(true);
+    expect(panel.props).not.toHaveProperty("participantId");
+    expect(JSON.stringify(panel.props)).not.toContain("18");
+  });
+
+  it("keeps the assisted switch disabled until the server finds a target submission", async () => {
+    vi.mocked(getAssistedParticipant).mockResolvedValueOnce({ id: 18, name: "Assistant" });
+    vi.mocked(getParticipantResult).mockResolvedValueOnce({ state: "waiting" });
+
+    const element = (await ResultsPage({ searchParams: Promise.resolve({}) })) as ReactElement;
+    const panel = (await renderProtectedResult(element)) as ReactElement<{
+      hasAssistedSubmission?: boolean;
+      participantId?: unknown;
+    }>;
+
+    expect(getLatestAnswerSubmission).toHaveBeenCalledWith(18);
+    expect(panel.props.hasAssistedSubmission).toBe(false);
+    expect(panel.props).not.toHaveProperty("participantId");
   });
 
   it("returns neutral content when cookie verification throws", async () => {

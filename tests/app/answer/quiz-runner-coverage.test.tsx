@@ -167,7 +167,7 @@ describe("QuizRunner remaining coverage states", () => {
 
     render(<QuizRunner />);
 
-    const resultsLink = await screen.findByRole("link", { name: "代理回答者の結果を見る" });
+    const resultsLink = await screen.findByRole("link", { name: "代理回答の結果を見る" });
     expect(resultsLink).toHaveAttribute("href", "/results?scope=assisted");
   });
 
@@ -594,7 +594,8 @@ describe("QuizRunner remaining coverage states", () => {
         { kind: "complete" },
         {
           assistedBusy: true,
-          assistedError: "ほかの人の回答状態を確認できませんでした。",
+          assistedError:
+            "代理回答の状態を確認できませんでした。時間をおいて再読み込みしてください。",
           startAssisted,
           returnToOwner,
         },
@@ -603,7 +604,7 @@ describe("QuizRunner remaining coverage states", () => {
     render(<QuizRunner />);
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "ほかの人の回答状態を確認できませんでした。",
+      "代理回答の状態を確認できませんでした。時間をおいて再読み込みしてください。",
     );
     expect(screen.getByRole("button", { name: "回答状態を確認しています…" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "回答状態を確認しています…" }));
@@ -683,7 +684,7 @@ describe("QuizRunner remaining coverage states", () => {
 
     expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
     const { definition, field: answererField } = getAnswererNameField(screen.getByRole("main"));
-    expect(definition).toHaveTextContent("ほかの人");
+    expect(definition).toHaveTextContent("代理回答者");
     expect(within(answererField).getByText("代理回答", { exact: true })).toBeInTheDocument();
     expect(screen.queryByText("参加者")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
@@ -705,7 +706,7 @@ describe("QuizRunner remaining coverage states", () => {
       render(<QuizRunner />);
 
       const { definition, field: answererField } = getAnswererNameField(screen.getByRole("banner"));
-      expect(definition).toHaveTextContent("ほかの人");
+      expect(definition).toHaveTextContent("代理回答者");
       expect(within(answererField).getByText("代理回答", { exact: true })).toBeInTheDocument();
       expect(screen.queryByText("参加者")).not.toBeInTheDocument();
     },
@@ -740,13 +741,17 @@ describe("QuizRunner remaining coverage states", () => {
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "complete" },
-        { assistedScreen: "login", assistedError: "ほかの人の回答状態を確認できませんでした。" },
+        {
+          assistedScreen: "login",
+          assistedError:
+            "代理回答の状態を確認できませんでした。時間をおいて再読み込みしてください。",
+        },
       ),
     );
     render(<QuizRunner />);
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "ほかの人の回答状態を確認できませんでした。",
+      "代理回答の状態を確認できませんでした。時間をおいて再読み込みしてください。",
     );
   });
 

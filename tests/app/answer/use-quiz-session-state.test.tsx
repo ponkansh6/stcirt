@@ -2159,7 +2159,9 @@ describe("useQuizSession state transitions", () => {
     const hook = await enterOwnerComplete();
 
     await waitFor(() =>
-      expect(hook.result.current.assistedError).toContain("回答状態を確認できません"),
+      expect(hook.result.current.assistedError).toContain(
+        "代理回答の状態を確認できませんでした。時間をおいて再読み込みしてください。",
+      ),
     );
     expect(hook.result.current.access).toMatchObject({ kind: "ready", participant });
     expect(hook.result.current.phase.kind).toBe("complete");

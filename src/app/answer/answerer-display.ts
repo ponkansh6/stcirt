@@ -11,6 +11,6 @@ export function resolveAnswererDisplay(
   assistedName: string | null | undefined,
 ): AnswererDisplay {
   return answerMode === "assisted"
-    ? { name: assistedName ?? "ほかの人", kind: "代理回答" }
+    ? { name: assistedName ?? "代理回答者", kind: "代理回答" }
     : { name: ownerName, kind: "本人の回答" };
 }

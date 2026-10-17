@@ -277,10 +277,19 @@ describe("free-response presentation scoring and immutable snapshots", () => {
           );
       }
 
+      const sessionBefore = await testDb.db.select().from(schema.presentationSessions);
+      expect(sessionBefore).toHaveLength(1);
+      expect(sessionBefore[0]).toMatchObject({
+        state: "not_started",
+        version: 0,
+        snapshotRevision: 0,
+      });
       await expect(
         operatePresentation(`blocked-start-${caseName}`, "start"),
       ).rejects.toBeInstanceOf(PresentationConflictError);
-      await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
+      await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toEqual(
+        sessionBefore,
+      );
     },
   );
 
@@ -310,10 +319,13 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       })),
       { submissionId, questionId: 5, answerKind: "legacy", selectedIndex: 1 },
     ]);
+    const sessionBefore = await testDb.db.select().from(schema.presentationSessions);
     await expect(operatePresentation("legacy-q5-aggregate", "aggregate")).rejects.toBeInstanceOf(
       PresentationConflictError,
     );
-    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toEqual(
+      sessionBefore,
+    );
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
   });
 });
