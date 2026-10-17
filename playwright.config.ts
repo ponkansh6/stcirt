@@ -13,7 +13,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   use: {
-    baseURL: "http://localhost:3001",
+    baseURL: "http://127.0.0.1:3001",
     locale: "ja-JP",
     trace: "on-first-retry",
     serviceWorkers: "block",
@@ -32,7 +32,7 @@ export default defineConfig({
 
   webServer: {
     command: "pnpm exec next dev --turbopack --hostname 127.0.0.1 --port 3001",
-    url: "http://localhost:3001",
+    url: "http://127.0.0.1:3001",
     reuseExistingServer: false,
     env: {
       ADMIN_PRESENTATION_PIN: e2eAdminPin,

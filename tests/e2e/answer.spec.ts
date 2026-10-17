@@ -444,7 +444,15 @@ test("keeps choices local, blocks an incomplete batch, then confirms all five wi
   await mockParticipantSession(page);
   await mockQuestions(page);
   const submitted: Array<{ body: BatchPayload; cookie: string | undefined }> = [];
-  await page.route("**/api/answers/batch", async (route) => {
+  await page.route("**/api/answers/batch**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resultsVisible: false }),
+      });
+      return;
+    }
     const body = route.request().postDataJSON() as BatchPayload;
     submitted.push({
       body,
@@ -593,7 +601,15 @@ async function runAnswerFlowProxyAtWidth(page: Page, testInfo: TestInfo, width: 
   const questionRequests: string[] = [];
   await mockQuestions(page, questionRequests);
   const submitted: BatchPayload[] = [];
-  await page.route("**/api/answers/batch", async (route) => {
+  await page.route("**/api/answers/batch**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resultsVisible: false }),
+      });
+      return;
+    }
     submitted.push(route.request().postDataJSON() as BatchPayload);
     const body = submitted.at(-1)!;
     await route.fulfill({
@@ -790,7 +806,15 @@ test("locks the full answer sheet while its batch request is pending", async ({ 
   const answerGate = new Promise<void>((resolve) => {
     releaseAnswer = resolve;
   });
-  await page.route("**/api/answers/batch", async (route) => {
+  await page.route("**/api/answers/batch**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resultsVisible: false }),
+      });
+      return;
+    }
     const body = route.request().postDataJSON() as BatchPayload;
     answerCalls += 1;
     markRequestStarted();
@@ -1057,6 +1081,15 @@ test("returns to owner completion after an assisted save and opens target correc
     });
   });
   await page.route("**/api/answers/batch**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resultsVisible: false }),
+      });
+      return;
+    }
+
     const url = new URL(route.request().url());
     const body = route.request().postDataJSON() as BatchPayload;
     expect(url.searchParams.get("scope")).toBe("assisted");
@@ -1094,7 +1127,7 @@ test("returns to owner completion after an assisted save and opens target correc
   await expectResultsWaiting(page);
   await expect(page.getByRole("button", { name: "代理回答を行う" })).toBeVisible();
   await page.getByRole("button", { name: "代理回答を行う" }).click();
-  await expect(page.getByRole("heading", { name: "ほかの人の回答" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "代理回答" })).toBeVisible();
   await page.getByLabel("回答する人のお名前").fill("代理回答者");
   await page.getByRole("button", { name: "回答をはじめる" }).click();
   await expect(
@@ -1345,6 +1378,7 @@ test("restores the latest saved answers after a same-participant re-login on cor
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
+          resultsVisible: false,
           submissionId: latestSubmissionId,
           revision: 3,
           answers: savedAnswers(2, "再認証後の保存回答です。"),
@@ -1456,6 +1490,7 @@ test("loads the canonical batch after a revision conflict while preserving the l
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
+          resultsVisible: false,
           submissionId: canonicalSubmissionId,
           revision: 2,
           answers: savedAnswers,
@@ -1569,7 +1604,9 @@ test("keeps a stale second-tab draft distinct from the canonical submission afte
   // Both tabs share this deterministic API state; this exercises the client
   // conflict recovery, not a real database concurrency scenario.
   const writes: BatchPayload[] = [];
+  let visibilityReads = 0;
   const canonicalReads: { revision: number; answers: SavedBatchAnswer[] }[] = [];
+  let conflictReturned = false;
   let canonical = {
     submissionId,
     revision: 1,
@@ -1577,11 +1614,14 @@ test("keeps a stale second-tab draft distinct from the canonical submission afte
   };
   const handleBatchRoute = async (route: Route) => {
     if (route.request().method() === "GET") {
-      canonicalReads.push({ revision: canonical.revision, answers: canonical.answers });
+      visibilityReads += 1;
+      if (conflictReturned) {
+        canonicalReads.push({ revision: canonical.revision, answers: canonical.answers });
+      }
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(canonical),
+        body: JSON.stringify({ resultsVisible: false, ...canonical }),
       });
       return;
     }
@@ -1609,6 +1649,7 @@ test("keeps a stale second-tab draft distinct from the canonical submission afte
       return;
     }
 
+    conflictReturned = true;
     await route.fulfill({
       status: 409,
       contentType: "application/json",
@@ -1625,6 +1666,7 @@ test("keeps a stale second-tab draft distinct from the canonical submission afte
 
   await page.getByRole("button", { name: "回答を修正する" }).click();
   await secondTab.getByRole("button", { name: "回答を修正する" }).click();
+  expect(visibilityReads).toBeGreaterThan(0);
   expect(canonicalReads).toHaveLength(0);
 
   await answerQuestion(secondTab, 1, "D");
@@ -1676,7 +1718,15 @@ test("retains all choices through reauthentication and resubmits the batch only 
   await mockParticipantSession(page, "Aki");
   await mockQuestions(page);
   let answerCalls = 0;
-  await page.route("**/api/answers/batch", async (route) => {
+  await page.route("**/api/answers/batch**", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resultsVisible: false }),
+      });
+      return;
+    }
     answerCalls += 1;
     if (answerCalls === 1) {
       await route.fulfill({
@@ -1719,7 +1769,7 @@ test("retries a failed exam batch with one request per attempt", async ({ page }
   await mockParticipantSession(page);
   let fail = true;
   const requests: string[] = [];
-  await page.route("**/api/questions/batch", async (route) => {
+  await page.route("**/api/questions/batch**", async (route) => {
     requests.push(new URL(route.request().url()).pathname);
     if (fail) {
       fail = false;
