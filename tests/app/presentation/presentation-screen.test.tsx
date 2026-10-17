@@ -2007,7 +2007,12 @@ describe("presentation projection and presenter progression", () => {
     expect(await screen.findByText("第三位")).toBeInTheDocument();
     expect(screen.getByText("12.50 ポイント")).toBeInTheDocument();
     expect(screen.getByText("葵", { exact: false })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "第三位の勝者一覧" })).not.toHaveClass(/announce/);
+    const region = screen.getByRole("region", { name: "第三位の勝者一覧" });
+    expect(region).not.toHaveClass(/announce/);
+    const ornament = region.querySelector("[aria-hidden='true'][class*='rankEntranceOrnament']");
+    expect(ornament).toBeInTheDocument();
+    expect(ornament).not.toHaveAttribute("tabindex");
+    expect(region.querySelectorAll("[class*='rankEntranceOrnament']")).toHaveLength(1);
   });
 
   it("limits visible tied winners to two and reports the remaining count", async () => {
@@ -2213,12 +2218,43 @@ describe("presentation projection and presenter progression", () => {
 
   it("keeps initial and previous-stage rank renders static", async () => {
     setup({
-      projection: { state: "third", winners: [{ displayName: "葵", score: 12.5, rank: 3 }] },
+      projection: {
+        state: "third",
+        winners: [
+          {
+            displayName: "葵",
+            score: 12.5,
+            rank: 3,
+            questionResults: [
+              {
+                position: 0,
+                question: "一番の問題",
+                answer: { kind: "selected", value: "青" },
+                correctness: "correct",
+              },
+            ],
+          },
+          { displayName: "凛", score: 10, rank: 3 },
+          { displayName: "悠", score: 9, rank: 3 },
+        ],
+      },
       admin: { state: "third", questionIndex: 5, questionCount: 5 },
     });
     render(<PresentationScreen presenterRequested />);
     const region = await screen.findByRole("region", { name: "第三位の勝者一覧" });
+    expect(within(region).getByRole("heading", { name: "第三位" })).toBeVisible();
+    expect(within(region).getByText("葵", { exact: false })).toBeVisible();
+    expect(within(region).getByText("12.50 ポイント")).toBeVisible();
+    expect(within(region).getByText("凛", { exact: false })).toBeVisible();
+    expect(within(region).getByText("10.00 ポイント")).toBeVisible();
+    const answerRow = within(region).getByText("Q1").closest("li") as HTMLLIElement;
+    expect(within(answerRow).getByText("○")).toBeVisible();
+    expect(within(answerRow).getByLabelText("正解")).toBeVisible();
+    expect(within(region).getByText("ほか 1 名")).toBeVisible();
     expect(region).not.toHaveClass(/announce/);
+    const ornament = region.querySelector("[class*='rankEntranceOrnament']");
+    expect(ornament).toHaveAttribute("aria-hidden", "true");
+    expect(ornament).not.toHaveAttribute("tabindex");
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowLeft" });
     await settled();
     expect(region).not.toHaveClass(/announce/);
@@ -2243,6 +2279,12 @@ describe("presentation projection and presenter progression", () => {
     const region = await screen.findByRole("region", { name: "第三位の勝者一覧" });
     await settled();
     expect(region).not.toHaveClass(/announce/);
+    expect(within(region).getByRole("heading", { name: "第三位" })).toBeInTheDocument();
+    expect(within(region).getByText("葵", { exact: false })).toBeInTheDocument();
+    expect(within(region).getByText("12.50 ポイント")).toBeInTheDocument();
+    expect(
+      region.querySelector("[aria-hidden='true'][class*='rankEntranceOrnament']"),
+    ).toBeInTheDocument();
   });
 
   it("does not write position when mutation is in flight during operate", async () => {

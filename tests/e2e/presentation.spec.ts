@@ -7,6 +7,7 @@ declare global {
     __fullscreenRequests: number;
     __wakeRequests: number[];
     __releaseWakeLock: () => void;
+    __rankOrnamentAnimations: { rank: string | null; name: string }[];
   }
 
   interface Document {
@@ -448,6 +449,12 @@ async function installAdminApiMock(
       setWinnerEntries: (entries: typeof winnerEntries) => {
         winnerEntries = entries;
       },
+      setPresentationPosition: (nextState: PresentationState) => {
+        state = nextState;
+        questionIndex = 0;
+        stageCursor = stages.indexOf(nextState);
+        version += 1;
+      },
       getPresentationState: () => ({ state, questionIndex, version, projectionHidden }),
       getSnapshotRevision: () => snapshotRevision,
       participantResultsMutations,
@@ -588,6 +595,94 @@ async function advanceTo(page: import("@playwright/test").Page, target: Presenta
     await waitForRenderFrames(page);
   }
   await expect(slideFor(page, target)).toBeVisible();
+}
+
+async function expectRankOrnamentGeometry(region: import("@playwright/test").Locator) {
+  const geometry = await region.evaluate((rankRegion) => {
+    const ornament = rankRegion.querySelector<HTMLElement>("[class*='rankEntranceOrnament']");
+    const rankStamp = rankRegion.querySelector<HTMLElement>("[class*='rankStamp']");
+    const canvas = document.querySelector<HTMLElement>("[data-testid='presentation-canvas']");
+    const content = document.querySelector<HTMLElement>(
+      "[data-testid='presentation-fit-viewport']",
+    );
+    const ornamentRect = ornament?.getBoundingClientRect();
+    const canvasRect = canvas?.getBoundingClientRect();
+    const contentRect = content?.getBoundingClientRect();
+    const meaningfulElements = Array.from(
+      rankRegion.querySelectorAll<HTMLElement>(
+        [
+          "[class*='rankHeader'] > h1[class*='rank']",
+          "article h1",
+          "[class*='winnerScore']",
+          "[aria-label='設問別の回答']",
+          "[class*='additionalWinners']",
+          "[class*='rankStamp']",
+        ].join(", "),
+      ),
+    );
+    const rects = meaningfulElements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        text: (element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 80),
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+        visible: getComputedStyle(element).visibility === "visible",
+      };
+    });
+    const hasArea = (rect: DOMRect | undefined) =>
+      Boolean(rect && rect.width > 0 && rect.height > 0);
+    const overlaps = (left: DOMRect, right: DOMRect) =>
+      left.left < right.right &&
+      left.right > right.left &&
+      left.top < right.bottom &&
+      left.bottom > right.top;
+    return {
+      ornamentFound: Boolean(ornamentRect),
+      rankStampFound: Boolean(rankStamp),
+      insideCanvas: Boolean(
+        ornamentRect &&
+        canvasRect &&
+        ornamentRect.left >= canvasRect.left - 1 &&
+        ornamentRect.right <= canvasRect.right + 1 &&
+        ornamentRect.top >= canvasRect.top - 1 &&
+        ornamentRect.bottom <= canvasRect.bottom + 1,
+      ),
+      insideContent: Boolean(
+        ornamentRect &&
+        contentRect &&
+        ornamentRect.left >= contentRect.left - 1 &&
+        ornamentRect.right <= contentRect.right + 1 &&
+        ornamentRect.top >= contentRect.top - 1 &&
+        ornamentRect.bottom <= contentRect.bottom + 1,
+      ),
+      allMeasuredElementsAreVisibleAndHaveArea: Boolean(
+        hasArea(ornamentRect) &&
+        hasArea(canvasRect) &&
+        hasArea(contentRect) &&
+        hasArea(rankStamp?.getBoundingClientRect()) &&
+        rects.length > 0 &&
+        rects.every(({ width, height, visible }) => width > 0 && height > 0 && visible),
+      ),
+      meaningfulElementsDoNotOverlap: Boolean(
+        ornamentRect &&
+        meaningfulElements.length > 0 &&
+        meaningfulElements.every(
+          (element) => !overlaps(ornamentRect, element.getBoundingClientRect()),
+        ),
+      ),
+      meaningfulTexts: rects.map(({ text }) => text),
+    };
+  });
+  expect(geometry.ornamentFound).toBe(true);
+  expect(geometry.rankStampFound).toBe(true);
+  expect(geometry.insideCanvas).toBe(true);
+  expect(geometry.insideContent).toBe(true);
+  expect(geometry.allMeasuredElementsAreVisibleAndHaveArea).toBe(true);
+  expect(geometry.meaningfulElementsDoNotOverlap).toBe(true);
 }
 
 test("@chromium public and presenter routes are read-only unless an authenticated presenter progresses", async ({
@@ -1108,13 +1203,33 @@ test("@chromium all rank entries fit on the slide without vertical scrolling und
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   const mock = await installAdminApiMock(page);
-  mock.setWinnerEntries(
-    Array.from({ length: 24 }, (_, index) => ({
-      displayName: `受賞者${index + 1}`,
-      score: 1,
-      rank: 3,
-    })),
-  );
+  const selectedCorrectResult: E2EWinnerQuestionResult = {
+    position: 0,
+    question: null,
+    answer: { kind: "selected", value: null },
+    correctness: "correct",
+  };
+  const thirdPlaceWinners: E2EWinnerEntry[] = Array.from({ length: 24 }, (_, index) => ({
+    displayName: `受賞者${index + 1}`,
+    score: 1,
+    rank: 3,
+    questionResults: [selectedCorrectResult],
+  }));
+  mock.setWinnerEntries([
+    ...thirdPlaceWinners,
+    {
+      displayName: "第二位の受賞者",
+      score: 2,
+      rank: 2,
+      questionResults: [selectedCorrectResult],
+    },
+    {
+      displayName: "第一位の受賞者",
+      score: 3,
+      rank: 1,
+      questionResults: [selectedCorrectResult],
+    },
+  ]);
   await signIn(page);
   await startPresentation(page);
   await openPresenter(page);
@@ -1122,6 +1237,20 @@ test("@chromium all rank entries fit on the slide without vertical scrolling und
   const winners = page.getByRole("region", { name: "第三位の勝者一覧" });
   await expect(winners).toBeVisible();
   await expect(winners).not.toHaveClass(/announce/);
+  const ornament = winners.locator("[class*='rankEntranceOrnament']");
+  await expectRankOrnamentGeometry(winners);
+  await expect(ornament).toHaveAttribute("aria-hidden", "true");
+  await expect(ornament).toHaveCSS("position", "absolute");
+  await expect(ornament).toHaveCSS("pointer-events", "none");
+  await expect
+    .poll(() => ornament.evaluate((node) => getComputedStyle(node).animationName))
+    .toBe("none");
+  await expect
+    .poll(() => ornament.evaluate((node) => getComputedStyle(node).transitionProperty))
+    .toBe("none");
+  const conciseAnnouncement = await page.getByRole("status").textContent();
+  expect(conciseAnnouncement?.trim()).toBe("第三位を発表します");
+  expect(conciseAnnouncement).not.toContain("受賞者");
   const rankTitle = winners.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(rankTitle).toHaveCount(1);
   await expect(rankTitle).toHaveText("第三位");
@@ -1279,6 +1408,166 @@ test("@chromium all rank entries fit on the slide without vertical scrolling und
     ),
   ).toBe(true);
   expect(mock.getPresentationState().state).toBe("third");
+
+  for (const state of ["second", "first"] as const) {
+    const entry = nextAdminMutation(page);
+    await page.locator("main").press("ArrowRight");
+    await expect(slideFor(page, state)).toBeVisible();
+    await entry;
+    await expectRankOrnamentGeometry(
+      page.getByRole("region", {
+        name: state === "second" ? "第二位の勝者一覧" : "第一位の勝者一覧",
+      }),
+    );
+  }
+});
+
+test("@chromium rank ornament animates once per rank-stage entry and not on same-stage refresh", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.__rankOrnamentAnimations = [];
+    document.addEventListener(
+      "animationstart",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !target.matches("[class*='rankEntranceOrnament']"))
+          return;
+        window.__rankOrnamentAnimations.push({
+          rank: target.closest("[data-rank]")?.getAttribute("data-rank") ?? null,
+          name: (event as AnimationEvent).animationName,
+        });
+      },
+      true,
+    );
+  });
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+  await advanceTo(page, "third");
+  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(1);
+  await expect(page.getByRole("heading", { name: "第三位" })).toBeVisible();
+
+  const secondEntry = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "second")).toBeVisible();
+  await secondEntry;
+  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(2);
+
+  const firstEntry = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "first")).toBeVisible();
+  await firstEntry;
+  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(3);
+
+  const backEntry = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "second")).toBeVisible();
+  await backEntry;
+  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(4);
+  const keyboardEntries = await page.evaluate(() => window.__rankOrnamentAnimations);
+  expect(keyboardEntries.map(({ rank }) => rank)).toEqual(["third", "second", "first", "second"]);
+  expect(keyboardEntries.every(({ name }) => name.includes("rankOrnamentEntrance"))).toBe(true);
+
+  const controlsReadsBeforeRefresh = mock
+    .getPresentationRouteEvents()
+    .filter((event) => event === "controls:get").length;
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect
+    .poll(
+      () => mock.getPresentationRouteEvents().filter((event) => event === "controls:get").length,
+    )
+    .toBeGreaterThan(controlsReadsBeforeRefresh);
+  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(4);
+
+  // Reloading a presenter already positioned on a rank stage is a direct stage entry.
+  await page.reload();
+  await expect(slideFor(page, "second")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(1);
+  expect(await page.evaluate(() => window.__rankOrnamentAnimations[0]?.rank)).toBe("second");
+
+  const previousRank = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "third")).toBeVisible();
+  await previousRank;
+  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(2);
+  const previousPodium = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "podium_preview")).toBeVisible();
+  await previousPodium;
+
+  // Canvas tap enters third place; a horizontal swipe enters second place.
+  const tapEntry = nextAdminMutation(page);
+  await page.getByTestId("presentation-canvas").click();
+  await expect(slideFor(page, "third")).toBeVisible();
+  await tapEntry;
+  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(3);
+
+  const canvasBounds = await page.getByTestId("presentation-canvas").boundingBox();
+  expect(canvasBounds).not.toBeNull();
+  const swipeEntry = nextAdminMutation(page);
+  const swipeY = canvasBounds!.y + canvasBounds!.height / 2;
+  await page.mouse.move(canvasBounds!.x + canvasBounds!.width * 0.75, swipeY);
+  await page.mouse.down();
+  await page.mouse.move(canvasBounds!.x + canvasBounds!.width * 0.25, swipeY, { steps: 4 });
+  await page.mouse.up();
+  await expect(slideFor(page, "second")).toBeVisible();
+  await swipeEntry;
+  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(4);
+
+  // Absolute position writes are also stage entries and must replay only the ornament.
+  const directPosition = await page.evaluate(async () => {
+    const controlsResponse = await fetch("/api/admin/presentation?view=controls");
+    if (!controlsResponse.ok) return { ok: false, status: controlsResponse.status };
+    const controls = (await controlsResponse.json()) as {
+      version: number;
+      snapshotRevision: number;
+    };
+    const response = await fetch("/api/admin/presentation", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        operationId: crypto.randomUUID(),
+        action: "position",
+        state: "first",
+        questionIndex: 0,
+        expectedSnapshotRevision: controls.snapshotRevision,
+        expectedSessionVersion: controls.version,
+      }),
+    });
+    return { ok: response.ok, status: response.status };
+  });
+  expect(directPosition.ok, `Direct position failed: ${directPosition.status}`).toBe(true);
+  await expect(slideFor(page, "first")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(5);
+  const inputEntries = await page.evaluate(() => window.__rankOrnamentAnimations.slice(1));
+  expect(inputEntries.map(({ rank }) => rank)).toEqual(["third", "third", "second", "first"]);
+  expect(inputEntries.every(({ name }) => name.includes("rankOrnamentEntrance"))).toBe(true);
+
+  mock.setPresentationPosition("second");
+  const spectator = await page.context().newPage();
+  await spectator.addInitScript(() => {
+    window.__rankOrnamentAnimations = [];
+    document.addEventListener(
+      "animationstart",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !target.matches("[class*='rankEntranceOrnament']"))
+          return;
+        window.__rankOrnamentAnimations.push({
+          rank: target.closest("[data-rank]")?.getAttribute("data-rank") ?? null,
+          name: (event as AnimationEvent).animationName,
+        });
+      },
+      true,
+    );
+  });
+  await spectator.goto("/presentation");
+  await expect(spectator.getByRole("region", { name: "第二位の勝者一覧" })).toBeVisible();
+  await expect.poll(() => spectator.evaluate(() => window.__rankOrnamentAnimations.length)).toBe(1);
+  expect(await spectator.evaluate(() => window.__rankOrnamentAnimations[0]?.rank)).toBe("second");
+  await spectator.close();
 });
 
 test("@chromium every stage keeps its fixture text inside the canvas content bounds", async ({
@@ -1580,6 +1869,7 @@ test("@chromium reference-size long presentation content stays readable after fi
   await next("third");
 
   const region = page.getByRole("region", { name: "第三位の勝者一覧" });
+  await expectRankOrnamentGeometry(region);
   await expect(region.locator("article")).toHaveCount(2);
   await expectTwoWinnerLongContentFitException();
   const cardGeometry = await region.evaluate((region) => {
@@ -1665,11 +1955,13 @@ test("@chromium reference-size long presentation content stays readable after fi
   await expect(region.locator("article")).toHaveCount(2);
   await next("second");
   const secondPlaceRegion = page.getByRole("region", { name: "第二位の勝者一覧" });
+  await expectRankOrnamentGeometry(secondPlaceRegion);
   const secondPlaceHeading = secondPlaceRegion.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(secondPlaceHeading).toBeVisible();
   await expect(secondPlaceHeading).toHaveText("第二位");
   await next("first");
   const firstPlaceRegion = page.getByRole("region", { name: "第一位の勝者一覧" });
+  await expectRankOrnamentGeometry(firstPlaceRegion);
   const firstPlaceHeading = firstPlaceRegion.locator("[class*='rankHeader'] > h1[class*='rank']");
   await expect(firstPlaceHeading).toBeVisible();
   await expect(firstPlaceHeading).toHaveText("第一位");
@@ -1729,6 +2021,7 @@ test("@mobile a single long winner name wraps fully inside the slide", async ({ 
 
     for (const [rankIndex, rankStage] of ranks.entries()) {
       const region = page.getByRole("region", { name: `${rankStage.label}の勝者一覧` });
+      await expectRankOrnamentGeometry(region);
       const name = region.locator("article h1");
       await expect(region.locator("article")).toHaveCount(1);
       await expect(region.locator("[class*='rankHeader'] > h1[class*='rank']")).toHaveCount(1);

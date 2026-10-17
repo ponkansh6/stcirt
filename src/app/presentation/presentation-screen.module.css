@@ -528,6 +528,54 @@
   width: clamp(58px, 7cqw, 100px);
 }
 
+.rankEntranceOrnament {
+  position: absolute;
+  top: clamp(20px, 3cqh, 36px);
+  left: 50%;
+  width: 38px;
+  height: 14px;
+  animation: none;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.rankEntranceOrnament::before,
+.rankEntranceOrnament::after {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--rank-metal, #8e6e31);
+  content: "";
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.rankEntranceOrnament::before {
+  left: 3px;
+}
+
+.rankEntranceOrnament::after {
+  right: 3px;
+}
+
+@keyframes rankOrnamentEntrance {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rankEntranceOrnament {
+    animation: rankOrnamentEntrance 300ms ease-out both;
+  }
+}
+
 .winners:focus-visible {
   outline: 2px solid #315b66;
   outline-offset: -2px;
@@ -859,5 +907,10 @@
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .screen .rankEntranceOrnament {
+    animation: none !important;
+    transition: none !important;
   }
 }

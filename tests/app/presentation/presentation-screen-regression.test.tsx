@@ -4,7 +4,12 @@ import PresentationScreen from "@/app/presentation/presentation-screen";
 import { installPresentationFitLayout } from "./presentation-fit-test-helpers";
 
 type Projection = Record<string, unknown>;
-type WinnerFixture = { displayName: string; score: number; rank: number };
+type WinnerFixture = {
+  displayName: string;
+  score: number;
+  rank: number;
+  questionResults?: Record<string, unknown>[];
+};
 type DeckProjectionFixture =
   | { state: "question" | "answer"; question?: unknown }
   | { state: "third" | "second" | "first"; winners: WinnerFixture[] }
@@ -2804,7 +2809,25 @@ describe("PresentationScreen", () => {
         {
           state: "third",
           questionIndex: 0,
-          projection: { state: "third", winners: [{ displayName: "葵", score: 9, rank: 3 }] },
+          projection: {
+            state: "third",
+            winners: [
+              {
+                displayName: "葵",
+                score: 9,
+                rank: 3,
+                questionResults: [
+                  {
+                    position: 0,
+                    question: "好きな場所は？",
+                    answer: { kind: "freeText", value: "長い回答もすぐ表示" },
+                  },
+                ],
+              },
+              { displayName: "凛", score: 9, rank: 3 },
+              { displayName: "悠", score: 9, rank: 3 },
+            ],
+          },
         },
       ],
       actionAdmin: controls({ state: "third" }),
@@ -2815,7 +2838,12 @@ describe("PresentationScreen", () => {
     await flush();
     const winnerRegion = screen.getByRole("region", { name: "第三位の勝者一覧" });
     expect(winnerRegion).toHaveTextContent("9.00 ポイント");
+    expect(winnerRegion).toHaveTextContent("長い回答もすぐ表示");
+    expect(winnerRegion).toHaveTextContent("ほか 1 名");
     expect(winnerRegion.className).not.toContain("announce");
+    expect(
+      winnerRegion.querySelector("[aria-hidden='true'][class*='rankEntranceOrnament']"),
+    ).toBeInTheDocument();
     expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 1200)).toBe(false);
     setTimeoutSpy.mockRestore();
   });

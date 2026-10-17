@@ -1478,6 +1478,7 @@ export default function PresentationScreen({
                     tabIndex={0}
                   >
                     <ExamStamp className={styles.rankStamp} />
+                    <span className={styles.rankEntranceOrnament} key={state} aria-hidden="true" />
                     <div className={styles.rankHeader}>
                       <span className={styles.certificateLabel}>認定証</span>
                       <h1 className={styles.rank}>{rankTitle[state]}</h1>
