@@ -24,8 +24,7 @@ import {
 export const runtime = "nodejs";
 
 function unavailable() {
-  const message = "Participant sign-in is unavailable";
-  return NextResponse.json({ error: message, message }, { status: 503 });
+  return errorResponse("Participant sign-in is unavailable", 503);
 }
 
 function errorResponse(message: string, status: number, extra: Record<string, unknown> = {}) {
