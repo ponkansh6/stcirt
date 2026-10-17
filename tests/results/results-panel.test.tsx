@@ -238,7 +238,7 @@ describe("ResultsPanel", () => {
     render(<ResultsPanel initial={visibleResult} />);
 
     expect(screen.getByText("2位")).toBeVisible();
-    expect(screen.getByText("1.5点")).toBeVisible();
+    expect(screen.getByText("1.50点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(screen.getByText("不正解")).toBeVisible();
@@ -253,7 +253,7 @@ describe("ResultsPanel", () => {
       ),
     );
     expect(screen.queryByText("2位")).not.toBeInTheDocument();
-    expect(screen.queryByText("1.5点")).not.toBeInTheDocument();
+    expect(screen.queryByText("1.50点")).not.toBeInTheDocument();
     expect(screen.queryByText("最初の問題")).not.toBeInTheDocument();
     expect(screen.queryByText("選択した回答")).not.toBeInTheDocument();
     expect(screen.queryByText("不正解")).not.toBeInTheDocument();
@@ -322,7 +322,7 @@ describe("ResultsPanel", () => {
       render(<ResultsPanel initial={visibleResult} />);
 
       expect(screen.getByText("2位")).toBeVisible();
-      expect(screen.getByText("1.5点")).toBeVisible();
+      expect(screen.getByText("1.50点")).toBeVisible();
       expect(screen.getByText("最初の問題")).toBeVisible();
       expect(screen.getByText("選択した回答")).toBeVisible();
 
@@ -332,7 +332,7 @@ describe("ResultsPanel", () => {
         expect(screen.getByRole("heading", { name: "あなたの結果" })).toBeVisible(),
       );
       expect(screen.getByText("2位")).toBeVisible();
-      expect(screen.getByText("1.5点")).toBeVisible();
+      expect(screen.getByText("1.50点")).toBeVisible();
       expect(screen.getByText("最初の問題")).toBeVisible();
       expect(screen.getByText("選択した回答")).toBeVisible();
       expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
@@ -345,7 +345,7 @@ describe("ResultsPanel", () => {
     render(<ResultsPanel initial={visibleResult} />);
 
     expect(screen.getByText("2位")).toBeVisible();
-    expect(screen.getByText("1.5点")).toBeVisible();
+    expect(screen.getByText("1.50点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(screen.getByText("不正解")).toBeVisible();
@@ -700,7 +700,7 @@ describe("ResultsPanel", () => {
     setVisibility("visible");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     expect(screen.getByText("2位")).toBeVisible();
-    expect(screen.getByText("1.5点")).toBeVisible();
+    expect(screen.getByText("1.50点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
@@ -716,7 +716,7 @@ describe("ResultsPanel", () => {
     setVisibility("visible");
     await waitFor(() => expect(json).toHaveBeenCalledTimes(1));
     expect(screen.getByText("2位")).toBeVisible();
-    expect(screen.getByText("1.5点")).toBeVisible();
+    expect(screen.getByText("1.50点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
@@ -777,7 +777,7 @@ describe("ResultsPanel", () => {
 
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     expect(screen.getByText("2位")).toBeVisible();
-    expect(screen.getByText("1.5点")).toBeVisible();
+    expect(screen.getByText("1.50点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");

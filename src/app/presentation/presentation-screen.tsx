@@ -383,7 +383,7 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
                     ? "得点を確認できません"
                     : result.normalizedScore === null || result.normalizedScore === undefined
                       ? "未採点"
-                      : `得点 ${result.normalizedScore}`}
+                      : `得点 ${result.normalizedScore.toFixed(2)}`}
                 </span>
               </>
             ) : (

@@ -188,7 +188,7 @@ export default function ResultsPanel({
               </div>
               <div className="rounded-xl bg-surface-2 p-5">
                 <dt className="text-sm text-muted text-balance">得点</dt>
-                <dd className="mt-1 text-3xl font-bold">{result.score}点</dd>
+                <dd className="mt-1 text-3xl font-bold">{result.score.toFixed(2)}点</dd>
               </div>
             </dl>
             <section className="mt-10" aria-labelledby="answer-details-heading">
@@ -251,7 +251,9 @@ export default function ResultsPanel({
                           {typeof item.answer.score === "number" ? (
                             <p className="mt-3 text-sm text-muted text-pretty">
                               記録済みスコア:{" "}
-                              <span className="font-semibold text-text">{item.answer.score}</span>
+                              <span className="font-semibold text-text">
+                                {item.answer.score.toFixed(2)}
+                              </span>
                             </p>
                           ) : (
                             <p className="mt-3 text-sm text-muted text-pretty">

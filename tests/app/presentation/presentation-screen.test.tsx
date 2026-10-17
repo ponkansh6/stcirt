@@ -2132,7 +2132,7 @@ describe("presentation projection and presenter progression", () => {
     }
     expect(screen.getByText("保存された回答")).toBeInTheDocument();
     expect(screen.getByText("得点を確認できません")).toBeInTheDocument();
-    expect(screen.getByText("得点 0")).toBeInTheDocument();
+    expect(screen.getByText("得点 0.00")).toBeInTheDocument();
     expect(screen.getByText("未採点")).toBeInTheDocument();
     expect(screen.getByText("0点の回答")).toBeInTheDocument();
     expect(screen.getByText("未採点の回答")).toBeInTheDocument();

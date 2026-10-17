@@ -2295,7 +2295,7 @@ test("rank announcements compact saved answers and fit the slide", async ({ page
   await expect(region).not.toContainText("待ち合わせ場所は？");
   await expect(region).not.toContainText("思い出に残った出来事を教えてください");
   await expect(region).toContainText("保存された自由記述");
-  await expect(region).toContainText("得点 0");
+  await expect(region).toContainText("得点 0.00");
   await expect(region).toContainText("未採点");
   await expect(region).toContainText("得点を確認できません");
   await expect(region).toContainText("未採点の自由記述");
