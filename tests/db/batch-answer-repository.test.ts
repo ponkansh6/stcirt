@@ -59,6 +59,31 @@ async function commitWinnerThenRaiseAdapterUniqueConflict(
   }
 }
 
+async function commitOperationBetweenPreflightAndLockedRead(
+  winnerInput: Parameters<typeof saveAnswerSubmission>[0],
+  retryInput: Parameters<typeof saveAnswerSubmission>[0],
+) {
+  const database = dbRef.db!;
+  const originalTransaction = database.transaction.bind(database);
+  let insertedWinner = false;
+  const transactionSpy = vi.spyOn(database, "transaction");
+  transactionSpy.mockImplementation((callback, config) => {
+    if (insertedWinner) return originalTransaction(callback, config);
+    return (async () => {
+      // The outer preflight is an autocommit read. Commit a competing operation
+      // before starting its write transaction, whose first read is under lock.
+      insertedWinner = true;
+      await saveAnswerSubmission(winnerInput);
+      return originalTransaction(callback, config);
+    })();
+  });
+  try {
+    return await saveAnswerSubmission(retryInput);
+  } finally {
+    transactionSpy.mockRestore();
+  }
+}
+
 describe("saveAnswerSubmission", () => {
   let testDb: TestDb;
   let participantId: number;
@@ -485,6 +510,45 @@ describe("saveAnswerSubmission", () => {
     expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);
   });
 
+  it("replays an operation committed after preflight when it is found under the lock", async () => {
+    const input = {
+      submissionId,
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId,
+      answers,
+    };
+
+    await expect(commitOperationBetweenPreflightAndLockedRead(input, input)).resolves.toEqual({
+      submissionId,
+      revision: 1,
+      assessmentTarget: null,
+    });
+    expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);
+  });
+
+  it("rejects a conflicting operation committed after preflight when found under the lock", async () => {
+    const winnerInput = {
+      submissionId,
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId,
+      answers,
+    };
+    const conflictingInput = {
+      ...winnerInput,
+      answers: answers.map((answer) => ({
+        ...answer,
+        selectedIndex: (answer.selectedIndex + 1) % 4,
+      })),
+    };
+
+    await expect(
+      commitOperationBetweenPreflightAndLockedRead(winnerInput, conflictingInput),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);
+  });
+
   it("rejects an initial same-submission race and preserves only the winner's complete set", async () => {
     const winnerAnswers = answers.map((answer) => ({ ...answer, selectedIndex: 1 }));
     const retryAnswers = answers.map((answer) => ({ ...answer, selectedIndex: 2 }));
@@ -512,6 +576,50 @@ describe("saveAnswerSubmission", () => {
     expect(stored).toHaveLength(5);
     expect(stored.map(({ selectedIndex }) => selectedIndex)).toEqual(Array(5).fill(1));
     expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);
+  });
+
+  it("returns not found when unique-conflict recovery finds an operation owned by another participant", async () => {
+    const [otherParticipant] = await testDb.db
+      .insert(schema.examParticipants)
+      .values({ normalizedName: "別の参加者", displayName: "別の参加者" })
+      .returning({ id: schema.examParticipants.id });
+    const winnerInput = {
+      submissionId: "00000000-0000-4000-8000-000000000006",
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId: otherParticipant!.id,
+      answers,
+    };
+    const retryInput = {
+      ...winnerInput,
+      submissionId,
+      participantId,
+    };
+
+    await expect(
+      commitWinnerThenRaiseAdapterUniqueConflict(winnerInput, retryInput),
+    ).rejects.toMatchObject({ status: 404, message: "Submission not found" });
+  });
+
+  it("returns conflict when unique-conflict recovery finds a same-owner operation with a different payload", async () => {
+    const winnerInput = {
+      submissionId,
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId,
+      answers,
+    };
+    const retryInput = {
+      ...winnerInput,
+      answers: answers.map((answer) => ({
+        ...answer,
+        selectedIndex: (answer.selectedIndex + 1) % 4,
+      })),
+    };
+
+    await expect(
+      commitWinnerThenRaiseAdapterUniqueConflict(winnerInput, retryInput),
+    ).rejects.toMatchObject({ status: 409, message: "Operation ID was already used" });
   });
 
   it("rejects a same-revision correction race and keeps only one complete answer set", async () => {

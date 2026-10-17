@@ -399,6 +399,47 @@ describe("useQuizSession hook", () => {
     expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(1);
   });
 
+  it("clears the answering-phase published lock after visibility is confirmed hidden", async () => {
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue({
+      submissionId,
+      revision: 1,
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/questions/batch")
+        return { ok: true, json: async () => ({ questions: batchQuestions() }) };
+      if (url === "/api/answers/batch" && init?.method === "POST")
+        return {
+          ok: false,
+          status: 423,
+          json: async () => ({ message: "Submission is published", error: "SUBMISSION_LOCKED" }),
+        };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    act(() => result.current.editAnswers());
+    act(() => result.current.select(1, 3));
+    const draft = { ...result.current.selections };
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase).toMatchObject({ kind: "answering", publishedLock: true });
+    expect(result.current.selections).toEqual(draft);
+
+    act(() => result.current.clearPublishedLock());
+
+    expect(result.current.phase).toEqual({ kind: "answering" });
+    expect(result.current.selections).toEqual(draft);
+  });
+
   it("shows login after session lookup failure and keeps login errors visible", async () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       if (init?.method === "POST")

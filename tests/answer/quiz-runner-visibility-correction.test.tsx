@@ -167,12 +167,18 @@ describe("QuizRunner batch answer sheet", () => {
   it.each([
     ["lookup failure", { ok: false, json: async () => ({}) }],
     ["malformed visibility", { ok: true, json: async () => ({ resultsVisible: "false" }) }],
+    ["null visibility payload", { ok: true, json: async () => null }],
   ])("keeps saved answers locked after a %s", async (_label, response) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering" },
-        { revision: 2, submissionId: "submission-2", selections: { 1: 0 }, answeredCount: 1 },
+        {
+          revision: 2,
+          submissionId: "submission-2",
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+          answeredCount: 5,
+        },
       ),
     );
     render(<RunnerPage />);
@@ -180,7 +186,8 @@ describe("QuizRunner batch answer sheet", () => {
     expect(
       screen.getAllByRole("radio").every((radio) => (radio as HTMLInputElement).disabled),
     ).toBe(true);
-    expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
+    expect(screen.getAllByRole("radio")[0]).toBeChecked();
+    expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeDisabled();
   });
 
   it("locks a saved submission only after a confirmed visible response", async () => {
