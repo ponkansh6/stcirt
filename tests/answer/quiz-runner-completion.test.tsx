@@ -120,8 +120,8 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.queryByRole("button", { name: /公開状況/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "設問へ移動" })).not.toBeInTheDocument();
     expect(
-      screen.getByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
-    ).toBeInTheDocument();
+      screen.queryByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/正解|不正解|合格|得点|正答率/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "回答を修正する" })).toBeDisabled();
     expect(

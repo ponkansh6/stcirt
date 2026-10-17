@@ -848,9 +848,11 @@ export default function QuizRunner() {
             assistedName={assistedParticipant?.participant?.name}
             className="mt-3"
           />
-          <p className="mt-2 text-sm leading-relaxed text-muted">
-            回答を見直す場合は、同じ5問の回答を復元して修正できます。
-          </p>
+          {visibilityStatus === "unlocked" && (
+            <p className="mt-2 text-sm leading-relaxed text-muted">
+              回答を見直す場合は、同じ5問の回答を復元して修正できます。
+            </p>
+          )}
           {restoreError && (
             <p className="mt-4 text-sm font-medium text-error" role="alert">
               {restoreError}
@@ -888,11 +890,6 @@ export default function QuizRunner() {
           >
             回答を修正する
           </Button>
-          {visibilityStatus === "locked" && (
-            <p className="mt-3 text-sm leading-relaxed text-muted" role="status" aria-live="polite">
-              結果が公開されているため、回答は修正できません。主催者が結果を非公開にすると、再び修正できます。
-            </p>
-          )}
           {visibilityStatus === "unknown" && !restoreError && (
             <p className="mt-3 text-sm leading-relaxed text-muted" role="status" aria-live="polite">
               回答の公開状態を確認しています。確認できるまで編集はできません。
@@ -903,34 +900,39 @@ export default function QuizRunner() {
               自分の回答に戻る
             </Button>
           )}
-          {!answeringForAssisted && canAnswerForAssisted && (
-            <div className="mt-4">
-              {assistedError && (
-                <p className="mb-2 text-sm text-error" role="alert">
-                  {assistedError}
-                </p>
-              )}
-              <Button
-                variant="outline"
-                onClick={() => {
-                  if (assistedParticipant?.participant) void resumeAssisted();
-                  else openAssistedLogin();
-                }}
-                disabled={assistedBusy}
-              >
-                {assistedBusy
-                  ? "回答状態を確認しています…"
-                  : assistedParticipant?.hasSubmission
-                    ? "代理回答を修正する"
-                    : "代理回答を行う"}
-              </Button>
-              {assistedParticipant?.participant && !assistedParticipant.hasSubmission && (
-                <p className="mt-2 text-sm text-muted">
-                  {assistedParticipant.participant.name}さんの回答を再開できます。
-                </p>
-              )}
-            </div>
-          )}
+          {!answeringForAssisted &&
+            canAnswerForAssisted &&
+            (!assistedParticipant?.hasSubmission || visibilityStatus !== "locked") && (
+              <div className="mt-4">
+                {assistedError && (
+                  <p className="mb-2 text-sm text-error" role="alert">
+                    {assistedError}
+                  </p>
+                )}
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (assistedParticipant?.participant) void resumeAssisted();
+                    else openAssistedLogin();
+                  }}
+                  disabled={
+                    assistedBusy ||
+                    Boolean(assistedParticipant?.hasSubmission && visibilityStatus !== "unlocked")
+                  }
+                >
+                  {assistedBusy
+                    ? "回答状態を確認しています…"
+                    : assistedParticipant?.hasSubmission
+                      ? "代理回答を修正する"
+                      : "代理回答を行う"}
+                </Button>
+                {assistedParticipant?.participant && !assistedParticipant.hasSubmission && (
+                  <p className="mt-2 text-sm text-muted">
+                    {assistedParticipant.participant.name}さんの回答を再開できます。
+                  </p>
+                )}
+              </div>
+            )}
           {participantResultsVisible && !participantResultsAuthExpired && (
             <div className="mt-3 flex flex-col items-start gap-2">
               <Link
@@ -1188,15 +1190,6 @@ export default function QuizRunner() {
           aria-labelledby="final-check-title"
         >
           <p className="text-sm font-semibold tracking-widest text-primary">最終確認</p>
-          {publishedLock && (
-            <p
-              className="mt-3 rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm leading-relaxed text-text"
-              role="status"
-              aria-live="polite"
-            >
-              結果が公開されているため、回答を修正できません。主催者が結果を非公開にすると、再び編集できます。
-            </p>
-          )}
           {visibilityUnknown && !publishedLock && (
             <p className="mt-3 text-sm text-muted" role="status" aria-live="polite">
               公開状態を確認できません。確認できるまで編集はできません。
@@ -1210,9 +1203,7 @@ export default function QuizRunner() {
           >
             回答内容を確認してください
           </h2>
-          <p className="mt-3 text-sm leading-relaxed text-muted">
-            保存すると回答完了になります。完了後も「回答を修正する」から同じ5問を見直せます。
-          </p>
+          <p className="mt-3 text-sm leading-relaxed text-muted">保存すると回答完了になります。</p>
           <dl className="mt-4 rounded-lg border border-border bg-surface-2 p-4">
             <dt className="text-sm text-muted">回答先</dt>
             <dd className="mt-1 break-words font-semibold">

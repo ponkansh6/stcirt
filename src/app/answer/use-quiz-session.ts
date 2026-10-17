@@ -1173,8 +1173,6 @@ export function useQuizSession() {
         ) {
           setPhase({
             kind: "answering",
-            message:
-              "結果が公開されているため、回答を修正できません。主催者が結果を非公開にすると再び編集できます。",
             publishedLock: true,
           });
           return;

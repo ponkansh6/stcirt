@@ -204,7 +204,14 @@ describe("QuizRunner batch answer sheet", () => {
       ),
     );
     render(<RunnerPage />);
-    expect(await screen.findByText(/結果が公開されているため、回答を修正できません/)).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("radio").every((radio) => (radio as HTMLInputElement).disabled),
+      ).toBe(true),
+    );
+    expect(
+      screen.queryByText(/結果が公開されているため、回答を修正できません/),
+    ).not.toBeInTheDocument();
     expect(
       screen.getAllByRole("radio").every((radio) => (radio as HTMLInputElement).disabled),
     ).toBe(true);
@@ -235,7 +242,12 @@ describe("QuizRunner batch answer sheet", () => {
 
     render(<RunnerPage />);
 
-    expect(await screen.findByText(/結果が公開されているため、回答は修正できません/)).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "回答を修正する" })).toBeDisabled(),
+    );
+    expect(
+      screen.queryByText(/結果が公開されているため、回答は修正できません/),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "回答を修正する" })).toBeDisabled();
   });
 
