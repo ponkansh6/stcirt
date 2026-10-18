@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # 静的解析。Production schema は trusted-only workflow で別途検査する。
+  # 静的解析。CI では production schema drift を検査せず、blocking check はローカル pre-push Phase 3 で実行する。
   static:
     runs-on: ubuntu-latest
     steps:
