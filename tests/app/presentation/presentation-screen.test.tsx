@@ -5,7 +5,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PresentationScreen from "@/app/presentation/presentation-screen";
 import { installPresentationFitLayout } from "./presentation-fit-test-helpers";
 
-type WinnerFixture = { displayName: string; score: number; rank: number };
+type WinnerFixture = {
+  displayName: string;
+  score: number;
+  rank: number;
+  questionResults?: {
+    position: number;
+    question: string | null;
+    answer:
+      | { kind: "selected"; value: string | null }
+      | { kind: "freeText"; value: string | null }
+      | { kind: "unanswered" }
+      | { kind: "legacy" }
+      | { kind: "unavailable" };
+    correctness?: "correct" | "incorrect" | "unavailable";
+    normalizedScore?: number | null;
+    scoreStatus?: "unavailable";
+  }[];
+};
 type DeckProjectionFixture =
   | { state: "question" | "answer"; question?: unknown }
   | { state: "third" | "second" | "first"; winners: WinnerFixture[] }
