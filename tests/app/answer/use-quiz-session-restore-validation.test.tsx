@@ -37,27 +37,25 @@ describe("useQuizSession saved answer validation", () => {
 
   async function loadSavedSubmission(answers: unknown[], freeTextFifth = false) {
     mockLatest.mockResolvedValue({ submissionId, revision: 2, answers });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string) => {
-        if (url === "/api/participants/session")
-          return { ok: true, json: async () => ({ participant }) };
-        if (url === "/api/questions/batch") {
-          return {
-            ok: true,
-            json: async () => ({
-              questions: [1, 2, 3, 4, 5].map((id) =>
-                freeTextFifth && id === 5 ? quiz(id, true) : quiz(id),
-              ),
-            }),
-          };
-        }
-        throw new Error(`Unexpected request ${url}`);
-      }),
-    );
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/questions/batch") {
+        return {
+          ok: true,
+          json: async () => ({
+            questions: [1, 2, 3, 4, 5].map((id) =>
+              freeTextFifth && id === 5 ? quiz(id, true) : quiz(id),
+            ),
+          }),
+        };
+      }
+      throw new Error(`Unexpected request ${url} ${init?.method ?? ""}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
-    return hook;
+    return { ...hook, fetchMock };
   }
 
   it.each([
@@ -112,10 +110,23 @@ describe("useQuizSession saved answer validation", () => {
       true,
     ],
   ])("disables correction for %s", async (_label, answers, freeTextFifth) => {
-    const { result } = await loadSavedSubmission(answers as unknown[], freeTextFifth as boolean);
+    const { result, fetchMock } = await loadSavedSubmission(
+      answers as unknown[],
+      freeTextFifth as boolean,
+    );
     expect(result.current.phase.kind).toBe("complete");
     expect(result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(result.current.submissionId).toBe(submissionId);
+    expect(result.current.revision).toBe(2);
     result.current.editAnswers();
+    await result.current.saveAnswers();
     expect(result.current.phase.kind).toBe("complete");
+    expect(result.current.submissionId).toBe(submissionId);
+    expect(result.current.revision).toBe(2);
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) => url === "/api/answers/batch" && init?.method === "POST",
+      ),
+    ).toBe(false);
   });
 });

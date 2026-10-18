@@ -12,6 +12,7 @@ import { ApiError } from "@/lib/api/client";
 import { parseParticipantResult } from "@/lib/participant-results-contract";
 import { HeaderPortal } from "./header-portal";
 import { resolveAnswererDisplay } from "./answerer-display";
+import { runIfSubmissionAllowed } from "./submission-gate";
 import type { AccessState, AnswerMode, Phase } from "./use-quiz-session";
 
 type AnswerUiSurface =
@@ -985,10 +986,11 @@ export default function QuizRunner() {
   const canSubmit =
     canRunRecoveryAction && (ui.primaryAction === "submit" || ui.primaryAction === "retry-submit");
   function submitAnswers() {
-    if (!canSubmit || submissionBlocked) return;
-    shouldFocusSubmissionRef.current = true;
-    void Promise.resolve(saveAnswers()).finally(() => {
-      shouldFocusSubmissionRef.current = false;
+    runIfSubmissionAllowed(canSubmit, submissionBlocked, () => {
+      shouldFocusSubmissionRef.current = true;
+      void Promise.resolve(saveAnswers()).finally(() => {
+        shouldFocusSubmissionRef.current = false;
+      });
     });
   }
   const submitLabel = isSubmitting
@@ -1334,7 +1336,7 @@ export default function QuizRunner() {
             variant={canSubmit ? "primary" : "outline"}
             className={`mt-6 min-h-12 w-full sm:w-auto ${isSubmitting || isRefreshing ? "cursor-wait opacity-80" : ""}`}
           >
-            {(isSubmitting || isRefreshing) && <Spinner className="motion-reduce:animate-none" />}
+            {(isSubmitting || isRefreshing) && <Spinner />}
             {submitLabel}
           </Button>
           {authExpired && (

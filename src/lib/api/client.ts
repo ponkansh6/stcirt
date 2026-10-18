@@ -36,11 +36,7 @@ const examQuestionsSchema = z
     }
   });
 
-export const answerResultSchema = z.object({
-  recorded: z.literal(true),
-});
-
-type RequestOptions = { customErrorMsg?: string; allowNotFound?: boolean };
+type RequestOptions = { customErrorMsg?: string };
 
 export class ApiError extends Error {
   readonly status: number;
@@ -95,13 +91,6 @@ async function request<T>(
   init: RequestInit | undefined,
   label: string,
   schema: z.ZodType<T>,
-  options: RequestOptions & { allowNotFound: true },
-): Promise<T | null>;
-async function request<T>(
-  path: string,
-  init: RequestInit | undefined,
-  label: string,
-  schema: z.ZodType<T>,
   options?: RequestOptions,
 ): Promise<T>;
 async function request<T>(
@@ -110,11 +99,8 @@ async function request<T>(
   label: string,
   schema: z.ZodType<T>,
   options?: RequestOptions,
-): Promise<T | null> {
+): Promise<T> {
   const res = await fetch(path, { ...init, credentials: "same-origin" });
-  if (res.status === 404 && options?.allowNotFound) {
-    return null;
-  }
   if (!res.ok) {
     const fallback = `Failed to ${label}: status ${res.status}`;
     const payload = await readErrorPayload(res);
@@ -139,17 +125,6 @@ async function request<T>(
   }
 
   return parsed.data;
-}
-
-export async function fetchNextQuestion(afterId?: number): Promise<QuizQuestion | null> {
-  const query = afterId === undefined ? "" : `?afterId=${afterId}`;
-  return request(
-    `/api/questions/next${query}`,
-    undefined,
-    "fetch next question",
-    quizQuestionSchema,
-    { allowNotFound: true },
-  );
 }
 
 export async function fetchExamQuestions(): Promise<QuizQuestion[]> {
@@ -252,22 +227,6 @@ export async function deleteParticipantSession(): Promise<void> {
       retryAt: payload.retryAt,
     });
   }
-}
-
-export async function submitAnswer(
-  questionId: number,
-  selectedIndex: number,
-): Promise<{ recorded: true }> {
-  return request(
-    "/api/answers",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ questionId, selectedIndex }),
-    },
-    "submit answer",
-    answerResultSchema,
-  );
 }
 
 export type AnswerBatchInput = {

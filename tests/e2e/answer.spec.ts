@@ -488,6 +488,20 @@ test("@chromium pending batch preserves accessible motion behavior and locks the
     };
 
     await assertPendingAnswerState();
+    await expect(spinner).toBeVisible();
+    await expect(spinner).toHaveAttribute("aria-hidden", "true");
+    await expect(spinner).toHaveCSS("width", "16px");
+    await expect(spinner).toHaveCSS("height", "16px");
+    await expect(spinner).toHaveCSS("border-top-width", "2px");
+    await expect(spinner).toHaveCSS("border-right-width", "2px");
+    await expect
+      .poll(() =>
+        spinner.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return style.borderRightColor === style.color;
+        }),
+      )
+      .toBe(true);
     await expect(spinner).toHaveCSS("animation-name", "spin");
     await expect(submit).toHaveCSS("transition-duration", "0.2s");
     await expect(selectedChoice.locator("xpath=ancestor::label")).toHaveCSS(

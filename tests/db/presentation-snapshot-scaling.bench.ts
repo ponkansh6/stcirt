@@ -31,6 +31,14 @@ type PersistedAnswer = {
 };
 
 const QUESTION_IDS = [11, 22, 33, 44, 55];
+const QUESTION_VERSIONS = [
+  "nagano-001-v1",
+  "nagano-002-v1",
+  "nagano-003-v1",
+  "nagano-004-v1",
+  "tamami-egg-v1",
+];
+const Q5_RUBRIC_VERSION = "jev-q5-fulfillment-v3-02";
 const WARMUP_SAMPLES = 2;
 
 function createSqlLogger(): SqlLogger {
@@ -123,6 +131,7 @@ describe("presentation snapshot scaling benchmark", () => {
       QUESTION_IDS.map((id, index) => ({
         id,
         key: index === 4 ? "it-literacy-005" : `snapshot-bench-question-${id}`,
+        questionVersion: QUESTION_VERSIONS[index]!,
         question: `Snapshot benchmark question ${index + 1}`,
         choices: index === 4 ? [] : ["A", "B", "C", "D"],
         correctIndex: 0,
@@ -144,16 +153,13 @@ describe("presentation snapshot scaling benchmark", () => {
     const answerRows: PersistedAnswer[] = [];
     const assessmentRows: (typeof schema.examAnswerAssessments.$inferInsert)[] = [];
     let olderValidNewerIncompleteCount = 0;
-    let eligibleLegacyQ5Count = 0;
     let eligibleGradedQ5Count = 0;
 
     for (const participant of participantRows) {
       const isOlderValidPair = dataset.submissionsPerParticipant > 1 && participant.id % 3 === 0;
       const selectedSubmissionIndex = isOlderValidPair ? 0 : dataset.submissionsPerParticipant - 1;
       if (isOlderValidPair) olderValidNewerIncompleteCount += 1;
-      const q5IsGraded = participant.id % 3 === 2;
-      if (q5IsGraded) eligibleGradedQ5Count += 1;
-      else eligibleLegacyQ5Count += 1;
+      eligibleGradedQ5Count += 1;
 
       for (
         let submissionIndex = 0;
@@ -167,39 +173,36 @@ describe("presentation snapshot scaling benchmark", () => {
           id: submissionId,
           participantId: participant.id,
           questionIds: QUESTION_IDS,
+          questionVersions: Object.fromEntries(
+            QUESTION_IDS.map((questionId, questionIndex) => [
+              String(questionId),
+              QUESTION_VERSIONS[questionIndex]!,
+            ]),
+          ),
           revision,
         });
 
         for (const [questionIndex, questionId] of QUESTION_IDS.entries()) {
           if (!isEligible && questionIndex === 4) continue;
           if (questionIndex === 4) {
-            if (q5IsGraded) {
-              answerRows.push({
+            answerRows.push({
+              submissionId,
+              questionId,
+              answerKind: "freeText",
+              selectedIndex: null,
+              freeText: `Graded response ${participant.id} revision ${revision}`,
+            });
+            if (isEligible) {
+              assessmentRows.push({
                 submissionId,
                 questionId,
-                answerKind: "freeText",
-                selectedIndex: null,
-                freeText: `Graded response ${participant.id}`,
-              });
-              if (isEligible) {
-                assessmentRows.push({
-                  submissionId,
-                  questionId,
-                  revision,
-                  answerText: `Graded response ${participant.id}`,
-                  state: "graded",
-                  rawScore: 1,
-                  normalizedScore: 1,
-                  rubricVersion: "snapshot-bench-v1",
-                });
-              }
-            } else {
-              answerRows.push({
-                submissionId,
-                questionId,
-                answerKind: "legacy",
-                selectedIndex: 0,
-                freeText: null,
+                revision,
+                answerText: `Graded response ${participant.id} revision ${revision}`,
+                questionVersion: QUESTION_VERSIONS[4]!,
+                state: "graded",
+                rawScore: 9,
+                normalizedScore: 1,
+                rubricVersion: Q5_RUBRIC_VERSION,
               });
             }
             continue;
@@ -208,7 +211,7 @@ describe("presentation snapshot scaling benchmark", () => {
             submissionId,
             questionId,
             answerKind: "selected",
-            selectedIndex: (participant.id + questionIndex) % 4,
+            selectedIndex: (participant.id + questionIndex + revision) % 4,
             freeText: null,
           });
         }
@@ -232,9 +235,90 @@ describe("presentation snapshot scaling benchmark", () => {
       totalAnswerRows: answerRows.length,
       eligibleCompleteSubmissions: dataset.participants,
       olderValidNewerIncompleteParticipants: olderValidNewerIncompleteCount,
-      eligibleLegacyQ5Submissions: eligibleLegacyQ5Count,
+      eligibleLegacyQ5Submissions: 0,
       eligibleSameRevisionGradedQ5Submissions: eligibleGradedQ5Count,
     };
+  }
+
+  async function resetPresentationSide() {
+    assert.ok(testDb, "File-backed benchmark database must be initialized");
+    const { db } = testDb;
+    // Keep the seeded source questions, participants, and submissions intact.
+    // Delete children before the session row to respect the fixture's FK order.
+    await db.delete(schema.presentationOperations);
+    await db.delete(schema.presentationEntries);
+    await db.delete(schema.presentationQuestions);
+    await db.delete(schema.presentationSessions);
+  }
+
+  async function assertSnapshotContent(dataset: Dataset) {
+    assert.ok(testDb, "File-backed benchmark database must be initialized");
+    const questions = await testDb.db
+      .select()
+      .from(schema.presentationQuestions)
+      .orderBy(schema.presentationQuestions.position);
+    assert.deepEqual(
+      questions,
+      QUESTION_IDS.map((id, position) => ({
+        sessionId: 1,
+        position,
+        sourceQuestionId: id,
+        question: `Snapshot benchmark question ${position + 1}`,
+        choices: position === 4 ? [] : ["A", "B", "C", "D"],
+        correctIndex: 0,
+        explanation: null,
+      })),
+      "Aggregate must persist the exact seeded question projection",
+    );
+
+    const entries = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .orderBy(schema.presentationEntries.participantId);
+    const expectedEntries = Array.from({ length: dataset.participants }, (_, index) => {
+      const participantId = index + 1;
+      const selectedRevision =
+        dataset.submissionsPerParticipant > 1 && participantId % 3 === 0
+          ? 1
+          : dataset.submissionsPerParticipant;
+      const answers = QUESTION_IDS.map((questionId, questionIndex) => ({
+        questionId,
+        answerKind: questionIndex === 4 ? "freeText" : "selected",
+        selectedIndex:
+          questionIndex === 4 ? null : (participantId + questionIndex + selectedRevision) % 4,
+        freeText:
+          questionIndex === 4
+            ? `Graded response ${participantId} revision ${selectedRevision}`
+            : null,
+        rawScore: questionIndex === 4 ? 9 : null,
+        normalizedScore: questionIndex === 4 ? 1 : null,
+      }));
+      const score = answers.reduce(
+        (total, answer, questionIndex) =>
+          total + (questionIndex === 4 ? 1 : Number(answer.selectedIndex === 0)),
+        0,
+      );
+      return {
+        participantId,
+        displayName: `Snapshot participant ${participantId}`,
+        answers,
+        score,
+      };
+    }).sort((left, right) => right.score - left.score || left.participantId - right.participantId);
+    let previousScore: number | undefined;
+    let previousRank = 0;
+    const rows = expectedEntries
+      .map((entry, index) => {
+        if (entry.score !== previousScore) previousRank = index + 1;
+        previousScore = entry.score;
+        return { sessionId: 1, ...entry, rank: previousRank };
+      })
+      .sort((left, right) => left.participantId - right.participantId);
+    assert.deepEqual(
+      entries,
+      rows,
+      "Aggregate must persist exact expected participant rows and answer projections",
+    );
   }
 
   const datasets: Array<{ dimensions: Dataset; samples: number }> = [
@@ -260,9 +344,10 @@ describe("presentation snapshot scaling benchmark", () => {
         await ensureInitialized();
         assert.ok(testDb && logger && aggregatePresentation);
         fixtureMix ??= await prepareDataset(dimensions);
-        logger.reset();
+        await resetPresentationSide();
         invocation += 1;
         const operationId = `snapshot-scale-${dimensions.participants}-${dimensions.submissionsPerParticipant}-${invocation}`;
+        logger.reset();
         const startedAt = performance.now();
         const snapshot = await aggregatePresentation(operationId, "aggregate");
         const elapsedMs = performance.now() - startedAt;
@@ -270,9 +355,10 @@ describe("presentation snapshot scaling benchmark", () => {
         assert.ok(snapshot !== null && typeof snapshot === "object");
         assert.ok(sqlStatements > 0, "Aggregation must execute SQL statements");
 
-        const result = snapshot as { questions?: unknown[]; entries?: unknown[] };
-        assert.equal(result.questions?.length, QUESTION_IDS.length);
-        assert.equal(result.entries?.length, dimensions.participants);
+        const result = snapshot as { snapshotRevision?: unknown; questionCount?: unknown };
+        assert.ok(typeof result.snapshotRevision === "number" && result.snapshotRevision > 0);
+        assert.equal(result.questionCount, QUESTION_IDS.length);
+        await assertSnapshotContent(dimensions);
         if (invocation <= WARMUP_SAMPLES) return;
 
         durations.push(elapsedMs);
@@ -300,7 +386,7 @@ describe("presentation snapshot scaling benchmark", () => {
             timingScope:
               "warm repository aggregation over a local file-backed SQLite fixture; remote Turso RTT and user-perceived waiting are not measured",
             stateScope:
-              "each aggregate invocation mutates the presentation snapshot/revision; measured samples do not use identical database state",
+              "every warmup and measured aggregation starts from the same presentation-side state; seeded source data is reused",
             sqlMetricScope:
               "count-only Drizzle statements; SQL text and bound values are not emitted",
           });

@@ -17,6 +17,7 @@ export default defineConfig({
       thresholds: { 100: true, perFile: true, autoUpdate: false },
       // Declarative/auto-generated files with no branching logic are excluded:
       // codemap.md (docs), schema.ts (Drizzle table definitions), migrations/** (generated SQL).
+      // Remaining exclusions are declarative or generated files.
       exclude: ["src/**/codemap.md", "src/lib/db/schema.ts", "src/lib/db/migrations/**"],
     },
   },

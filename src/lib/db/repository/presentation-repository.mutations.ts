@@ -95,6 +95,17 @@ const presentationActions = new Set<string>([
   "reset",
 ]);
 
+const supportedPresentationStates = new Set<PresentationState>([
+  "opening",
+  "question",
+  "answer",
+  "podium_preview",
+  "third",
+  "second",
+  "first",
+  "finished",
+]);
+
 export async function setParticipantResultsVisible(visible: boolean) {
   let phase: PresentationOperationPhase = "transaction_begin";
   try {
@@ -519,43 +530,44 @@ async function advanceState(
 
 async function previousState(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  state: PresentationState,
+  state: Exclude<PresentationState, "not_started">,
   questionIndex: number,
   questionCount: number,
-) {
-  if (state === "opening")
-    throw new PresentationConflictError("Presentation is already at its first state");
-  if (state === "question" && questionIndex === 0)
-    return { state: "opening" as const, questionIndex: 0 };
-  if (state === "question" && questionIndex > 0) {
-    return { state: "answer" as const, questionIndex: questionIndex - 1 };
-  }
-  if (state === "answer") return { state: "question" as const, questionIndex };
-  if (state === "podium_preview" && questionCount > 0) {
-    return { state: "answer" as const, questionIndex: questionCount - 1 };
-  }
-  if (state === "podium_preview" && questionCount === 0)
-    return { state: "opening" as const, questionIndex: 0 };
-  if (state === "third") return { state: "podium_preview" as const, questionIndex };
-  const currentRank = rankForStage(state);
-  if (currentRank !== null) {
-    for (let rank = currentRank + 1; rank <= 3; rank += 1) {
-      const [winner] = await tx
-        .select({ participantId: presentationEntries.participantId })
-        .from(presentationEntries)
-        .where(and(eq(presentationEntries.sessionId, 1), eq(presentationEntries.rank, rank)))
-        .limit(1);
-      if (winner) return { state: stageForRank(rank), questionIndex };
+): Promise<{ state: PresentationState; questionIndex: number }> {
+  switch (state) {
+    case "opening":
+      throw new PresentationConflictError("Presentation is already at its first state");
+    case "question":
+      return questionIndex === 0
+        ? { state: "opening", questionIndex: 0 }
+        : { state: "answer", questionIndex: questionIndex - 1 };
+    case "answer":
+      return { state: "question", questionIndex };
+    case "podium_preview":
+      return questionCount > 0
+        ? { state: "answer", questionIndex: questionCount - 1 }
+        : { state: "opening", questionIndex: 0 };
+    case "third":
+      return { state: "podium_preview", questionIndex };
+    case "second":
+    case "first": {
+      const currentRank = state === "first" ? 1 : 2;
+      for (let rank = currentRank + 1; rank <= 3; rank += 1) {
+        const [winner] = await tx
+          .select({ participantId: presentationEntries.participantId })
+          .from(presentationEntries)
+          .where(and(eq(presentationEntries.sessionId, 1), eq(presentationEntries.rank, rank)))
+          .limit(1);
+        if (winner) return { state: stageForRank(rank), questionIndex };
+      }
+      return { state: "podium_preview", questionIndex };
     }
-    return { state: "podium_preview" as const, questionIndex };
+    case "finished":
+      return {
+        state: (await lastAnnouncedRank(tx)) ?? "podium_preview",
+        questionIndex,
+      };
   }
-  if (state === "finished") {
-    return {
-      state: (await lastAnnouncedRank(tx)) ?? "podium_preview",
-      questionIndex,
-    };
-  }
-  throw new PresentationConflictError("Presentation is already at its first state");
 }
 
 async function isValidPresentationPosition(
@@ -741,6 +753,12 @@ async function operatePresentationWithResponse<T>(
           throw new PresentationConflictError("Presentation has not started");
         const cursorState = session.state as PresentationState;
         if (
+          (action === "advance" || action === "previous") &&
+          !supportedPresentationStates.has(cursorState)
+        ) {
+          throw new PresentationConflictError("Presentation state is invalid");
+        }
+        if (
           action === "position" &&
           (!target ||
             !(await isValidPresentationPosition(tx, target.state, target.questionIndex, session)))
@@ -751,7 +769,12 @@ async function operatePresentationWithResponse<T>(
           action === "position"
             ? target!
             : action === "previous"
-              ? await previousState(tx, cursorState, session.questionIndex, session.questionCount)
+              ? await previousState(
+                  tx,
+                  cursorState as Exclude<PresentationState, "not_started">,
+                  session.questionIndex,
+                  session.questionCount,
+                )
               : await advanceState(tx, cursorState, session.questionIndex, session.questionCount);
         const changed = await tx
           .update(presentationSessions)

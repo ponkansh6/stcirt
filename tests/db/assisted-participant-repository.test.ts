@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "../helpers/db";
 import * as schema from "@/lib/db/schema";
 
@@ -39,6 +40,79 @@ async function completeParticipant(participantId: number, suffix: string) {
   });
 }
 
+function findSqliteConstraintError(error: unknown): unknown {
+  let current = error;
+  while (current && typeof current === "object") {
+    const candidate = current as { message?: unknown; cause?: unknown };
+    if (typeof candidate.message === "string" && /unique|constraint/i.test(candidate.message)) {
+      return current;
+    }
+    current = candidate.cause;
+  }
+  return error;
+}
+
+async function runSqliteUniqueConflict(operation: () => Promise<unknown>) {
+  try {
+    await operation();
+  } catch (error) {
+    // Drizzle wraps libsql's constraint error. Pass the actual SQLite error
+    // through so the repository's constraint classifier sees its message.
+    throw findSqliteConstraintError(error);
+  }
+}
+
+async function commitWinnerThenCauseSqliteUniqueConflict(
+  winnerOwnerId: number,
+  winnerName: string,
+  retryOwnerId: number,
+  retryName: string,
+  conflict: "owner-link" | "participant-name",
+) {
+  const database = dbRef.db!;
+  const originalTransaction = database.transaction.bind(database);
+  let calls = 0;
+  let intercept = true;
+  const transactionSpy = vi.spyOn(database, "transaction");
+  transactionSpy.mockImplementation((callback, config) => {
+    calls += 1;
+    if (!intercept || calls !== 1) return originalTransaction(callback, config);
+    intercept = false;
+    return (async () => {
+      const winner = await createAssistedParticipant(winnerOwnerId, winnerName);
+      // Keep the winning row committed, then make the intercepted retry write
+      // hit SQLite's real unique constraint outside a transaction. This feeds
+      // the constraint error to createAssistedParticipant's recovery path
+      // without aborting the winner's transaction or masking the error.
+      if (conflict === "owner-link") {
+        await runSqliteUniqueConflict(() =>
+          database
+            .insert(schema.assistedParticipants)
+            .values({ ownerParticipantId: winnerOwnerId, targetParticipantId: winner.id })
+            .run(),
+        );
+        return;
+      }
+      const [row] = await database
+        .select()
+        .from(schema.examParticipants)
+        .where(eq(schema.examParticipants.id, winner.id));
+      if (!row) throw new Error("Expected the winning participant to exist");
+      await runSqliteUniqueConflict(() =>
+        database
+          .insert(schema.examParticipants)
+          .values({ displayName: row.displayName, normalizedName: row.normalizedName })
+          .run(),
+      );
+    })();
+  });
+  try {
+    return await createAssistedParticipant(retryOwnerId, retryName);
+  } finally {
+    transactionSpy.mockRestore();
+  }
+}
+
 describe("assisted-participant-repository", () => {
   let testDb: TestDb;
 
@@ -69,41 +143,33 @@ describe("assisted-participant-repository", () => {
   it("treats a same-name unique race as an idempotent retry after re-reading the link", async () => {
     const ownerId = await addParticipant("本人");
     await completeParticipant(ownerId, "owner");
-    const target = await createAssistedParticipant(ownerId, "代理");
-    const transaction = vi
-      .spyOn(dbRef.db!, "transaction")
-      .mockRejectedValueOnce(
-        new Error("UNIQUE constraint failed: assisted_participants.owner_participant_id"),
-      );
-
-    try {
-      await expect(createAssistedParticipant(ownerId, " 代理 ")).resolves.toEqual(target);
-      expect(transaction).toHaveBeenCalledOnce();
-      await expect(dbRef.db!.select().from(schema.assistedParticipants)).resolves.toHaveLength(1);
-    } finally {
-      transaction.mockRestore();
-    }
+    const retry = await commitWinnerThenCauseSqliteUniqueConflict(
+      ownerId,
+      "代理",
+      ownerId,
+      " 代理 ",
+      "owner-link",
+    );
+    expect(retry.name).toBe("代理");
+    expect(await getAssistedParticipant(ownerId)).toEqual(retry);
+    await expect(dbRef.db!.select().from(schema.assistedParticipants)).resolves.toHaveLength(1);
+    await expect(dbRef.db!.select().from(schema.examParticipants)).resolves.toHaveLength(2);
   });
 
   it("returns a conflict after a unique race links a different target to the owner", async () => {
     const ownerId = await addParticipant("本人");
     await completeParticipant(ownerId, "owner");
-    await createAssistedParticipant(ownerId, "先に登録された代理");
-    const transaction = vi
-      .spyOn(dbRef.db!, "transaction")
-      .mockRejectedValueOnce(
-        new Error("UNIQUE constraint failed: assisted_participants.owner_participant_id"),
-      );
-
-    try {
-      await expect(createAssistedParticipant(ownerId, "別の代理")).rejects.toMatchObject({
-        name: "AssistedParticipantError",
-        status: 409,
-      });
-      await expect(dbRef.db!.select().from(schema.assistedParticipants)).resolves.toHaveLength(1);
-    } finally {
-      transaction.mockRestore();
-    }
+    await expect(
+      commitWinnerThenCauseSqliteUniqueConflict(
+        ownerId,
+        "先に登録された代理",
+        ownerId,
+        "別の代理",
+        "owner-link",
+      ),
+    ).rejects.toMatchObject({ name: "AssistedParticipantError", status: 409 });
+    await expect(dbRef.db!.select().from(schema.assistedParticipants)).resolves.toHaveLength(1);
+    await expect(dbRef.db!.select().from(schema.examParticipants)).resolves.toHaveLength(2);
   });
 
   it("returns a name conflict when another owner wins the target-name unique race", async () => {
@@ -111,23 +177,21 @@ describe("assisted-participant-repository", () => {
     const secondOwnerId = await addParticipant("二人目");
     await completeParticipant(firstOwnerId, "first-owner");
     await completeParticipant(secondOwnerId, "second-owner");
-    await createAssistedParticipant(firstOwnerId, "共有名");
-    const transaction = vi
-      .spyOn(dbRef.db!, "transaction")
-      .mockRejectedValueOnce(
-        new Error("UNIQUE constraint failed: exam_participants.normalized_name"),
-      );
-
-    try {
-      await expect(createAssistedParticipant(secondOwnerId, "共有名")).rejects.toMatchObject({
-        name: "AssistedParticipantError",
-        status: 409,
-        message: "この名前はすでに使用されています",
-      });
-      await expect(dbRef.db!.select().from(schema.assistedParticipants)).resolves.toHaveLength(1);
-    } finally {
-      transaction.mockRestore();
-    }
+    await expect(
+      commitWinnerThenCauseSqliteUniqueConflict(
+        firstOwnerId,
+        "共有名",
+        secondOwnerId,
+        "共有名",
+        "participant-name",
+      ),
+    ).rejects.toMatchObject({
+      name: "AssistedParticipantError",
+      status: 409,
+      message: "この名前はすでに使用されています",
+    });
+    await expect(dbRef.db!.select().from(schema.assistedParticipants)).resolves.toHaveLength(1);
+    await expect(dbRef.db!.select().from(schema.examParticipants)).resolves.toHaveLength(3);
   });
 
   it("rejects a second different target for the same owner", async () => {

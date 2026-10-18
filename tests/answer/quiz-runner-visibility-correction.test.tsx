@@ -3,7 +3,6 @@ import { cleanup, render, screen, fireEvent, within, act, waitFor } from "@testi
 import { useState } from "react";
 import QuizRunner from "@/app/answer/quiz-runner";
 import GlobalHeader from "@/app/GlobalHeader";
-import { ApiError } from "@/lib/api/client";
 
 const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
@@ -119,6 +118,40 @@ describe("QuizRunner batch answer sheet", () => {
       "/results",
     );
     expect(screen.queryByRole("link", { name: "代理回答の結果を見る" })).not.toBeInTheDocument();
+  });
+
+  it("links an assisted submission to its scoped results while keeping the owner result link", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => visibleResultsPayload,
+      }),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+        },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    expect(await screen.findByRole("link", { name: "自分の結果を見る" })).toHaveAttribute(
+      "href",
+      "/results",
+    );
+    expect(screen.getByRole("link", { name: "代理回答の結果を見る" })).toHaveAttribute(
+      "href",
+      "/results?scope=assisted",
+    );
   });
 
   it("fails closed while a saved submission visibility lookup is pending, then unlocks only on confirmation", async () => {

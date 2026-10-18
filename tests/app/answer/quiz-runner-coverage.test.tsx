@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import QuizRunner from "@/app/answer/quiz-runner";
+import { runIfSubmissionAllowed } from "@/app/answer/submission-gate";
 
 const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
@@ -327,16 +328,36 @@ describe("QuizRunner remaining coverage states", () => {
     expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
   });
 
-  it("does not submit an incomplete answer sheet even if the disabled button is clicked", () => {
-    const saveAnswers = vi.fn();
-    mockUseQuizSession.mockReturnValue(session({ kind: "answering" }, { saveAnswers }));
+  it("keeps submit disabled and the incomplete draft visible", () => {
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "answering" }, { selections: { 1: 0 }, answeredCount: 1 }),
+    );
     render(<QuizRunner />);
 
+    expect(screen.getByText("未回答 4問", { exact: true })).toBeInTheDocument();
     const submit = screen.getByRole("button", { name: "未回答の設問に回答してください" });
-    submit.removeAttribute("disabled");
-    fireEvent.click(submit);
+    expect(submit).toBeDisabled();
+    expect(document.getElementById("answer-1-0")).toBeChecked();
+  });
 
-    expect(saveAnswers).not.toHaveBeenCalled();
+  it("keeps a complete draft visible while results are published", () => {
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering", publishedLock: true },
+        {
+          selections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0 },
+          answeredCount: 5,
+        },
+      ),
+    );
+    render(<QuizRunner />);
+
+    expect(screen.getByText("全5問に回答しました。", { exact: true })).toBeInTheDocument();
+    const submit = screen.getByRole("button", { name: "5問の回答を確定する" });
+    expect(submit).toBeDisabled();
+    for (const [questionId, choiceIndex] of Object.entries({ 1: 0, 2: 1, 3: 2, 4: 3, 5: 0 })) {
+      expect(document.getElementById(`answer-${questionId}-${choiceIndex}`)).toBeChecked();
+    }
   });
 
   it("keeps incomplete answer recovery without offering submit after an error message", () => {
@@ -425,51 +446,30 @@ describe("QuizRunner remaining coverage states", () => {
   it.each([
     ["submitting", { kind: "submitting" }],
     ["refreshing", { kind: "refreshing" }],
-  ] as const)("ignores a forced submit click while %s", (_label, phase) => {
-    const saveAnswers = vi.fn();
+  ] as const)("keeps the draft visible while %s is in progress", (label, phase) => {
     mockUseQuizSession.mockReturnValue(
       session(phase, {
         selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
         answeredCount: 5,
-        saveAnswers,
       }),
     );
     render(<QuizRunner />);
 
+    const expectedStatus =
+      label === "submitting" ? "回答を送信しています…" : "保存済み回答を確認しています…";
+    const expectedGuidance =
+      label === "submitting"
+        ? "送信が完了するまで、回答の変更や再送はできません。"
+        : "確認が終わるまで、回答の変更や送信はできません。";
+    expect(screen.getByRole("status")).toHaveTextContent(expectedStatus);
+    expect(screen.getByRole("status")).toHaveTextContent(expectedGuidance);
     const submit = screen.getByRole("button", {
       name: /回答を送信しています|保存済み回答を確認しています/,
     });
-    submit.removeAttribute("disabled");
-    fireEvent.click(submit);
-    expect(saveAnswers).not.toHaveBeenCalled();
-  });
-
-  it("does not submit when the captured submit handler runs during refresh", () => {
-    const saveAnswers = vi.fn();
-    mockUseQuizSession.mockReturnValue(
-      session(
-        { kind: "refreshing" },
-        {
-          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-          answeredCount: 5,
-          saveAnswers,
-        },
-      ),
-    );
-    render(<QuizRunner />);
-
-    const submit = screen.getByRole("button", {
-      name: "保存済み回答を確認しています…",
-    });
-    const reactPropsKey = Object.keys(submit).find((key) => key.startsWith("__reactProps$"));
-    expect(reactPropsKey).toBeDefined();
-    const onClick = (submit as unknown as Record<string, { onClick?: () => void }>)[reactPropsKey!]
-      ?.onClick;
-    expect(onClick).toBeTypeOf("function");
-
-    onClick!();
-
-    expect(saveAnswers).not.toHaveBeenCalled();
+    expect(submit).toBeDisabled();
+    for (let questionId = 1; questionId <= 5; questionId += 1) {
+      expect(document.getElementById(`answer-${questionId}-0`)).toBeChecked();
+    }
   });
 
   it("explains when a free-text question has a legacy selected answer", () => {
@@ -971,5 +971,18 @@ describe("QuizRunner remaining coverage states", () => {
     payload.reject(new Error("late response failed"));
     await payload.promise.catch(() => undefined);
     await Promise.resolve();
+  });
+});
+
+describe("runIfSubmissionAllowed", () => {
+  it("runs the action only when submission is allowed and unblocked", () => {
+    const action = vi.fn(() => "saved");
+
+    expect(runIfSubmissionAllowed(false, false, action)).toBeUndefined();
+    expect(runIfSubmissionAllowed(true, true, action)).toBeUndefined();
+    expect(action).not.toHaveBeenCalled();
+
+    expect(runIfSubmissionAllowed(true, false, action)).toBe("saved");
+    expect(action).toHaveBeenCalledOnce();
   });
 });

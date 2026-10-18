@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import ChoiceButton from "@/components/ChoiceButton";
 
 describe("ChoiceButton", () => {
@@ -63,22 +64,31 @@ describe("ChoiceButton", () => {
     expect(screen.getByText("Styled choice").closest("label")).toHaveClass(...classes);
   });
 
-  it("changes the radio when its full row label is activated", () => {
+  it("changes the radio when its full row label is activated", async () => {
     const handleChange = vi.fn();
-    render(
+    const user = userEvent.setup();
+    const choice = (checked: boolean) => (
       <ChoiceButton
         id="choice-a"
         name="answer"
         value="0"
         label="A."
         text="Clickable"
-        variant="idle"
-        checked={false}
+        variant={checked ? "selected" : "idle"}
+        checked={checked}
         onChange={handleChange}
-      />,
+      />
     );
-    fireEvent.click(screen.getByText("Clickable"));
+    const { rerender } = render(choice(false));
+    const radio = screen.getByRole("radio", { name: /A\..*Clickable/ });
+
+    await user.click(screen.getByText("Clickable"));
     expect(handleChange).toHaveBeenCalledOnce();
+    expect(radio).not.toBeChecked();
+
+    rerender(choice(true));
+    expect(screen.getByRole("radio", { name: /A\..*Clickable/ })).toBeChecked();
+    expect(screen.getByText("選択中")).toBeVisible();
   });
 
   it("disables the radio while a submission is pending", () => {

@@ -258,7 +258,7 @@ describe("durable free-response assessment and restoration", () => {
     });
   });
 
-  it("continues to the next due assessment when its claim loses a race", async () => {
+  it("continues to the next due assessment when its claim RETURNING result is hidden", async () => {
     const otherSubmissionId = "00000000-0000-4000-8000-000000000103";
     await saveAnswerSubmission({
       submissionId,
@@ -276,19 +276,34 @@ describe("durable free-response assessment and restoration", () => {
     });
 
     let hideClaimResult = true;
+    let hiddenClaimResult: unknown;
+    let hiddenClaimToken: string | null = null;
     const wrapQuery = (query: object): object =>
       new Proxy(query, {
         get(target, property) {
           const value = Reflect.get(target, property);
           if (typeof value !== "function") return value;
+          if (property === "set") {
+            return (...args: unknown[]) => {
+              const values = args[0] as { claimToken?: unknown } | undefined;
+              const result = value.apply(target, args) as object;
+              if (hideClaimResult && typeof values?.claimToken === "string") {
+                hiddenClaimToken = values.claimToken;
+              }
+              return wrapQuery(result);
+            };
+          }
           if (property === "returning") {
             return (...args: unknown[]) => {
               const result = value.apply(target, args) as Promise<unknown>;
               if (!hideClaimResult) return result;
               hideClaimResult = false;
-              // Let the conditional update claim the row, as if another worker
-              // won just before this worker received its RETURNING result.
-              return result.then(() => []);
+              // Let the conditional update claim the row, then hide its
+              // RETURNING result from the worker.
+              return result.then((rows) => {
+                hiddenClaimResult = rows;
+                return [];
+              });
             };
           }
           return (...args: unknown[]) => wrapQuery(value.apply(target, args));
@@ -322,9 +337,57 @@ describe("durable free-response assessment and restoration", () => {
       questionVersion,
       JEV_RUBRIC_VERSION,
     );
+    expect(hiddenClaimResult).toHaveLength(1);
+    const lostClaimSubmissionId = (hiddenClaimResult as { submissionId: string }[])[0]!
+      .submissionId;
+    expect([submissionId, otherSubmissionId]).toContain(lostClaimSubmissionId);
+    expect(hiddenClaimToken).toEqual(expect.any(String));
+    const gradedSubmissionId =
+      lostClaimSubmissionId === submissionId ? otherSubmissionId : submissionId;
     const assessments = await testDb.db.select().from(schema.examAnswerAssessments);
-    expect(assessments.filter(({ state }) => state === "processing")).toHaveLength(1);
-    expect(assessments.filter(({ state }) => state === "graded")).toHaveLength(1);
+    expect(assessments).toHaveLength(2);
+    const assessmentBySubmission = new Map(
+      assessments.map((assessment) => [assessment.submissionId, assessment]),
+    );
+    const gradedAssessment = assessmentBySubmission.get(gradedSubmissionId);
+    expect(gradeFreeResponse).toHaveBeenCalledWith(
+      gradedAssessment!.answerText,
+      gradedAssessment!.questionVersion,
+      gradedAssessment!.rubricVersion,
+    );
+    expect(assessmentBySubmission.get(lostClaimSubmissionId)).toMatchObject({
+      submissionId: lostClaimSubmissionId,
+      questionId: 5,
+      revision: 1,
+      answerText: "上司に確認し、承認済み環境を使います。",
+      state: "processing",
+      attempts: 1,
+      claimToken: hiddenClaimToken,
+      nextAttemptAt: expect.any(Date),
+      rawScore: null,
+      normalizedScore: null,
+      confidence: null,
+      model: null,
+      gradedAt: null,
+      errorCode: null,
+    });
+    expect(gradedAssessment).toMatchObject({
+      submissionId: gradedSubmissionId,
+      questionId: 5,
+      revision: 1,
+      answerText: "上司に確認し、承認済み環境を使います。",
+      questionVersion,
+      rubricVersion: JEV_RUBRIC_VERSION,
+      state: "graded",
+      attempts: 1,
+      claimToken: null,
+      rawScore: 6.3,
+      normalizedScore: 0.7,
+      confidence: 0.99,
+      model: "jev-latest",
+      nextAttemptAt: null,
+      errorCode: null,
+    });
   });
 
   it("ignores a provider failure after another worker has replaced its claim", async () => {

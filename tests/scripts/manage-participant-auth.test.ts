@@ -459,11 +459,12 @@ describe("participant auth management", () => {
     const secret = "s".repeat(43);
     await writeFile(envPath, `PARTICIPANT_PIN=0042\nPARTICIPANT_SESSION_SECRET=${secret}\n`);
     await writeFile(projectPath, JSON.stringify({ projectId: "project-id" }));
-    const spawn = vi.fn((_command: string, args: string[]) => ({
-      status: args[1] === "add" && args[2] === "PARTICIPANT_SESSION_SECRET" ? 1 : 0,
-      stdout: secret,
-      stderr: secret,
-    }));
+    const calls: Array<{ args: string[]; status: number }> = [];
+    const spawn = vi.fn((_command: string, args: string[]) => {
+      const status = args[1] === "add" && args[2] === "PARTICIPANT_SESSION_SECRET" ? 1 : 0;
+      calls.push({ args, status });
+      return { status, stdout: secret, stderr: secret };
+    });
     const log = vi.fn();
 
     await expect(
@@ -472,7 +473,23 @@ describe("participant auth management", () => {
     expect(spawn).not.toHaveBeenCalled();
     await expect(
       syncPair({ target: "production", envPath, projectPath, spawn, log }),
-    ).rejects.toThrow("PARTICIPANT_SESSION_SECRET");
+    ).rejects.toThrow("rerun sync with the same saved pair to reconcile it");
+    // The accepted PIN upsert remains in Vercel when the later secret upsert fails.
+    expect(calls).toEqual([
+      { args: ["whoami"], status: 0 },
+      { args: ["env", "ls", "production"], status: 0 },
+      {
+        args: ["env", "add", "PARTICIPANT_PIN", "production", "--force", "--sensitive"],
+        status: 0,
+      },
+      {
+        args: ["env", "add", "PARTICIPANT_SESSION_SECRET", "production", "--force", "--sensitive"],
+        status: 1,
+      },
+    ]);
+    expect(log.mock.calls.flat().join(" ")).not.toContain(
+      "Both participant auth variables were upserted",
+    );
     expect(log.mock.calls.flat().join(" ")).not.toContain(secret);
   });
 });

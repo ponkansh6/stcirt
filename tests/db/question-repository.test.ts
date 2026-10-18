@@ -16,11 +16,7 @@ vi.mock("@/lib/db", async (importOriginal) => {
   };
 });
 
-import {
-  getExamQuestions,
-  getNextQuestion,
-  getQuestionById,
-} from "@/lib/db/repository/question-repository";
+import { getExamQuestions, getQuestionById } from "@/lib/db/repository/question-repository";
 
 async function insertQuestion(question: string) {
   const [count] = await dbRef
@@ -51,50 +47,6 @@ describe("question-repository", () => {
   });
 
   afterEach(() => testDb.cleanup());
-
-  it("returns null when there are no questions or the cursor is exhausted", async () => {
-    expect(await getNextQuestion()).toBeNull();
-    const id = await insertQuestion("Only question");
-    expect(await getNextQuestion(id)).toBeNull();
-  });
-
-  it("returns existing questions in insertion order using the id cursor", async () => {
-    const firstId = await insertQuestion("First question");
-    const secondId = await insertQuestion("Second question");
-
-    expect(await getNextQuestion()).toEqual({
-      id: firstId,
-      question: "First question",
-      choices: ["A", "B", "C", "D"],
-      answerType: "selected",
-    });
-    expect(await getNextQuestion(firstId)).toEqual({
-      id: secondId,
-      question: "Second question",
-      choices: ["A", "B", "C", "D"],
-      answerType: "selected",
-    });
-  });
-
-  it("returns it-literacy-005 as free text without choices", async () => {
-    const [question] = await testDb.db
-      .insert(schema.examQuestions)
-      .values({
-        id: 1,
-        key: "it-literacy-005",
-        question: "自由記述の質問",
-        choices: [],
-        correctIndex: 0,
-      })
-      .returning({ id: schema.examQuestions.id });
-
-    expect(await getNextQuestion()).toEqual({
-      id: question!.id,
-      question: "自由記述の質問",
-      choices: [],
-      answerType: "freeText",
-    });
-  });
 
   it("returns the first five questions in order with only public exam fields", async () => {
     for (let id = 1; id <= 6; id += 1) {

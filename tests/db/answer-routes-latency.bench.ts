@@ -23,10 +23,93 @@ vi.mock("@/lib/db", async (importOriginal) => {
 
 type SqlLogger = Logger & { reset(): void; count(): number };
 type RouteHandler = (request: Request) => Promise<Response>;
+type Scenario = {
+  name: string;
+  handler: "assistedStatus" | "answersLatest" | "answersBatch" | "participantResults";
+  url: string;
+  visible?: boolean;
+};
+
+function assertScenarioResponse(scenario: Scenario, response: Response, body: unknown) {
+  assert.equal(response.status, 200, `${scenario.name} must return successfully`);
+  const data = body as Record<string, unknown>;
+  if (scenario.name === "assisted-status/owner") {
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    assert.deepEqual(data, {
+      participant: { id: ASSISTED_ID, name: "Bench assisted" },
+      hasSubmission: true,
+      eligible: false,
+    });
+    return;
+  }
+  if (scenario.name.startsWith("answers-latest/")) {
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    const assisted = scenario.name.endsWith("assisted");
+    assert.ok(data.submission !== null && typeof data.submission === "object");
+    const submission = data.submission as Record<string, unknown>;
+    assert.equal(submission.submissionId, assisted ? ASSISTED_SUBMISSION_ID : OWNER_SUBMISSION_ID);
+    assert.equal(submission.revision, assisted ? 5 : 4);
+    assert.deepEqual(
+      submission.answers,
+      QUESTION_IDS.map((questionId, index) => ({
+        questionId,
+        answerKind: index === 4 ? "freeText" : "selected",
+        selectedIndex: index === 4 ? null : assisted ? 1 : 0,
+        freeText: index === 4 ? `Response ${assisted ? ASSISTED_ID : OWNER_ID}` : null,
+      })),
+    );
+    return;
+  }
+  if (scenario.name.startsWith("answers-batch-get/")) {
+    const assisted = scenario.name.endsWith("assisted");
+    assert.equal(data.submissionId, assisted ? ASSISTED_SUBMISSION_ID : OWNER_SUBMISSION_ID);
+    assert.equal(data.revision, assisted ? 5 : 4);
+    assert.equal(data.resultsVisible, false);
+    assert.deepEqual(
+      data.answers,
+      QUESTION_IDS.map((questionId, index) => ({
+        questionId,
+        answerKind: index === 4 ? "freeText" : "selected",
+        selectedIndex: index === 4 ? null : assisted ? 1 : 0,
+        freeText: index === 4 ? `Response ${assisted ? ASSISTED_ID : OWNER_ID}` : null,
+      })),
+    );
+    return;
+  }
+
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  if (!scenario.visible) {
+    assert.deepEqual(data, { state: "waiting" });
+    return;
+  }
+  const assisted = scenario.name.includes("assisted");
+  assert.equal(data.state, "visible");
+  assert.equal(data.rank, assisted ? 2 : 1);
+  assert.equal(data.score, assisted ? 0 : 1);
+  assert.deepEqual(data.questions, [
+    {
+      position: 0,
+      question: "Benchmark result question",
+      answer: {
+        kind: "selected",
+        value: assisted ? "B" : "A",
+        correctness: assisted ? "incorrect" : "correct",
+      },
+    },
+  ]);
+  assert.equal("participantId" in data, false, "Public results must not expose participant IDs");
+}
 
 const OWNER_ID = 701;
 const ASSISTED_ID = 702;
 const QUESTION_IDS = [101, 102, 103, 104, 105];
+const QUESTION_VERSIONS = [
+  "nagano-001-v1",
+  "nagano-002-v1",
+  "nagano-003-v1",
+  "nagano-004-v1",
+  "tamami-egg-v1",
+];
 const OWNER_SUBMISSION_ID = "00000000-0000-4000-8000-000000000701";
 const ASSISTED_SUBMISSION_ID = "00000000-0000-4000-8000-000000000702";
 const WARMUP_SAMPLES = 5;
@@ -127,6 +210,7 @@ describe("answer route local SQLite latency benchmark", () => {
       QUESTION_IDS.map((id, index) => ({
         id,
         key: `answer-route-bench-${id}`,
+        questionVersion: QUESTION_VERSIONS[index]!,
         question: `Benchmark question ${index + 1}`,
         choices: index === 4 ? [] : ["A", "B", "C", "D"],
         correctIndex: 0,
@@ -143,6 +227,9 @@ describe("answer route local SQLite latency benchmark", () => {
         id,
         participantId,
         questionIds: QUESTION_IDS,
+        questionVersions: Object.fromEntries(
+          QUESTION_IDS.map((questionId, index) => [String(questionId), QUESTION_VERSIONS[index]!]),
+        ),
         revision,
       })),
     );
@@ -227,12 +314,6 @@ describe("answer route local SQLite latency benchmark", () => {
     vi.unstubAllEnvs();
   }
 
-  type Scenario = {
-    name: string;
-    handler: "assistedStatus" | "answersLatest" | "answersBatch" | "participantResults";
-    url: string;
-    visible?: boolean;
-  };
   const scenarios: Scenario[] = [
     {
       name: "assisted-status/owner",
@@ -307,7 +388,8 @@ describe("answer route local SQLite latency benchmark", () => {
         const response = await handlers[scenario.handler](request);
         const elapsedMs = performance.now() - startedAt;
         const sqlStatements = logger.count();
-        assert.equal(response.status, 200, `${scenario.name} must return successfully`);
+        const body = await response.json();
+        assertScenarioResponse(scenario, response, body);
         assert.ok(sqlStatements > 0, `${scenario.name} must execute SQL`);
         if (invocation <= WARMUP_SAMPLES) return;
 

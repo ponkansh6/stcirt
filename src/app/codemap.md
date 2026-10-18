@@ -14,6 +14,7 @@ Next.js App Router pages and REST API routes for the fixed five-question exam, a
 - `results/` — Authenticated participant's own published result view
 - `api/questions/batch/route.ts` — GET the fixed five-question payload without answer keys
 - `api/answers/batch/route.ts` — Authenticated atomic save/correction endpoint
+- `api/answers/latest/route.ts` — Participant-scoped latest saved submission lookup
 - `api/participants/` — Participant session, assisted answer, and result APIs
 - `api/admin/` — Separate admin authentication, snapshot, deck, and result visibility APIs
 - `api/presentation/route.ts` — Stage-specific public projection API

@@ -255,6 +255,15 @@ describe("participant shared rate limit", () => {
     expect(granted.length).toBeLessThanOrEqual(2);
 
     const counts = await dbRef.db!.select().from(schema.participantRateLimits);
-    expect(counts.every((row) => row.attempts <= 2)).toBe(true);
+    expect(counts).toHaveLength(1);
+    expect(counts[0]?.attempts).toBe(granted.length);
+    expect(counts[0]?.attempts).toBeLessThanOrEqual(2);
+
+    const next = await checkParticipantRateLimit("同時");
+    const followUpGrant = next.available && next.allowed ? 1 : 0;
+    expect(granted.length + followUpGrant).toBeLessThanOrEqual(2);
+    const afterRejection = await dbRef.db!.select().from(schema.participantRateLimits);
+    expect(afterRejection[0]?.attempts).toBe(granted.length + followUpGrant);
+    expect(afterRejection[0]?.attempts).toBeLessThanOrEqual(2);
   });
 });

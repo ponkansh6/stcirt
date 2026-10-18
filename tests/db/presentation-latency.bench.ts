@@ -192,7 +192,7 @@ describe("presentation repository latency benchmark", () => {
         question: isFreeText ? "Free-text question" : "Question 11",
         choices: questionChoices,
         correctIndex: 0,
-        explanation: "Explanation 11",
+        explanation: `Explanation ${primarySourceId}`,
       },
       {
         sessionId: 1,
@@ -255,17 +255,98 @@ describe("presentation repository latency benchmark", () => {
     return operation(operationId, action);
   }
 
+  function assertPublicProjection(stage: PublicStage, projection: unknown) {
+    assert.ok(projection !== null && typeof projection === "object");
+    const value = projection as Record<string, unknown>;
+    if (stage === "hidden") {
+      assert.deepEqual(value, { state: "standby" });
+    } else if (stage === "question" || stage === "selected-answer") {
+      assert.equal(value.state, stage === "question" ? "question" : "answer");
+      const question = value.question as Record<string, unknown>;
+      assert.equal(question.id, 11);
+      assert.equal(question.ordinal, 1);
+      assert.equal(question.total, 2);
+      assert.equal(question.question, "Question 11");
+      assert.deepEqual(question.choices, ["Correct", "Wrong"]);
+      assert.equal(question.answerType, "selected");
+      if (stage === "question") {
+        assert.equal("correctAnswer" in question, false);
+      } else {
+        assert.equal(question.correctAnswer, "Correct");
+        assert.equal(question.correctIndex, 0);
+        assert.equal(question.explanation, "Explanation 11");
+      }
+    } else if (stage === "q5-free-text-answer" || stage === "non-q5-free-text-answer") {
+      assert.equal(value.state, "answer");
+      const question = value.question as Record<string, unknown>;
+      assert.equal(question.id, stage === "q5-free-text-answer" ? 22 : 11);
+      assert.equal(question.answerType, "freeText");
+      assert.equal(
+        question.expectedAnswer,
+        stage === "q5-free-text-answer" ? "Explanation 22" : "Explanation 11",
+      );
+      if (stage === "q5-free-text-answer") {
+        assert.equal("responses" in question, false, "Q5 free-text responses must be redacted");
+      } else {
+        assert.deepEqual(
+          question.responses,
+          [1, 2, 3].map((rank) => ({
+            displayName: `Participant ${rank}`,
+            answer: `Response ${rank}`,
+            answerKind: "freeText",
+            similarity: 1,
+            score: 1,
+          })),
+        );
+      }
+    } else if (stage === "podium-preview") {
+      assert.deepEqual(value, { state: "podium_preview" });
+    } else if (stage === "rank") {
+      assert.equal(value.state, "third");
+      assert.deepEqual(value.winners, [
+        {
+          displayName: "Participant 3",
+          score: 1,
+          rank: 3,
+          questionResults: [
+            {
+              position: 0,
+              question: "Question 11",
+              answer: { kind: "selected", value: "Correct" },
+              correctness: "correct",
+            },
+            {
+              position: 1,
+              question: "Question 22",
+              answer: { kind: "freeText", value: "Response 3" },
+              normalizedScore: 1,
+            },
+          ],
+        },
+      ]);
+    } else if (stage === "finished") {
+      assert.equal(value.state, "finished");
+      assert.equal("winners" in value, false);
+    }
+  }
+
+  async function assertPublicRouteResponse(stage: PublicStage, response: Response) {
+    assert.equal(response.status, 200, "Public presentation route must return successfully");
+    assert.equal(response.headers.get("cache-control"), "no-store, private");
+    assertPublicProjection(stage, await response.json());
+  }
+
   const scenarios: Array<{
     action: Action | "replay";
     actionToRun: Action;
-    before: (variant: Variant, operationId: string) => Promise<void>;
+    before: (variant: Variant, operationId: string) => Promise<unknown>;
     requiredReads: string;
     stateTransitions: string[];
   }> = [
     {
       action: "start",
       actionToRun: "start",
-      before: async () => {},
+      before: async () => undefined,
       requiredReads: "current session and aggregate presentation snapshot",
       stateTransitions: ["aggregate"],
     },
@@ -274,6 +355,7 @@ describe("presentation repository latency benchmark", () => {
       actionToRun: "advance",
       before: async (variant, operationId) => {
         await runOperation(variant, `${operationId}-setup-start`, "start");
+        return undefined;
       },
       requiredReads: "current session and presentation snapshot",
       stateTransitions: ["aggregate", "start"],
@@ -285,6 +367,7 @@ describe("presentation repository latency benchmark", () => {
         await runOperation(variant, `${operationId}-setup-start`, "start");
         await runOperation(variant, `${operationId}-setup-advance-1`, "advance");
         await runOperation(variant, `${operationId}-setup-advance-2`, "advance");
+        return undefined;
       },
       requiredReads: "current session and presentation snapshot",
       stateTransitions: ["aggregate", "start", "advance", "advance"],
@@ -294,6 +377,7 @@ describe("presentation repository latency benchmark", () => {
       actionToRun: "hide",
       before: async (variant, operationId) => {
         await runOperation(variant, `${operationId}-setup-start`, "start");
+        return undefined;
       },
       requiredReads: "current session state",
       stateTransitions: ["aggregate", "start"],
@@ -304,6 +388,7 @@ describe("presentation repository latency benchmark", () => {
       before: async (variant, operationId) => {
         await runOperation(variant, `${operationId}-setup-start`, "start");
         await runOperation(variant, `${operationId}-setup-hide`, "hide");
+        return undefined;
       },
       requiredReads: "current session state",
       stateTransitions: ["aggregate", "start", "hide"],
@@ -312,7 +397,7 @@ describe("presentation repository latency benchmark", () => {
       action: "replay",
       actionToRun: "start",
       before: async (variant, operationId) => {
-        await runOperation(variant, operationId, "start");
+        return runOperation(variant, operationId, "start");
       },
       requiredReads: "operation idempotency record and current session state",
       stateTransitions: ["aggregate", "start (same operation ID before measurement)"],
@@ -361,7 +446,7 @@ describe("presentation repository latency benchmark", () => {
               aggregateResult.snapshotRevision > 0,
             "Each scenario must prepare a unique aggregate presentation snapshot",
           );
-          await scenario.before(variant, operationId);
+          const replayBaseline = await scenario.before(variant, operationId);
           assert.ok(logger, "Drizzle SQL logger must be initialized");
           logger.reset();
 
@@ -373,6 +458,40 @@ describe("presentation repository latency benchmark", () => {
             result !== null && typeof result === "object",
             "Operation must return a result",
           );
+          const actionResult = result as Record<string, unknown>;
+          if (scenario.action === "replay") {
+            assert.deepEqual(
+              actionResult,
+              replayBaseline,
+              "Replay must return the original operation result",
+            );
+          } else {
+            const expected =
+              scenario.action === "start"
+                ? { state: "opening", questionIndex: 0, projectionHidden: false }
+                : scenario.action === "advance"
+                  ? { state: "question", questionIndex: 0, projectionHidden: false }
+                  : scenario.action === "previous"
+                    ? { state: "question", questionIndex: 0, projectionHidden: false }
+                    : scenario.action === "hide"
+                      ? { state: "opening", questionIndex: 0, projectionHidden: true }
+                      : { state: "opening", questionIndex: 0, projectionHidden: false };
+            assert.equal(actionResult.state, expected.state);
+            assert.equal(actionResult.questionIndex, expected.questionIndex);
+            assert.equal(actionResult.projectionHidden, expected.projectionHidden);
+          }
+          const [persistedSession] = await testDb!.db
+            .select({
+              state: schema.presentationSessions.state,
+              questionIndex: schema.presentationSessions.questionIndex,
+              projectionHidden: schema.presentationSessions.projectionHidden,
+            })
+            .from(schema.presentationSessions)
+            .where(eq(schema.presentationSessions.id, 1));
+          assert.ok(persistedSession, "Presentation session must persist after the action");
+          assert.equal(persistedSession.state, actionResult.state);
+          assert.equal(persistedSession.questionIndex, actionResult.questionIndex);
+          assert.equal(persistedSession.projectionHidden, actionResult.projectionHidden);
           assert.ok(sqlStatements > 0, "Operation must execute logged Drizzle SQL statements");
           durations.push(duration);
           statementCounts.push(sqlStatements);
@@ -433,7 +552,8 @@ describe("presentation repository latency benchmark", () => {
           const result = await runPublicProjection(variant);
           const duration = performance.now() - startedAt;
           const sqlStatements = logger.count();
-          assert.ok(result !== null && typeof result === "object");
+          if (variant === "repository") assertPublicProjection(stage, result);
+          else await assertPublicRouteResponse(stage, result as Response);
           assert.ok(sqlStatements > 0, "Projection must execute logged Drizzle SQL statements");
           durations.push(duration);
           statementCounts.push(sqlStatements);

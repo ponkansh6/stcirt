@@ -293,18 +293,20 @@ describe("answer-repository", () => {
         answerKind: "freeText",
       });
 
-      await expect(
-        getAnswerSubmission("restored-submission", participantId),
-      ).resolves.toMatchObject({
-        answers: [
-          {
-            questionId: questionId!.id,
-            answerKind: "freeText",
-            selectedIndex: null,
-            freeText: "response",
-          },
-        ],
-      });
+      const restored = await getAnswerSubmission("restored-submission", participantId);
+      expect(restored).not.toBeNull();
+      expect(restored?.submissionId).toBe("restored-submission");
+      expect(restored?.answers).toEqual([
+        {
+          questionId: questionId!.id,
+          answerKind: "freeText",
+          selectedIndex: null,
+          freeText: "response",
+        },
+      ]);
+      expect(restored?.answers.some((answer) => answer.questionId === missingQuestionId!.id)).toBe(
+        false,
+      );
     });
 
     it("does not restore a submission for another participant", async () => {
@@ -577,6 +579,9 @@ describe("answer-repository", () => {
             answers: [],
           }),
         ).rejects.toMatchObject({ status: 503, code: "DATABASE_LOCKED" });
+        // Six write retries exhaust the retry budget; call seven is the recovery
+        // transaction/read that finds no submission.
+        expect(transaction).toHaveBeenCalledTimes(7);
       } finally {
         transaction.mockRestore();
       }
@@ -807,7 +812,7 @@ describe("answer-repository", () => {
       }
     });
 
-    it("recognizes generic SQLite unique-constraint messages", async () => {
+    it("rethrows a recognized SQLite unique conflict when recovery finds no submission", async () => {
       const conflict = Object.assign(new Error("unique constraint failed: table.key"), {
         code: "SQLITE_CONSTRAINT",
       });

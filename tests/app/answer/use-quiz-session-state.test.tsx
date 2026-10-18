@@ -19,7 +19,6 @@ const api = vi.hoisted(() => ({
   fetchAssistedParticipant: vi.fn(),
   fetchExamQuestions: vi.fn(),
   fetchLatestAnswerSubmission: vi.fn(),
-  fetchNextQuestion: vi.fn(),
   fetchParticipantSession: vi.fn(),
   createAssistedParticipant: vi.fn(),
   submitAnswerBatch: vi.fn(),
@@ -103,10 +102,11 @@ async function enterAnswering(
 ) {
   api.fetchParticipantSession.mockResolvedValue(participant);
   api.fetchLatestAnswerSubmission.mockResolvedValue(options.latest ?? null);
-  api.fetchNextQuestion.mockImplementation(async (afterId?: number) => {
-    const id = (afterId ?? 0) + 1;
-    return question(id, options.freeTextFifth && id === 5 ? "freeText" : "selected");
-  });
+  api.fetchExamQuestions.mockResolvedValue(
+    [1, 2, 3, 4, 5].map((id) =>
+      question(id, options.freeTextFifth && id === 5 ? "freeText" : "selected"),
+    ),
+  );
   const hook = renderHook(() => useQuizSession());
   await waitFor(() => expect(hook.result.current.phase.kind).toBe(expectedPhase));
   return hook;
@@ -205,18 +205,7 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: false,
     });
     api.fetchLatestAnswerSubmission.mockResolvedValue(null);
-    api.fetchNextQuestion.mockImplementation(async (afterId?: number) =>
-      question((afterId ?? 0) + 1),
-    );
-    api.fetchExamQuestions.mockImplementation(async (): Promise<ReturnType<typeof question>[]> => {
-      const questions: ReturnType<typeof question>[] = [];
-      for (let index = 0; index < 5; index += 1) {
-        const next = await api.fetchNextQuestion(index === 0 ? undefined : questions.at(-1)?.id);
-        if (!next) return questions;
-        questions.push(next);
-      }
-      return questions;
-    });
+    api.fetchExamQuestions.mockResolvedValue([1, 2, 3, 4, 5].map((id) => question(id)));
     api.createParticipantSession.mockResolvedValue({ participant });
     api.deleteParticipantSession.mockResolvedValue(undefined);
     api.submitAnswerBatch.mockResolvedValue({ submissionId, revision: 1 });
@@ -438,7 +427,7 @@ describe("useQuizSession state transitions", () => {
 
   it("reports incomplete batch as a retryable load error", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchNextQuestion.mockResolvedValueOnce(question(1)).mockResolvedValueOnce(null);
+    api.fetchExamQuestions.mockResolvedValueOnce([question(1)]);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
     expect(hook.result.current.quizzes).toHaveLength(0);
@@ -447,7 +436,7 @@ describe("useQuizSession state transitions", () => {
   it("marks a saved submission unrestorable when its questions are unavailable", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
     api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
-    api.fetchNextQuestion.mockResolvedValueOnce(null);
+    api.fetchExamQuestions.mockResolvedValueOnce([]);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
     expect(hook.result.current.restoreError).toContain("設問を読み込めませんでした");
@@ -455,10 +444,9 @@ describe("useQuizSession state transitions", () => {
 
   it("retries a failed load from the already loaded questions", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchNextQuestion
-      .mockResolvedValueOnce(question(1))
+    api.fetchExamQuestions
       .mockRejectedValueOnce(new Error("offline"))
-      .mockImplementation(async (afterId?: number) => question((afterId ?? 0) + 1));
+      .mockResolvedValueOnce([1, 2, 3, 4, 5].map((id) => question(id)));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
     act(() => hook.result.current.retryLoad());
@@ -468,12 +456,12 @@ describe("useQuizSession state transitions", () => {
 
   it("ignores repeated load retries while the first retry is pending", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchNextQuestion.mockRejectedValueOnce(new Error("offline"));
+    api.fetchExamQuestions.mockRejectedValueOnce(new Error("offline"));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
 
-    const pending = deferred<ReturnType<typeof question>>();
-    api.fetchNextQuestion.mockReturnValueOnce(pending.promise);
+    const pending = deferred<ReturnType<typeof question>[]>();
+    api.fetchExamQuestions.mockReturnValueOnce(pending.promise);
     const callsBeforeRetry = api.fetchExamQuestions.mock.calls.length;
     act(() => {
       hook.result.current.retryLoad();
@@ -482,7 +470,7 @@ describe("useQuizSession state transitions", () => {
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("loading"));
     expect(api.fetchExamQuestions).toHaveBeenCalledTimes(callsBeforeRetry + 1);
 
-    pending.resolve(question(1));
+    pending.resolve([1, 2, 3, 4, 5].map((id) => question(id)));
     await act(async () => {
       await pending.promise;
     });

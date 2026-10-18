@@ -101,6 +101,107 @@ describe("database migrations", () => {
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'exam_answer_submissions'",
       );
       expect(submissions.rows).toHaveLength(1);
+
+      const columns = async (table: string) => {
+        const result = await client.execute(`PRAGMA table_info(${table})`);
+        return result.rows.map((row) => ({
+          name: row.name,
+          type: row.type,
+          notnull: row.notnull,
+          pk: row.pk,
+        }));
+      };
+      expect(await columns("exam_answer_submissions")).toEqual([
+        { name: "id", type: "TEXT", notnull: 1, pk: 1 },
+        { name: "participant_id", type: "INTEGER", notnull: 1, pk: 0 },
+        { name: "question_ids", type: "TEXT", notnull: 1, pk: 0 },
+        { name: "revision", type: "INTEGER", notnull: 1, pk: 0 },
+        { name: "created_at", type: "INTEGER", notnull: 1, pk: 0 },
+        { name: "updated_at", type: "INTEGER", notnull: 1, pk: 0 },
+      ]);
+      expect(await columns("exam_submission_answers")).toEqual([
+        { name: "submission_id", type: "TEXT", notnull: 1, pk: 1 },
+        { name: "question_id", type: "INTEGER", notnull: 1, pk: 2 },
+        { name: "selected_index", type: "INTEGER", notnull: 1, pk: 0 },
+      ]);
+      expect(await columns("exam_submission_operations")).toEqual([
+        { name: "operation_id", type: "TEXT", notnull: 1, pk: 1 },
+        { name: "submission_id", type: "TEXT", notnull: 1, pk: 0 },
+        { name: "payload", type: "TEXT", notnull: 1, pk: 0 },
+        { name: "revision", type: "INTEGER", notnull: 1, pk: 0 },
+      ]);
+
+      const uniqueIndexes = async (table: string) => {
+        const result = await client.execute(`PRAGMA index_list(${table})`);
+        return result.rows
+          .filter((row) => row.unique === 1)
+          .map((row) => row.name)
+          .sort();
+      };
+      expect(await uniqueIndexes("exam_questions")).toContain("exam_questions_question_key_unique");
+      expect(await uniqueIndexes("exam_participants")).toContain(
+        "exam_participants_normalized_name_unique",
+      );
+
+      const normalizeForeignKeys = (rows: readonly unknown[]) =>
+        rows
+          .map((row) => {
+            if (typeof row !== "object" || row === null || Array.isArray(row)) {
+              throw new Error("SQLite foreign-key row was not an object");
+            }
+            const record = row as Record<string, unknown>;
+            return {
+              table: record.table,
+              from: record.from,
+              to: record.to,
+              on_delete: record.on_delete,
+            };
+          })
+          .sort((left, right) =>
+            JSON.stringify([left.from, left.table, left.to, left.on_delete]).localeCompare(
+              JSON.stringify([right.from, right.table, right.to, right.on_delete]),
+            ),
+          );
+      const foreignKeys = async (table: string) => {
+        const result = await client.execute(`PRAGMA foreign_key_list(${table})`);
+        return normalizeForeignKeys(result.rows);
+      };
+      expect(await foreignKeys("exam_answer_submissions")).toEqual(
+        normalizeForeignKeys([
+          {
+            table: "exam_participants",
+            from: "participant_id",
+            to: "id",
+            on_delete: "CASCADE",
+          },
+        ]),
+      );
+      expect(await foreignKeys("exam_submission_answers")).toEqual(
+        normalizeForeignKeys([
+          {
+            table: "exam_answer_submissions",
+            from: "submission_id",
+            to: "id",
+            on_delete: "CASCADE",
+          },
+          {
+            table: "exam_questions",
+            from: "question_id",
+            to: "id",
+            on_delete: "CASCADE",
+          },
+        ]),
+      );
+      expect(await foreignKeys("exam_submission_operations")).toEqual(
+        normalizeForeignKeys([
+          {
+            table: "exam_answer_submissions",
+            from: "submission_id",
+            to: "id",
+            on_delete: "CASCADE",
+          },
+        ]),
+      );
     } finally {
       client.close();
       rmSync(dir, { recursive: true, force: true });

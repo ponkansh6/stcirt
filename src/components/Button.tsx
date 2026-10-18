@@ -8,7 +8,7 @@ type ButtonProps = React.ComponentPropsWithRef<"button"> & {
   loading?: boolean;
 };
 
-/** Shared design-system classes so NavLink / home links match Button styling. */
+/** Shared design-system classes for Button variants. */
 export const buttonBaseClasses =
   "w-full py-3 rounded-card font-bold min-h-12 text-center focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition duration-200 ease-[var(--ease-out-soft)] motion-reduce:duration-0 disabled:opacity-50 motion-safe:active:scale-[0.98]";
 

@@ -197,13 +197,28 @@ describe("JEV score adapter", () => {
 
   it("classifies validation and malformed JSON errors without forwarding response text", async () => {
     vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
+    const providerSecret = "private provider detail sentinel";
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response("private provider detail", { status: 422 })),
+      vi.fn().mockResolvedValue(new Response(providerSecret, { status: 422 })),
     );
-    await expect(gradeCurrentAnswer("secret answer")).rejects.toThrow("jev_validation");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("not-json", { status: 200 })));
-    await expect(gradeCurrentAnswer("secret answer")).rejects.toThrow("jev_invalid_json");
+    const validationError = await gradeCurrentAnswer("secret answer").catch(
+      (error: unknown) => error,
+    );
+    expect(validationError).toMatchObject({ message: "jev_validation" });
+    expect((validationError as Error).message).toBe("jev_validation");
+    expect(JSON.stringify(validationError)).not.toContain(providerSecret);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(`not-json: ${providerSecret}`, { status: 200 })),
+    );
+    const malformedJsonError = await gradeCurrentAnswer("secret answer").catch(
+      (error: unknown) => error,
+    );
+    expect(malformedJsonError).toMatchObject({ message: "jev_invalid_json" });
+    expect((malformedJsonError as Error).message).toBe("jev_invalid_json");
+    expect(JSON.stringify(malformedJsonError)).not.toContain(providerSecret);
   });
 
   it("uses an abort timeout signal and leaves transport and timeout failures unclassified for durable retry", async () => {

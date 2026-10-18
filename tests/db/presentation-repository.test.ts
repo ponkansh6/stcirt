@@ -1465,19 +1465,17 @@ describe("presentation repository", () => {
       state: "answer",
       question: {
         expectedAnswer: "Model answer",
+        responses: [
+          {
+            displayName: "Private Name",
+            answer: "Private response",
+            answerKind: "freeText",
+            similarity: 1,
+            score: 0.5,
+          },
+        ],
       },
     });
-    const question = projection.state === "answer" ? projection.question : undefined;
-    if (question && "responses" in question) {
-      expect(question.responses).toEqual([
-        expect.objectContaining({
-          displayName: "Private Name",
-          answer: "Private response",
-          answerKind: "freeText",
-          score: 0.5,
-        }),
-      ]);
-    }
   });
 
   it("uses the unanswered response fallback when a snapshot answer is absent", async () => {
@@ -1886,22 +1884,28 @@ describe("presentation repository", () => {
       .update(schema.presentationSessions)
       .set({ state: "unsupported_persisted_state" })
       .where(eq(schema.presentationSessions.id, 1));
+    const sessionBefore = await testDb.db.select().from(schema.presentationSessions);
+    const operationHistoryBefore = await testDb.db.select().from(schema.presentationOperations);
 
-    await expect(
-      operatePresentation("unsupported-state-previous", "previous"),
-    ).rejects.toMatchObject({
-      message: "Presentation is already at its first state",
-      status: 409,
-    });
-    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
-      { state: "unsupported_persisted_state" },
-    ]);
-    await expect(
-      testDb.db
-        .select()
-        .from(schema.presentationOperations)
-        .where(eq(schema.presentationOperations.operationId, "unsupported-state-previous")),
-    ).resolves.toHaveLength(0);
+    for (const action of ["advance", "previous"] as const) {
+      const operationId = `unsupported-state-${action}`;
+      await expect(operatePresentation(operationId, action)).rejects.toMatchObject({
+        message: "Presentation state is invalid",
+        status: 409,
+      });
+      await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toEqual(
+        sessionBefore,
+      );
+      await expect(testDb.db.select().from(schema.presentationOperations)).resolves.toEqual(
+        operationHistoryBefore,
+      );
+      await expect(
+        testDb.db
+          .select()
+          .from(schema.presentationOperations)
+          .where(eq(schema.presentationOperations.operationId, operationId)),
+      ).resolves.toHaveLength(0);
+    }
   });
 
   it("rejects reusing an operation ID for a different action", async () => {
