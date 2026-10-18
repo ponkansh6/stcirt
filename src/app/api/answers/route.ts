@@ -19,7 +19,15 @@ export const POST = withErrorHandling(async function (request: Request) {
     return fail("Participant session required", 401);
   }
 
-  const json = await request.json();
+  let json: unknown;
+  try {
+    json = await request.json();
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return fail("Invalid parameters", 400);
+    }
+    throw error;
+  }
   if (
     json &&
     typeof json === "object" &&

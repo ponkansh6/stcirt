@@ -150,6 +150,111 @@ describe("POST /api/answers route handler", () => {
     expect(recordAnswer).not.toHaveBeenCalled();
   });
 
+  it("returns the existing 400 envelope for malformed JSON without saving", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/answers", {
+        method: "POST",
+        headers,
+        body: "{",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid parameters" });
+    expect(recordAnswer).not.toHaveBeenCalled();
+  });
+
+  it("checks origin and participant session before parsing malformed JSON", async () => {
+    const noCookie = await POST(
+      new Request("http://localhost/api/answers", {
+        method: "POST",
+        headers: { Origin: "http://localhost" },
+        body: "{",
+      }),
+    );
+    const wrongOrigin = await POST(
+      new Request("http://localhost/api/answers", {
+        method: "POST",
+        headers: { ...headers, Origin: "https://attacker.example" },
+        body: "{",
+      }),
+    );
+
+    expect(noCookie.status).toBe(401);
+    expect(wrongOrigin.status).toBe(403);
+    expect(recordAnswer).not.toHaveBeenCalled();
+  });
+
+  it("confirms the participant in the database before parsing the request body", async () => {
+    const events: string[] = [];
+    vi.mocked(findParticipantById).mockImplementationOnce(async () => {
+      events.push("participant lookup");
+      return { id: 42, name: "参加者" };
+    });
+    const request = new Request("http://localhost/api/answers", {
+      method: "POST",
+      headers,
+      body: "{",
+    });
+    const parseJson = request.json.bind(request);
+    Object.defineProperty(request, "json", {
+      value: async () => {
+        events.push("JSON parse");
+        return parseJson();
+      },
+    });
+
+    const response = await POST(request);
+
+    expect(events).toEqual(["participant lookup", "JSON parse"]);
+    expect(response.status).toBe(400);
+    expect(recordAnswer).not.toHaveBeenCalled();
+  });
+
+  it("returns 500 when request.json throws a non-SyntaxError", async () => {
+    const request = new Request("http://localhost/api/answers", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ questionId: 1, selectedIndex: 0 }),
+    });
+    Object.defineProperty(request, "json", {
+      value: async () => {
+        throw new TypeError("body stream failure");
+      },
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Internal server error" });
+    expect(recordAnswer).not.toHaveBeenCalled();
+  });
+
+  it("keeps unexpected persistence failures as 500 responses", async () => {
+    vi.mocked(getQuestionById).mockResolvedValueOnce({
+      id: 1,
+      key: "it-literacy-001",
+      questionVersion: null,
+      question: "Q1?",
+      choices: ["A", "B", "C", "D"],
+      correctIndex: 1,
+      explanation: "Explanation 1",
+      createdAt: new Date(),
+    });
+    vi.mocked(recordAnswer).mockRejectedValueOnce(new Error("database unavailable"));
+
+    const response = await POST(
+      new Request("http://localhost/api/answers", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ questionId: 1, selectedIndex: 0 }),
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Internal server error" });
+  });
+
   it("5. Question not found -> 404", async () => {
     vi.mocked(getQuestionById).mockResolvedValueOnce(null);
 

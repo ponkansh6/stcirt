@@ -1,0 +1,128 @@
+name: Production schema drift
+
+on:
+  push:
+    branches: [main, master]
+  pull_request_target:
+    branches: [main, master]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-schema-drift-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  production-schema-drift:
+    name: production-schema-drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # pull_request_target runs the trusted base workflow. Only this checkout is
+      # ever installed or executed; the PR schema is fetched below as inert data.
+      - name: Checkout trusted base code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install trusted dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch PR schema as data
+        if: github.event_name == 'pull_request_target'
+        uses: actions/github-script@v7
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            const pullRequest = context.payload.pull_request;
+            const headRepo = pullRequest?.head?.repo;
+            const sha = process.env.PR_HEAD_SHA;
+            if (!/^[0-9a-f]{40}$/i.test(sha || '')) {
+              core.setFailed('Schema fetch failed: PR head SHA is invalid.');
+              return;
+            }
+            if (!headRepo || typeof headRepo.owner?.login !== 'string' || typeof headRepo.name !== 'string') {
+              core.setFailed('Fork schema unavailable: PR head repository is null or deleted.');
+              return;
+            }
+            const owner = headRepo.owner.login;
+            const repo = headRepo.name;
+            if (!/^[A-Za-z0-9-]{1,39}$/.test(owner) || !/^[A-Za-z0-9_.-]{1,100}$/.test(repo) ||
+                (headRepo.full_name && headRepo.full_name.toLowerCase() !== `${owner}/${repo}`.toLowerCase())) {
+              core.setFailed('Schema fetch failed: PR head repository owner or name is invalid.');
+              return;
+            }
+            const isFork = `${owner}/${repo}`.toLowerCase() !== `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+            try {
+              let contentResponse;
+              if (isFork) {
+                // A base-repository token must never be sent to an untrusted fork.
+                // GitHub's unauthenticated Contents API can read public forks.
+                const url = `https://api.github.com/repos/${owner}/${repo}/contents/src/lib/db/schema.ts?ref=${sha}`;
+                const apiResponse = await fetch(url, {
+                  headers: {
+                    Accept: 'application/vnd.github+json',
+                    'X-GitHub-Api-Version': '2022-11-28',
+                  },
+                });
+                if (!apiResponse.ok) {
+                  throw Object.assign(new Error('unauthenticated fork API request failed'), { status: apiResponse.status });
+                }
+                contentResponse = await apiResponse.json();
+              } else {
+                const response = await github.rest.repos.getContent({
+                  owner,
+                  repo,
+                  path: 'src/lib/db/schema.ts',
+                  ref: sha,
+                });
+                contentResponse = response.data;
+              }
+              if (Array.isArray(contentResponse) || contentResponse?.type !== 'file' ||
+                  contentResponse.encoding !== 'base64' || !Number.isSafeInteger(contentResponse.size) ||
+                  contentResponse.size > 262144 || typeof contentResponse.content !== 'string') {
+                throw new Error('schema.ts is missing, not a regular file, or exceeds 256 KiB');
+              }
+              const encoded = contentResponse.content.replace(/\s/g, '');
+              if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+                throw new Error('schema.ts base64 encoding is invalid');
+              }
+              const bytes = Buffer.from(encoded, 'base64');
+              if (bytes.length > 262144 || bytes.length !== contentResponse.size) {
+                throw new Error('schema.ts size or encoding is invalid');
+              }
+              const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+              const schemaFile = path.join(process.env.RUNNER_TEMP, 'pr-schema.ts');
+              fs.writeFileSync(schemaFile, content, { flag: 'wx', mode: 0o600 });
+              fs.appendFileSync(process.env.GITHUB_ENV, `SCHEMA_FILE=${schemaFile}\n`);
+              core.info(`Fetched PR schema.ts as bounded UTF-8 data from ${owner}/${repo}.`);
+            } catch (error) {
+              const status = Number.isInteger(error.status) ? ` (HTTP ${error.status})` : '';
+              const message = isFork
+                ? `Fork schema unavailable: could not fetch src/lib/db/schema.ts from ${owner}/${repo}${status}.`
+                : `Schema fetch failed: could not fetch src/lib/db/schema.ts from ${owner}/${repo}${status}.`;
+              core.setFailed(message);
+            }
+
+      - name: Select trusted schema on push
+        if: github.event_name == 'push'
+        run: echo "SCHEMA_FILE=$GITHUB_WORKSPACE/src/lib/db/schema.ts" >> "$GITHUB_ENV"
+
+      - name: Inspect production schema (read-only)
+        run: bash scripts/check-prod-schema.sh
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}

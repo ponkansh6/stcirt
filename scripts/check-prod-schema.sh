@@ -1,122 +1,100 @@
 #!/bin/sh
-# Check that the production Turso DB schema matches schema.ts.
-# Read-only — does not modify the database.
-# Usage: TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... scripts/check-prod-schema.sh
+# Read-only comparison of a trusted/local schema file with the production DB.
+# Exit codes: 0 = match, 1 = drift, 2 = missing credentials, 3 = inspection failure.
+# Usage: SCHEMA_FILE=... TURSO_DATABASE_URL=... TURSO_AUTH_TOKEN=... scripts/check-prod-schema.sh
 
-set -e
+set -eu
 
-if [ -z "$TURSO_DATABASE_URL" ] || [ -z "$TURSO_AUTH_TOKEN" ]; then
-  echo "❌ Production schema check requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN" >&2
-  exit 1
+if [ -z "${TURSO_DATABASE_URL:-}" ] || [ -z "${TURSO_AUTH_TOKEN:-}" ]; then
+  echo "::error::Production schema inspection could not run: database credentials are missing."
+  exit 2
 fi
 
-echo "🔍 Checking production schema consistency..."
+if [ -z "${SCHEMA_FILE:-}" ] || [ ! -f "$SCHEMA_FILE" ]; then
+  echo "::error::Production schema inspection failed: SCHEMA_FILE is missing or unreadable."
+  exit 3
+fi
 
-PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-SCHEMA_PROJECT_ROOT="$PROJECT_ROOT" node 2>&1 <<'NODE'
-const { createClient } = require('@libsql/client');
-const fs = require('fs');
-const path = require('path');
-
-function extractTableColumnBlock(schemaContent, tableName) {
-  const declarationRegex = new RegExp(
-    'export const \\w+ = sqliteTable\\s*\\(\\s*"' + tableName + '"\\s*,\\s*\\{',
-  );
-  const declaration = declarationRegex.exec(schemaContent);
-  if (!declaration) return null;
-
-  const openingBrace = declaration.index + declaration[0].lastIndexOf('{');
-  let depth = 0;
-  for (let i = openingBrace; i < schemaContent.length; i += 1) {
-    if (schemaContent[i] === '{') depth += 1;
-    if (schemaContent[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return schemaContent.slice(openingBrace + 1, i);
-    }
-  }
-
-  // An incomplete declaration is ignored; the bounded scan above cannot loop forever.
-  return null;
+echo "🔍 Checking production schema consistency (read-only)..."
+SCHEMA_FILE="$SCHEMA_FILE" node 2>&1 <<'NODE'
+function inspectionFailure(message) {
+  console.error(`::error::Production schema inspection failed: ${message}`);
+  process.exitCode = 3;
 }
 
 async function main() {
+  let createClient;
+  let parseExpectedSchema;
+  let fs;
+  try {
+    ({ createClient } = require('@libsql/client'));
+    ({ parseExpectedSchema } = require('./scripts/prod-schema-parser.cjs'));
+    fs = require('node:fs');
+  } catch (error) {
+    inspectionFailure(`checker dependency could not be loaded (${error.message}).`);
+    return;
+  }
+
+  let content;
+  try {
+    const bytes = fs.readFileSync(process.env.SCHEMA_FILE);
+    content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (error) {
+    inspectionFailure(`schema file could not be read as UTF-8 (${error.message}).`);
+    return;
+  }
+
+  let expectedSchema;
+  try {
+    expectedSchema = parseExpectedSchema(content);
+  } catch (error) {
+    inspectionFailure(error.message);
+    return;
+  }
+  const expectedTables = expectedSchema.map(({ tableName }) => tableName);
+
   const client = createClient({
     url: process.env.TURSO_DATABASE_URL,
     authToken: process.env.TURSO_AUTH_TOKEN,
   });
-
-  const schemaPath = path.join(process.env.SCHEMA_PROJECT_ROOT, 'src/lib/db/schema.ts');
-  const schemaContent = fs.readFileSync(schemaPath, 'utf-8');
-
-  // Extract all table names defined via sqliteTable in schema.ts
-  const tableRegex = /export const \w+ = sqliteTable\s*\(\s*\"(\w+)\"/g;
-  const expectedTables = [];
-  let t;
-  while ((t = tableRegex.exec(schemaContent)) !== null) {
-    expectedTables.push(t[1]);
-  }
-
-  const tablesResult = await client.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
-  const actualTables = new Set(tablesResult.rows.map(r => r.name));
-
-  const missingTables = expectedTables.filter(tt => !actualTables.has(tt));
-
-  if (missingTables.length > 0) {
-    console.log('');
-    console.log('❌ Production database schema drift detected.');
-    console.log('   Production is missing tables required by the current application schema.');
-    console.log('   Missing tables:');
-    missingTables.forEach(tt => console.log('   - ' + tt));
-    console.log('');
-    console.log('   Apply the project migrations to production with:');
-    console.log('   pnpm db:migrate');
-    console.log('');
-    process.exit(1);
-  }
-
-  // Check column drift for each table
-  for (const tableName of expectedTables) {
-    const colBlock = extractTableColumnBlock(schemaContent, tableName);
-    if (colBlock === null) continue;
-    // Match the physical column name passed to a Drizzle column builder,
-    // not string options such as { mode: "json" }.
-    const colRegex = /\b\w+\s*:\s*\w+\s*\(\s*"(\w+)"/g;
-    const expectedCols = new Set();
-    let c;
-    while ((c = colRegex.exec(colBlock)) !== null) {
-      expectedCols.add(c[1]);
-    }
-
-    const colResult = await client.execute('PRAGMA table_info(' + tableName + ')');
-    const actualCols = new Set(colResult.rows.map(r => r.name));
-
-    const missingCols = [];
-    for (const col of expectedCols) {
-      if (!actualCols.has(col)) {
-        missingCols.push(col);
+  try {
+    const tablesResult = await client.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
+    const actualTables = new Set(tablesResult.rows.map((row) => row.name));
+    const missingTables = expectedTables.filter((tableName) => !actualTables.has(tableName));
+    const missingColumnsByTable = [];
+    for (const { tableName, columns: expectedColumns } of expectedSchema) {
+      if (!missingTables.includes(tableName)) {
+        // The identifier has passed a strict ASCII allowlist before SQL use.
+        const colResult = await client.execute(`PRAGMA table_info("${tableName}")`);
+        const actualColumns = new Set(colResult.rows.map((row) => row.name));
+        const missingColumns = expectedColumns.filter((columnName) => !actualColumns.has(columnName));
+        if (missingColumns.length > 0) missingColumnsByTable.push({ tableName, columns: missingColumns });
       }
     }
 
-    if (missingCols.length > 0) {
-      console.log('');
-      console.log('❌ Production database schema drift detected in table: ' + tableName);
-      console.log('   Production is missing columns required by the current application schema.');
-      console.log('   Missing columns:');
-      missingCols.forEach(cc => console.log('   - ' + cc));
-      console.log('');
-      console.log('   Apply the project migrations to production with:');
-      console.log('   pnpm db:migrate');
-      console.log('');
-      process.exit(1);
+    if (missingTables.length > 0 || missingColumnsByTable.length > 0) {
+      console.error('::error::Production database schema drift detected.');
+      for (const tableName of missingTables) console.error(`Missing table: ${tableName}`);
+      for (const entry of missingColumnsByTable) {
+        console.error(`Missing columns in ${entry.tableName}: ${entry.columns.join(', ')}`);
+      }
+      console.error('Apply the project migrations to production with: pnpm db:migrate');
+      process.exitCode = 1;
+      return;
+    }
+    console.log('✅ Production schema is up to date');
+  } catch (error) {
+    inspectionFailure(`database query failed (${error.message}).`);
+  } finally {
+    try {
+      await client.close();
+    } catch (error) {
+      if (process.exitCode !== 1 && process.exitCode !== 3) {
+        inspectionFailure(`database client close failed (${error.message}).`);
+      }
     }
   }
-
-  console.log('✅ Production schema is up to date');
-  client.close();
 }
 
-main().catch(err => {
-  console.error('Schema check failed:', err.message);
-  process.exit(1);
-});
+main().catch((error) => inspectionFailure(`unexpected checker error (${error.message}).`));
 NODE

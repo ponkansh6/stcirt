@@ -12,8 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # 静的解析 + 環境/ネットワーク依存の検査。
-  # 本番スキーマ drift は対象変更時の pre-push では blocking、CI では non-blocking。
+  # 静的解析。Production schema は trusted-only workflow で別途検査する。
   static:
     runs-on: ubuntu-latest
     steps:
@@ -28,15 +27,6 @@ jobs:
       - run: pnpm format:check
       - run: bash scripts/check-spec-refs.sh
       - run: pnpm security-check
-      - name: Check production schema script syntax
-        run: bash -n scripts/check-prod-schema.sh
-      - name: Production schema drift
-        continue-on-error: true
-        run: bash scripts/check-prod-schema.sh
-        env:
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-
   # 素の `vitest run` は coverage 版と同一内容なので実行しない（-21s）
   test:
     runs-on: ubuntu-latest
