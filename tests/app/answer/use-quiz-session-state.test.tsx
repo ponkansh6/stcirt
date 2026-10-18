@@ -416,22 +416,25 @@ describe("useQuizSession state transitions", () => {
       label: "out of order",
       questions: [question(2), question(1), question(3), question(4), question(5)],
     },
-  ])("does not start an exam from a $label batch", async ({ questions }) => {
-    api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchExamQuestions.mockResolvedValueOnce(questions);
+  ])(
+    "does not start an exam from a $label batch and offers a working retry",
+    async ({ questions }) => {
+      api.fetchParticipantSession.mockResolvedValueOnce(participant);
+      api.fetchExamQuestions
+        .mockResolvedValueOnce(questions)
+        .mockResolvedValueOnce([1, 2, 3, 4, 5].map((id) => question(id)));
 
-    const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
-    expect(hook.result.current.quizzes).toEqual([]);
-  });
-
-  it("reports incomplete batch as a retryable load error", async () => {
-    api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchExamQuestions.mockResolvedValueOnce([question(1)]);
-    const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
-    expect(hook.result.current.quizzes).toHaveLength(0);
-  });
+      const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
+      expect(hook.result.current.quizzes).toEqual([]);
+      act(() => hook.result.current.retryLoad());
+      await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+      expect(hook.result.current.quizzes.map(({ question: item }) => item.id)).toEqual([
+        1, 2, 3, 4, 5,
+      ]);
+      expect(api.fetchExamQuestions).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("marks a saved submission unrestorable when its questions are unavailable", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);

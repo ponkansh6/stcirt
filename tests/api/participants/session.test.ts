@@ -203,9 +203,15 @@ describe("participant session API", () => {
   });
 
   it("rejects a limited attempt", async () => {
-    state.rate = { available: true, allowed: false, retryAt: new Date("2030-01-01T00:00:00.000Z") };
+    const retryAt = "2030-01-01T00:00:00.000Z";
+    state.rate = { available: true, allowed: false, retryAt: new Date(retryAt) };
     const response = await POST(request({ name: "山田", pin: "0427" }));
     expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({
+      error: "試行回数が上限に達しました。時間をおいて再度お試しください",
+      message: "試行回数が上限に達しました。時間をおいて再度お試しください",
+      retryAt,
+    });
     expect(verifyEventPin).not.toHaveBeenCalled();
     expect(getOrCreateParticipant).not.toHaveBeenCalled();
   });

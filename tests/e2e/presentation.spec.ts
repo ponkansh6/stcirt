@@ -905,6 +905,46 @@ test("@chromium public and presenter routes are read-only unless an authenticate
   expect(mock.actionLog).toEqual(["aggregate", "start", "position"]);
 });
 
+test("@chromium presenter keyboard progression ignores keys from nested interactive controls", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+
+  const fullscreenButton = page.locator("main").getByRole("button", { name: "全画面表示" });
+  await expect(fullscreenButton).toBeVisible();
+  for (const key of ["ArrowRight", "ArrowLeft", "Enter", "Space"] as const) {
+    await fullscreenButton.press(key);
+    await expect(slideFor(page, "question")).toBeVisible();
+    expect(mock.actionLog).toEqual(["aggregate", "start", "position"]);
+  }
+
+  let mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "answer")).toBeVisible();
+  await mutation;
+
+  mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "question")).toBeVisible();
+  await mutation;
+
+  mutation = nextAdminMutation(page);
+  await page.locator("main").press("Enter");
+  await expect(slideFor(page, "answer")).toBeVisible();
+  await mutation;
+  expect(mock.actionLog).toEqual([
+    "aggregate",
+    "start",
+    "position",
+    "position",
+    "position",
+    "position",
+  ]);
+});
+
 test("@chromium opening cover geometry matches before and after presentation start", async ({
   page,
 }) => {

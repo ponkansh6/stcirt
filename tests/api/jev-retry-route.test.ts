@@ -57,4 +57,27 @@ describe("POST /api/internal/jev/retry", () => {
     });
     expect(processDueAssessments).toHaveBeenCalledWith(true);
   });
+
+  it("ignores caller-supplied answerText and asks the repository to process persisted jobs", async () => {
+    vi.mocked(processDueAssessments).mockResolvedValue({
+      processed: 0,
+      graded: 0,
+      retried: 0,
+      failed: 0,
+    });
+    const response = await POST(
+      new Request("http://localhost/api/internal/jev/retry", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer internal-test-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ answerText: "attacker-controlled replacement" }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(processDueAssessments).toHaveBeenCalledWith(false);
+    expect(processDueAssessments).toHaveBeenCalledTimes(1);
+  });
 });

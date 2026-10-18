@@ -1262,6 +1262,39 @@ describe("presentation repository", () => {
     });
   });
 
+  it("reads the presenter deck revision, snapshot slides and source fallback in one transaction", async () => {
+    await addQ5OnlyQuestion();
+    await op("aggregate", "deck-transaction-aggregate");
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ explanation: "" })
+      .where(eq(schema.presentationQuestions.sourceQuestionId, 5));
+    const [session] = await testDb.db
+      .select({ snapshotRevision: schema.presentationSessions.snapshotRevision })
+      .from(schema.presentationSessions)
+      .where(eq(schema.presentationSessions.id, 1));
+    const transaction = vi.spyOn(testDb.db, "transaction");
+
+    try {
+      const deck = await getAdminPresentationDeck();
+
+      expect(transaction).toHaveBeenCalledOnce();
+      expect(deck.snapshotRevision).toBe(session?.snapshotRevision);
+      const questionSlide = deck.slides.find(({ state }) => state === "question");
+      const answerSlide = deck.slides.find(({ state }) => state === "answer");
+      expect(questionSlide?.projection).toMatchObject({
+        state: "question",
+        question: { question: "Question 5" },
+      });
+      expect(answerSlide?.projection).toMatchObject({
+        state: "answer",
+        question: { expectedAnswer: "Explanation 5" },
+      });
+    } finally {
+      transaction.mockRestore();
+    }
+  });
+
   it("keeps tied winners' answers paired to each person and snapshot position", async () => {
     await addQuestions();
     const first = await addParticipant("First tied");
@@ -2156,6 +2189,27 @@ describe("presentation repository", () => {
           answer: { kind: "freeText", value: "Q5 latest", score: 0 },
         },
       ],
+    });
+  });
+
+  it("hides participant result details without changing the public presentation projection", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Hidden results participant");
+    await addSubmission(participant, [0, 0]);
+    await startWithAggregate("hide-results-independent-projection");
+    await setParticipantResultsVisible(true);
+
+    const projectionBeforeHide = await getPublicPresentation();
+    expect(projectionBeforeHide).toEqual({ state: "question", question: expect.any(Object) });
+    await expect(getParticipantResult(participant)).resolves.toMatchObject({ state: "visible" });
+
+    await setParticipantResultsVisible(false);
+
+    await expect(getParticipantResult(participant)).resolves.toEqual({ state: "waiting" });
+    await expect(getPublicPresentation()).resolves.toEqual(projectionBeforeHide);
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      projectionHidden: false,
+      participantResultsVisible: false,
     });
   });
 

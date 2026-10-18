@@ -258,6 +258,115 @@ describe("durable free-response assessment and restoration", () => {
     });
   });
 
+  it("claims no more than five due assessments per worker call with a 45 second lease", async () => {
+    const submissionIds = [
+      submissionId,
+      ...Array.from(
+        { length: 5 },
+        (_, index) => `00000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`,
+      ),
+    ];
+    for (const [index, id] of submissionIds.entries()) {
+      await saveAnswerSubmission({
+        submissionId: id,
+        operationId: `00000000-0000-4000-8000-${String(300 + index).padStart(12, "0")}`,
+        expectedRevision: 0,
+        participantId,
+        answers: validAnswers,
+      });
+    }
+    const now = new Date("2026-01-02T03:04:05.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    vi.mocked(gradeFreeResponse).mockResolvedValue({
+      score: 6,
+      confidence: 0.9,
+      model: "jev-latest",
+    });
+
+    await expect(processDueAssessments()).resolves.toEqual({
+      processed: 5,
+      graded: 5,
+      retried: 0,
+      failed: 0,
+    });
+    expect(gradeFreeResponse).toHaveBeenCalledTimes(5);
+    const assessments = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(assessments).toHaveLength(6);
+    expect(assessments.filter((assessment) => assessment.state === "graded")).toHaveLength(5);
+    expect(assessments.filter((assessment) => assessment.state === "pending")).toHaveLength(1);
+    expect(assessments.find((assessment) => assessment.state === "pending")?.attempts).toBe(0);
+  });
+
+  it("persists the exact 45 second lease while a provider call is in flight", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    const now = new Date("2026-01-02T03:04:05.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    let release!: () => void;
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const delayed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(gradeFreeResponse).mockImplementationOnce(async () => {
+      started();
+      await delayed;
+      return { score: 6, confidence: 0.9, model: "jev-latest" };
+    });
+    const worker = processDueAssessments();
+    await startedPromise;
+    const [claimed] = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(claimed).toMatchObject({ state: "processing", attempts: 1 });
+    expect(claimed!.nextAttemptAt).toEqual(new Date(now.getTime() + 45_000));
+    release();
+    await worker;
+  });
+
+  it("uses exponential retry delays and makes the eighth transient attempt terminal", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    const start = new Date("2026-01-02T03:04:05.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(start);
+    vi.mocked(gradeFreeResponse).mockRejectedValue(new Error("network down"));
+
+    let now = start;
+    for (let attempt = 1; attempt <= 7; attempt += 1) {
+      await expect(processDueAssessments()).resolves.toMatchObject({ retried: 1, failed: 0 });
+      const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
+      const expectedDelay = Math.min(60 * 60_000, 30_000 * 2 ** (attempt - 1));
+      expect(assessment).toMatchObject({ state: "pending", attempts: attempt });
+      expect(assessment!.nextAttemptAt).toEqual(new Date(now.getTime() + expectedDelay));
+      // SQLite stores timestamp-mode columns at whole-second precision. Keep
+      // each subsequent claim exactly on that persisted due-time boundary.
+      now = new Date(assessment!.nextAttemptAt!.getTime());
+      vi.setSystemTime(now);
+    }
+    await expect(processDueAssessments()).resolves.toEqual({
+      processed: 1,
+      graded: 0,
+      retried: 0,
+      failed: 1,
+    });
+    const [terminal] = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(terminal).toMatchObject({ state: "failed", attempts: 8, nextAttemptAt: null });
+    expect(gradeFreeResponse).toHaveBeenCalledTimes(8);
+  });
+
   it("continues to the next due assessment when its claim RETURNING result is hidden", async () => {
     const otherSubmissionId = "00000000-0000-4000-8000-000000000103";
     await saveAnswerSubmission({

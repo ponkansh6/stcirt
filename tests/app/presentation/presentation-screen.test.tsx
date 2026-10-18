@@ -2276,7 +2276,23 @@ describe("presentation projection and presenter progression", () => {
     });
     api.setDeckSlide("third", 5, {
       state: "third",
-      winners: [{ displayName: "葵", score: 12.5, rank: 3 }],
+      winners: [
+        {
+          displayName: "葵",
+          score: 12.5,
+          rank: 3,
+          questionResults: [
+            {
+              position: 4,
+              question: "自由記述",
+              answer: { kind: "freeText", value: "保存された回答" },
+              normalizedScore: 0.75,
+            },
+          ],
+        },
+        { displayName: "凛", score: 12.5, rank: 3 },
+        { displayName: "悠", score: 12.5, rank: 3 },
+      ],
     });
     render(<PresentationScreen presenterRequested />);
     await settled();
@@ -2286,8 +2302,16 @@ describe("presentation projection and presenter progression", () => {
     expect(region).not.toHaveClass(/announce/);
     expect(within(region).getByRole("heading", { name: "第三位" })).toBeInTheDocument();
     expect(within(region).getByText("葵", { exact: false })).toBeInTheDocument();
-    expect(within(region).getByText("12.50 ポイント")).toBeInTheDocument();
-    expect(region.querySelector("[class*='winnerReveal']")).toHaveTextContent("葵");
+    expect(within(region).getAllByText("12.50 ポイント")).toHaveLength(2);
+    expect(within(region).getByText("凛", { exact: false })).toBeInTheDocument();
+    expect(within(region).getByText("ほか 1 名")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("第三位を発表します");
+    expect(screen.getByRole("status")).not.toHaveTextContent("葵");
+    const reveal = region.querySelector("[class*='winnerReveal']");
+    expect(reveal).toBeInTheDocument();
+    expect(reveal).toHaveTextContent("葵");
+    expect(within(reveal as HTMLElement).getByText("保存された回答")).toBeVisible();
+    expect(within(reveal as HTMLElement).getByText("得点 0.75")).toBeVisible();
     expect(region.querySelector("[class*='rankEntranceOrnament']")).not.toBeInTheDocument();
   });
 

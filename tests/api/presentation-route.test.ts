@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db/repository/presentation-repository", () => ({
   getPublicPresentation: vi.fn(),
+  getAdminPresentationDeck: vi.fn(),
 }));
 
 import { GET } from "@/app/api/presentation/route";
-import { getPublicPresentation } from "@/lib/db/repository/presentation-repository";
+import {
+  getAdminPresentationDeck,
+  getPublicPresentation,
+} from "@/lib/db/repository/presentation-repository";
 
 const responseBoundaryCases = [
   {
@@ -58,6 +62,17 @@ describe("GET /api/presentation", () => {
       },
     });
     expect(payload.question).not.toHaveProperty("responses");
+  });
+
+  it("keeps the public standby response separate from the admin deck getter", async () => {
+    vi.mocked(getPublicPresentation).mockResolvedValueOnce({ state: "standby" });
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ state: "standby" });
+    expect(getPublicPresentation).toHaveBeenCalledOnce();
+    expect(getAdminPresentationDeck).not.toHaveBeenCalled();
   });
 
   it("returns only the current rank's winners with their question breakdowns", async () => {
