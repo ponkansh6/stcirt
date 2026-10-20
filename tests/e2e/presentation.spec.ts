@@ -2021,8 +2021,8 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
             name,
             timestamp: event.timeStamp,
             identity,
-            startTime: animation.startTime,
-            currentTime: animation.currentTime,
+            startTime: animation.startTime === null ? null : Number(animation.startTime),
+            currentTime: animation.currentTime === null ? null : Number(animation.currentTime),
           });
         },
         true,
@@ -2059,7 +2059,7 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
         rank: entryRank,
         name: (animation as CSSAnimation).animationName,
         identity: window.__rankAnimationIdentity(animation),
-        currentTime: animation.currentTime,
+        currentTime: animation.currentTime === null ? null : Number(animation.currentTime),
         playState: animation.playState,
       };
     }, rank);
@@ -2100,7 +2100,7 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
               rank: entryRank,
               name: (animation as CSSAnimation).animationName,
               identity: window.__rankAnimationIdentity(animation),
-              currentTime: animation.currentTime,
+              currentTime: animation.currentTime === null ? null : Number(animation.currentTime),
               playState: animation.playState,
             }
           : null;
@@ -2432,7 +2432,7 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
       return animation
         ? {
             playState: animation.playState,
-            currentTime: animation.currentTime,
+            currentTime: animation.currentTime === null ? null : Number(animation.currentTime),
           }
         : null;
     };
@@ -2505,8 +2505,12 @@ test("@chromium first-place halo stays suppressed after empty entry or winner di
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.addInitScript(() => {
     const nativeSetTimeout = window.setTimeout.bind(window);
-    const acceleratedSetTimeout: typeof window.setTimeout = (handler, timeout, ...args) =>
-      nativeSetTimeout(handler, timeout === 1400 ? 25 : timeout, ...args);
+    const acceleratedSetTimeout = ((handler: TimerHandler, timeout = 0, ...args: unknown[]) =>
+      nativeSetTimeout(
+        handler,
+        timeout === 1400 ? 25 : timeout,
+        ...args,
+      )) as typeof window.setTimeout;
     window.setTimeout = acceleratedSetTimeout;
     window.__rankAnimationTimeline = [];
     const identities = new WeakMap<Animation, number>();
@@ -2537,8 +2541,8 @@ test("@chromium first-place halo stays suppressed after empty entry or winner di
             name,
             timestamp: event.timeStamp,
             identity: window.__rankAnimationIdentity(animation),
-            startTime: animation.startTime,
-            currentTime: animation.currentTime,
+            startTime: animation.startTime === null ? null : Number(animation.startTime),
+            currentTime: animation.currentTime === null ? null : Number(animation.currentTime),
           });
         },
         true,
@@ -2629,8 +2633,8 @@ test("@chromium first-place halo stays suppressed after empty entry or winner di
       .find((candidate) => (candidate as CSSAnimation).animationName.includes("firstRankHalo"));
     return {
       identity: animation ? window.__rankAnimationIdentity(animation) : null,
-      startTime: animation?.startTime ?? null,
-      currentTime: animation?.currentTime ?? -1,
+      startTime: animation?.startTime == null ? null : Number(animation.startTime),
+      currentTime: animation?.currentTime == null ? -1 : Number(animation.currentTime),
     };
   });
   expect(initialAnimation.identity).toBe(haloStartEvent!.identity);
@@ -2676,8 +2680,8 @@ test("@chromium first-place halo stays suppressed after empty entry or winner di
       .find((candidate) => (candidate as CSSAnimation).animationName.includes("firstRankHalo"));
     return {
       identity: animation ? window.__rankAnimationIdentity(animation) : null,
-      startTime: animation?.startTime ?? null,
-      currentTime: animation?.currentTime ?? -1,
+      startTime: animation?.startTime == null ? null : Number(animation.startTime),
+      currentTime: animation?.currentTime == null ? -1 : Number(animation.currentTime),
     };
   });
   expect(hiddenAnimation.identity).toBe(initialAnimation.identity);
@@ -2697,7 +2701,7 @@ test("@chromium first-place halo stays suppressed after empty entry or winner di
           return Boolean(
             animation &&
             animation.currentTime !== null &&
-            animation.currentTime > previousTime &&
+            Number(animation.currentTime) > previousTime &&
             getComputedStyle(element).visibility === "hidden",
           );
         },
@@ -2729,8 +2733,8 @@ test("@chromium first-place halo stays suppressed after empty entry or winner di
       .find((candidate) => (candidate as CSSAnimation).animationName.includes("firstRankHalo"));
     return {
       identity: animation ? window.__rankAnimationIdentity(animation) : null,
-      startTime: animation?.startTime ?? null,
-      currentTime: animation?.currentTime ?? -1,
+      startTime: animation?.startTime == null ? null : Number(animation.startTime),
+      currentTime: animation?.currentTime == null ? -1 : Number(animation.currentTime),
     };
   });
   expect(restoredAnimation.identity).toBe(initialAnimation.identity);

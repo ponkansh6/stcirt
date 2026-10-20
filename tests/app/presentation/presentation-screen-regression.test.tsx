@@ -2512,9 +2512,7 @@ describe("PresentationScreen", () => {
     } finally {
       if (originalVisibility)
         Object.defineProperty(document, "visibilityState", originalVisibility);
-      else
-        delete (document as Document & { visibilityState?: DocumentVisibilityState })
-          .visibilityState;
+      else Reflect.deleteProperty(document, "visibilityState");
     }
   });
 
