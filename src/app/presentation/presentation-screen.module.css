@@ -574,8 +574,8 @@
 .rankHalo {
   position: absolute;
   z-index: 0;
-  inset: 18% 12%;
-  border: 2px solid rgb(181 139 53 / 16%);
+  inset: 12% 7%;
+  border: 5px solid rgb(181 139 53 / 48%);
   border-radius: 50%;
   opacity: 0;
   pointer-events: none;
@@ -583,7 +583,8 @@
 }
 
 .winners[data-rank="first"] .rankHalo {
-  animation: firstRankHalo 300ms ease-out 800ms both;
+  box-shadow: 0 0 0 7px rgb(181 139 53 / 20%);
+  animation: firstRankHalo 600ms ease-out 800ms both;
 }
 
 .rankHalo[data-halo-eligible="true"] {
@@ -663,7 +664,7 @@
   }
 
   35% {
-    opacity: 0.42;
+    opacity: 0.92;
   }
 
   to {

@@ -438,6 +438,12 @@ describe("presentation projection and presenter progression", () => {
     expect(stylesheet).toMatch(/transition-duration:\s*0\.01ms\s*!important/);
     expect(stylesheet).toMatch(/scroll-behavior:\s*auto\s*!important/);
     expect(stylesheet).toMatch(
+      /\.winners\[data-rank="first"\] \.rankHalo\s*\{\s*box-shadow:\s*0 0 0 7px rgb\(181 139 53 \/ 20%\);\s*animation:\s*firstRankHalo 600ms ease-out 800ms both;/,
+    );
+    expect(stylesheet).toMatch(
+      /\.rankHalo\s*\{[^}]*border:\s*5px solid rgb\(181 139 53 \/ 48%\);[^}]*pointer-events:\s*none;/s,
+    );
+    expect(stylesheet).toMatch(
       /\.answerReveal\s*\{\s*animation:\s*answerRevealFade 350ms ease 100ms backwards;/,
     );
     expect(stylesheet).toMatch(

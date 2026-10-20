@@ -2191,7 +2191,9 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   await expect(firstHalo).toHaveAttribute("aria-hidden", "true");
   await expect(firstHalo).toHaveAttribute("data-halo-eligible", "true");
   await expect(firstHalo).toHaveCSS("animation-delay", "0.8s");
-  await expect(firstHalo).toHaveCSS("animation-duration", "0.3s");
+  await expect(firstHalo).toHaveCSS("animation-duration", "0.6s");
+  await expect(firstHalo).toHaveCSS("border-top-width", "5px");
+  await expect(firstHalo).toHaveCSS("box-shadow", "rgba(181, 139, 53, 0.2) 0px 0px 0px 7px");
   await expect(firstHalo).toHaveCSS("pointer-events", "none");
   await expect(firstOrnament).toHaveCSS("pointer-events", "none");
   await expect(firstStamp).toHaveCSS("pointer-events", "none");
@@ -2497,6 +2499,23 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
     "dynamic reduced-motion first-rank entry",
   );
   await expect(firstHalo).toHaveCSS("visibility", "hidden");
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(firstHalo).toHaveCSS("animation-name", /firstRankHalo/);
+  await expect
+    .poll(() => firstHalo.evaluate((element) => Number(getComputedStyle(element).opacity)))
+    .toBeGreaterThan(0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(firstHalo).toHaveCSS("animation-name", "none");
+  await expect(firstHalo).toHaveCSS("opacity", "0");
+  await expect(firstHalo).toHaveCSS("visibility", "hidden");
+  expect(
+    await firstHalo.evaluate((element) =>
+      element
+        .getAnimations()
+        .some((animation) => (animation as CSSAnimation).animationName.includes("firstRankHalo")),
+    ),
+  ).toBe(false);
 });
 
 test("@chromium first-place halo stays suppressed after empty entry or winner disappearance", async ({
@@ -3581,6 +3600,198 @@ test("@chromium reference-size long presentation content stays readable after fi
   await expect(firstPlaceHeading).toBeVisible();
   await expect(firstPlaceHeading).toHaveText("第一位");
   await next("finished");
+});
+
+test("@mobile tied first-place winners keep the halo and fit at 480x900", async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 900 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const mock = await installAdminApiMock(page);
+  const firstWinner = "長い表示名の同率一位受賞者・花子";
+  const secondWinner = "長い表示名の同率一位受賞者・太郎";
+  mock.setWinnerEntries([
+    { displayName: firstWinner, score: 0.93, rank: 1 },
+    { displayName: secondWinner, score: 0.87, rank: 1 },
+  ]);
+  await signIn(page);
+  await startPresentation(page);
+  mock.setPresentationPosition("second");
+  await openPresenter(page);
+
+  const firstEntry = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  const region = page.getByRole("region", { name: "第一位の勝者一覧" });
+  await expect(region).toBeVisible();
+  await firstEntry;
+
+  const winners = region.locator("article");
+  await expect(winners).toHaveCount(2);
+  const firstName = winners.nth(0).locator("[class*='winnerName']");
+  await expect(firstName).toBeVisible();
+  await expect(firstName).toHaveText(`${firstWinner} 殿`);
+  await expect(winners.nth(0).locator("[class*='winnerScore']")).toHaveText("0.93 ポイント");
+  const secondName = winners.nth(1).locator("[class*='winnerName']");
+  await expect(secondName).toBeVisible();
+  await expect(secondName).toHaveText(`${secondWinner} 殿`);
+  await expect(winners.nth(1).locator("[class*='winnerScore']")).toHaveText("0.87 ポイント");
+
+  const halo = await expectSingleRankHalo(region, "tied first-place winners");
+  await expect(halo).toHaveAttribute("data-halo-eligible", "true");
+  await expect(halo).toHaveCSS("visibility", "visible");
+  await expect
+    .poll(() =>
+      halo.evaluate((element) =>
+        element
+          .getAnimations()
+          .some(
+            (animation) =>
+              (animation as CSSAnimation).animationName.includes("firstRankHalo") &&
+              animation.playState === "finished",
+          ),
+      ),
+    )
+    .toBe(true);
+  await expect(halo).toHaveCSS("visibility", "visible");
+  await expectRankRevealGeometry(region);
+
+  const geometry = await page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
+    const bounds = viewport.getBoundingClientRect();
+    const winnersRegion = viewport.querySelector<HTMLElement>(
+      "section[class*='winners'][data-rank='first']",
+    );
+    const regionBounds = winnersRegion?.getBoundingClientRect();
+    return {
+      regionInsideViewport: Boolean(
+        regionBounds &&
+        regionBounds.left >= bounds.left - 1 &&
+        regionBounds.right <= bounds.right + 1 &&
+        regionBounds.top >= bounds.top - 1 &&
+        regionBounds.bottom <= bounds.bottom + 1,
+      ),
+      pageCanScroll:
+        document.documentElement.scrollWidth > document.documentElement.clientWidth ||
+        document.documentElement.scrollHeight > document.documentElement.clientHeight,
+      regionCanScroll: Boolean(
+        winnersRegion &&
+        (winnersRegion.scrollWidth > winnersRegion.clientWidth ||
+          winnersRegion.scrollHeight > winnersRegion.clientHeight),
+      ),
+    };
+  });
+  expect(geometry.regionInsideViewport).toBe(true);
+  expect(geometry.pageCanScroll).toBe(false);
+  expect(geometry.regionCanScroll).toBe(false);
+});
+
+test("@mobile 24 first-place winners fit with halo at 480x900", async ({ page }) => {
+  await page.setViewportSize({ width: 480, height: 900 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const mock = await installAdminApiMock(page);
+  const winnerEntries = Array.from({ length: 24 }, (_, index) => ({
+    displayName: `一位受賞者${index + 1}`,
+    score: 1 - index * 0.01,
+    rank: 1,
+  }));
+  mock.setWinnerEntries(winnerEntries);
+  await signIn(page);
+  await startPresentation(page);
+  mock.setPresentationPosition("second");
+  await openPresenter(page);
+
+  const firstEntry = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  const region = page.getByRole("region", { name: "第一位の勝者一覧" });
+  await expect(region).toBeVisible();
+  await firstEntry;
+
+  const winners = region.locator("article");
+  await expect(winners).toHaveCount(2);
+  for (let index = 0; index < 2; index += 1) {
+    await expect(winners.nth(index).locator("[class*='winnerName']")).toHaveText(
+      `一位受賞者${index + 1} 殿`,
+    );
+  }
+  await expect(region.locator("[class*='additionalWinners']")).toHaveText("ほか 22 名");
+
+  const halo = await expectSingleRankHalo(region, "24 first-place winners");
+  await expect(halo).toHaveAttribute("data-halo-eligible", "true");
+  await expect(halo).toHaveCSS("visibility", "visible");
+  await expect
+    .poll(() =>
+      halo.evaluate((element) =>
+        element
+          .getAnimations()
+          .some(
+            (animation) =>
+              (animation as CSSAnimation).animationName.includes("firstRankHalo") &&
+              animation.playState === "running",
+          ),
+      ),
+    )
+    .toBe(true);
+  await expect
+    .poll(() => halo.evaluate((element) => Number(getComputedStyle(element).opacity)))
+    .toBeGreaterThan(0.8);
+  await expect
+    .poll(() =>
+      halo.evaluate((element) =>
+        element
+          .getAnimations()
+          .some(
+            (animation) =>
+              (animation as CSSAnimation).animationName.includes("firstRankHalo") &&
+              animation.playState === "finished",
+          ),
+      ),
+    )
+    .toBe(true);
+  await expect(halo).toHaveCSS("visibility", "visible");
+  await expectRankRevealGeometry(region);
+
+  const geometry = await page.getByTestId("presentation-canvas").evaluate((canvas) => {
+    const canvasBounds = canvas.getBoundingClientRect();
+    const fitViewport = canvas.querySelector<HTMLElement>(
+      "[data-testid='presentation-fit-viewport']",
+    );
+    const viewportBounds = fitViewport?.getBoundingClientRect();
+    const winnersRegion = fitViewport?.querySelector<HTMLElement>(
+      "section[class*='winners'][data-rank='first']",
+    );
+    const regionBounds = winnersRegion?.getBoundingClientRect();
+    const visibleContent = Array.from(fitViewport?.querySelectorAll<HTMLElement>("*") ?? [])
+      .filter((element) => getComputedStyle(element).visibility === "visible")
+      .map((element) => element.getBoundingClientRect())
+      .filter((bounds) => bounds.width > 0 && bounds.height > 0);
+    const inside = (bounds: DOMRect, container: DOMRect) =>
+      bounds.left >= container.left - 1 &&
+      bounds.right <= container.right + 1 &&
+      bounds.top >= container.top - 1 &&
+      bounds.bottom <= container.bottom + 1;
+    return {
+      fitViewportInsideCanvas: Boolean(viewportBounds && inside(viewportBounds, canvasBounds)),
+      winnersInsideViewport: Boolean(
+        viewportBounds && regionBounds && inside(regionBounds, viewportBounds),
+      ),
+      allVisibleContentInsideViewport: Boolean(
+        viewportBounds && visibleContent.every((bounds) => inside(bounds, viewportBounds)),
+      ),
+      canvasCanScroll:
+        canvas.scrollWidth > canvas.clientWidth || canvas.scrollHeight > canvas.clientHeight,
+      pageCanScroll:
+        document.documentElement.scrollWidth > innerWidth ||
+        document.documentElement.scrollHeight > innerHeight,
+      regionCanScroll: Boolean(
+        winnersRegion &&
+        (winnersRegion.scrollWidth > winnersRegion.clientWidth ||
+          winnersRegion.scrollHeight > winnersRegion.clientHeight),
+      ),
+    };
+  });
+  expect(geometry.fitViewportInsideCanvas).toBe(true);
+  expect(geometry.winnersInsideViewport).toBe(true);
+  expect(geometry.allVisibleContentInsideViewport).toBe(true);
+  expect(geometry.canvasCanScroll).toBe(false);
+  expect(geometry.pageCanScroll).toBe(false);
+  expect(geometry.regionCanScroll).toBe(false);
 });
 
 test("@mobile a single long winner name wraps fully inside the slide", async ({ page }) => {
