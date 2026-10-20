@@ -269,7 +269,9 @@ async function getPresenterDeck(signal?: AbortSignal): Promise<PresenterDeck> {
       );
     })
   )
-    throw new Error("スライドを読み込めませんでした。");
+    throw Object.assign(new Error("スライドを読み込めませんでした。"), {
+      invalidPayload: true,
+    });
   return payload as unknown as PresenterDeck;
 }
 
@@ -332,6 +334,21 @@ function ExamStamp({ className }: { className: string }) {
       <span>しゅんたま</span>
       <span>検定</span>
     </span>
+  );
+}
+
+function RankHalo({ hasWinners }: { hasWinners: boolean }) {
+  const eligibleAtEntry = useRef(hasWinners);
+  useLayoutEffect(() => {
+    if (!hasWinners) eligibleAtEntry.current = false;
+  }, [hasWinners]);
+
+  return (
+    <span
+      className={styles.rankHalo}
+      data-halo-eligible={hasWinners && eligibleAtEntry.current}
+      aria-hidden="true"
+    />
   );
 }
 
@@ -512,6 +529,7 @@ export default function PresentationScreen({
   const [presenterDeck, setPresenterDeck] = useState<PresenterDeck | null>(null);
   const [deckSyncPending, setDeckSyncPending] = useState(false);
   const [deckLoadError, setDeckLoadError] = useState(false);
+  const [staleDeckContent, setStaleDeckContent] = useState(false);
   const [pollError, setPollError] = useState(false);
   const presenterDeckRef = useRef<PresenterDeck | null>(null);
   const presenterDeckRequest = useRef<Promise<PresenterDeck> | null>(null);
@@ -696,7 +714,9 @@ export default function PresentationScreen({
         }
         let deck = presenterDeckRef.current;
         if (!deck || deck.snapshotRevision !== controls.snapshotRevision) {
-          if (deck && deck.snapshotRevision !== controls.snapshotRevision) setData(null);
+          const previousSnapshotRevision =
+            presenterDeckRef.current?.snapshotRevision ??
+            adminControlsRef.current?.snapshotRevision;
           presenterDeckRef.current = null;
           setPresenterDeck(null);
           loadingDeck = true;
@@ -706,6 +726,14 @@ export default function PresentationScreen({
           presenterDeckRequest.current = request;
           try {
             deck = await request;
+          } catch (error) {
+            const failedRequest = error as { status?: number; invalidPayload?: boolean };
+            if (canApply())
+              setStaleDeckContent(
+                !failedRequest.invalidPayload &&
+                  controls.snapshotRevision > (previousSnapshotRevision ?? -1),
+              );
+            throw error;
           } finally {
             // Single-flight keeps this request current until its awaited fetch settles.
             /* v8 ignore else */
@@ -715,11 +743,12 @@ export default function PresentationScreen({
           if (deck.snapshotRevision !== controls.snapshotRevision) {
             setDeckSyncPending(false);
             setDeckLoadError(true);
+            setStaleDeckContent(false);
             applyAdminControls(null);
-            setData(null);
             return;
           }
           setDeckSyncPending(false);
+          setStaleDeckContent(false);
           presenterDeckRef.current = deck;
           setPresenterDeck(deck);
           setDeckLoadError(false);
@@ -758,6 +787,7 @@ export default function PresentationScreen({
           setPresenterDeck(deck);
           setDeckSyncPending(false);
           setDeckLoadError(false);
+          setStaleDeckContent(false);
           /* v8 ignore if -- この経路は conflict 復旧で deck を再取得した場合に限る。再取得済みの同一 revision deck と controls が一致する状態を実環境で作れないため、防御的な復旧状態消去。 */
           if (positionConflictRecovery.current) {
             pendingPosition.current = null;
@@ -1403,10 +1433,13 @@ export default function PresentationScreen({
                 className={styles.contentLayer}
                 data-testid="presentation-natural-layer"
                 data-fit-ready={fit.ready}
+                data-stale-hidden={staleDeckContent || undefined}
                 style={{ visibility: fit.ready ? "visible" : "hidden" }}
               >
                 {loadingPresenterDeck && (
-                  <section className={styles.waiting}>
+                  <section
+                    className={`${styles.waiting} ${deckLoadError ? styles.deckLoadStatus : ""}`}
+                  >
                     <h1>
                       {deckLoadError
                         ? "スライドを読み込めませんでした"
@@ -1420,132 +1453,146 @@ export default function PresentationScreen({
                   </section>
                 )}
 
-                {state === "standby" && (
-                  <section className={styles.waiting} aria-labelledby="standby-title">
-                    <h1 id="standby-title">ただいま休憩中です</h1>
-                    <p className={styles.subtitle}>まもなく再開します</p>
-                  </section>
-                )}
+                <div
+                  className={styles.slideContent}
+                  data-stale-hidden={staleDeckContent || undefined}
+                  aria-hidden={staleDeckContent || undefined}
+                  inert={staleDeckContent || undefined}
+                >
+                  {state === "standby" && (
+                    <section className={styles.waiting} aria-labelledby="standby-title">
+                      <h1 id="standby-title">ただいま休憩中です</h1>
+                      <p className={styles.subtitle}>まもなく再開します</p>
+                    </section>
+                  )}
 
-                {!loadingPresenterDeck && (!data || state === "not_started") && (
-                  <section className={styles.opening} aria-labelledby="presentation-title">
-                    <div className={styles.openingLockup}>
-                      <div className={styles.openingTitle}>
-                        <h1 id="presentation-title" aria-label="しゅんたま検定">
-                          <span>しゅんたま</span>
-                          <span>検定</span>
-                        </h1>
+                  {!loadingPresenterDeck && (!data || state === "not_started") && (
+                    <section className={styles.opening} aria-labelledby="presentation-title">
+                      <div className={styles.openingLockup}>
+                        <div className={styles.openingTitle}>
+                          <h1 id="presentation-title" aria-label="しゅんたま検定">
+                            <span>しゅんたま</span>
+                            <span>検定</span>
+                          </h1>
+                        </div>
                       </div>
-                    </div>
-                    <p className={styles.openingSubtitle}>解答解説・表彰</p>
-                    <div className={styles.openingWaitSlot}>
-                      <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
-                    </div>
-                  </section>
-                )}
-
-                {state === "opening" && (
-                  <section className={styles.opening} aria-labelledby="opening-title">
-                    <div className={styles.openingLockup}>
-                      <div className={styles.openingTitle}>
-                        <h1 id="opening-title" aria-label="しゅんたま検定">
-                          <span>しゅんたま</span>
-                          <span>検定</span>
-                        </h1>
+                      <p className={styles.openingSubtitle}>解答解説・表彰</p>
+                      <div className={styles.openingWaitSlot}>
+                        <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
                       </div>
-                    </div>
-                    <p className={styles.openingSubtitle}>解答解説・表彰</p>
-                    <div className={styles.openingWaitSlot} aria-hidden="true">
-                      <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
-                    </div>
-                  </section>
-                )}
+                    </section>
+                  )}
 
-                {state === "question" && data?.question && (
-                  <QuestionPrompt question={data.question} />
-                )}
-                {state === "answer" && data?.question && (
-                  <AnswerReview
-                    key={`answer:${String(data.question.id)}`}
-                    question={data.question}
-                  />
-                )}
+                  {state === "opening" && (
+                    <section className={styles.opening} aria-labelledby="opening-title">
+                      <div className={styles.openingLockup}>
+                        <div className={styles.openingTitle}>
+                          <h1 id="opening-title" aria-label="しゅんたま検定">
+                            <span>しゅんたま</span>
+                            <span>検定</span>
+                          </h1>
+                        </div>
+                      </div>
+                      <p className={styles.openingSubtitle}>解答解説・表彰</p>
+                      <div className={styles.openingWaitSlot} aria-hidden="true">
+                        <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
+                      </div>
+                    </section>
+                  )}
 
-                {state === "podium_preview" && (
-                  <section className={styles.podiumPreview} aria-labelledby="podium-title">
-                    <h1 id="podium-title">いよいよ、結果発表です</h1>
-                    <p className={styles.subtitle}>これから入賞者を発表します。どうぞお楽しみに</p>
-                  </section>
-                )}
+                  {state === "question" && data?.question && (
+                    <QuestionPrompt question={data.question} />
+                  )}
+                  {state === "answer" && data?.question && (
+                    <AnswerReview
+                      key={`answer:${String(data.question.id)}`}
+                      question={data.question}
+                    />
+                  )}
 
-                {(state === "third" || state === "second" || state === "first") && (
-                  <section
-                    className={styles.winners}
-                    role="region"
-                    aria-label={`${rankTitle[state]}の勝者一覧`}
-                    data-rank={state}
-                    tabIndex={0}
-                  >
-                    <ExamStamp className={styles.rankStamp} />
-                    <div className={styles.rankHeader}>
-                      <span className={styles.certificateLabel}>認定証</span>
-                      <h1 className={styles.rank}>{rankTitle[state]}</h1>
-                    </div>
-                    <div className={styles.winnerReveal} key={state}>
-                      {winnerGroups.length ? (
-                        winnerGroups.map(({ rank, winners }) => (
-                          <div className={styles.winnerRankGroup} key={rank}>
-                            <div
-                              className={`${styles.winnerNames} ${winners.length === 1 ? styles.singleWinner : ""}`}
-                            >
-                              {winners.slice(0, 2).map((winner, index) => (
-                                <article
-                                  className={styles.winner}
-                                  key={`${winner.rank}-${winner.displayName}-${index}`}
-                                >
-                                  <div className={styles.winnerIdentity}>
-                                    <h1>
-                                      <span className={styles.winnerName}>
-                                        {winner.displayName}
-                                        <span className={styles.winnerHonorific}>&nbsp;殿</span>
-                                      </span>
-                                    </h1>
-                                    <p className={styles.winnerScore}>
-                                      {winner.score.toFixed(2)} ポイント
-                                    </p>
-                                  </div>
-                                  {winner.questionResults && (
-                                    <WinnerQuestionBreakdown results={winner.questionResults} />
-                                  )}
-                                </article>
-                              ))}
+                  {state === "podium_preview" && (
+                    <section className={styles.podiumPreview} aria-labelledby="podium-title">
+                      <h1 id="podium-title">いよいよ、結果発表です</h1>
+                      <p className={styles.subtitle}>
+                        これから入賞者を発表します。どうぞお楽しみに
+                      </p>
+                    </section>
+                  )}
+
+                  {(state === "third" || state === "second" || state === "first") && (
+                    <section
+                      key={state}
+                      className={styles.winners}
+                      role="region"
+                      aria-label={`${rankTitle[state]}の勝者一覧`}
+                      data-rank={state}
+                      tabIndex={0}
+                    >
+                      <RankHalo key={`rankHalo-${state}`} hasWinners={winnerGroups.length > 0} />
+                      <ExamStamp className={styles.rankStamp} />
+                      <div className={styles.rankHeader}>
+                        <span className={styles.certificateLabel}>認定証</span>
+                        <div className={styles.rankHeading}>
+                          <span className={styles.rankOrnament} aria-hidden="true" />
+                          <h1 className={styles.rank}>{rankTitle[state]}</h1>
+                        </div>
+                      </div>
+                      <div className={styles.winnerReveal} key={state}>
+                        {winnerGroups.length ? (
+                          winnerGroups.map(({ rank, winners }) => (
+                            <div className={styles.winnerRankGroup} key={rank}>
+                              <div
+                                className={`${styles.winnerNames} ${winners.length === 1 ? styles.singleWinner : ""}`}
+                              >
+                                {winners.slice(0, 2).map((winner, index) => (
+                                  <article
+                                    className={styles.winner}
+                                    key={`${winner.rank}-${winner.displayName}-${index}`}
+                                  >
+                                    <div className={styles.winnerIdentity}>
+                                      <h1>
+                                        <span className={styles.winnerName}>
+                                          {winner.displayName}
+                                          <span className={styles.winnerHonorific}>&nbsp;殿</span>
+                                        </span>
+                                      </h1>
+                                      <p className={styles.winnerScore}>
+                                        {winner.score.toFixed(2)} ポイント
+                                      </p>
+                                    </div>
+                                    {winner.questionResults && (
+                                      <WinnerQuestionBreakdown results={winner.questionResults} />
+                                    )}
+                                  </article>
+                                ))}
+                              </div>
+                              {winners.length > 2 && (
+                                <p className={styles.additionalWinners}>
+                                  ほか {winners.length - 2} 名
+                                </p>
+                              )}
                             </div>
-                            {winners.length > 2 && (
-                              <p className={styles.additionalWinners}>
-                                ほか {winners.length - 2} 名
-                              </p>
-                            )}
-                          </div>
-                        ))
-                      ) : (
-                        <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
-                      )}
-                    </div>
-                  </section>
-                )}
+                          ))
+                        ) : (
+                          <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
+                        )}
+                      </div>
+                    </section>
+                  )}
 
-                {state === "finished" && (
-                  <section className={styles.finished} aria-labelledby="finished-title">
-                    <h1 id="finished-title">
-                      ご参加
-                      <br />
-                      ありがとうございました
-                    </h1>
-                    <p className={styles.subtitle}>
-                      ふたりの思い出を一緒に祝ってくださり、心から感謝します
-                    </p>
-                  </section>
-                )}
+                  {state === "finished" && (
+                    <section className={styles.finished} aria-labelledby="finished-title">
+                      <h1 id="finished-title">
+                        ご参加
+                        <br />
+                        ありがとうございました
+                      </h1>
+                      <p className={styles.subtitle}>
+                        ふたりの思い出を一緒に祝ってくださり、心から感謝します
+                      </p>
+                    </section>
+                  )}
+                </div>
               </div>
             </div>
           </div>

@@ -132,12 +132,24 @@
 }
 
 .contentLayer {
+  position: relative;
   display: block;
   width: 100%;
 }
 
 .contentLayer[data-fit-ready="false"] {
   visibility: hidden;
+}
+
+.slideContent[data-stale-hidden="true"] {
+  visibility: hidden;
+}
+
+.contentLayer[data-stale-hidden="true"] .deckLoadStatus {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  background: #fff;
 }
 
 .contentLayer img {
@@ -556,9 +568,51 @@
   top: clamp(18px, 3cqh, 36px);
   right: clamp(20px, 3.5cqw, 52px);
   width: clamp(58px, 7cqw, 100px);
+  pointer-events: none;
+}
+
+.rankHalo {
+  position: absolute;
+  z-index: 0;
+  inset: 18% 12%;
+  border: 2px solid rgb(181 139 53 / 16%);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.winners[data-rank="first"] .rankHalo {
+  animation: firstRankHalo 300ms ease-out 800ms both;
+}
+
+.rankHalo[data-halo-eligible="true"] {
+  visibility: visible;
+}
+
+.rankHeading {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rankOrnament {
+  position: absolute;
+  z-index: 0;
+  inset: 50% -0.65em auto;
+  height: 1px;
+  background: var(--rank-metal, #8e6e31);
+  opacity: 0;
+  transform: scaleX(0.25);
+  transform-origin: center;
+  pointer-events: none;
 }
 
 .winnerReveal {
+  position: relative;
+  z-index: 1;
   display: flex;
   width: 100%;
   min-width: 0;
@@ -569,14 +623,64 @@
 @keyframes rankWinnerReveal {
   from {
     opacity: 0;
+    transform: translateY(8px);
   }
 
   to {
     opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rankOrnamentEntrance {
+  from {
+    opacity: 0;
+    transform: scaleX(0.25);
+  }
+
+  to {
+    opacity: 0.55;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes rankMedalEntrance {
+  from {
+    opacity: 0;
+    transform: rotate(8deg) scale(0.82);
+  }
+
+  to {
+    opacity: 1;
+    transform: rotate(8deg) scale(1);
+  }
+}
+
+@keyframes firstRankHalo {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+
+  35% {
+    opacity: 0.42;
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.02);
   }
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  .rankOrnament {
+    animation: rankOrnamentEntrance 240ms ease-out both;
+  }
+
+  .rankStamp {
+    animation: rankMedalEntrance 240ms ease-out both;
+  }
+
   .winnerReveal {
     animation: rankWinnerReveal 400ms ease-out 400ms both;
   }
@@ -592,6 +696,8 @@
 }
 
 .rank {
+  position: relative;
+  z-index: 1;
   box-sizing: border-box;
   max-width: 100%;
   width: fit-content;
@@ -917,5 +1023,16 @@
 
   .screen .winnerReveal {
     animation: none !important;
+  }
+
+  .screen .rankOrnament,
+  .screen .rankStamp,
+  .screen .rankHalo {
+    animation: none !important;
+    opacity: 0;
+  }
+
+  .screen .rankHalo {
+    visibility: hidden;
   }
 }

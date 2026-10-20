@@ -555,7 +555,7 @@ describe("presentation projection and presenter progression", () => {
           "src",
           "/certificate_ornate_frame_16x9_gold.svg",
         );
-        const rank = slide.querySelector("[class*='rankHeader'] > h1[class*='rank']");
+        const rank = slide.querySelector("[class*='rankHeader'] h1[class*='rank']");
         const winner = slide.querySelector("article");
         const name = winner?.querySelector("h1");
         const score = winner?.querySelector("[class*='winnerScore']");
@@ -568,7 +568,7 @@ describe("presentation projection and presenter progression", () => {
         );
         expect(name).not.toBeNull();
         expect(score).not.toBeNull();
-        expect(slide.querySelectorAll("[class*='rankHeader'] > h1[class*='rank']")).toHaveLength(1);
+        expect(slide.querySelectorAll("[class*='rankHeader'] h1[class*='rank']")).toHaveLength(1);
         expect(rank?.textContent).toBe(
           projection.state === "third"
             ? "第三位"
@@ -1309,7 +1309,13 @@ describe("presentation projection and presenter progression", () => {
     const region = await screen.findByRole("region", { name: "第三位の勝者一覧" });
     await settled();
 
-    expect(screen.getByText("該当する受賞者はいません")).toBeInTheDocument();
+    const emptyMessage = screen.getByText("該当する受賞者はいません");
+    expect(emptyMessage).toBeInTheDocument();
+    expect(region.querySelector("[class*='winnerReveal']")).toContainElement(emptyMessage);
+    expect(region.querySelector("[class*='rankHalo']")).toHaveAttribute(
+      "data-halo-eligible",
+      "false",
+    );
     expect(region).not.toHaveClass(/announce/);
     expect(
       api.calls.filter(
@@ -2070,7 +2076,10 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.getByText("葵", { exact: false })).toBeInTheDocument();
     const region = screen.getByRole("region", { name: "第三位の勝者一覧" });
     expect(region).not.toHaveClass(/announce/);
-    expect(region.querySelector("[class*='rankEntranceOrnament']")).not.toBeInTheDocument();
+    expect(region.querySelector("[class*='rankOrnament']")).toHaveAttribute("aria-hidden", "true");
+    const medal = region.querySelector("[data-testid='presentation-exam-stamp']");
+    expect(medal).toHaveAttribute("aria-hidden", "true");
+    expect(region.querySelector("[class*='rankHalo']")).toHaveAttribute("aria-hidden", "true");
     const reveal = region.querySelector("[class*='winnerReveal']");
     expect(reveal).toBeInTheDocument();
     expect(reveal).toHaveTextContent("葵");
@@ -2315,7 +2324,7 @@ describe("presentation projection and presenter progression", () => {
     expect(within(answerRow).getByLabelText("正解")).toBeVisible();
     expect(within(region).getByText("ほか 1 名")).toBeVisible();
     expect(region).not.toHaveClass(/announce/);
-    expect(region.querySelector("[class*='rankEntranceOrnament']")).not.toBeInTheDocument();
+    expect(region.querySelector("[class*='rankOrnament']")).toHaveAttribute("aria-hidden", "true");
     const reveal = region.querySelector("[class*='winnerReveal']");
     expect(reveal).toHaveTextContent("葵");
     expect(reveal).toHaveTextContent("12.50 ポイント");
@@ -2326,7 +2335,7 @@ describe("presentation projection and presenter progression", () => {
     expect(region).not.toHaveClass(/announce/);
   });
 
-  it("renders rank content immediately under reduced motion without the removed ornament", async () => {
+  it("renders rank content immediately under reduced motion with decorative markup hidden from assistive technology", async () => {
     vi.stubGlobal(
       "matchMedia",
       vi.fn(() => ({ matches: true, addListener: vi.fn(), removeListener: vi.fn() })),
@@ -2373,7 +2382,7 @@ describe("presentation projection and presenter progression", () => {
     expect(reveal).toHaveTextContent("葵");
     expect(within(reveal as HTMLElement).getByText("保存された回答")).toBeVisible();
     expect(within(reveal as HTMLElement).getByText("得点 0.75")).toBeVisible();
-    expect(region.querySelector("[class*='rankEntranceOrnament']")).not.toBeInTheDocument();
+    expect(region.querySelector("[class*='rankOrnament']")).toHaveAttribute("aria-hidden", "true");
   });
 
   it("does not write position when mutation is in flight during operate", async () => {

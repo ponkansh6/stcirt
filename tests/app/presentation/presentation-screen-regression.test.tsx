@@ -2456,6 +2456,68 @@ describe("PresentationScreen", () => {
     expect(rerenderedRegion.querySelector("[class*='winnerReveal']")).toBe(reveal);
   });
 
+  it("freezes first-place halo eligibility for the lifetime of a rank entry", async () => {
+    vi.useFakeTimers();
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    const api = installApi({
+      projection: { state: "first", winners: [{ displayName: "花子", score: 12, rank: 1 }] },
+    });
+    try {
+      const view = render(<PresentationScreen />);
+      await flush();
+      const region = screen.getByRole("region", { name: "第一位の勝者一覧" });
+      const halo = region.querySelector("[class*='rankHalo']");
+      const reveal = region.querySelector("[class*='winnerReveal']");
+      expect(halo).toHaveAttribute("data-halo-eligible", "true");
+
+      api.setProjection({ state: "first", winners: [] });
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      await act(async () => vi.advanceTimersByTimeAsync(1400));
+      await flush();
+      expect(screen.getByText("該当する受賞者はいません")).toBeInTheDocument();
+      expect(region.querySelector("[class*='rankHalo']")).toBe(halo);
+      expect(halo).toHaveAttribute("data-halo-eligible", "false");
+      expect(region.querySelector("[class*='winnerReveal']")).toBe(reveal);
+
+      api.setProjection({ state: "first", winners: [{ displayName: "花子", score: 12, rank: 1 }] });
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      await act(async () => vi.advanceTimersByTimeAsync(1400));
+      await flush();
+      expect(screen.getByText("花子", { exact: false })).toBeInTheDocument();
+      expect(region.querySelector("[class*='rankHalo']")).toBe(halo);
+      expect(halo).toHaveAttribute("data-halo-eligible", "false");
+      expect(region.querySelector("[class*='winnerReveal']")).toBe(reveal);
+
+      view.unmount();
+      const emptyApi = installApi({ projection: { state: "first", winners: [] } });
+      render(<PresentationScreen />);
+      await flush();
+      const emptyRegion = screen.getByRole("region", { name: "第一位の勝者一覧" });
+      const emptyHalo = emptyRegion.querySelector("[class*='rankHalo']");
+      const emptyReveal = emptyRegion.querySelector("[class*='winnerReveal']");
+      expect(emptyHalo).toHaveAttribute("data-halo-eligible", "false");
+
+      emptyApi.setProjection({
+        state: "first",
+        winners: [{ displayName: "花子", score: 12, rank: 1 }],
+      });
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      await act(async () => vi.advanceTimersByTimeAsync(1400));
+      await flush();
+      expect(screen.getByText("花子", { exact: false })).toBeInTheDocument();
+      expect(emptyRegion.querySelector("[class*='rankHalo']")).toBe(emptyHalo);
+      expect(emptyHalo).toHaveAttribute("data-halo-eligible", "false");
+      expect(emptyRegion.querySelector("[class*='winnerReveal']")).toBe(emptyReveal);
+    } finally {
+      if (originalVisibility)
+        Object.defineProperty(document, "visibilityState", originalVisibility);
+      else
+        delete (document as Document & { visibilityState?: DocumentVisibilityState })
+          .visibilityState;
+    }
+  });
+
   it("renders the first-place winner immediately when advancing from second place", async () => {
     const waitForControls = observePresenterControls();
     vi.stubGlobal(
@@ -2925,7 +2987,10 @@ describe("PresentationScreen", () => {
     expect(winnerRegion).toHaveTextContent("長い回答もすぐ表示");
     expect(winnerRegion).toHaveTextContent("ほか 1 名");
     expect(winnerRegion.className).not.toContain("announce");
-    expect(winnerRegion.querySelector("[class*='rankEntranceOrnament']")).not.toBeInTheDocument();
+    expect(winnerRegion.querySelector("[class*='rankOrnament']")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
     const reveal = winnerRegion.querySelector("[class*='winnerReveal']");
     expect(reveal).toBeInTheDocument();
     expect(reveal).toHaveTextContent("長い回答もすぐ表示");
