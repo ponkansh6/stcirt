@@ -2213,7 +2213,7 @@ describe("presentation repository", () => {
     });
   });
 
-  it("rejects an answer update when the publication transaction commits first", async () => {
+  it("allows an answer update after publication while keeping its snapshot unchanged", async () => {
     await addCurrentFiveQuestions();
     const participantId = await addParticipant("Contended participant");
     const submissionId = `submission-${participantId}-latest`;
@@ -2253,16 +2253,13 @@ describe("presentation repository", () => {
     );
 
     expect(show.status).toBe("fulfilled");
-    expect(update).toMatchObject({
-      status: "rejected",
-      reason: { code: "SUBMISSION_LOCKED" },
-    });
+    expect(update.status).toBe("fulfilled");
     await expect(
       testDb.db
         .select({ revision: schema.examAnswerSubmissions.revision })
         .from(schema.examAnswerSubmissions)
         .where(eq(schema.examAnswerSubmissions.id, submissionId)),
-    ).resolves.toEqual([{ revision: 1 }]);
+    ).resolves.toEqual([{ revision: 2 }]);
     const [settings] = await testDb.db
       .select()
       .from(schema.participantResultSettings)

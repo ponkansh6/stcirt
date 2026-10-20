@@ -14,6 +14,12 @@ The checker does not back up, migrate, repair, or restore a database. Do not des
 
 This repository defines no backup schedule, backup retention, restore procedure, restore permissions, point-in-time recovery mechanism, or recovery objective. RPO and RTO are unresolved. The deployment/operator role must establish those details with the database provider and record the actual procedure before recovery can be promised. See [open decisions](../decisions/open-items.md).
 
+### External recovery evidence status
+
+Local repository evidence reviewed 2026-10-19: no provider or deployment evidence was available here to verify the deployed database scope, retention/deletion policy, backup frequency or retention, assigned owner, approved RPO/RTO, restore procedure/authority, or an isolated restore drill and its result. These items are **unverified**, not findings that the service has no such configuration or capability. No backup or restore was performed for this review, and no external confirmation date or approver is recorded.
+
+The actual privilege level of the credential used by the read-only drift checker remains unverified. Credential issuance, storage, rotation, revocation, and responsible role are also unverified. No credential value was inspected or recorded. Track decisions and ownership through [open decisions](../decisions/open-items.md).
+
 For a migration or suspected schema problem, preserve the observed error and migration identifier, stop any unreviewed schema mutation, and involve the deployment/operator role. Do not run `db:push` against production as an improvised repair. No destructive rollback or restore command is specified here because the repository does not establish a safe source of backup or recovery authority.
 
 Accidental publication is also not covered by a recovery guarantee. The admin can hide participant results through the existing visibility endpoint, but this does not erase data or rebuild snapshots. Confirm the resulting visibility state through the authorized admin interface and use the deployment's incident process; that process and its owner remain to be assigned.

@@ -6,6 +6,9 @@ import { jstDayStart } from "@/lib/date";
 
 const dbRef = vi.hoisted(() => ({ db: null as TestDb["db"] | null }));
 
+type TransactionCallback = Parameters<TestDb["db"]["transaction"]>[0];
+type TransactionConfig = Parameters<TestDb["db"]["transaction"]>[1];
+
 vi.mock("@/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/db")>();
   return {
@@ -500,6 +503,55 @@ describe("answer-repository", () => {
       return transactionSpy;
     }
 
+    function failRecoveryReads(failure: unknown, attempts = Number.POSITIVE_INFINITY) {
+      const database = dbRef.db!;
+      const originalSelect = database.select.bind(database);
+      let failures = 0;
+      const wrapSelect = (
+        builder: object,
+        table: unknown,
+        operationReadPhase: "preflight" | "recovery",
+      ): object =>
+        new Proxy(builder, {
+          get(target, property) {
+            const member = Reflect.get(target, property, target) as unknown;
+            if (property === "from" && typeof member === "function") {
+              return (fromTable: unknown) =>
+                wrapSelect(
+                  Reflect.apply(member, target, [fromTable]) as object,
+                  fromTable,
+                  operationReadPhase,
+                );
+            }
+            if (property === "where" && typeof member === "function") {
+              return (...args: unknown[]) => {
+                if (
+                  operationReadPhase === "recovery" &&
+                  table === schema.examSubmissionOperations &&
+                  failures < attempts
+                ) {
+                  failures += 1;
+                  return Promise.reject(failure);
+                }
+                return Reflect.apply(member, target, args);
+              };
+            }
+            return typeof member === "function" ? member.bind(target) : member;
+          },
+        });
+      return vi.spyOn(database, "select").mockImplementation(((...args: unknown[]) => {
+        // Preflight uses a projected joined read; recovery uses select() with
+        // no projection. Classify the read by its query shape, not transaction
+        // mock call counts, so retries remain isolated from this assertion.
+        const operationReadPhase = args.length === 0 ? "recovery" : "preflight";
+        return wrapSelect(
+          Reflect.apply(originalSelect, database, args) as object,
+          undefined,
+          operationReadPhase,
+        );
+      }) as never);
+    }
+
     function failRevisionCompareAndSwap(latestExists: boolean) {
       const realTransaction = dbRef.db!.transaction.bind(dbRef.db);
       return vi.spyOn(dbRef.db!, "transaction").mockImplementation(((
@@ -525,7 +577,7 @@ describe("answer-repository", () => {
                   return (...args: unknown[]) => {
                     if (
                       table === schema.examAnswerSubmissions &&
-                      submissionRead === 2 &&
+                      submissionRead === 1 &&
                       !latestExists
                     ) {
                       return Promise.resolve([]);
@@ -567,27 +619,62 @@ describe("answer-repository", () => {
         })) as never);
     }
 
-    it("classifies exhausted write lock retries when recovery finds no submission", async () => {
-      const transaction = failWriteTransactionsWithBusy();
-      try {
-        await expect(
-          saveAnswerSubmission({
-            submissionId: "not-created",
-            operationId: "missing-operation",
-            expectedRevision: 0,
-            participantId: 1,
-            answers: [],
-          }),
-        ).rejects.toMatchObject({ status: 503, code: "DATABASE_LOCKED" });
-        // Six write retries exhaust the retry budget; call seven is the recovery
-        // transaction/read that finds no submission.
-        expect(transaction).toHaveBeenCalledTimes(7);
-      } finally {
-        transaction.mockRestore();
+    it("bounds equal-jitter delays per retry-helper invocation and returns 503 after six attempts", async () => {
+      const questionIds = await insertFiveQuestions();
+      const cases = [
+        { label: "lower endpoint", random: () => 0, delays: [13, 25, 50, 100, 200] },
+        {
+          label: "upper endpoint",
+          random: () => 0.999999999,
+          delays: [25, 50, 100, 200, 400],
+        },
+      ];
+
+      for (const [index, testCase] of cases.entries()) {
+        const transaction = failWriteTransactionsWithBusy();
+        const retryEvents: {
+          phase: "preflight_read" | "write_transaction" | "recovery_read";
+          retryNumber: number;
+          capMs: number;
+          delayMs: number;
+        }[] = [];
+        const sleep = vi.fn((_ms: number) => Promise.resolve());
+        try {
+          await expect(
+            saveAnswerSubmission(
+              {
+                submissionId: `not-created-${index}`,
+                operationId: `missing-operation-${index}`,
+                expectedRevision: 0,
+                participantId: 1,
+                answers: selectedAnswers(questionIds),
+              },
+              {
+                random: testCase.random,
+                sleep,
+                onRetryScheduled: (event) => retryEvents.push(event),
+              },
+            ),
+          ).rejects.toMatchObject({ status: 503, code: "DATABASE_LOCKED" });
+          expect(transaction).toHaveBeenCalledTimes(6);
+          expect(sleep).toHaveBeenCalledTimes(5);
+          expect(sleep.mock.calls.map(([delayMs]) => delayMs)).toEqual(testCase.delays);
+          expect(retryEvents.map(({ delayMs }) => delayMs)).toEqual(testCase.delays);
+          expect(retryEvents.map(({ phase }) => phase)).toEqual(Array(5).fill("write_transaction"));
+          expect(retryEvents.map(({ retryNumber }) => retryNumber)).toEqual([1, 2, 3, 4, 5]);
+          expect(retryEvents.map(({ capMs }) => capMs)).toEqual([25, 50, 100, 200, 400]);
+          if (testCase.label === "upper endpoint") {
+            // This 775ms maximum applies to this one retry-helper invocation.
+            expect(sleep.mock.calls.reduce((total, [delayMs]) => total + delayMs, 0)).toBe(775);
+          }
+        } finally {
+          transaction.mockRestore();
+        }
       }
     });
 
     it("rethrows an unclassified SQLite error without starting recovery", async () => {
+      const questionIds = await insertFiveQuestions();
       const failure = Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR" });
       const database = dbRef.db!;
       const transaction = vi.spyOn(database, "transaction");
@@ -599,7 +686,7 @@ describe("answer-repository", () => {
             operationId: "io-error-operation",
             expectedRevision: 0,
             participantId: 1,
-            answers: [],
+            answers: selectedAnswers(questionIds),
           }),
         ).rejects.toBe(failure);
         expect(transaction).toHaveBeenCalledTimes(1);
@@ -609,13 +696,13 @@ describe("answer-repository", () => {
     });
 
     it("reports an owner mismatch when recovering an existing operation", async () => {
-      const questionId = await insertQuestion();
+      const questionIds = await insertFiveQuestions();
       const ownerId = await insertParticipant("operation-owner");
       const otherId = await insertParticipant("operation-caller");
       await insertSubmission({
         id: "operation-submission",
         participantId: ownerId,
-        questionIds: [questionId],
+        questionIds,
       });
       await dbRef.db!.insert(schema.examSubmissionOperations).values({
         operationId: "foreign-operation",
@@ -629,19 +716,19 @@ describe("answer-repository", () => {
           operationId: "foreign-operation",
           expectedRevision: 0,
           participantId: otherId,
-          answers: [],
+          answers: selectedAnswers(questionIds),
         }),
       ).rejects.toMatchObject({ name: "BatchSubmissionError", status: 404 });
     });
 
     it("reports an owner mismatch when recovering a submission without an operation", async () => {
-      const questionId = await insertQuestion();
+      const questionIds = await insertFiveQuestions();
       const ownerId = await insertParticipant("submission-owner");
       const otherId = await insertParticipant("submission-caller");
       await insertSubmission({
         id: "foreign-submission",
         participantId: ownerId,
-        questionIds: [questionId],
+        questionIds,
       });
       const transaction = failWriteTransactionsWithBusy();
       try {
@@ -651,7 +738,7 @@ describe("answer-repository", () => {
             operationId: "new-operation",
             expectedRevision: 1,
             participantId: otherId,
-            answers: [],
+            answers: selectedAnswers(questionIds),
           }),
         ).rejects.toMatchObject({ name: "BatchSubmissionError", status: 404 });
       } finally {
@@ -659,13 +746,48 @@ describe("answer-repository", () => {
       }
     });
 
+    it("reports an owner mismatch when an operation-less submission changes owner before recovery", async () => {
+      const questionIds = await insertFiveQuestions();
+      const participantId = await insertParticipant("owner-before-recovery");
+      const newOwnerId = await insertParticipant("owner-after-preflight");
+      const submissionId = "owner-changed-before-recovery";
+      await insertSubmission({ id: submissionId, participantId, questionIds });
+      const database = dbRef.db!;
+      const busy = Object.assign(new Error("database is busy"), { code: "SQLITE_BUSY" });
+      let calls = 0;
+      const transaction = vi.spyOn(database, "transaction").mockImplementation(async () => {
+        calls += 1;
+        if (calls === 1) {
+          await database
+            .update(schema.examAnswerSubmissions)
+            .set({ participantId: newOwnerId })
+            .where(eq(schema.examAnswerSubmissions.id, submissionId));
+        }
+        throw busy;
+      });
+      try {
+        await expect(
+          saveAnswerSubmission({
+            submissionId,
+            operationId: "owner-changed-operation",
+            expectedRevision: 1,
+            participantId,
+            answers: selectedAnswers(questionIds),
+          }),
+        ).rejects.toMatchObject({ name: "BatchSubmissionError", status: 404 });
+        expect(transaction).toHaveBeenCalledTimes(6);
+      } finally {
+        transaction.mockRestore();
+      }
+    });
+
     it("reports a revision conflict when recovery sees a newer submission", async () => {
-      const questionId = await insertQuestion();
+      const questionIds = await insertFiveQuestions();
       const participantId = await insertParticipant("revision-owner");
       await insertSubmission({
         id: "newer-submission",
         participantId,
-        questionIds: [questionId],
+        questionIds,
         revision: 2,
       });
       const transaction = failWriteTransactionsWithBusy();
@@ -676,7 +798,7 @@ describe("answer-repository", () => {
             operationId: "stale-operation",
             expectedRevision: 1,
             participantId,
-            answers: [],
+            answers: selectedAnswers(questionIds),
           }),
         ).rejects.toMatchObject({ name: "BatchSubmissionError", status: 409 });
       } finally {
@@ -699,6 +821,144 @@ describe("answer-repository", () => {
         ...committed,
         assessmentTarget: null,
       });
+    });
+
+    it("retries a busy recovery read and returns the already committed operation", async () => {
+      const questionIds = await insertFiveQuestions();
+      const participantId = await insertParticipant("busy-recovery-committed-owner");
+      const input = {
+        submissionId: "busy-recovery-committed-submission",
+        operationId: "busy-recovery-committed-operation",
+        expectedRevision: 0,
+        participantId,
+        answers: selectedAnswers(questionIds),
+      };
+      const database = dbRef.db!;
+      const busy = Object.assign(new Error("database is busy"), { code: "SQLITE_BUSY" });
+      const originalTransaction = database.transaction.bind(database);
+      let calls = 0;
+      let transaction: ReturnType<typeof vi.spyOn> | undefined;
+      let recoverySelect: ReturnType<typeof vi.spyOn> | undefined;
+      try {
+        transaction = vi.spyOn(database, "transaction");
+        transaction.mockImplementation(
+          async (callback: TransactionCallback, config?: TransactionConfig) => {
+            calls += 1;
+            if (calls === 1) {
+              // Model an adapter error after the transaction has actually committed.
+              await originalTransaction(callback, config);
+              throw busy;
+            }
+            if (calls <= 6) throw busy;
+            return originalTransaction(callback, config);
+          },
+        );
+        recoverySelect = failRecoveryReads(busy, 1);
+        await expect(saveAnswerSubmission(input)).resolves.toEqual({
+          submissionId: input.submissionId,
+          revision: 1,
+          assessmentTarget: null,
+        });
+        expect(transaction).toHaveBeenCalledTimes(6);
+        expect(
+          await database
+            .select()
+            .from(schema.examSubmissionOperations)
+            .where(eq(schema.examSubmissionOperations.operationId, input.operationId)),
+        ).toHaveLength(1);
+      } finally {
+        transaction?.mockRestore();
+        recoverySelect?.mockRestore();
+      }
+    });
+
+    it("maps a persistently busy recovery read to 503 and allows the same ID to retry once", async () => {
+      const questionIds = await insertFiveQuestions();
+      const participantId = await insertParticipant("busy-recovery-retry-owner");
+      const input = {
+        submissionId: "busy-recovery-retry-submission",
+        operationId: "busy-recovery-retry-operation",
+        expectedRevision: 0,
+        participantId,
+        answers: selectedAnswers(questionIds),
+      };
+      const database = dbRef.db!;
+      const busy = Object.assign(new Error("database is busy"), { code: "SQLITE_BUSY" });
+      const originalTransaction = database.transaction.bind(database);
+      let calls = 0;
+      let transaction: ReturnType<typeof vi.spyOn> | undefined;
+      let recoverySelect: ReturnType<typeof vi.spyOn> | undefined;
+      try {
+        transaction = vi.spyOn(database, "transaction");
+        transaction.mockImplementation(
+          async (callback: TransactionCallback, config?: TransactionConfig) => {
+            calls += 1;
+            if (calls === 1) {
+              // Model an adapter failure after the first write has committed.
+              await originalTransaction(callback, config);
+            }
+            return Promise.reject(busy);
+          },
+        );
+        recoverySelect = failRecoveryReads(busy);
+        await expect(saveAnswerSubmission(input)).rejects.toMatchObject({
+          name: "BatchSubmissionError",
+          status: 503,
+          code: "DATABASE_LOCKED",
+        });
+        // Recovery retries the direct autocommit read without opening a transaction.
+        expect(transaction).toHaveBeenCalledTimes(6);
+      } finally {
+        transaction?.mockRestore();
+        recoverySelect?.mockRestore();
+      }
+
+      await expect(saveAnswerSubmission(input)).resolves.toMatchObject({
+        submissionId: input.submissionId,
+        revision: 1,
+      });
+      expect(await database.select().from(schema.examAnswerSubmissions)).toHaveLength(1);
+      expect(
+        await database
+          .select()
+          .from(schema.examSubmissionOperations)
+          .where(eq(schema.examSubmissionOperations.operationId, input.operationId)),
+      ).toHaveLength(1);
+      expect(
+        await database
+          .select()
+          .from(schema.examSubmissionAnswers)
+          .where(eq(schema.examSubmissionAnswers.submissionId, input.submissionId)),
+      ).toHaveLength(5);
+    });
+
+    it("preserves non-busy recovery failures as server errors", async () => {
+      const questionIds = await insertFiveQuestions();
+      const busy = Object.assign(new Error("database is busy"), { code: "SQLITE_BUSY" });
+      const ioError = Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR" });
+      let calls = 0;
+      let transaction: ReturnType<typeof vi.spyOn> | undefined;
+      let recoverySelect: ReturnType<typeof vi.spyOn> | undefined;
+      try {
+        transaction = vi.spyOn(dbRef.db!, "transaction").mockImplementation(() => {
+          calls += 1;
+          return Promise.reject(busy);
+        });
+        recoverySelect = failRecoveryReads(ioError, 1);
+        await expect(
+          saveAnswerSubmission({
+            submissionId: "busy-recovery-io-error-submission",
+            operationId: "busy-recovery-io-error-operation",
+            expectedRevision: 0,
+            participantId: 1,
+            answers: selectedAnswers(questionIds),
+          }),
+        ).rejects.toBe(ioError);
+        expect(transaction).toHaveBeenCalledTimes(6);
+      } finally {
+        transaction?.mockRestore();
+        recoverySelect?.mockRestore();
+      }
     });
 
     it("rejects a different payload in the operation replay preflight", async () => {
@@ -788,6 +1048,7 @@ describe("answer-repository", () => {
     });
 
     it("recognizes nested busy conflicts after skipping null, primitive, and visited values", async () => {
+      const questionIds = await insertFiveQuestions();
       const nestedConflict = Object.assign(new Error("locked"), { code: "SQLITE_BUSY" });
       const wrapper: { cause?: unknown; originalError?: unknown; error?: unknown } = {};
       wrapper.cause = wrapper;
@@ -801,18 +1062,18 @@ describe("answer-repository", () => {
             operationId: "nested-conflict-operation",
             expectedRevision: 0,
             participantId: 1,
-            answers: [],
+            answers: selectedAnswers(questionIds),
           }),
         ).rejects.toMatchObject({ status: 503, code: "DATABASE_LOCKED" });
-        // Six write attempts exhaust the retry budget; the final call reads
-        // for a committed operation before returning DATABASE_LOCKED.
-        expect(transaction).toHaveBeenCalledTimes(7);
+        // Six write attempts exhaust the retry budget; recovery is a direct read.
+        expect(transaction).toHaveBeenCalledTimes(6);
       } finally {
         transaction.mockRestore();
       }
     });
 
     it("rethrows a recognized SQLite unique conflict when recovery finds no submission", async () => {
+      const questionIds = await insertFiveQuestions();
       const conflict = Object.assign(new Error("unique constraint failed: table.key"), {
         code: "SQLITE_CONSTRAINT",
       });
@@ -826,10 +1087,10 @@ describe("answer-repository", () => {
             operationId: "unique-conflict-operation",
             expectedRevision: 0,
             participantId: 1,
-            answers: [],
+            answers: selectedAnswers(questionIds),
           }),
         ).rejects.toBe(conflict);
-        expect(transaction).toHaveBeenCalledTimes(2);
+        expect(transaction).toHaveBeenCalledTimes(1);
       } finally {
         transaction.mockRestore();
       }

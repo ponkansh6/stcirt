@@ -465,7 +465,7 @@ export default function QuizRunner() {
       }
     };
     void refreshLock();
-    const interval = window.setInterval(() => void refreshLock(), 5000);
+    const interval = window.setInterval(() => void refreshLock(), 30_000);
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") void refreshLock();
     };

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PresentationScreen from "@/app/presentation/presentation-screen";
 import { installPresentationFitLayout } from "./presentation-fit-test-helpers";
@@ -215,6 +215,9 @@ function installApi(
   return {
     actions,
     fetchMock,
+    setProjection(value: Projection) {
+      projection = value;
+    },
     setActionError(status: number) {
       actionError = status;
     },
@@ -625,6 +628,79 @@ describe("PresentationScreen", () => {
     expect(screen.getAllByText("正解")).toHaveLength(1);
     expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
     expect(screen.getByText("山")).toBeInTheDocument();
+  });
+
+  it("keeps answer and supplement content attached and semantically exposed during reveal", async () => {
+    installApi({
+      projection: {
+        state: "answer",
+        question: {
+          ...question,
+          correctIndex: 1,
+          explanation: "家族旅行で訪れました。",
+        },
+      },
+    });
+    render(<PresentationScreen />);
+
+    const ordinal = await screen.findByText("問");
+    const heading = screen.getByRole("heading", { name: question.question });
+    const answerList = screen.getByRole("list");
+    const supplement = screen.getByText("家族旅行で訪れました。");
+    expect(ordinal).toBeVisible();
+    expect(heading).toBeVisible();
+    expect(answerList.tagName).toBe("OL");
+    expect(answerList).toBeVisible();
+    expect(answerList).not.toHaveAttribute("aria-hidden");
+    expect(answerList).not.toHaveAttribute("inert");
+    expect(within(answerList).getAllByRole("listitem")).toHaveLength(question.choices.length);
+    expect(supplement).toBeVisible();
+    expect(supplement.closest("[class*='answerSupplement']")).toBeInTheDocument();
+  });
+
+  it("preserves the answer node for same-question polls and replaces it for a new question ID", async () => {
+    vi.useFakeTimers();
+    let view: ReturnType<typeof render> | undefined;
+    try {
+      const firstProjection = {
+        state: "answer" as const,
+        question: { ...question, correctIndex: 1, explanation: "初回の説明" },
+      };
+      const api = installApi({ projection: firstProjection });
+      view = render(<PresentationScreen />);
+      await flush();
+      const answerList = screen.getByRole("list");
+
+      api.setProjection({
+        state: "answer",
+        question: { ...question, correctIndex: 1, explanation: "更新された説明" },
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(1400));
+      await flush();
+
+      expect(screen.getByText("更新された説明")).toBeInTheDocument();
+      expect(screen.getByRole("list")).toBe(answerList);
+
+      api.setProjection({
+        state: "answer",
+        question: {
+          ...question,
+          id: 2,
+          ordinal: 2,
+          question: "次の質問ですか？",
+          correctIndex: 0,
+          explanation: "別の回答です",
+        },
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(1400));
+      await flush();
+      const nextAnswerList = screen.getByRole("list");
+      expect(screen.getByRole("heading", { name: "次の質問ですか？" })).toBeInTheDocument();
+      expect(nextAnswerList).not.toBe(answerList);
+    } finally {
+      view?.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("renders the complete long explanation including its repeated closing paragraph", async () => {

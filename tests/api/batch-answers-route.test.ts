@@ -23,8 +23,8 @@ vi.mock("@/lib/db/repository/answer-repository", () => ({
   BatchSubmissionError: class BatchSubmissionError extends Error {
     constructor(
       message: string,
-      readonly status: 400 | 404 | 409 | 423 | 503,
-      readonly code?: "SUBMISSION_LOCKED" | "DATABASE_LOCKED",
+      readonly status: 400 | 404 | 409 | 503,
+      readonly code?: "DATABASE_LOCKED",
     ) {
       super(message);
     }
@@ -373,54 +373,6 @@ describe("/api/answers/batch route handlers", () => {
     expect(afterRef.callback).toBeNull();
   });
 
-  it("maps a published submission lock to its own API error code", async () => {
-    vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(
-      new BatchSubmissionError("Submission is published", 423, "SUBMISSION_LOCKED"),
-    );
-
-    const response = await POST(
-      new Request("http://localhost/api/answers/batch", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
-      }),
-    );
-
-    expect(response.status).toBe(423);
-    await expect(response.json()).resolves.toEqual({
-      message: "Submission is published",
-      error: "SUBMISSION_LOCKED",
-    });
-  });
-
-  it("returns the lock classification for an assisted revision using the server-resolved target", async () => {
-    vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(
-      new BatchSubmissionError("Submission is published", 423, "SUBMISSION_LOCKED"),
-    );
-
-    const response = await POST(
-      new Request("http://localhost/api/answers/batch?scope=assisted&participantId=42", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ submissionId, operationId, expectedRevision: 1, answers }),
-      }),
-    );
-
-    expect(response.status).toBe(423);
-    await expect(response.json()).resolves.toEqual({
-      message: "Submission is published",
-      error: "SUBMISSION_LOCKED",
-    });
-    expect(saveAnswerSubmission).toHaveBeenCalledWith({
-      submissionId,
-      operationId,
-      expectedRevision: 1,
-      answers,
-      participantId: 99,
-    });
-    expect(afterRef.callback).toBeNull();
-  });
-
   it("POST returns a generic 500 when the repository fails unexpectedly", async () => {
     vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(new Error("sensitive repository detail"));
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -472,6 +424,32 @@ describe("/api/answers/batch route handlers", () => {
     });
     expect(afterRef.callback).not.toBeNull();
     await afterRef.callback?.();
+    expect(processDueAssessments).toHaveBeenCalledWith(false, { submissionId, revision: 1 });
+  });
+
+  it("schedules assessment once for duplicate requests coalesced during the initial save", async () => {
+    vi.mocked(saveAnswerSubmission)
+      .mockResolvedValueOnce({
+        submissionId,
+        revision: 1,
+        assessmentTarget: { submissionId, revision: 1 },
+      })
+      .mockResolvedValueOnce({ submissionId, revision: 1, assessmentTarget: null });
+    const request = () =>
+      POST(
+        new Request("http://localhost/api/answers/batch", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
+        }),
+      );
+
+    const responses = await Promise.all([request(), request()]);
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(after).toHaveBeenCalledTimes(1);
+    await afterRef.callback?.();
+    expect(processDueAssessments).toHaveBeenCalledTimes(1);
     expect(processDueAssessments).toHaveBeenCalledWith(false, { submissionId, revision: 1 });
   });
 

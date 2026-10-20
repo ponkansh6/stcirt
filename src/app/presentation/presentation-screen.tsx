@@ -442,21 +442,25 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
         </p>
         <div className={styles.answerContent}>
           <h1 id="question-heading">{question.question}</h1>
-          <h2>模範解答</h2>
-          <p>{question.expectedAnswer}</p>
+          <div className={styles.answerReveal}>
+            <h2>模範解答</h2>
+            <p>{question.expectedAnswer}</p>
+          </div>
           {showResponses && (
-            <ul>
-              {question.responses?.map((response) => (
-                <li key={response.displayName}>
-                  {response.displayName}：
-                  {response.answerKind === "legacy"
-                    ? "旧選択式回答（再採点なし）"
-                    : response.answerKind === "unanswered"
-                      ? "未回答"
-                      : `${response.answer ?? ""} — 類似度 ${response.similarity?.toFixed(2) ?? "—"} / 得点 ${response.score?.toFixed(2) ?? "—"}`}
-                </li>
-              ))}
-            </ul>
+            <div className={styles.answerSupplement}>
+              <ul>
+                {question.responses?.map((response) => (
+                  <li key={response.displayName}>
+                    {response.displayName}：
+                    {response.answerKind === "legacy"
+                      ? "旧選択式回答（再採点なし）"
+                      : response.answerKind === "unanswered"
+                        ? "未回答"
+                        : `${response.answer ?? ""} — 類似度 ${response.similarity?.toFixed(2) ?? "—"} / 得点 ${response.score?.toFixed(2) ?? "—"}`}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       </section>
@@ -475,7 +479,7 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
       </p>
       <div className={styles.answerContent}>
         <h1 id="question-heading">{question.question}</h1>
-        <ol className={`${styles.choices} ${styles.answered}`}>
+        <ol className={`${styles.choices} ${styles.answered} ${styles.answerReveal}`}>
           {question.choices.map((choice, index) => {
             const isCorrect = index === question.correctIndex;
             return (
@@ -488,7 +492,7 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
           })}
         </ol>
         {hasExplanation && (
-          <div className={styles.explanation}>
+          <div className={`${styles.explanation} ${styles.answerSupplement}`}>
             <p>{question.explanation}</p>
           </div>
         )}
@@ -1460,7 +1464,12 @@ export default function PresentationScreen({
                 {state === "question" && data?.question && (
                   <QuestionPrompt question={data.question} />
                 )}
-                {state === "answer" && data?.question && <AnswerReview question={data.question} />}
+                {state === "answer" && data?.question && (
+                  <AnswerReview
+                    key={`answer:${String(data.question.id)}`}
+                    question={data.question}
+                  />
+                )}
 
                 {state === "podium_preview" && (
                   <section className={styles.podiumPreview} aria-labelledby="podium-title">

@@ -277,6 +277,14 @@ describe("free-response presentation scoring and immutable snapshots", () => {
           );
       }
 
+      await testDb.db.insert(schema.presentationSessions).values({
+        id: 1,
+        state: "not_started",
+        version: 0,
+        questionIndex: 0,
+        questionCount: 0,
+        projectionHidden: false,
+      });
       const sessionBefore = await testDb.db.select().from(schema.presentationSessions);
       expect(sessionBefore).toHaveLength(1);
       expect(sessionBefore[0]).toMatchObject({

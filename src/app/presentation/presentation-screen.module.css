@@ -340,12 +340,14 @@
   margin: 0;
 }
 
-.answerContent > h2 {
+.answerContent > h2,
+.answerReveal > h2 {
   margin: clamp(12px, 1.5cqh, 24px) 0 0;
   font-size: clamp(var(--presentation-min-readable-size), 1.7cqw, 1.6rem);
 }
 
-.answerContent > p {
+.answerContent > p,
+.answerReveal > p {
   margin: 8px 0 0;
   font-size: clamp(var(--presentation-min-readable-size), 2.3cqw, 2.3rem);
   font-weight: 700;
@@ -353,11 +355,39 @@
   overflow-wrap: anywhere;
 }
 
-.answerContent > ul {
+.answerContent > ul,
+.answerSupplement > ul {
   padding-left: 1.4em;
   margin: 1rem 0 0;
   font-size: var(--presentation-min-readable-size);
   overflow-wrap: anywhere;
+}
+
+.answerReveal {
+  animation: answerRevealFade 350ms ease 100ms backwards;
+}
+
+.answerSupplement {
+  animation: answerRevealFade 300ms ease 350ms backwards;
+}
+
+@keyframes answerRevealFade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .answerReveal,
+  .answerSupplement {
+    animation: none;
+    animation-delay: 0s;
+    opacity: 1;
+  }
 }
 
 .ordinal {

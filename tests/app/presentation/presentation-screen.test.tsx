@@ -437,6 +437,15 @@ describe("presentation projection and presenter progression", () => {
     expect(stylesheet).toMatch(/animation-iteration-count:\s*1\s*!important/);
     expect(stylesheet).toMatch(/transition-duration:\s*0\.01ms\s*!important/);
     expect(stylesheet).toMatch(/scroll-behavior:\s*auto\s*!important/);
+    expect(stylesheet).toMatch(
+      /\.answerReveal\s*\{\s*animation:\s*answerRevealFade 350ms ease 100ms backwards;/,
+    );
+    expect(stylesheet).toMatch(
+      /\.answerSupplement\s*\{\s*animation:\s*answerRevealFade 300ms ease 350ms backwards;/,
+    );
+    expect(stylesheet).toMatch(
+      /\.answerReveal,\s*\.answerSupplement\s*\{\s*animation:\s*none;\s*animation-delay:\s*0s;\s*opacity:\s*1;/,
+    );
   });
 
   it("exposes a single slide region without persistent presentation chrome", async () => {
@@ -2005,6 +2014,41 @@ describe("presentation projection and presenter progression", () => {
     render(<PresentationScreen />);
     expect(await screen.findByText("家族で旅行")).toBeInTheDocument();
     expect(screen.queryByText(/回答|類似度|得点/)).not.toBeInTheDocument();
+    const answerHeading = screen.getByRole("heading", { name: "模範解答" });
+    expect(answerHeading).toBeInTheDocument();
+    expect(answerHeading.closest("[class*='answerReveal']")).toContainElement(
+      screen.getByText("家族で旅行"),
+    );
+    expect(screen.queryByText(/秘密の回答者|秘密の参加者回答/)).not.toBeInTheDocument();
+  });
+
+  it("keeps every multiple-choice answer in an ordered list with its correct marker", async () => {
+    setup({
+      projection: {
+        state: "answer",
+        question: {
+          id: 1,
+          ordinal: 1,
+          total: 5,
+          question: "思い出の場所は？",
+          choices: ["海", "山", "森"],
+          correctIndex: 1,
+        },
+      },
+    });
+    render(<PresentationScreen />);
+
+    expect(await screen.findByText("問")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+    const choices = screen.getByRole("list");
+    expect(choices.tagName).toBe("OL");
+    expect(within(choices).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(choices).getByText("海")).toBeInTheDocument();
+    expect(within(choices).getByText("山")).toBeInTheDocument();
+    expect(within(choices).getByText("森")).toBeInTheDocument();
+    const correctChoice = within(choices).getAllByRole("listitem")[1]!;
+    expect(within(correctChoice).getByText("正解")).toBeInTheDocument();
+    expect(choices).not.toHaveAttribute("aria-hidden");
   });
 
   it("renders one rank label followed by the winner name and score after a forward operation", async () => {

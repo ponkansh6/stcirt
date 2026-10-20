@@ -8,6 +8,29 @@ declare global {
     __wakeRequests: number[];
     __releaseWakeLock: () => void;
     __rankRevealAnimations: { rank: string | null; name: string }[];
+    __answerRevealAnimations: {
+      group: string;
+      name: string;
+      targetId?: number;
+      isConnected?: boolean;
+      questionId?: string | null;
+      questionText?: string;
+      timestamp?: number;
+      stage?: string;
+      className?: string;
+      data?: Record<string, string | undefined>;
+      style?: {
+        inline: string | null;
+        animationName: string;
+        animationDelay: string;
+        animationDuration: string;
+        animationPlayState: string;
+        opacity: string;
+      };
+    }[];
+    __answerRevealAnimationEnds: { group: string; name: string }[];
+    __pauseAnswerRevealAtStart: boolean;
+    __answerRevealNodeIdentity: (node: Node) => number;
   }
 
   interface Document {
@@ -47,7 +70,24 @@ type E2EWinnerEntry = {
   questionResults?: E2EWinnerQuestionResult[];
 };
 
-const questions = [
+type PresentationQuestionFixture = {
+  id: number;
+  question: string;
+  choices: string[];
+  correctAnswer: string;
+  explanation: string;
+  answerType?: "selected" | "freeText";
+  expectedAnswer?: string;
+  responses?: {
+    displayName: string;
+    answer?: string | null;
+    answerKind: "selected" | "freeText" | "legacy" | "unanswered";
+    similarity: number | null;
+    score: number | null;
+  }[];
+};
+
+const questions: PresentationQuestionFixture[] = [
   {
     id: 11,
     question: "ふたりが初めて出会った場所は？",
@@ -56,8 +96,6 @@ const questions = [
     explanation: "共通の友人が開いた集まりで出会いました。",
   },
 ];
-
-type PresentationQuestionFixture = (typeof questions)[number];
 
 async function installAdminApiMock(
   page: import("@playwright/test").Page,
@@ -91,6 +129,7 @@ async function installAdminApiMock(
   ];
   let snapshotRevision = 0;
   let failAdminRead = false;
+  let failNextAdminRead = false;
   let failNextMutationUnauthorized = false;
   let failNextMutationConflict = false;
   let pauseNextMutation = false;
@@ -170,6 +209,15 @@ async function installAdminApiMock(
                     presentationQuestion.correctAnswer,
                   ),
                   explanation: presentationQuestion.explanation,
+                  ...(presentationQuestion.answerType
+                    ? { answerType: presentationQuestion.answerType }
+                    : {}),
+                  ...(presentationQuestion.expectedAnswer !== undefined
+                    ? { expectedAnswer: presentationQuestion.expectedAnswer }
+                    : {}),
+                  ...(presentationQuestion.responses !== undefined
+                    ? { responses: presentationQuestion.responses }
+                    : {}),
                 }
               : {}),
           },
@@ -228,7 +276,18 @@ async function installAdminApiMock(
         (url) => url.pathname === "/api/admin/presentation",
         async (route) => {
           if (route.request().method() === "GET") {
+            if (failNextAdminRead) {
+              failNextAdminRead = false;
+              if (new URL(route.request().url()).searchParams.get("view") === "controls") {
+                presentationRouteEvents.push("controls:get:503");
+              }
+              await route.fulfill({ status: 503, json: { error: "Unavailable" } });
+              return;
+            }
             if (failAdminRead) {
+              if (new URL(route.request().url()).searchParams.get("view") === "controls") {
+                presentationRouteEvents.push("controls:get:503");
+              }
               await route.fulfill({ status: 503, json: { error: "Unavailable" } });
               return;
             }
@@ -238,6 +297,7 @@ async function installAdminApiMock(
             }
             if (new URL(route.request().url()).searchParams.get("view") === "controls") {
               presentationRouteEvents.push("controls:get");
+              presentationRouteEvents.push("controls:get:200");
               await route.fulfill({ json: controlsPayload() });
               return;
             }
@@ -424,6 +484,9 @@ async function installAdminApiMock(
       failAdminReads: () => {
         failAdminRead = true;
       },
+      failNextAdminRead: () => {
+        failNextAdminRead = true;
+      },
       failNextMutationAsUnauthorized: () => {
         failNextMutationUnauthorized = true;
       },
@@ -558,7 +621,7 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
     case "question":
       return page.getByRole("heading", { name: questions[0].question });
     case "answer":
-      return page.getByText("正解", { exact: true }).first();
+      return page.locator("[class*='answerReview']");
     case "podium_preview":
       return page.getByRole("heading", { name: "いよいよ、結果発表です" });
     case "third":
@@ -601,6 +664,192 @@ async function pauseRankRevealBeforeEntry(page: import("@playwright/test").Page)
   return page.addStyleTag({
     content: rankRevealPauseStyles,
   });
+}
+
+async function installAnswerRevealAnimationProbe(
+  page: import("@playwright/test").Page,
+  expectedQuestionId: number | string,
+) {
+  await page.addInitScript((expectedQuestionId) => {
+    window.__answerRevealAnimations = [];
+    window.__answerRevealAnimationEnds = [];
+    window.__pauseAnswerRevealAtStart = true;
+    const targetIds = new WeakMap<Node, number>();
+    let nextTargetId = 1;
+    window.__answerRevealNodeIdentity = (node) => {
+      let targetId = targetIds.get(node);
+      if (targetId === undefined) {
+        targetId = nextTargetId++;
+        targetIds.set(node, targetId);
+      }
+      return targetId;
+    };
+    const answerRevealGroup = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return null;
+      return target.matches("[class*='answerReveal']")
+        ? "answer"
+        : target.matches("[class*='answerSupplement']")
+          ? "supplement"
+          : null;
+    };
+    document.addEventListener(
+      "animationstart",
+      (event) => {
+        const group = answerRevealGroup(event.target);
+        if (!group) return;
+        if (window.__pauseAnswerRevealAtStart && event.target instanceof HTMLElement) {
+          for (const animation of event.target.getAnimations()) {
+            animation.pause();
+            animation.currentTime = 0;
+          }
+        }
+        const element = event.target as HTMLElement;
+        const targetId = window.__answerRevealNodeIdentity(element);
+        const question = element.closest<HTMLElement>("[class*='answerReview']");
+        const computedStyle = getComputedStyle(element);
+        window.__answerRevealAnimations.push({
+          group,
+          name: (event as AnimationEvent).animationName,
+          targetId,
+          isConnected: element.isConnected,
+          questionId:
+            question?.getAttribute("data-question-id") ??
+            question?.querySelector<HTMLElement>("[data-question-id]")?.dataset.questionId ??
+            String(expectedQuestionId),
+          questionText: question?.querySelector("h1")?.textContent?.trim() ?? "",
+          timestamp: performance.now(),
+          stage: question ? "answer" : "unknown",
+          className: element.className,
+          data: { ...element.dataset },
+          style: {
+            inline: element.getAttribute("style"),
+            animationName: computedStyle.animationName,
+            animationDelay: computedStyle.animationDelay,
+            animationDuration: computedStyle.animationDuration,
+            animationPlayState: computedStyle.animationPlayState,
+            opacity: computedStyle.opacity,
+          },
+        });
+      },
+      true,
+    );
+    document.addEventListener(
+      "animationend",
+      (event) => {
+        const group = answerRevealGroup(event.target);
+        if (!group) return;
+        window.__answerRevealAnimationEnds.push({
+          group,
+          name: (event as AnimationEvent).animationName,
+        });
+      },
+      true,
+    );
+  }, expectedQuestionId);
+}
+
+async function expectAnswerRevealFitDuringAndAfter(
+  page: import("@playwright/test").Page,
+  entryStartIndex: number,
+) {
+  const answer = page.locator("[class*='answerReview'] [class*='answerReveal']");
+  const supplement = page.locator("[class*='answerSupplement']");
+  const endCountBefore = await page.evaluate(() => window.__answerRevealAnimationEnds.length);
+  await expect
+    .poll(() => page.evaluate(() => window.__answerRevealAnimations.length))
+    .toBe(entryStartIndex + 2);
+  await expect
+    .poll(() => answer.evaluate((element) => element.getAnimations()[0]?.playState))
+    .toBe("paused");
+  await expect
+    .poll(() => supplement.evaluate((element) => element.getAnimations()[0]?.playState))
+    .toBe("paused");
+  await expect(answer).toHaveCSS("animation-delay", "0.1s");
+  await expect(answer).toHaveCSS("animation-duration", "0.35s");
+  await expect(supplement).toHaveCSS("animation-delay", "0.35s");
+  await expect(supplement).toHaveCSS("animation-duration", "0.3s");
+  await expect(answer).toHaveCSS("opacity", "0");
+  await expect(supplement).toHaveCSS("opacity", "0");
+  const answerCurrentTime = await answer.evaluate(
+    (element) => element.getAnimations()[0]?.currentTime,
+  );
+  expect(answerCurrentTime).not.toBeNull();
+  expect(answerCurrentTime).toBe(0);
+  const supplementCurrentTime = await supplement.evaluate(
+    (element) => element.getAnimations()[0]?.currentTime,
+  );
+  expect(supplementCurrentTime).not.toBeNull();
+  expect(supplementCurrentTime).toBe(0);
+
+  const inspectFit = async () =>
+    page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
+      const bounds = viewport.getBoundingClientRect();
+      const fitLayer = document.querySelector<HTMLElement>(
+        "[data-testid='presentation-fit-layer']",
+      );
+      const naturalLayer = document.querySelector<HTMLElement>(
+        "[data-testid='presentation-natural-layer']",
+      );
+      const content = viewport.querySelector<HTMLElement>("[class*='answerReview']");
+      const outOfBounds = Array.from(viewport.querySelectorAll("*"))
+        .map((node) => node.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0)
+        .filter(
+          (rect) =>
+            rect.left < bounds.left - 1 ||
+            rect.right > bounds.right + 1 ||
+            rect.top < bounds.top - 1 ||
+            rect.bottom > bounds.bottom + 1,
+        ).length;
+      return {
+        scale: Number(fitLayer?.style.getPropertyValue("--presentation-fit-scale")),
+        fitReady: naturalLayer?.dataset.fitReady,
+        outOfBounds,
+        contentHasNaturalArea: Boolean(
+          content && content.offsetWidth > 0 && content.offsetHeight > 0,
+        ),
+        contentCanScroll: Boolean(
+          content &&
+          (content.scrollHeight > content.clientHeight + 1 ||
+            content.scrollWidth > content.clientWidth + 1),
+        ),
+        pageCanScroll: document.documentElement.scrollHeight > innerHeight,
+      };
+    });
+  const during = await inspectFit();
+  const assertFit = (geometry: Awaited<ReturnType<typeof inspectFit>>) => {
+    expect(geometry.fitReady).toBe("true");
+    expect(geometry.scale).toBeGreaterThan(0);
+    expect(geometry.scale).toBeLessThanOrEqual(1);
+    expect(geometry.outOfBounds).toBe(0);
+    expect(geometry.contentHasNaturalArea).toBe(true);
+    expect(geometry.contentCanScroll).toBe(false);
+    expect(geometry.pageCanScroll).toBe(false);
+  };
+  assertFit(during);
+
+  await page.evaluate(() => {
+    window.__pauseAnswerRevealAtStart = false;
+    for (const selector of ["[class*='answerReveal']", "[class*='answerSupplement']"])
+      document
+        .querySelector<HTMLElement>(selector)
+        ?.getAnimations()
+        .forEach((animation) => animation.play());
+  });
+  await expect
+    .poll(() => page.evaluate(() => window.__answerRevealAnimationEnds.length))
+    .toBe(endCountBefore + 2);
+  expect(
+    await page.evaluate(() =>
+      window.__answerRevealAnimationEnds.slice(-2).map(({ group }) => group),
+    ),
+  ).toEqual(["answer", "supplement"]);
+  await expect(answer).toHaveCSS("opacity", "1");
+  await expect(supplement).toHaveCSS("opacity", "1");
+  const after = await inspectFit();
+  assertFit(after);
+  expect(after.scale).toBeCloseTo(during.scale, 5);
+  return { during, after };
 }
 
 const rankRevealPauseStyles = `
@@ -1873,9 +2122,387 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   await spectator.close();
 });
 
+test("@chromium selected-answer and supplement groups reveal in order and replay only on entry", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await installAnswerRevealAnimationProbe(page, questions[0].id);
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+
+  const enterAnswer = async () => {
+    const mutation = nextAdminMutation(page);
+    await page.locator("main").press("ArrowRight");
+    await expect(slideFor(page, "answer")).toBeVisible();
+    await mutation;
+  };
+  await enterAnswer();
+  const ordinal = page.locator("[class*='answerReview'] [class*='ordinal']");
+  const questionHeading = page.getByRole("heading", { name: questions[0].question });
+  const answerList = page.locator("[class*='answerReview'] ol[class*='answerReveal']");
+  const supplement = page.locator("[class*='answerSupplement']");
+  await expect(ordinal).toHaveText("問 1");
+  await expect(questionHeading).toBeVisible();
+  await expect(answerList).toBeAttached();
+  await expect(answerList).not.toHaveAttribute("aria-hidden");
+  await expect(answerList).not.toHaveAttribute("inert");
+  await expect(answerList).toHaveCSS("animation-delay", "0.1s");
+  await expect(answerList).toHaveCSS("animation-duration", "0.35s");
+  await expect(supplement).toBeAttached();
+  await expect(supplement).toHaveCSS("animation-delay", "0.35s");
+  await expect(supplement).toHaveCSS("animation-duration", "0.3s");
+  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimations.length)).toBe(2);
+  expect(
+    await page.evaluate(() => window.__answerRevealAnimations.map(({ group }) => group)),
+  ).toEqual(["answer", "supplement"]);
+  expect(
+    await page.evaluate(() =>
+      window.__answerRevealAnimations.every(({ name }) => name.includes("answerRevealFade")),
+    ),
+  ).toBe(true);
+
+  await expectAnswerRevealFitDuringAndAfter(page, 0);
+  const captureRecoverySnapshot = async (label: string) => {
+    const browser = await page.evaluate((expectedQuestionId) => {
+      const section = document.querySelector<HTMLElement>("[class*='answerReview']");
+      const questionPrompt = document.querySelector<HTMLElement>(
+        "[class*='question']:not([class*='answerReview'])",
+      );
+      const elementSnapshot = (element: HTMLElement | null) => {
+        if (!element) return null;
+        const style = getComputedStyle(element);
+        return {
+          identity: window.__answerRevealNodeIdentity(element),
+          isConnected: element.isConnected,
+          className: element.className,
+          data: { ...element.dataset },
+          inlineStyle: element.getAttribute("style"),
+          computedStyle: {
+            animationName: style.animationName,
+            animationDelay: style.animationDelay,
+            animationDuration: style.animationDuration,
+            animationPlayState: style.animationPlayState,
+            opacity: style.opacity,
+          },
+        };
+      };
+      const questionText =
+        section?.querySelector("h1")?.textContent?.trim() ??
+        questionPrompt?.querySelector("h1")?.textContent?.trim() ??
+        "";
+      return {
+        stage: section ? "answer" : questionPrompt ? "question" : "other",
+        questionId: section?.getAttribute("data-question-id") ?? String(expectedQuestionId),
+        questionText,
+        answerSection: elementSnapshot(section),
+        answerReveal: elementSnapshot(
+          section?.querySelector<HTMLElement>("[class*='answerReveal']") ?? null,
+        ),
+        supplement: elementSnapshot(
+          section?.querySelector<HTMLElement>("[class*='answerSupplement']") ?? null,
+        ),
+        animationStarts: window.__answerRevealAnimations.map((entry) => ({ ...entry })),
+        animationEnds: window.__answerRevealAnimationEnds.map((entry) => ({ ...entry })),
+      };
+    }, questions[0].id);
+    return {
+      label,
+      browser,
+      controlGetStatuses: mock
+        .getPresentationRouteEvents()
+        .filter((event) => event.startsWith("controls:get:")),
+    };
+  };
+
+  const startsBeforeControlsRefresh = await page.evaluate(() =>
+    window.__answerRevealAnimations.map((entry) => ({ ...entry })),
+  );
+  const controlsReadsBeforeRefresh = mock
+    .getPresentationRouteEvents()
+    .filter((event) => event === "controls:get").length;
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect
+    .poll(
+      () => mock.getPresentationRouteEvents().filter((event) => event === "controls:get").length,
+    )
+    .toBeGreaterThan(controlsReadsBeforeRefresh);
+  const startsAfterControlsRefresh = await page.evaluate(() =>
+    window.__answerRevealAnimations.map((entry) => ({ ...entry })),
+  );
+  const newStartsAfterControlsRefresh = startsAfterControlsRefresh.slice(
+    startsBeforeControlsRefresh.length,
+  );
+  if (newStartsAfterControlsRefresh.length > 0) {
+    throw new Error(
+      `Same-question controls refresh restarted answer animations; no-replay expected. ` +
+        `Before: ${JSON.stringify(startsBeforeControlsRefresh, null, 2)}\n` +
+        `New events: ${JSON.stringify(newStartsAfterControlsRefresh, null, 2)}\n` +
+        `After: ${JSON.stringify(startsAfterControlsRefresh, null, 2)}`,
+    );
+  }
+  expect(startsAfterControlsRefresh).toHaveLength(startsBeforeControlsRefresh.length);
+
+  const before503 = await captureRecoverySnapshot("before-503");
+  const controlsBeforeFailure = before503.controlGetStatuses.filter(
+    (event) => event === "controls:get:503",
+  ).length;
+  const successfulControlsBeforeFailure = before503.controlGetStatuses.filter(
+    (event) => event === "controls:get:200",
+  ).length;
+  mock.failNextAdminRead();
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.getByText("スライドの状態を確認できません。自動で再試行します")).toBeVisible();
+  await expect
+    .poll(
+      () =>
+        mock.getPresentationRouteEvents().filter((event) => event === "controls:get:503").length,
+    )
+    .toBeGreaterThan(controlsBeforeFailure);
+  const after503 = await captureRecoverySnapshot("after-503-before-retry-success");
+  await expect
+    .poll(
+      () =>
+        mock.getPresentationRouteEvents().filter((event) => event === "controls:get:200").length,
+    )
+    .toBeGreaterThan(successfulControlsBeforeFailure);
+  const afterRetry = await captureRecoverySnapshot("after-retry-success");
+  const replayEventsAfterFailure = afterRetry.browser.animationStarts.slice(
+    before503.browser.animationStarts.length,
+  );
+  if (replayEventsAfterFailure.length > 0) {
+    throw new Error(
+      `Same-question 503/retry recovery restarted answer animations; no-replay expected. ` +
+        `Snapshots: ${JSON.stringify([before503, after503, afterRetry], null, 2)}`,
+    );
+  }
+  expect(replayEventsAfterFailure).toHaveLength(0);
+  await expect(answerList).toBeAttached();
+
+  const previous = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "question")).toBeVisible();
+  await previous;
+  const reentry = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "answer")).toBeVisible();
+  await reentry;
+  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimations.length)).toBe(4);
+  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimationEnds.length)).toBe(4);
+
+  const secondLeave = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "question")).toBeVisible();
+  await secondLeave;
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reducedReentry = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "answer")).toBeVisible();
+  await reducedReentry;
+  const reducedAnswer = page.locator("[class*='answerReview'] ol[class*='answerReveal']");
+  await expect(reducedAnswer).toHaveCSS("animation-name", "none");
+  await expect(reducedAnswer).toHaveCSS("animation-delay", "0s");
+  await expect(reducedAnswer).toHaveCSS("opacity", "1");
+  await expect(supplement).toHaveCSS("animation-name", "none");
+  await expect(supplement).toHaveCSS("animation-delay", "0s");
+  await expect(supplement).toHaveCSS("opacity", "1");
+  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimations.length)).toBe(4);
+});
+
+test("@chromium presenter can leave and advance stages during an active answer reveal", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => {
+    window.__answerRevealAnimations = [];
+    window.__answerRevealAnimationEnds = [];
+    document.addEventListener(
+      "animationstart",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (!target.matches("[class*='answerReveal'], [class*='answerSupplement']")) return;
+        for (const animation of target.getAnimations()) {
+          animation.pause();
+          animation.currentTime = 150;
+        }
+        window.__answerRevealAnimations.push({
+          group: target.matches("[class*='answerReveal']") ? "answer" : "supplement",
+          name: (event as AnimationEvent).animationName,
+        });
+      },
+      true,
+    );
+    document.addEventListener(
+      "animationend",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (!target.matches("[class*='answerReveal'], [class*='answerSupplement']")) return;
+        window.__answerRevealAnimationEnds.push({
+          group: target.matches("[class*='answerReveal']") ? "answer" : "supplement",
+          name: (event as AnimationEvent).animationName,
+        });
+      },
+      true,
+    );
+  });
+  await installAdminApiMock(page);
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+
+  const answerEntry = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "answer")).toBeVisible();
+  await answerEntry;
+  await expect
+    .poll(() => page.evaluate(() => window.__answerRevealAnimations.length))
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() =>
+      page
+        .locator("[class*='answerReview'] [class*='answerReveal']")
+        .evaluate((element) => element.getAnimations()[0]?.playState),
+    )
+    .toBe("paused");
+  const firstRevealProgress = await page
+    .locator("[class*='answerReview'] [class*='answerReveal']")
+    .evaluate((element) => element.getAnimations()[0]?.effect?.getComputedTiming().progress);
+  expect(firstRevealProgress).toBeGreaterThan(0);
+  expect(firstRevealProgress).toBeLessThan(1);
+  expect(
+    await page.evaluate(
+      () => window.__answerRevealAnimationEnds.filter(({ group }) => group === "answer").length,
+    ),
+  ).toBe(0);
+  const startsBeforeLeaving = await page.evaluate(() => window.__answerRevealAnimations.length);
+
+  const leaveDuringReveal = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "question")).toBeVisible();
+  await leaveDuringReveal;
+
+  const reentry = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "answer")).toBeVisible();
+  await reentry;
+  await expect
+    .poll(() => page.evaluate(() => window.__answerRevealAnimations.length))
+    .toBeGreaterThan(startsBeforeLeaving);
+  await expect
+    .poll(() =>
+      page
+        .locator("[class*='answerReview'] [class*='answerReveal']")
+        .evaluate((element) => element.getAnimations()[0]?.playState),
+    )
+    .toBe("paused");
+  const reentryProgress = await page
+    .locator("[class*='answerReview'] [class*='answerReveal']")
+    .evaluate((element) => element.getAnimations()[0]?.effect?.getComputedTiming().progress);
+  expect(reentryProgress).toBeGreaterThan(0);
+  expect(reentryProgress).toBeLessThan(1);
+  expect(
+    await page.evaluate(
+      () => window.__answerRevealAnimationEnds.filter(({ group }) => group === "answer").length,
+    ),
+  ).toBe(0);
+  const advanceDuringReveal = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "podium_preview")).toBeVisible();
+  await advanceDuringReveal;
+});
+
+test("@chromium free-text model answer and published responses share their planned reveal groups", async ({
+  page,
+}) => {
+  const freeTextQuestion: PresentationQuestionFixture = {
+    ...questions[0],
+    answerType: "freeText",
+    expectedAnswer: "家族で訪れた海辺",
+    responses: [
+      {
+        displayName: "葵",
+        answerKind: "freeText",
+        answer: "海辺",
+        similarity: 0.8,
+        score: 1,
+      },
+    ],
+  };
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => {
+    window.__answerRevealAnimationEnds = [];
+    document.addEventListener(
+      "animationend",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const group = target.matches("[class*='answerReveal']")
+          ? "answer"
+          : target.matches("[class*='answerSupplement']")
+            ? "supplement"
+            : null;
+        if (group)
+          window.__answerRevealAnimationEnds.push({
+            group,
+            name: (event as AnimationEvent).animationName,
+          });
+      },
+      true,
+    );
+  });
+  await installAdminApiMock(page, { question: freeTextQuestion });
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+  const mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "answer")).toBeVisible();
+  await mutation;
+
+  const answerGroup = page.locator("[class*='answerReveal']");
+  const supplement = page.locator("[class*='answerSupplement']");
+  await expect(answerGroup.getByRole("heading", { name: "模範解答" })).toBeVisible();
+  await expect(answerGroup).toContainText("家族で訪れた海辺");
+  await expect(supplement.getByRole("listitem")).toContainText("葵：海辺");
+  await expect(answerGroup).toHaveCSS("animation-delay", "0.1s");
+  await expect(answerGroup).toHaveCSS("animation-duration", "0.35s");
+  await expect(supplement).toHaveCSS("animation-delay", "0.35s");
+  await expect(supplement).toHaveCSS("animation-duration", "0.3s");
+  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimationEnds.length)).toBe(2);
+  await expect(answerGroup).toHaveCSS("opacity", "1");
+  await expect(supplement).toHaveCSS("opacity", "1");
+  await expectNoAccessibilityViolations(page, "presentation free-text answer and responses");
+});
+
 test("@chromium every stage keeps its fixture text inside the canvas content bounds", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => {
+    window.__answerRevealAnimationEnds = [];
+    document.addEventListener(
+      "animationend",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const group = target.matches("[class*='answerReveal']")
+          ? "answer"
+          : target.matches("[class*='answerSupplement']")
+            ? "supplement"
+            : null;
+        if (group)
+          window.__answerRevealAnimationEnds.push({
+            group,
+            name: (event as AnimationEvent).animationName,
+          });
+      },
+      true,
+    );
+  });
   await installAdminApiMock(page);
   const inspectSlide = async () => {
     await waitForRenderFrames(page);
@@ -1937,6 +2564,11 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
     const inspection = await inspectSlide();
     for (const text of stage.text) expect(inspection.text).toContain(text);
     if (stage.state === "question" || stage.state === "answer") {
+      if (stage.state === "answer") {
+        await expect
+          .poll(() => page.evaluate(() => window.__answerRevealAnimationEnds.length))
+          .toBe(2);
+      }
       await expectNoAccessibilityViolations(page, `presentation ${stage.state} state`);
     }
     expect(inspection.outOfBounds).toBe(0);
@@ -1955,6 +2587,7 @@ test("@chromium reference-size long presentation content stays readable after fi
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
+  await installAnswerRevealAnimationProbe(page, 11);
   const longQuestion =
     "ふたりが初めて出会った場所で、どのような会話をして、その後どんな思い出につながったのでしょうか？";
   const longChoices = [
@@ -2129,6 +2762,9 @@ test("@chromium reference-size long presentation content stays readable after fi
     if (state === "third") {
       await expectTwoWinnerLongContentFitException();
       await expectRankRevealGeometry(rankRegion!);
+    } else if (state === "answer") {
+      await expectAnswerRevealFitDuringAndAfter(page, 0);
+      await expectMainContentAt20pt(state);
     } else {
       await expectMainContentAt20pt(state);
     }
@@ -2179,6 +2815,25 @@ test("@chromium reference-size long presentation content stays readable after fi
   expect(answerRowContrast!.rowContrast).toBeGreaterThanOrEqual(4.5);
   expect(answerRowContrast!.labelContrast).toBeGreaterThanOrEqual(4.5);
   expect(answerRowContrast!.labelFontSize).toBeGreaterThanOrEqual(16);
+
+  const returnToQuestion = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(page.getByRole("heading", { name: longQuestion })).toBeVisible();
+  await returnToQuestion;
+  await page.setViewportSize({ width: 480, height: 900 });
+  await waitForRenderFrames(page);
+  await page.evaluate(() => {
+    window.__pauseAnswerRevealAtStart = true;
+  });
+  const narrowAnswerEntry = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "answer")).toBeVisible();
+  await narrowAnswerEntry;
+  const narrowRevealGeometry = await expectAnswerRevealFitDuringAndAfter(page, 2);
+  expect(narrowRevealGeometry.during.scale).toBeLessThan(1);
+
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await waitForRenderFrames(page);
   await next("podium_preview");
   await next("third");
 

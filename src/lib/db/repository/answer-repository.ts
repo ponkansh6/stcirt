@@ -13,7 +13,6 @@ import { jstDayStart } from "../../date";
 import { gradeFreeResponse, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
 import { randomUUID } from "node:crypto";
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
-import { acquirePresentationSession } from "./presentation-repository.mutations";
 
 export type BatchAnswer =
   | { questionId: number; selectedIndex: number }
@@ -59,13 +58,43 @@ function restoreSubmissionAnswers(
 export class BatchSubmissionError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 404 | 409 | 423 | 503,
-    readonly code?: "SUBMISSION_LOCKED" | "DATABASE_LOCKED",
+    readonly status: 400 | 404 | 409 | 503,
+    readonly code?: "DATABASE_LOCKED",
   ) {
     super(message);
     this.name = "BatchSubmissionError";
   }
 }
+
+export type AnswerSaveRetryPhase = "preflight_read" | "write_transaction" | "recovery_read";
+
+export type AnswerSaveRetryRuntime = {
+  random(): number;
+  sleep?(ms: number): Promise<void>;
+  onRetryScheduled?(event: {
+    phase: AnswerSaveRetryPhase;
+    retryNumber: number;
+    capMs: number;
+    delayMs: number;
+  }): void;
+};
+
+const defaultAnswerSaveRetryRuntime: AnswerSaveRetryRuntime = {
+  random: Math.random,
+};
+
+const inFlightAnswerSaves = new Map<
+  string,
+  {
+    participantId: number;
+    payload: string;
+    promise: Promise<{
+      submissionId: string;
+      revision: number;
+      assessmentTarget: { submissionId: string; revision: number } | null;
+    }>;
+  }
+>();
 
 export async function getAnswerSubmission(submissionId: string, participantId: number) {
   return db.transaction(async (tx) => {
@@ -128,14 +157,53 @@ export async function getLatestAnswerSubmission(participantId: number) {
   });
 }
 
+/** Coalesce identical requests while their first atomic save is still in flight. */
+export function saveAnswerSubmission(
+  input: {
+    submissionId: string;
+    operationId: string;
+    expectedRevision: number;
+    participantId: number;
+    answers: BatchAnswer[];
+  },
+  retryRuntime: AnswerSaveRetryRuntime = defaultAnswerSaveRetryRuntime,
+) {
+  const canonicalAnswers = [...input.answers].sort(
+    (left, right) => left.questionId - right.questionId,
+  );
+  const payload = JSON.stringify({
+    submissionId: input.submissionId,
+    expectedRevision: input.expectedRevision,
+    answers: canonicalAnswers,
+  });
+  const pending = inFlightAnswerSaves.get(input.operationId);
+  if (pending?.participantId === input.participantId && pending.payload === payload) {
+    return pending.promise.then((result) => ({ ...result, assessmentTarget: null }));
+  }
+
+  const promise = saveAnswerSubmissionOnce(input, retryRuntime);
+  const entry = { participantId: input.participantId, payload, promise };
+  inFlightAnswerSaves.set(input.operationId, entry);
+  const clear = () => {
+    if (inFlightAnswerSaves.get(input.operationId) === entry) {
+      inFlightAnswerSaves.delete(input.operationId);
+    }
+  };
+  void promise.then(clear, clear);
+  return promise;
+}
+
 /** Save or revise one fixed five-question answer set atomically. */
-export async function saveAnswerSubmission(input: {
-  submissionId: string;
-  operationId: string;
-  expectedRevision: number;
-  participantId: number;
-  answers: BatchAnswer[];
-}) {
+async function saveAnswerSubmissionOnce(
+  input: {
+    submissionId: string;
+    operationId: string;
+    expectedRevision: number;
+    participantId: number;
+    answers: BatchAnswer[];
+  },
+  retryRuntime: AnswerSaveRetryRuntime,
+) {
   const canonicalAnswers = [...input.answers].sort(
     (left, right) => left.questionId - right.questionId,
   );
@@ -145,70 +213,54 @@ export async function saveAnswerSubmission(input: {
     answers: canonicalAnswers,
   });
 
-  // Resolve already-committed retries without acquiring the write lock. Apart
-  // from preserving idempotency while published, this keeps replays available
-  // when the presentation/session row is temporarily contended.
+  // Resolve committed retries and validate immutable input before opening the write transaction.
   try {
-    const replay = await withAnswerTransactionRetry(() =>
-      readSubmissionOperationReplay(input, payload),
+    const replay = await withAnswerTransactionRetry(
+      () => readSubmissionOperationReplay(input, payload),
+      retryRuntime,
+      "preflight_read",
     );
     if (replay) return replay;
 
-    return await withAnswerTransactionRetry(() =>
-      db.transaction(async (tx) => {
-        // All answer writes and publication transitions acquire this row first.
-        // This makes the visibility check and submission mutation one serialized decision.
-        await acquirePresentationSession(tx);
-        const [operation] = await tx
-          .select()
-          .from(examSubmissionOperations)
-          .where(eq(examSubmissionOperations.operationId, input.operationId));
-        if (operation) {
-          const [owner] = await tx
-            .select({ participantId: examAnswerSubmissions.participantId })
-            .from(examAnswerSubmissions)
-            .where(eq(examAnswerSubmissions.id, operation.submissionId));
-          if (!owner || owner.participantId !== input.participantId) {
-            throw new BatchSubmissionError("Submission not found", 404);
-          }
-          if (operation.submissionId !== input.submissionId || operation.payload !== payload) {
-            throw new BatchSubmissionError("Operation ID was already used", 409);
-          }
-          return {
-            submissionId: input.submissionId,
-            revision: operation.revision,
-            assessmentTarget: null,
-          };
-        }
+    if (
+      input.answers.length !== 5 ||
+      new Set(input.answers.map((answer) => answer.questionId)).size !== 5
+    ) {
+      throw new BatchSubmissionError("Exactly five distinct answers are required", 400);
+    }
 
-        if (
-          input.answers.length !== 5 ||
-          new Set(input.answers.map((a) => a.questionId)).size !== 5
-        ) {
-          throw new BatchSubmissionError("Exactly five distinct answers are required", 400);
-        }
+    const [submission] = await db
+      .select()
+      .from(examAnswerSubmissions)
+      .where(eq(examAnswerSubmissions.id, input.submissionId));
+    if (submission && submission.participantId !== input.participantId) {
+      throw new BatchSubmissionError("Submission not found", 404);
+    }
+    if (input.expectedRevision !== (submission?.revision ?? 0)) {
+      throw new BatchSubmissionError("Submission revision conflict", 409);
+    }
 
-        const [submission] = await tx
-          .select()
-          .from(examAnswerSubmissions)
-          .where(eq(examAnswerSubmissions.id, input.submissionId));
-        if (submission && submission.participantId !== input.participantId) {
-          throw new BatchSubmissionError("Submission not found", 404);
-        }
-        if (submission) {
-          const [settings] = await tx
-            .select({ visible: participantResultSettings.visible })
-            .from(participantResultSettings)
-            .where(eq(participantResultSettings.id, 1));
-          if (settings?.visible) {
-            throw new BatchSubmissionError("Submission is published", 423, "SUBMISSION_LOCKED");
-          }
-        }
-        if (input.expectedRevision !== (submission?.revision ?? 0)) {
-          throw new BatchSubmissionError("Submission revision conflict", 409);
-        }
-
-        const examSet = await tx
+    const examSet = await db
+      .select({
+        id: examQuestions.id,
+        key: examQuestions.key,
+        choices: examQuestions.choices,
+        questionVersion: examQuestions.questionVersion,
+      })
+      .from(examQuestions)
+      .orderBy(asc(examQuestions.id))
+      .limit(5);
+    const expectedQuestionIds = submission
+      ? submission.questionIds
+      : examSet.map((question) => question.id);
+    if (
+      expectedQuestionIds.length !== 5 ||
+      canonicalAnswers.some((answer, index) => answer.questionId !== expectedQuestionIds[index])
+    ) {
+      throw new BatchSubmissionError("Answers must match the submission's five questions", 400);
+    }
+    const questions = submission
+      ? await db
           .select({
             id: examQuestions.id,
             key: examQuestions.key,
@@ -216,156 +268,204 @@ export async function saveAnswerSubmission(input: {
             questionVersion: examQuestions.questionVersion,
           })
           .from(examQuestions)
-          .orderBy(asc(examQuestions.id))
-          .limit(5);
-        const expectedQuestionIds = submission
-          ? submission.questionIds
-          : examSet.map((question) => question.id);
-        if (
-          expectedQuestionIds.length !== 5 ||
-          canonicalAnswers.some((answer, index) => answer.questionId !== expectedQuestionIds[index])
-        ) {
-          throw new BatchSubmissionError("Answers must match the submission's five questions", 400);
-        }
-        const questions = submission
-          ? await tx
-              .select({
-                id: examQuestions.id,
-                key: examQuestions.key,
-                choices: examQuestions.choices,
-                questionVersion: examQuestions.questionVersion,
+          .where(inArray(examQuestions.id, expectedQuestionIds))
+      : examSet;
+    const questionById = new Map(questions.map((question) => [question.id, question]));
+    if (
+      canonicalAnswers.some((answer) => {
+        const question = questionById.get(answer.questionId);
+        if (!question) return true;
+        if (question.key === "it-literacy-005")
+          return (
+            !("freeText" in answer) ||
+            answer.freeText.trim().length === 0 ||
+            answer.freeText.trim().length > 1000
+          );
+        return (
+          !("selectedIndex" in answer) ||
+          answer.selectedIndex < 0 ||
+          answer.selectedIndex >= question.choices.length
+        );
+      })
+    ) {
+      throw new BatchSubmissionError("Answer type does not match its question", 400);
+    }
+
+    const revision = input.expectedRevision + 1;
+    const questionVersions = Object.fromEntries(
+      questions.flatMap((question) =>
+        question.questionVersion
+          ? ([[String(question.id), question.questionVersion]] as const)
+          : [],
+      ),
+    );
+
+    return await withAnswerTransactionRetry(
+      () =>
+        db.transaction(async (tx) => {
+          if (submission) {
+            // Reserve the operation as the first write. The reservation rolls back with
+            // the answer changes if the revision compare-and-swap fails.
+            const [reserved] = await tx
+              .insert(examSubmissionOperations)
+              .values({
+                operationId: input.operationId,
+                submissionId: input.submissionId,
+                payload,
+                revision,
               })
-              .from(examQuestions)
-              .where(inArray(examQuestions.id, expectedQuestionIds))
-          : examSet;
-        const questionById = new Map(questions.map((question) => [question.id, question]));
-        if (
-          canonicalAnswers.some((answer) => {
-            const question = questionById.get(answer.questionId);
-            if (!question) return true;
-            if (question.key === "it-literacy-005")
-              return (
-                !("freeText" in answer) ||
-                answer.freeText.trim().length === 0 ||
-                answer.freeText.trim().length > 1000
-              );
-            return (
-              !("selectedIndex" in answer) ||
-              answer.selectedIndex < 0 ||
-              answer.selectedIndex >= question.choices.length
-            );
-          })
-        )
-          throw new BatchSubmissionError("Answer type does not match its question", 400);
-
-        const revision = submission ? submission.revision + 1 : 1;
-        const questionVersions = Object.fromEntries(
-          questions.flatMap((question) =>
-            question.questionVersion
-              ? ([[String(question.id), question.questionVersion]] as const)
-              : [],
-          ),
-        );
-
-        if (submission) {
-          const updated = await tx
-            .update(examAnswerSubmissions)
-            .set({ revision, updatedAt: new Date(), questionVersions })
-            .where(
-              and(
-                eq(examAnswerSubmissions.id, input.submissionId),
-                eq(examAnswerSubmissions.revision, input.expectedRevision),
-              ),
-            )
-            .returning({ id: examAnswerSubmissions.id });
-          if (updated.length === 0) {
-            const [latest] = await tx
-              .select({ revision: examAnswerSubmissions.revision })
-              .from(examAnswerSubmissions)
-              .where(eq(examAnswerSubmissions.id, input.submissionId));
-            if (!latest) throw new BatchSubmissionError("Submission not found", 404);
-            throw new BatchSubmissionError("Submission revision conflict", 409);
+              .onConflictDoNothing()
+              .returning({ operationId: examSubmissionOperations.operationId });
+            if (!reserved) {
+              const replay = await readOperationReplayInTransaction(tx, input, payload);
+              if (replay) return replay;
+              throw new BatchSubmissionError("Operation ID was already used", 409);
+            }
+            const updated = await tx
+              .update(examAnswerSubmissions)
+              .set({ revision, updatedAt: new Date(), questionVersions })
+              .where(
+                and(
+                  eq(examAnswerSubmissions.id, input.submissionId),
+                  eq(examAnswerSubmissions.participantId, input.participantId),
+                  eq(examAnswerSubmissions.revision, input.expectedRevision),
+                ),
+              )
+              .returning({ id: examAnswerSubmissions.id });
+            if (updated.length === 0) {
+              const [latest] = await tx
+                .select({ id: examAnswerSubmissions.id })
+                .from(examAnswerSubmissions)
+                .where(
+                  and(
+                    eq(examAnswerSubmissions.id, input.submissionId),
+                    eq(examAnswerSubmissions.participantId, input.participantId),
+                  ),
+                );
+              if (!latest) throw new BatchSubmissionError("Submission not found", 404);
+              throw new BatchSubmissionError("Submission revision conflict", 409);
+            }
+            await tx
+              .delete(examSubmissionAnswers)
+              .where(eq(examSubmissionAnswers.submissionId, input.submissionId));
+          } else {
+            // Target the caller's stable ID as the first transaction statement. This
+            // acquires the writer before any read while preserving multiple submissions
+            // per participant and making an ID collision a no-op.
+            const inserted = await tx.run(sql`
+            INSERT INTO exam_answer_submissions
+              (id, participant_id, question_ids, question_versions, revision)
+            VALUES (${input.submissionId}, ${input.participantId},
+              ${JSON.stringify(expectedQuestionIds)}, ${JSON.stringify(questionVersions)}, ${revision})
+            ON CONFLICT(id) DO NOTHING
+          `);
+            if (inserted.rowsAffected === 0) {
+              const replay = await readOperationReplayInTransaction(tx, input, payload);
+              if (replay) return replay;
+              const [existing] = await tx
+                .select({ participantId: examAnswerSubmissions.participantId })
+                .from(examAnswerSubmissions)
+                .where(eq(examAnswerSubmissions.id, input.submissionId));
+              if (!existing || existing.participantId !== input.participantId) {
+                throw new BatchSubmissionError("Submission not found", 404);
+              }
+              throw new BatchSubmissionError("Submission revision conflict", 409);
+            }
           }
-          await tx
-            .delete(examSubmissionAnswers)
-            .where(eq(examSubmissionAnswers.submissionId, input.submissionId));
-        } else {
-          await tx.insert(examAnswerSubmissions).values({
-            id: input.submissionId,
-            participantId: input.participantId,
-            questionIds: expectedQuestionIds,
-            questionVersions,
-            revision,
-          });
-        }
 
-        await tx.insert(examSubmissionAnswers).values(
-          canonicalAnswers.map((answer) => ({
-            submissionId: input.submissionId,
-            questionId: answer.questionId,
-            selectedIndex: "selectedIndex" in answer ? answer.selectedIndex : null,
-            freeText: "freeText" in answer ? answer.freeText.trim() : null,
-            answerKind: "freeText" in answer ? "freeText" : "selected",
-          })),
-        );
-        const freeResponse = canonicalAnswers.find((answer) => "freeText" in answer);
-        if (freeResponse && "freeText" in freeResponse) {
-          await tx
-            .insert(examAnswerAssessments)
-            .values({
+          await tx.insert(examSubmissionAnswers).values(
+            canonicalAnswers.map((answer) => ({
               submissionId: input.submissionId,
-              questionId: freeResponse.questionId,
-              revision,
-              answerText: freeResponse.freeText.trim(),
-              questionVersion: questionById.get(freeResponse.questionId)?.questionVersion ?? null,
-              state: "pending",
-              rubricVersion:
-                questionById.get(freeResponse.questionId)?.questionVersion === JEV_QUESTION_VERSION
-                  ? JEV_RUBRIC_VERSION
-                  : "unversioned",
-              attempts: 0,
-              nextAttemptAt: new Date(0),
-            })
-            .onConflictDoUpdate({
-              target: [examAnswerAssessments.submissionId, examAnswerAssessments.questionId],
-              set: {
+              questionId: answer.questionId,
+              selectedIndex: "selectedIndex" in answer ? answer.selectedIndex : null,
+              freeText: "freeText" in answer ? answer.freeText.trim() : null,
+              answerKind: "freeText" in answer ? "freeText" : "selected",
+            })),
+          );
+          const freeResponse = canonicalAnswers.find((answer) => "freeText" in answer);
+          if (freeResponse && "freeText" in freeResponse) {
+            await tx
+              .insert(examAnswerAssessments)
+              .values({
+                submissionId: input.submissionId,
+                questionId: freeResponse.questionId,
                 revision,
                 answerText: freeResponse.freeText.trim(),
                 questionVersion: questionById.get(freeResponse.questionId)?.questionVersion ?? null,
                 state: "pending",
-                rawScore: null,
-                normalizedScore: null,
-                confidence: null,
-                model: null,
-                attempts: 0,
-                nextAttemptAt: new Date(0),
-                gradedAt: null,
-                errorCode: null,
-                claimToken: null,
                 rubricVersion:
                   questionById.get(freeResponse.questionId)?.questionVersion ===
                   JEV_QUESTION_VERSION
                     ? JEV_RUBRIC_VERSION
                     : "unversioned",
-              },
+                attempts: 0,
+                nextAttemptAt: new Date(0),
+              })
+              .onConflictDoUpdate({
+                target: [examAnswerAssessments.submissionId, examAnswerAssessments.questionId],
+                set: {
+                  revision,
+                  answerText: freeResponse.freeText.trim(),
+                  questionVersion:
+                    questionById.get(freeResponse.questionId)?.questionVersion ?? null,
+                  state: "pending",
+                  rawScore: null,
+                  normalizedScore: null,
+                  confidence: null,
+                  model: null,
+                  attempts: 0,
+                  nextAttemptAt: new Date(0),
+                  gradedAt: null,
+                  errorCode: null,
+                  claimToken: null,
+                  rubricVersion:
+                    questionById.get(freeResponse.questionId)?.questionVersion ===
+                    JEV_QUESTION_VERSION
+                      ? JEV_RUBRIC_VERSION
+                      : "unversioned",
+                },
+              });
+          }
+          if (!submission) {
+            await tx.insert(examSubmissionOperations).values({
+              operationId: input.operationId,
+              submissionId: input.submissionId,
+              payload,
+              revision,
             });
-        }
-        await tx.insert(examSubmissionOperations).values({
-          operationId: input.operationId,
-          submissionId: input.submissionId,
-          payload,
-          revision,
-        });
-        return {
-          submissionId: input.submissionId,
-          revision,
-          assessmentTarget: freeResponse ? { submissionId: input.submissionId, revision } : null,
-        };
-      }),
+          }
+          return {
+            submissionId: input.submissionId,
+            revision,
+            assessmentTarget: freeResponse ? { submissionId: input.submissionId, revision } : null,
+          };
+        }),
+      retryRuntime,
+      "write_transaction",
     );
   } catch (error) {
     if (error instanceof BatchSubmissionError || !isKnownSqliteConflict(error)) throw error;
-    const recovered = await recoverSubmissionConflict(input, payload);
+    let recovered: Awaited<ReturnType<typeof recoverSubmissionConflict>>;
+    try {
+      // The recovery lookup is read-only, so it is safe to repeat when SQLite
+      // remains busy after the write attempts. Never repeat the write here:
+      // the original transaction may have committed before the adapter failed.
+      recovered = await withAnswerTransactionRetry(
+        () => recoverSubmissionConflict(input, payload),
+        retryRuntime,
+        "recovery_read",
+      );
+    } catch (recoveryError) {
+      if (recoveryError instanceof BatchSubmissionError) throw recoveryError;
+      if (isSqliteLockContention(recoveryError)) {
+        throw new BatchSubmissionError(
+          "Answer save is temporarily unavailable",
+          503,
+          "DATABASE_LOCKED",
+        );
+      }
+      throw recoveryError;
+    }
     if (recovered) return recovered;
     if (isSqliteLockContention(error)) {
       throw new BatchSubmissionError(
@@ -382,9 +482,9 @@ async function readSubmissionOperationReplay(
   input: { submissionId: string; operationId: string; participantId: number },
   payload: string,
 ) {
-  // A single autocommit read avoids taking SQLite's write reservation before
-  // the actual save transaction. The latter acquires the presentation-session
-  // serialization row before reading mutable state.
+  // A single autocommit read avoids taking SQLite's writer before the actual
+  // save transaction. The transaction begins with a write reservation instead
+  // of a deferred read-to-write upgrade.
   const [operation] = await db
     .select({
       submissionId: examSubmissionOperations.submissionId,
@@ -412,14 +512,50 @@ async function readSubmissionOperationReplay(
   };
 }
 
-async function withAnswerTransactionRetry<T>(run: () => Promise<T>): Promise<T> {
+async function readOperationReplayInTransaction(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  input: { submissionId: string; operationId: string; participantId: number },
+  payload: string,
+) {
+  const [operation] = await tx
+    .select()
+    .from(examSubmissionOperations)
+    .where(eq(examSubmissionOperations.operationId, input.operationId));
+  if (!operation) return null;
+  const [owner] = await tx
+    .select({ participantId: examAnswerSubmissions.participantId })
+    .from(examAnswerSubmissions)
+    .where(eq(examAnswerSubmissions.id, operation.submissionId));
+  if (!owner || owner.participantId !== input.participantId) {
+    throw new BatchSubmissionError("Submission not found", 404);
+  }
+  if (operation.submissionId !== input.submissionId || operation.payload !== payload) {
+    throw new BatchSubmissionError("Operation ID was already used", 409);
+  }
+  return { submissionId: input.submissionId, revision: operation.revision, assessmentTarget: null };
+}
+
+function equalJitterDelay(capMs: number, random: number): number {
+  const minimumMs = Math.ceil(capMs / 2);
+  return minimumMs + Math.floor(random * (capMs - minimumMs + 1));
+}
+
+async function withAnswerTransactionRetry<T>(
+  run: () => Promise<T>,
+  runtime: AnswerSaveRetryRuntime,
+  phase: AnswerSaveRetryPhase,
+): Promise<T> {
   const maxAttempts = 6;
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await run();
     } catch (error) {
       if (!isSqliteLockContention(error) || attempt >= maxAttempts - 1) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
+      const capMs = 25 * 2 ** attempt;
+      const delayMs = equalJitterDelay(capMs, runtime.random());
+      runtime.onRetryScheduled?.({ phase, retryNumber: attempt + 1, capMs, delayMs });
+      if (runtime.sleep) await runtime.sleep(delayMs);
+      else await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 }
@@ -469,42 +605,40 @@ async function recoverSubmissionConflict(
   },
   payload: string,
 ) {
-  return db.transaction(async (tx) => {
-    const [operation] = await tx
-      .select()
-      .from(examSubmissionOperations)
-      .where(eq(examSubmissionOperations.operationId, input.operationId));
-    if (operation) {
-      const [owner] = await tx
-        .select({ participantId: examAnswerSubmissions.participantId })
-        .from(examAnswerSubmissions)
-        .where(eq(examAnswerSubmissions.id, operation.submissionId));
-      if (!owner || owner.participantId !== input.participantId) {
-        throw new BatchSubmissionError("Submission not found", 404);
-      }
-      if (operation.submissionId === input.submissionId && operation.payload === payload) {
-        return {
-          submissionId: input.submissionId,
-          revision: operation.revision,
-          assessmentTarget: null,
-        };
-      }
-      throw new BatchSubmissionError("Operation ID was already used", 409);
-    }
-
-    const [submission] = await tx
-      .select()
+  const [operation] = await db
+    .select()
+    .from(examSubmissionOperations)
+    .where(eq(examSubmissionOperations.operationId, input.operationId));
+  if (operation) {
+    const [owner] = await db
+      .select({ participantId: examAnswerSubmissions.participantId })
       .from(examAnswerSubmissions)
-      .where(eq(examAnswerSubmissions.id, input.submissionId));
-    if (!submission) return null;
-    if (submission.participantId !== input.participantId) {
+      .where(eq(examAnswerSubmissions.id, operation.submissionId));
+    if (!owner || owner.participantId !== input.participantId) {
       throw new BatchSubmissionError("Submission not found", 404);
     }
-    if (submission.revision !== input.expectedRevision) {
-      throw new BatchSubmissionError("Submission revision conflict", 409);
+    if (operation.submissionId === input.submissionId && operation.payload === payload) {
+      return {
+        submissionId: input.submissionId,
+        revision: operation.revision,
+        assessmentTarget: null,
+      };
     }
-    return null;
-  });
+    throw new BatchSubmissionError("Operation ID was already used", 409);
+  }
+
+  const [submission] = await db
+    .select()
+    .from(examAnswerSubmissions)
+    .where(eq(examAnswerSubmissions.id, input.submissionId));
+  if (!submission) return null;
+  if (submission.participantId !== input.participantId) {
+    throw new BatchSubmissionError("Submission not found", 404);
+  }
+  if (submission.revision !== input.expectedRevision) {
+    throw new BatchSubmissionError("Submission revision conflict", 409);
+  }
+  return null;
 }
 
 export async function recordAnswer(input: {
