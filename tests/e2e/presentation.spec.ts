@@ -2644,7 +2644,7 @@ test("@chromium first-place halo stays suppressed after empty entry or winner di
       const animation = element
         .getAnimations()
         .find((candidate) => (candidate as CSSAnimation).animationName.includes("firstRankHalo"));
-      return animation?.currentTime ?? -1;
+      return animation?.currentTime == null ? -1 : Number(animation.currentTime);
     });
   const refreshSnapshot = async () => {
     const priorDeckRefreshes = mock
