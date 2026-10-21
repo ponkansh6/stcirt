@@ -1168,7 +1168,7 @@ async function verifyInvalidRetrySources(
     }
     const manifestText = await readFile(resolve(sourceDir, "manifest.json"), "utf8");
     const configText = await readFile(resolve(sourceDir, "request-config.json"), "utf8");
-    const manifest = JSON.parse(manifestText) as Record<string, unknown>;
+    JSON.parse(manifestText);
     const config = JSON.parse(configText) as Record<string, unknown>;
     const manifestRecordIds = source.parentRunId
       ? source.expected

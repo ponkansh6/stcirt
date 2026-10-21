@@ -185,7 +185,7 @@ function summarizeRsc(records) {
 function installResultsHeadingFrameObserver() {
   const navigationStart = performance.getEntriesByType("navigation")[0]?.startTime ?? 0;
   window.__resultsPaintMetrics = {
-    ...(window.__resultsPaintMetrics ?? {}),
+    ...window.__resultsPaintMetrics,
     navigationStart,
     lcp: window.__resultsPaintMetrics?.lcp ?? [],
     layoutShifts: window.__resultsPaintMetrics?.layoutShifts ?? [],
@@ -378,6 +378,38 @@ async function startServer() {
   let readyLogged = false;
   let spawnError;
   let pendingLogLine = "";
+  const stripAnsiEscapeSequences = (value) => {
+    let output = "";
+    for (let index = 0; index < value.length; index += 1) {
+      if (value.charCodeAt(index) !== 27 || value[index + 1] !== "[") {
+        output += value[index];
+        continue;
+      }
+      index += 2;
+      while (
+        index < value.length &&
+        value.charCodeAt(index) >= 0x30 &&
+        value.charCodeAt(index) <= 0x3f
+      ) {
+        index += 1;
+      }
+      while (
+        index < value.length &&
+        value.charCodeAt(index) >= 0x20 &&
+        value.charCodeAt(index) <= 0x2f
+      ) {
+        index += 1;
+      }
+      if (
+        index >= value.length ||
+        value.charCodeAt(index) < 0x40 ||
+        value.charCodeAt(index) > 0x7e
+      ) {
+        index -= 1;
+      }
+    }
+    return output;
+  };
   const collectLog = (chunk) => {
     const text = String(chunk);
     logs = `${logs}${text}`.slice(-4000);
@@ -385,7 +417,7 @@ async function startServer() {
     pendingLogLine = lines.pop() ?? "";
     if (
       lines.some((line) =>
-        /\bReady in \d+(?:\.\d+)?\s*(?:ms|s)\b/i.test(line.replace(/\u001b\[[0-9;]*m/g, "")),
+        /\bReady in \d+(?:\.\d+)?\s*(?:ms|s)\b/i.test(stripAnsiEscapeSequences(line)),
       )
     ) {
       readyLogged = true;

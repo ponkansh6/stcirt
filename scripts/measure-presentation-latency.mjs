@@ -180,10 +180,6 @@ function createOperationTracker() {
   return tracker;
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function withTimeout(promise, ms, message) {
   let timeoutId;
   try {

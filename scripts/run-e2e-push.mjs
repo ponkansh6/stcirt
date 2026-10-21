@@ -31,7 +31,7 @@ function caseRows(output, name, description) {
     );
   }
 
-  const rows = output.split(/\r?\n/).filter((line) => /^  \[/.test(line));
+  const rows = output.split(/\r?\n/).filter((line) => line.startsWith("  ["));
   if (rows.length !== count) {
     throw new Error(
       `Could not validate Playwright --list cases for ${description} in project ${JSON.stringify(name)}: ` +
