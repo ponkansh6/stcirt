@@ -181,7 +181,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         state: "graded",
         rawScore: 1,
         normalizedScore: 1,
-        rubricVersion: "jev-q5-fulfillment-v3-02",
+        rubricVersion: "jev-q5-keywords30-30-jev40-v1",
         gradedAt: new Date(),
       })
       .where(eq(schema.examAnswerAssessments.submissionId, submissionId));

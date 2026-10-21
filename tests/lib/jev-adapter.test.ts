@@ -76,6 +76,19 @@ describe("JEV score adapter", () => {
     );
   });
 
+  it("sends the original mixed Unicode answer to JEV without keyword normalization", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
+    respond(envelope());
+    const originalAnswer = "  ﾀﾏｺﾞ・シュントウと卵  ";
+
+    await gradeCurrentAnswer(originalAnswer);
+
+    const [, request] = vi.mocked(fetch).mock.calls[0]!;
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      state: { user_answer: originalAnswer },
+    });
+  });
+
   it("accepts a score that differs from the weighted probability and logs the delta", async () => {
     vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
     respond(

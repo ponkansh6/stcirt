@@ -377,7 +377,7 @@ async function completeConcurrentQ5Assessment(submissionId: string, revision: nu
       state: "graded",
       rawScore: 9,
       normalizedScore: 1,
-      rubricVersion: "jev-q5-fulfillment-v3-02",
+      rubricVersion: "jev-q5-keywords30-30-jev40-v1",
       gradedAt: new Date(),
     })
     .where(
@@ -517,6 +517,7 @@ describe("presentation repository", () => {
     selectedIndices: number[],
     revision = 1,
     suffix = "latest",
+    q5NormalizedScore = selectedIndices[1] === 0 ? 1 : 0,
   ) {
     const id = `submission-${participantId}-${suffix}`;
     const questions = await testDb.db.select().from(schema.examQuestions);
@@ -556,8 +557,8 @@ describe("presentation repository", () => {
       questionVersion: q5.questionVersion!,
       state: "graded",
       rawScore: selectedIndices[1] === 0 ? 9 : 0,
-      normalizedScore: selectedIndices[1] === 0 ? 1 : 0,
-      rubricVersion: "jev-q5-fulfillment-v3-02",
+      normalizedScore: q5NormalizedScore,
+      rubricVersion: "jev-q5-keywords30-30-jev40-v1",
     });
   }
 
@@ -1582,7 +1583,7 @@ describe("presentation repository", () => {
         state: "graded" as const,
         rawScore: 0,
         normalizedScore: 0,
-        rubricVersion: "jev-q5-fulfillment-v3-02",
+        rubricVersion: "jev-q5-keywords30-30-jev40-v1",
       })),
     );
 
@@ -1765,7 +1766,7 @@ describe("presentation repository", () => {
       state: "graded",
       rawScore: 4.5,
       normalizedScore: 0.5,
-      rubricVersion: "jev-q5-fulfillment-v3-02",
+      rubricVersion: "jev-q5-keywords30-30-jev40-v1",
     });
 
     await op("aggregate", "current-five-question-aggregate");
@@ -1777,8 +1778,40 @@ describe("presentation repository", () => {
       { participantId: participant, score: 4.5 },
     ]);
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
-      { questionVersions, rubricVersions: { "5": "jev-q5-fulfillment-v3-02" } },
+      { questionVersions, rubricVersions: { "5": "jev-q5-keywords30-30-jev40-v1" } },
     ]);
+  });
+
+  it("keeps unrounded Q5 floats distinct in snapshot totals and competition ranks", async () => {
+    await addCurrentFiveQuestions();
+    const higher = await addParticipant("Higher precise total");
+    const lower = await addParticipant("Lower precise total");
+    await addSubmission(higher, [0, 0], 1, "higher-precision", 0.804);
+    await addSubmission(lower, [0, 0], 1, "lower-precision", 0.801);
+
+    await op("aggregate", "precise-q5-totals");
+
+    const entries = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .orderBy(schema.presentationEntries.rank);
+    expect(entries.map(({ score, rank }) => ({ score, rank }))).toEqual([
+      { score: 4.804, rank: 1 },
+      { score: 4.801, rank: 2 },
+    ]);
+    expect(entries[0]?.score.toFixed(2)).toBe(entries[1]?.score.toFixed(2));
+    expect(entries[0]?.answers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ questionId: 5, normalizedScore: 0.804 })]),
+    );
+    expect(entries[1]?.answers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ questionId: 5, normalizedScore: 0.801 })]),
+    );
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      entries: [
+        { displayName: "Higher precise total", score: 4.804, rank: 1 },
+        { displayName: "Lower precise total", score: 4.801, rank: 2 },
+      ],
+    });
   });
 
   it.each([
@@ -1886,7 +1919,7 @@ describe("presentation repository", () => {
       state: "graded",
       rawScore: 4.5,
       normalizedScore: 0.5,
-      rubricVersion: "jev-q5-fulfillment-v3-02",
+      rubricVersion: "jev-q5-keywords30-30-jev40-v1",
     });
 
     await op("aggregate", "stale-q5-snapshot-aggregate");
@@ -2693,7 +2726,7 @@ describe("presentation repository", () => {
         answerText: "pending response",
         state: "pending",
         questionVersion: "tamami-egg-v1",
-        rubricVersion: "jev-q5-fulfillment-v3-02",
+        rubricVersion: "jev-q5-keywords30-30-jev40-v1",
       })
       .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
 
@@ -2744,6 +2777,54 @@ describe("presentation repository", () => {
       PresentationConflictError,
     );
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+  });
+
+  it("preserves a current snapshot and revision when a legacy Q5 answer blocks reaggregation", async () => {
+    await addCurrentFiveQuestions();
+    const currentParticipant = await addParticipant("Current graded answer");
+    await addSubmission(currentParticipant, [0, 0]);
+    const firstAggregate = await op("aggregate", "legacy-preservation-first-aggregate");
+    expect(firstAggregate.aggregationSummary?.snapshotUpdated).toBe(true);
+
+    const legacyParticipant = await addParticipant("Legacy answer after aggregate");
+    const legacySubmissionId = `submission-${legacyParticipant}-legacy-current-version`;
+    await addSubmission(legacyParticipant, [0, 0], 1, "legacy-current-version");
+    await testDb.db
+      .update(schema.examSubmissionAnswers)
+      .set({ answerKind: "legacy", selectedIndex: 1, freeText: null })
+      .where(
+        and(
+          eq(schema.examSubmissionAnswers.submissionId, legacySubmissionId),
+          eq(schema.examSubmissionAnswers.questionId, 5),
+        ),
+      );
+
+    const sessionBefore = await testDb.db.select().from(schema.presentationSessions);
+    const questionsBefore = await testDb.db.select().from(schema.presentationQuestions);
+    const entriesBefore = await testDb.db.select().from(schema.presentationEntries);
+    expect(sessionBefore[0]).toMatchObject({
+      snapshotRevision: 1,
+      questionVersions: {
+        "5": "tamami-egg-v1",
+      },
+      rubricVersions: {
+        "5": "jev-q5-keywords30-30-jev40-v1",
+      },
+    });
+
+    await expect(op("aggregate", "legacy-preservation-reaggregate")).rejects.toMatchObject({
+      status: 409,
+    });
+
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toEqual(
+      sessionBefore,
+    );
+    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toEqual(
+      questionsBefore,
+    );
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toEqual(
+      entriesBefore,
+    );
   });
 
   it("returns the cookie owner's answers and correctness and fails closed on malformed snapshots", async () => {

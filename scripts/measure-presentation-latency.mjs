@@ -791,7 +791,7 @@ async function seedRealDatabase() {
   const questionVersions = Object.fromEntries(
     questions.map((row) => [String(row.id), row.question_version]),
   );
-  const rubricVersions = { 5: "jev-q5-fulfillment-v3-02" };
+  const rubricVersions = { 5: "jev-q5-keywords30-30-jev40-v1" };
   await dbClient.execute({
     sql: "INSERT INTO presentation_sessions (id, state, version, question_index, question_count, snapshot_revision, question_versions, rubric_versions) VALUES (1, 'not_started', 1, 0, 5, 1, ?, ?)",
     args: [JSON.stringify(questionVersions), JSON.stringify(rubricVersions)],

@@ -38,7 +38,7 @@ const QUESTION_VERSIONS = [
   "nagano-004-v1",
   "tamami-egg-v1",
 ];
-const Q5_RUBRIC_VERSION = "jev-q5-fulfillment-v3-02";
+const Q5_RUBRIC_VERSION = "jev-q5-keywords30-30-jev40-v1";
 const WARMUP_SAMPLES = 2;
 
 function createSqlLogger(): SqlLogger {

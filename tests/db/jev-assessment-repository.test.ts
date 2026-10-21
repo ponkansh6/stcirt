@@ -5,7 +5,7 @@ import * as schema from "@/lib/db/schema";
 
 const dbRef = vi.hoisted(() => ({ db: null as TestDb["db"] | null }));
 const gradeMock = vi.hoisted(() => vi.fn());
-const rubricVersion = vi.hoisted(() => "test-rubric-v1");
+const rubricVersion = vi.hoisted(() => "jev-q5-keywords30-30-jev40-v1");
 const questionVersion = vi.hoisted(() => "tamami-egg-v1");
 
 vi.mock("@/lib/db", async (importOriginal) => {
@@ -222,6 +222,44 @@ describe("durable free-response assessment and restoration", () => {
     });
   });
 
+  it("leaves an old-rubric pending assessment untouched until its answer is resubmitted", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    await testDb.db
+      .update(schema.examAnswerAssessments)
+      .set({ rubricVersion: "jev-q5-fulfillment-v3-02" })
+      .where(eq(schema.examAnswerAssessments.submissionId, submissionId));
+
+    const [before] = await testDb.db.select().from(schema.examAnswerAssessments);
+    await expect(processDueAssessments()).resolves.toMatchObject({
+      processed: 0,
+      graded: 0,
+      retried: 0,
+      failed: 0,
+    });
+    const [after] = await testDb.db.select().from(schema.examAnswerAssessments);
+
+    expect(gradeFreeResponse).not.toHaveBeenCalled();
+    expect(after).toEqual(before);
+    expect(after).toMatchObject({
+      revision: 1,
+      questionVersion,
+      rubricVersion: "jev-q5-fulfillment-v3-02",
+      state: "pending",
+      attempts: 0,
+      rawScore: null,
+      normalizedScore: null,
+      confidence: null,
+      model: null,
+      claimToken: null,
+    });
+  });
+
   it("retries transient provider failures with persisted backoff and increments durable attempts", async () => {
     await saveAnswerSubmission({
       submissionId,
@@ -253,10 +291,44 @@ describe("durable free-response assessment and restoration", () => {
       state: "graded",
       attempts: 2,
       rawScore: 6.3,
-      normalizedScore: 0.7,
       confidence: 0.99,
     });
+    expect(graded!.normalizedScore).toBeCloseTo(0.28);
   });
+
+  it.each([
+    { score: 0, confidence: 0, normalized: 0 },
+    { score: 9, confidence: 1, normalized: 0.4 },
+    { score: 4.5, confidence: 0.37, normalized: 0.2 },
+  ])(
+    "persists JEV raw score $score without weighting confidence",
+    async ({ score, confidence, normalized }) => {
+      await saveAnswerSubmission({
+        submissionId,
+        operationId,
+        expectedRevision: 0,
+        participantId,
+        answers: validAnswers,
+      });
+      vi.mocked(gradeFreeResponse).mockResolvedValueOnce({
+        score,
+        confidence,
+        model: "jev-score-audit-model",
+      });
+
+      await expect(processDueAssessments()).resolves.toMatchObject({ graded: 1 });
+      const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
+      expect(assessment).toMatchObject({
+        state: "graded",
+        rawScore: score,
+        normalizedScore: normalized,
+        confidence,
+        model: "jev-score-audit-model",
+        questionVersion,
+        rubricVersion: JEV_RUBRIC_VERSION,
+      });
+    },
+  );
 
   it("claims no more than five due assessments per worker call with a 45 second lease", async () => {
     const submissionIds = [
@@ -491,12 +563,12 @@ describe("durable free-response assessment and restoration", () => {
       attempts: 1,
       claimToken: null,
       rawScore: 6.3,
-      normalizedScore: 0.7,
       confidence: 0.99,
       model: "jev-latest",
       nextAttemptAt: null,
       errorCode: null,
     });
+    expect(gradedAssessment!.normalizedScore).toBeCloseTo(0.28);
   });
 
   it("ignores a provider failure after another worker has replaced its claim", async () => {
@@ -594,7 +666,7 @@ describe("durable free-response assessment and restoration", () => {
       attempts: 1,
       rawScore: 5.4,
     });
-    expect(retried!.normalizedScore).toBeCloseTo(0.6);
+    expect(retried!.normalizedScore).toBeCloseTo(0.24);
   });
 
   it("rejects a late result after the lease is reclaimed by another worker", async () => {
@@ -633,9 +705,9 @@ describe("durable free-response assessment and restoration", () => {
     expect(assessment).toMatchObject({
       state: "graded",
       rawScore: 7.2,
-      normalizedScore: 0.8,
       claimToken: null,
     });
+    expect(assessment!.normalizedScore).toBeCloseTo(0.32);
   });
 
   it("does not apply an assessment after the participant revises the answer revision", async () => {
@@ -654,11 +726,13 @@ describe("durable free-response assessment and restoration", () => {
     const delayed = new Promise<void>((resolve) => {
       releaseGrade = resolve;
     });
-    vi.mocked(gradeFreeResponse).mockImplementationOnce(async () => {
-      gradeStarted();
-      await delayed;
-      return { score: 1.8, confidence: 1, model: "jev-latest" };
-    });
+    vi.mocked(gradeFreeResponse)
+      .mockImplementationOnce(async () => {
+        gradeStarted();
+        await delayed;
+        return { score: 1.8, confidence: 1, model: "old-job-model" };
+      })
+      .mockResolvedValueOnce({ score: 9, confidence: 0.75, model: "current-job-model" });
     const oldWorker = processDueAssessments();
     await gradeStartedPromise;
     await saveAnswerSubmission({
@@ -673,10 +747,28 @@ describe("durable free-response assessment and restoration", () => {
     const [current] = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(current).toMatchObject({
       revision: 2,
-      state: "pending",
+      state: "graded",
       answerText: "Revised answer",
-      rawScore: null,
+      rawScore: 9,
+      confidence: 0.75,
+      model: "current-job-model",
+      questionVersion,
+      rubricVersion: JEV_RUBRIC_VERSION,
       claimToken: null,
     });
+    expect(current!.normalizedScore).toBeCloseTo(0.4);
+    expect(gradeFreeResponse).toHaveBeenCalledTimes(2);
+    expect(gradeFreeResponse).toHaveBeenNthCalledWith(
+      1,
+      "上司に確認し、承認済み環境を使います。",
+      questionVersion,
+      JEV_RUBRIC_VERSION,
+    );
+    expect(gradeFreeResponse).toHaveBeenNthCalledWith(
+      2,
+      "Revised answer",
+      questionVersion,
+      JEV_RUBRIC_VERSION,
+    );
   });
 });

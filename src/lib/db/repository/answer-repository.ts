@@ -11,6 +11,7 @@ import {
 } from "../schema";
 import { jstDayStart } from "../../date";
 import { gradeFreeResponse, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
+import { scoreQ5 } from "@/lib/jev/scoring";
 import { randomUUID } from "node:crypto";
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
 
@@ -710,6 +711,8 @@ export async function processDueAssessments(
     const dueConditions = [
       or(eq(examAnswerAssessments.state, "pending"), eq(examAnswerAssessments.state, "processing")),
       lte(examAnswerAssessments.nextAttemptAt, now),
+      eq(examAnswerAssessments.questionVersion, JEV_QUESTION_VERSION),
+      eq(examAnswerAssessments.rubricVersion, JEV_RUBRIC_VERSION),
     ];
     if (target) {
       dueConditions.push(
@@ -739,8 +742,16 @@ export async function processDueAssessments(
           eq(examAnswerAssessments.questionId, job.questionId),
           eq(examAnswerAssessments.revision, job.revision),
           eq(examAnswerAssessments.answerText, job.answerText),
+          eq(examAnswerAssessments.questionVersion, JEV_QUESTION_VERSION),
+          eq(examAnswerAssessments.rubricVersion, job.rubricVersion),
+          eq(examAnswerAssessments.rubricVersion, JEV_RUBRIC_VERSION),
           eq(examAnswerAssessments.state, job.state),
           lte(examAnswerAssessments.nextAttemptAt, now),
+          sql`EXISTS (
+            SELECT 1 FROM exam_answer_submissions
+            WHERE exam_answer_submissions.id = ${job.submissionId}
+              AND exam_answer_submissions.revision = ${job.revision}
+          )`,
         ),
       )
       .returning({ submissionId: examAnswerAssessments.submissionId });
@@ -751,37 +762,38 @@ export async function processDueAssessments(
         job.questionVersion,
         job.rubricVersion,
       );
-      const current = await db
-        .select({ revision: examAnswerSubmissions.revision })
-        .from(examAnswerSubmissions)
-        .where(eq(examAnswerSubmissions.id, job.submissionId));
-      const applied =
-        current[0]?.revision === job.revision
-          ? await db
-              .update(examAnswerAssessments)
-              .set({
-                state: "graded",
-                rawScore: result.score,
-                normalizedScore: result.score / 9,
-                confidence: result.confidence,
-                model: result.model,
-                gradedAt: new Date(),
-                nextAttemptAt: null,
-                errorCode: null,
-                claimToken: null,
-              })
-              .where(
-                and(
-                  eq(examAnswerAssessments.submissionId, job.submissionId),
-                  eq(examAnswerAssessments.questionId, job.questionId),
-                  eq(examAnswerAssessments.revision, job.revision),
-                  eq(examAnswerAssessments.answerText, job.answerText),
-                  eq(examAnswerAssessments.state, "processing"),
-                  eq(examAnswerAssessments.claimToken, claimToken),
-                ),
-              )
-              .returning({ submissionId: examAnswerAssessments.submissionId })
-          : [];
+      const applied = await db
+        .update(examAnswerAssessments)
+        .set({
+          state: "graded",
+          rawScore: result.score,
+          normalizedScore: scoreQ5(job.answerText, result.score),
+          confidence: result.confidence,
+          model: result.model,
+          gradedAt: new Date(),
+          nextAttemptAt: null,
+          errorCode: null,
+          claimToken: null,
+        })
+        .where(
+          and(
+            eq(examAnswerAssessments.submissionId, job.submissionId),
+            eq(examAnswerAssessments.questionId, job.questionId),
+            eq(examAnswerAssessments.revision, job.revision),
+            eq(examAnswerAssessments.answerText, job.answerText),
+            eq(examAnswerAssessments.questionVersion, JEV_QUESTION_VERSION),
+            eq(examAnswerAssessments.rubricVersion, job.rubricVersion),
+            eq(examAnswerAssessments.rubricVersion, JEV_RUBRIC_VERSION),
+            eq(examAnswerAssessments.state, "processing"),
+            eq(examAnswerAssessments.claimToken, claimToken),
+            sql`EXISTS (
+              SELECT 1 FROM exam_answer_submissions
+              WHERE exam_answer_submissions.id = ${job.submissionId}
+                AND exam_answer_submissions.revision = ${job.revision}
+            )`,
+          ),
+        )
+        .returning({ submissionId: examAnswerAssessments.submissionId });
       if (applied.length) graded += 1;
     } catch (error) {
       const code =
@@ -816,6 +828,9 @@ export async function processDueAssessments(
             eq(examAnswerAssessments.questionId, job.questionId),
             eq(examAnswerAssessments.revision, job.revision),
             eq(examAnswerAssessments.answerText, job.answerText),
+            eq(examAnswerAssessments.questionVersion, JEV_QUESTION_VERSION),
+            eq(examAnswerAssessments.rubricVersion, job.rubricVersion),
+            eq(examAnswerAssessments.rubricVersion, JEV_RUBRIC_VERSION),
             eq(examAnswerAssessments.state, "processing"),
             eq(examAnswerAssessments.claimToken, claimToken),
           ),
