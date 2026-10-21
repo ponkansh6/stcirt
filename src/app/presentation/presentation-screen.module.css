@@ -571,26 +571,6 @@
   pointer-events: none;
 }
 
-.rankHalo {
-  position: absolute;
-  z-index: 0;
-  inset: 12% 7%;
-  border: 5px solid rgb(181 139 53 / 48%);
-  border-radius: 50%;
-  opacity: 0;
-  pointer-events: none;
-  visibility: hidden;
-}
-
-.winners[data-rank="first"] .rankHalo {
-  box-shadow: 0 0 0 7px rgb(181 139 53 / 20%);
-  animation: firstRankHalo 600ms ease-out 800ms both;
-}
-
-.rankHalo[data-halo-eligible="true"] {
-  visibility: visible;
-}
-
 .rankHeading {
   position: relative;
   z-index: 1;
@@ -612,6 +592,7 @@
 }
 
 .winnerReveal {
+  --rank-reveal-boundary: 400ms;
   position: relative;
   z-index: 1;
   display: flex;
@@ -619,6 +600,36 @@
   min-width: 0;
   flex-direction: column;
   align-items: center;
+}
+
+.winnerReveal::before,
+.winnerReveal::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(181 139 53 / 78%) 18%,
+    #fff1b8 50%,
+    rgb(181 139 53 / 78%) 82%,
+    transparent
+  );
+  opacity: 0;
+  pointer-events: none;
+  transform: scaleX(1);
+  transform-origin: center;
+}
+
+.winnerReveal::before {
+  top: 0;
+}
+
+.winnerReveal::after {
+  bottom: 0;
 }
 
 @keyframes rankWinnerReveal {
@@ -657,19 +668,25 @@
   }
 }
 
-@keyframes firstRankHalo {
-  from {
+@keyframes rankRevealAnticipation {
+  0% {
     opacity: 0;
-    transform: scale(0.94);
+    transform: scaleX(1);
   }
 
-  35% {
-    opacity: 0.92;
+  12% {
+    opacity: 0.82;
+    transform: scaleX(1);
   }
 
-  to {
+  82% {
+    opacity: 0.5;
+    transform: scaleX(0.08);
+  }
+
+  100% {
     opacity: 0;
-    transform: scale(1.02);
+    transform: scaleX(0);
   }
 }
 
@@ -683,7 +700,13 @@
   }
 
   .winnerReveal {
-    animation: rankWinnerReveal 400ms ease-out 400ms both;
+    animation: rankWinnerReveal var(--rank-reveal-boundary) ease-out var(--rank-reveal-boundary)
+      both;
+  }
+
+  .winnerReveal[data-reveal-eligible="true"]::before,
+  .winnerReveal[data-reveal-eligible="true"]::after {
+    animation: rankRevealAnticipation var(--rank-reveal-boundary) ease-out 0ms both;
   }
 }
 
@@ -1026,14 +1049,15 @@
     animation: none !important;
   }
 
-  .screen .rankOrnament,
-  .screen .rankStamp,
-  .screen .rankHalo {
+  .screen .winnerReveal::before,
+  .screen .winnerReveal::after {
     animation: none !important;
-    opacity: 0;
+    opacity: 0 !important;
   }
 
-  .screen .rankHalo {
-    visibility: hidden;
+  .screen .rankOrnament,
+  .screen .rankStamp {
+    animation: none !important;
+    opacity: 0;
   }
 }

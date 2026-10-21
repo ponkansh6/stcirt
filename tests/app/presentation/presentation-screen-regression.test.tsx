@@ -2456,7 +2456,7 @@ describe("PresentationScreen", () => {
     expect(rerenderedRegion.querySelector("[class*='winnerReveal']")).toBe(reveal);
   });
 
-  it("freezes first-place halo eligibility for the lifetime of a rank entry", async () => {
+  it("freezes rank decoration eligibility for the lifetime of a first-place entry", async () => {
     vi.useFakeTimers();
     const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
@@ -2467,36 +2467,32 @@ describe("PresentationScreen", () => {
       const view = render(<PresentationScreen />);
       await flush();
       const region = screen.getByRole("region", { name: "第一位の勝者一覧" });
-      const halo = region.querySelector("[class*='rankHalo']");
       const reveal = region.querySelector("[class*='winnerReveal']");
-      expect(halo).toHaveAttribute("data-halo-eligible", "true");
+      expect(reveal).toHaveAttribute("data-reveal-eligible", "true");
 
       api.setProjection({ state: "first", winners: [] });
       act(() => document.dispatchEvent(new Event("visibilitychange")));
       await act(async () => vi.advanceTimersByTimeAsync(1400));
       await flush();
       expect(screen.getByText("該当する受賞者はいません")).toBeInTheDocument();
-      expect(region.querySelector("[class*='rankHalo']")).toBe(halo);
-      expect(halo).toHaveAttribute("data-halo-eligible", "false");
       expect(region.querySelector("[class*='winnerReveal']")).toBe(reveal);
+      expect(reveal).toHaveAttribute("data-reveal-eligible", "false");
 
       api.setProjection({ state: "first", winners: [{ displayName: "花子", score: 12, rank: 1 }] });
       act(() => document.dispatchEvent(new Event("visibilitychange")));
       await act(async () => vi.advanceTimersByTimeAsync(1400));
       await flush();
       expect(screen.getByText("花子", { exact: false })).toBeInTheDocument();
-      expect(region.querySelector("[class*='rankHalo']")).toBe(halo);
-      expect(halo).toHaveAttribute("data-halo-eligible", "false");
       expect(region.querySelector("[class*='winnerReveal']")).toBe(reveal);
+      expect(reveal).toHaveAttribute("data-reveal-eligible", "false");
 
       view.unmount();
       const emptyApi = installApi({ projection: { state: "first", winners: [] } });
       render(<PresentationScreen />);
       await flush();
       const emptyRegion = screen.getByRole("region", { name: "第一位の勝者一覧" });
-      const emptyHalo = emptyRegion.querySelector("[class*='rankHalo']");
       const emptyReveal = emptyRegion.querySelector("[class*='winnerReveal']");
-      expect(emptyHalo).toHaveAttribute("data-halo-eligible", "false");
+      expect(emptyReveal).toHaveAttribute("data-reveal-eligible", "false");
 
       emptyApi.setProjection({
         state: "first",
@@ -2506,9 +2502,56 @@ describe("PresentationScreen", () => {
       await act(async () => vi.advanceTimersByTimeAsync(1400));
       await flush();
       expect(screen.getByText("花子", { exact: false })).toBeInTheDocument();
-      expect(emptyRegion.querySelector("[class*='rankHalo']")).toBe(emptyHalo);
-      expect(emptyHalo).toHaveAttribute("data-halo-eligible", "false");
       expect(emptyRegion.querySelector("[class*='winnerReveal']")).toBe(emptyReveal);
+      expect(emptyReveal).toHaveAttribute("data-reveal-eligible", "false");
+    } finally {
+      if (originalVisibility)
+        Object.defineProperty(document, "visibilityState", originalVisibility);
+      else Reflect.deleteProperty(document, "visibilityState");
+    }
+  });
+
+  it("creates a fresh winner reveal when leaving and re-entering a rank", async () => {
+    vi.useFakeTimers();
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    const api = installApi({
+      projection: {
+        state: "first",
+        winners: [{ displayName: "悠", score: 10, rank: 1 }],
+      },
+    });
+    try {
+      render(<PresentationScreen />);
+      await flush();
+      const initialRegion = screen.getByRole("region", { name: "第一位の勝者一覧" });
+      const initialReveal = initialRegion.querySelector("[class*='winnerReveal']");
+      expect(initialReveal).toHaveAttribute("data-reveal-eligible", "true");
+
+      api.setProjection({
+        state: "second",
+        winners: [{ displayName: "凛", score: 11, rank: 2 }],
+      });
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      await act(async () => vi.advanceTimersByTimeAsync(1400));
+      await flush();
+      const secondRegion = screen.getByRole("region", { name: "第二位の勝者一覧" });
+      const secondReveal = secondRegion.querySelector("[class*='winnerReveal']");
+      expect(secondReveal).not.toBe(initialReveal);
+      expect(secondReveal).toHaveAttribute("data-reveal-eligible", "false");
+
+      api.setProjection({
+        state: "first",
+        winners: [{ displayName: "悠", score: 10, rank: 1 }],
+      });
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      await act(async () => vi.advanceTimersByTimeAsync(1400));
+      await flush();
+      const reenteredRegion = screen.getByRole("region", { name: "第一位の勝者一覧" });
+      const reenteredReveal = reenteredRegion.querySelector("[class*='winnerReveal']");
+      expect(reenteredReveal).not.toBe(initialReveal);
+      expect(reenteredReveal).not.toBe(secondReveal);
+      expect(reenteredReveal).toHaveAttribute("data-reveal-eligible", "true");
     } finally {
       if (originalVisibility)
         Object.defineProperty(document, "visibilityState", originalVisibility);

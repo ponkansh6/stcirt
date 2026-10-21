@@ -9,6 +9,7 @@ import {
   type CSSProperties,
   type MouseEvent,
   type PointerEvent,
+  type ReactNode,
 } from "react";
 import Image from "next/image";
 import { canApplyPresenterPoll } from "@/lib/presentation/presenter-position";
@@ -337,18 +338,25 @@ function ExamStamp({ className }: { className: string }) {
   );
 }
 
-function RankHalo({ hasWinners }: { hasWinners: boolean }) {
-  const eligibleAtEntry = useRef(hasWinners);
+function WinnerReveal({
+  anticipationEligible,
+  children,
+}: {
+  anticipationEligible: boolean;
+  children: ReactNode;
+}) {
+  const eligibleAtEntry = useRef(anticipationEligible);
   useLayoutEffect(() => {
-    if (!hasWinners) eligibleAtEntry.current = false;
-  }, [hasWinners]);
+    if (!anticipationEligible) eligibleAtEntry.current = false;
+  }, [anticipationEligible]);
 
   return (
-    <span
-      className={styles.rankHalo}
-      data-halo-eligible={hasWinners && eligibleAtEntry.current}
-      aria-hidden="true"
-    />
+    <div
+      className={styles.winnerReveal}
+      data-reveal-eligible={anticipationEligible && eligibleAtEntry.current}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -1528,7 +1536,6 @@ export default function PresentationScreen({
                       data-rank={state}
                       tabIndex={0}
                     >
-                      <RankHalo key={`rankHalo-${state}`} hasWinners={winnerGroups.length > 0} />
                       <ExamStamp className={styles.rankStamp} />
                       <div className={styles.rankHeader}>
                         <span className={styles.certificateLabel}>認定証</span>
@@ -1537,7 +1544,11 @@ export default function PresentationScreen({
                           <h1 className={styles.rank}>{rankTitle[state]}</h1>
                         </div>
                       </div>
-                      <div className={styles.winnerReveal} key={state}>
+                      <WinnerReveal
+                        anticipationEligible={
+                          state === "first" && winnerGroups.some(({ rank }) => rank === 1)
+                        }
+                      >
                         {winnerGroups.length ? (
                           winnerGroups.map(({ rank, winners }) => (
                             <div className={styles.winnerRankGroup} key={rank}>
@@ -1576,7 +1587,7 @@ export default function PresentationScreen({
                         ) : (
                           <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
                         )}
-                      </div>
+                      </WinnerReveal>
                     </section>
                   )}
 

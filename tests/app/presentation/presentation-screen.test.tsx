@@ -437,11 +437,15 @@ describe("presentation projection and presenter progression", () => {
     expect(stylesheet).toMatch(/animation-iteration-count:\s*1\s*!important/);
     expect(stylesheet).toMatch(/transition-duration:\s*0\.01ms\s*!important/);
     expect(stylesheet).toMatch(/scroll-behavior:\s*auto\s*!important/);
+    expect(stylesheet).toMatch(/\.winnerReveal\s*\{\s*--rank-reveal-boundary:\s*400ms;/);
     expect(stylesheet).toMatch(
-      /\.winners\[data-rank="first"\] \.rankHalo\s*\{\s*box-shadow:\s*0 0 0 7px rgb\(181 139 53 \/ 20%\);\s*animation:\s*firstRankHalo 600ms ease-out 800ms both;/,
+      /animation:\s*rankWinnerReveal var\(--rank-reveal-boundary\) ease-out var\(--rank-reveal-boundary\)\s*both;/,
     );
     expect(stylesheet).toMatch(
-      /\.rankHalo\s*\{[^}]*border:\s*5px solid rgb\(181 139 53 \/ 48%\);[^}]*pointer-events:\s*none;/s,
+      /\.winnerReveal\[data-reveal-eligible="true"\]::before,\s*\.winnerReveal\[data-reveal-eligible="true"\]::after\s*\{[^}]*animation:\s*rankRevealAnticipation var\(--rank-reveal-boundary\) ease-out 0ms both;/s,
+    );
+    expect(stylesheet).toMatch(
+      /\.winnerReveal::before,\s*\.winnerReveal::after\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;[^}]*transform-origin:\s*center;/s,
     );
     expect(stylesheet).toMatch(
       /\.answerReveal\s*\{\s*animation:\s*answerRevealFade 350ms ease 100ms backwards;/,
@@ -451,6 +455,10 @@ describe("presentation projection and presenter progression", () => {
     );
     expect(stylesheet).toMatch(
       /\.answerReveal,\s*\.answerSupplement\s*\{\s*animation:\s*none;\s*animation-delay:\s*0s;\s*opacity:\s*1;/,
+    );
+    expect(stylesheet).toMatch(/\.screen \.winnerReveal\s*\{\s*animation:\s*none !important;/);
+    expect(stylesheet).toMatch(
+      /\.screen \.winnerReveal::before,\s*\.screen \.winnerReveal::after\s*\{[^}]*animation:\s*none !important;[^}]*opacity:\s*0\s*!important;/s,
     );
   });
 
@@ -1318,8 +1326,8 @@ describe("presentation projection and presenter progression", () => {
     const emptyMessage = screen.getByText("該当する受賞者はいません");
     expect(emptyMessage).toBeInTheDocument();
     expect(region.querySelector("[class*='winnerReveal']")).toContainElement(emptyMessage);
-    expect(region.querySelector("[class*='rankHalo']")).toHaveAttribute(
-      "data-halo-eligible",
+    expect(region.querySelector("[class*='winnerReveal']")).toHaveAttribute(
+      "data-reveal-eligible",
       "false",
     );
     expect(region).not.toHaveClass(/announce/);
@@ -2085,9 +2093,9 @@ describe("presentation projection and presenter progression", () => {
     expect(region.querySelector("[class*='rankOrnament']")).toHaveAttribute("aria-hidden", "true");
     const medal = region.querySelector("[data-testid='presentation-exam-stamp']");
     expect(medal).toHaveAttribute("aria-hidden", "true");
-    expect(region.querySelector("[class*='rankHalo']")).toHaveAttribute("aria-hidden", "true");
     const reveal = region.querySelector("[class*='winnerReveal']");
     expect(reveal).toBeInTheDocument();
+    expect(reveal).toHaveAttribute("data-reveal-eligible", "false");
     expect(reveal).toHaveTextContent("葵");
     expect(reveal).toHaveTextContent("12.50 ポイント");
     expect(reveal).not.toHaveAttribute("aria-hidden");
@@ -2114,6 +2122,33 @@ describe("presentation projection and presenter progression", () => {
     expect(within(region).queryByText("悠", { exact: false })).not.toBeInTheDocument();
     expect(within(region).queryByText("澪", { exact: false })).not.toBeInTheDocument();
     expect(within(region).getByText("ほか 2 名")).toHaveClass(/additionalWinners/);
+    expect(region.querySelector("[class*='winnerReveal']")).toHaveAttribute(
+      "data-reveal-eligible",
+      "false",
+    );
+  });
+
+  it("reveals a first-place tie together under one eligible group", async () => {
+    setup({
+      projection: {
+        state: "first",
+        winners: [
+          { displayName: "花子", score: 15, rank: 1 },
+          { displayName: "太郎", score: 15, rank: 1 },
+          { displayName: "凛", score: 15, rank: 1 },
+        ],
+      },
+      admin: { state: "first", questionIndex: 5, questionCount: 5 },
+    });
+    render(<PresentationScreen />);
+
+    const region = await screen.findByRole("region", { name: "第一位の勝者一覧" });
+    const reveal = region.querySelector("[class*='winnerReveal']");
+    expect(reveal).toHaveAttribute("data-reveal-eligible", "true");
+    expect(reveal?.querySelectorAll("article")).toHaveLength(2);
+    expect(within(reveal as HTMLElement).getByText("花子", { exact: false })).toBeInTheDocument();
+    expect(within(reveal as HTMLElement).getByText("太郎", { exact: false })).toBeInTheDocument();
+    expect(within(reveal as HTMLElement).getByText("ほか 1 名")).toBeInTheDocument();
   });
 
   it("shows two cards for 24 shared-rank winners with paired names and scores", async () => {

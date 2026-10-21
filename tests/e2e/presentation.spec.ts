@@ -660,43 +660,40 @@ function rankRegionFor(page: import("@playwright/test").Page, rank: "third" | "s
     .locator(`section[class*="winners"][data-rank="${rank}"]:visible`);
 }
 
-async function expectSingleRankHalo(region: import("@playwright/test").Locator, context: string) {
-  const halo = region.locator("[class*='rankHalo']");
-  const diagnostics = await halo.evaluateAll((elements) => ({
-    count: elements.length,
-    region: (() => {
-      const root = elements[0]?.closest('section[class*="winners"][data-rank]');
-      return root
-        ? {
-            tag: root.tagName.toLowerCase(),
-            class: root.getAttribute("class"),
-            dataRank: root.getAttribute("data-rank"),
-            ariaLabel: root.getAttribute("aria-label"),
-            outerHTML: root.outerHTML.slice(0, 600),
-          }
-        : null;
-    })(),
-    matches: elements.map((element) => {
-      const ancestors = [];
-      let current: Element | null = element;
-      while (current && ancestors.length < 7) {
-        ancestors.push({
-          tag: current.tagName.toLowerCase(),
-          class: current.getAttribute("class"),
-          dataRank: current.getAttribute("data-rank"),
-          ariaLabel: current.getAttribute("aria-label"),
-          outerHTML: current.outerHTML.slice(0, 600),
-        });
-        current = current.parentElement;
-      }
-      return ancestors;
-    }),
+async function expectRankAnticipation(
+  region: import("@playwright/test").Locator,
+  context: string,
+  eligible: boolean,
+  motion: "normal" | "reduced" = "normal",
+) {
+  const reveal = region.locator("[class*='winnerReveal']");
+  await expect(reveal, context).toHaveAttribute("data-reveal-eligible", String(eligible));
+  await expect(region.locator("[class*='rankHalo']"), context).toHaveCount(0);
+  const state = await reveal.evaluate((element) => ({
+    hiddenFromAccessibility: element.getAttribute("aria-hidden") !== "true",
+    beforeAnimation: getComputedStyle(element, "::before").animationName,
+    afterAnimation: getComputedStyle(element, "::after").animationName,
+    beforeContent: getComputedStyle(element, "::before").content,
+    afterContent: getComputedStyle(element, "::after").content,
+    text: element.textContent?.trim() ?? "",
   }));
-  expect(
-    diagnostics.count,
-    `Expected one rank halo in ${context}; selected region diagnostics: ${JSON.stringify(diagnostics, null, 2)}`,
-  ).toBe(1);
-  return halo;
+  expect(state.hiddenFromAccessibility, `${context}: winner content remains accessible`).toBe(true);
+  expect(state.text, `${context}: winner content remains present`).not.toBe("");
+  expect(state.beforeContent, `${context}: before decoration is empty CSS content`).toBe('""');
+  expect(state.afterContent, `${context}: after decoration is empty CSS content`).toBe('""');
+  const expectedAnimation = eligible && motion === "normal" ? "rankRevealAnticipation" : null;
+  if (expectedAnimation) {
+    expect(state.beforeAnimation, `${context}: before decoration eligibility`).toContain(
+      expectedAnimation,
+    );
+    expect(state.afterAnimation, `${context}: after decoration eligibility`).toContain(
+      expectedAnimation,
+    );
+  } else {
+    expect(state.beforeAnimation, `${context}: before decoration eligibility`).toBe("none");
+    expect(state.afterAnimation, `${context}: after decoration eligibility`).toBe("none");
+  }
+  return reveal;
 }
 
 async function advanceTo(page: import("@playwright/test").Page, target: PresentationState) {
@@ -1116,8 +1113,16 @@ async function expectRankRevealGeometry(
         decorationsHiddenFromAssistiveTech: [
           rankRegion.querySelector("[class*='rankOrnament']"),
           rankRegion.querySelector("[data-testid='presentation-exam-stamp']"),
-          rankRegion.querySelector("[class*='rankHalo']"),
         ].every((element) => element?.getAttribute("aria-hidden") === "true"),
+        anticipationIsGeneratedOutsideTheDom:
+          !rankRegion.querySelector("[class*='rankHalo']") &&
+          Boolean(
+            reveal &&
+            reveal.getAttribute("aria-hidden") !== "true" &&
+            reveal.textContent?.trim() &&
+            getComputedStyle(reveal, "::before").content === '""' &&
+            getComputedStyle(reveal, "::after").content === '""',
+          ),
         revealInsideCanvas: Boolean(revealRect && inside(revealRect, canvasRect)),
         revealInsideContent: Boolean(revealRect && inside(revealRect, contentRect)),
         headerDoesNotOverlapReveal: !overlaps(headerRect, revealRect),
@@ -1146,6 +1151,7 @@ async function expectRankRevealGeometry(
     });
     expect(geometry.revealFound).toBe(true);
     expect(geometry.decorationsHiddenFromAssistiveTech).toBe(true);
+    expect(geometry.anticipationIsGeneratedOutsideTheDom).toBe(true);
     expect(geometry.revealInsideCanvas).toBe(true);
     expect(geometry.revealInsideContent).toBe(true);
     expect(geometry.headerDoesNotOverlapReveal).toBe(true);
@@ -1811,7 +1817,7 @@ test("@chromium all rank entries fit on the slide without vertical scrolling und
   await expect(stamp).toHaveText("しゅんたま検定");
   await expect(winners.locator("[class*='rankOrnament']")).toHaveCSS("animation-name", "none");
   await expect(stamp).toHaveCSS("animation-name", "none");
-  await expect(winners.locator("[class*='rankHalo']")).toHaveCSS("visibility", "hidden");
+  await expectRankAnticipation(winners, "reduced-motion third-place entry", false);
   const canvas = page.getByTestId("presentation-canvas");
   const frame = canvas.locator("img[class*='presentationFrame']");
   await expect(frame).toHaveCount(1);
@@ -2007,7 +2013,11 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
           const target = event.target;
           if (!(target instanceof HTMLElement)) return;
           const name = (event as AnimationEvent).animationName;
-          if (!/rankWinnerReveal|rankOrnamentEntrance|rankMedalEntrance|firstRankHalo/.test(name))
+          if (
+            !/rankWinnerReveal|rankOrnamentEntrance|rankMedalEntrance|rankRevealAnticipation/.test(
+              name,
+            )
+          )
             return;
           const animation = target
             .getAnimations()
@@ -2075,7 +2085,6 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
     reveal: RankRevealSnapshot;
     ornament: RankRevealSnapshot;
     medal: RankRevealSnapshot;
-    halo: RankRevealSnapshot | null;
   };
   const captureRankEffects = async (rank: string): Promise<RankEffectSnapshot | null> =>
     page.evaluate((entryRank): RankEffectSnapshot | null => {
@@ -2108,8 +2117,7 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
       const reveal = find("[class*='winnerReveal']", "rankWinnerReveal");
       const ornament = find("[class*='rankOrnament']", "rankOrnamentEntrance");
       const medal = find("[data-testid='presentation-exam-stamp']", "rankMedalEntrance");
-      const halo = find("[class*='rankHalo']", "firstRankHalo");
-      return reveal && ornament && medal ? { reveal, ornament, medal, halo } : null;
+      return reveal && ornament && medal ? { reveal, ornament, medal } : null;
     }, rank);
   const waitForRankEffects = async (rank: string) => {
     await expect.poll(async () => (await captureRankEffects(rank)) !== null).toBe(true);
@@ -2140,6 +2148,7 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   await openPresenter(page);
   const thirdRegion = rankRegionFor(page, "third");
   await expect(thirdRegion).toHaveCount(1);
+  await expectRankAnticipation(thirdRegion, "third-place entry", false);
   await expect(thirdRegion.getByRole("heading", { name: "第三位", exact: true })).toBeVisible();
   const thirdReveal = thirdRegion.locator("[class*='winnerReveal']");
   await expect(thirdReveal).toHaveCount(1);
@@ -2161,6 +2170,7 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   await secondEntry;
   const secondRevealSnapshot = await waitForRankReveal("second");
   expect(secondRevealSnapshot.identity).not.toBe(thirdRevealSnapshot.identity);
+  await expectRankAnticipation(rankRegionFor(page, "second"), "second-place entry", false);
   const secondDecorationEntry = await latestDecorationEntry("second");
 
   const firstPauseStyle = await pauseRankRevealBeforeEntry(page);
@@ -2183,18 +2193,38 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   await expect(firstRegion).toHaveCount(1);
   const firstOrnament = firstRegion.locator("[class*='rankOrnament']");
   const firstStamp = firstRegion.locator("[data-testid='presentation-exam-stamp']");
-  const firstHalo = await expectSingleRankHalo(firstRegion, "rank entry reveal");
+  await expectRankAnticipation(firstRegion, "first-place rank entry reveal", true);
   await expect(firstOrnament).toHaveCSS("animation-duration", "0.24s");
   await expect(firstStamp).toHaveCSS("animation-duration", "0.24s");
   await expect(firstOrnament).toHaveAttribute("aria-hidden", "true");
   await expect(firstStamp).toHaveAttribute("aria-hidden", "true");
-  await expect(firstHalo).toHaveAttribute("aria-hidden", "true");
-  await expect(firstHalo).toHaveAttribute("data-halo-eligible", "true");
-  await expect(firstHalo).toHaveCSS("animation-delay", "0.8s");
-  await expect(firstHalo).toHaveCSS("animation-duration", "0.6s");
-  await expect(firstHalo).toHaveCSS("border-top-width", "5px");
-  await expect(firstHalo).toHaveCSS("box-shadow", "rgba(181, 139, 53, 0.2) 0px 0px 0px 7px");
-  await expect(firstHalo).toHaveCSS("pointer-events", "none");
+  const anticipationGeometry = await firstRegion
+    .locator("[class*='winnerReveal']")
+    .evaluate((node) =>
+      ["::before", "::after"].map((pseudo) => {
+        const style = getComputedStyle(node, pseudo);
+        return {
+          animationNameIncludes: style.animationName.includes("rankRevealAnticipation"),
+          animationDuration: style.animationDuration,
+          animationDelay: style.animationDelay,
+          pointerEvents: style.pointerEvents,
+        };
+      }),
+    );
+  expect(anticipationGeometry).toEqual([
+    {
+      animationNameIncludes: true,
+      animationDuration: "0.4s",
+      animationDelay: "0s",
+      pointerEvents: "none",
+    },
+    {
+      animationNameIncludes: true,
+      animationDuration: "0.4s",
+      animationDelay: "0s",
+      pointerEvents: "none",
+    },
+  ]);
   await expect(firstOrnament).toHaveCSS("pointer-events", "none");
   await expect(firstStamp).toHaveCSS("pointer-events", "none");
 
@@ -2383,9 +2413,13 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
     "animation-name",
     "none",
   );
-  const reducedHalo = await expectSingleRankHalo(reducedFirst, "reduced-motion rank reveal");
-  await expect(reducedHalo).toHaveCSS("animation-name", "none");
-  await expect(reducedHalo).toHaveCSS("opacity", "0");
+  await expectRankAnticipation(reducedFirst, "reduced-motion first-place reveal", true, "reduced");
+  const reducedReveal = reducedFirst.locator("[class*='winnerReveal']");
+  await expect(reducedReveal).toHaveCSS("opacity", "1");
+  const reducedPseudoOpacity = await reducedReveal.evaluate((element) =>
+    ["::before", "::after"].map((pseudo) => getComputedStyle(element, pseudo).opacity),
+  );
+  expect(reducedPseudoOpacity).toEqual(["0", "0"]);
 });
 
 test("@chromium rank effects respond immediately to a dynamic reduced-motion change", async ({
@@ -2407,7 +2441,8 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
       html body [class*="rankOrnament"],
       html body [data-testid="presentation-exam-stamp"],
       html body [class*="winnerReveal"],
-      html body [class*="rankHalo"] {
+      html body [class*="winnerReveal"]::before,
+      html body [class*="winnerReveal"]::after {
         animation-duration: 5000ms !important;
       }
     `,
@@ -2418,6 +2453,7 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
   const ornament = region.locator("[class*='rankOrnament']");
   const medal = region.locator("[data-testid='presentation-exam-stamp']");
   await expect(region.getByText("太郎", { exact: false })).toBeVisible();
+  await expectRankAnticipation(region, "second-place entry", false);
   await expect(ornament).toHaveCSS("animation-duration", "5s");
   await expect(medal).toHaveCSS("animation-duration", "5s");
   await expect(reveal).toHaveCSS("animation-duration", "5s");
@@ -2474,12 +2510,12 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
       () =>
         [
           ...document.querySelectorAll(
-            "[class*='rankOrnament'], [class*='rankStamp'], [class*='winnerReveal'], [class*='rankHalo']",
+            "[class*='rankOrnament'], [class*='rankStamp'], [class*='winnerReveal']",
           ),
         ]
           .flatMap((element) => element.getAnimations())
           .filter((animation) =>
-            /rankWinnerReveal|rankOrnamentEntrance|rankMedalEntrance|firstRankHalo/.test(
+            /rankWinnerReveal|rankOrnamentEntrance|rankMedalEntrance|rankRevealAnticipation/.test(
               (animation as CSSAnimation).animationName,
             ),
           ).length,
@@ -2494,177 +2530,77 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
   await expect(firstRegion).toHaveCount(1);
   await expect(firstRegion.getByText("花子", { exact: false })).toBeVisible();
   await expect(firstRegion.locator("[class*='winnerReveal']")).toHaveCSS("animation-name", "none");
-  const firstHalo = await expectSingleRankHalo(
+  await expectRankAnticipation(
     firstRegion,
-    "dynamic reduced-motion first-rank entry",
+    "dynamic reduced-motion first-place entry",
+    true,
+    "reduced",
   );
-  await expect(firstHalo).toHaveCSS("visibility", "hidden");
+  const firstReveal = firstRegion.locator("[class*='winnerReveal']");
+  await expect(firstReveal).toHaveCSS("opacity", "1");
 
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await expect(firstHalo).toHaveCSS("animation-name", /firstRankHalo/);
+  await expectRankAnticipation(firstRegion, "dynamic normal-motion first-place entry", true);
   await expect
-    .poll(() => firstHalo.evaluate((element) => Number(getComputedStyle(element).opacity)))
-    .toBeGreaterThan(0);
+    .poll(() =>
+      firstReveal.evaluate((element) => getComputedStyle(element, "::before").animationName),
+    )
+    .toContain("rankRevealAnticipation");
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(firstHalo).toHaveCSS("animation-name", "none");
-  await expect(firstHalo).toHaveCSS("opacity", "0");
-  await expect(firstHalo).toHaveCSS("visibility", "hidden");
+  await expectRankAnticipation(
+    firstRegion,
+    "dynamic reduced-motion first-place entry",
+    true,
+    "reduced",
+  );
   expect(
-    await firstHalo.evaluate((element) =>
+    await firstReveal.evaluate((element) =>
       element
         .getAnimations()
-        .some((animation) => (animation as CSSAnimation).animationName.includes("firstRankHalo")),
+        .some((animation) =>
+          (animation as CSSAnimation).animationName.includes("rankRevealAnticipation"),
+        ),
     ),
   ).toBe(false);
 });
 
-test("@chromium first-place halo stays suppressed after empty entry or winner disappearance", async ({
+test("@chromium first-place anticipation eligibility stays fixed for the rank entry", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.addInitScript(() => {
-    const nativeSetTimeout = window.setTimeout.bind(window);
-    const acceleratedSetTimeout = ((handler: TimerHandler, timeout = 0, ...args: unknown[]) =>
-      nativeSetTimeout(
-        handler,
-        timeout === 1400 ? 25 : timeout,
-        ...args,
-      )) as typeof window.setTimeout;
-    window.setTimeout = acceleratedSetTimeout;
-    window.__rankAnimationTimeline = [];
-    const identities = new WeakMap<Animation, number>();
-    let nextIdentity = 1;
-    window.__rankAnimationIdentity = (animation) => {
-      let identity = identities.get(animation);
-      if (identity === undefined) {
-        identity = nextIdentity++;
-        identities.set(animation, identity);
-      }
-      return identity;
-    };
-    for (const kind of ["animationstart", "animationend"] as const) {
-      document.addEventListener(
-        kind,
-        (event) => {
-          const target = event.target;
-          if (!(target instanceof HTMLElement)) return;
-          const name = (event as AnimationEvent).animationName;
-          if (!name.includes("rankWinnerReveal") && !name.includes("firstRankHalo")) return;
-          const animation = target
-            .getAnimations()
-            .find((candidate) => (candidate as CSSAnimation).animationName === name);
-          if (!animation) return;
-          window.__rankAnimationTimeline.push({
-            kind: kind === "animationstart" ? "start" : "end",
-            rank: target.closest("[data-rank]")?.getAttribute("data-rank") ?? null,
-            name,
-            timestamp: event.timeStamp,
-            identity: window.__rankAnimationIdentity(animation),
-            startTime: animation.startTime === null ? null : Number(animation.startTime),
-            currentTime: animation.currentTime === null ? null : Number(animation.currentTime),
-          });
-        },
-        true,
-      );
-    }
-  });
   const mock = await installAdminApiMock(page);
-  mock.setWinnerEntries([{ displayName: "花子", score: 1, rank: 1 }]);
+  mock.setWinnerEntries([
+    { displayName: "花子", score: 1, rank: 1 },
+    { displayName: "太郎", score: 1, rank: 1 },
+  ]);
   await signIn(page);
   await startPresentation(page);
-  mock.setPresentationPosition("second");
+  mock.setPresentationPosition("first");
   await openPresenter(page);
-  await expect(slideFor(page, "second")).toBeVisible();
-  await page.addStyleTag({
-    content: `
-      html body [class*="winners"][data-rank="first"] [class*="rankHalo"] {
-        animation-duration: 3000ms !important;
-      }
-    `,
-  });
-  const firstRankEntry = nextAdminMutation(page);
-  await page.locator("main").press("ArrowRight");
-  await expect(slideFor(page, "first")).toBeVisible();
-  await firstRankEntry;
+
   const region = rankRegionFor(page, "first");
   await expect(region).toHaveCount(1);
-  const halo = await expectSingleRankHalo(region, "first-place halo lifecycle");
-  const winnerReveal = region.locator("[class*='winnerReveal']");
-  await expect(region.getByText("花子", { exact: false })).toBeVisible();
-  await expect(halo).toHaveAttribute("data-halo-eligible", "true");
-  await expect(winnerReveal).toHaveCSS("animation-delay", "0.4s");
-  await expect(winnerReveal).toHaveCSS("animation-duration", "0.4s");
-  await expect(halo).toHaveCSS("animation-delay", "0.8s");
-  await expect(halo).toHaveCSS("animation-duration", "3s");
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        window.__rankAnimationTimeline.some(
-          ({ kind, rank, name }) =>
-            kind === "end" &&
-            rank === "first" &&
-            name.includes("rankWinnerReveal") &&
-            window.__rankAnimationTimeline.some(
-              (haloEvent) =>
-                haloEvent.kind === "start" &&
-                haloEvent.rank === "first" &&
-                haloEvent.name.includes("firstRankHalo"),
-            ),
-        ),
-      ),
-    )
-    .toBe(true);
-  const haloStartEvent = await page.evaluate(() =>
-    window.__rankAnimationTimeline.find(
-      ({ kind, rank, name }) =>
-        kind === "start" && rank === "first" && name.includes("firstRankHalo"),
-    ),
-  );
-  const winnerEndEvent = await page.evaluate(() =>
-    window.__rankAnimationTimeline.find(
-      ({ kind, rank, name }) =>
-        kind === "end" && rank === "first" && name.includes("rankWinnerReveal"),
-    ),
-  );
-  const winnerStartEvent = await page.evaluate(() =>
-    window.__rankAnimationTimeline.find(
-      ({ kind, rank, name }) =>
-        kind === "start" && rank === "first" && name.includes("rankWinnerReveal"),
-    ),
-  );
-  expect(winnerEndEvent?.currentTime).toBeGreaterThanOrEqual(800);
-  expect(haloStartEvent?.currentTime).toBeGreaterThanOrEqual(800);
-  expect(haloStartEvent?.startTime).toEqual(expect.any(Number));
-  // These events share the 800 ms boundary (400 ms reveal delay + 400 ms
-  // duration). Browser event timestamps can be reported a fraction of a
-  // millisecond out of order, so allow sub-millisecond rounding while still
-  // rejecting a halo that starts meaningfully before the reveal completes.
-  expect(
-    (haloStartEvent?.timestamp ?? -Infinity) - (winnerEndEvent?.timestamp ?? Infinity),
-  ).toBeGreaterThanOrEqual(-1);
-  expect(winnerStartEvent?.startTime).toEqual(expect.any(Number));
-  expect(winnerEndEvent!.timestamp - winnerStartEvent!.startTime!).toBeGreaterThanOrEqual(790);
-  expect(haloStartEvent!.timestamp - haloStartEvent!.startTime!).toBeGreaterThanOrEqual(790);
-  expect(haloStartEvent!.timestamp - winnerStartEvent!.startTime!).toBeGreaterThanOrEqual(790);
-  const initialAnimation = await halo.evaluate((element) => {
-    const animation = element
-      .getAnimations()
-      .find((candidate) => (candidate as CSSAnimation).animationName.includes("firstRankHalo"));
+  const reveal = await expectRankAnticipation(region, "first-place tied winners", true);
+  await expect(reveal.locator("article")).toHaveCount(2);
+  await expect(reveal.getByText("花子", { exact: false })).toBeVisible();
+  await expect(reveal.getByText("太郎", { exact: false })).toBeVisible();
+  const initialAnimation = await reveal.evaluate((element) => {
+    const before = getComputedStyle(element, "::before");
+    const after = getComputedStyle(element, "::after");
     return {
-      identity: animation ? window.__rankAnimationIdentity(animation) : null,
-      startTime: animation?.startTime == null ? null : Number(animation.startTime),
-      currentTime: animation?.currentTime == null ? -1 : Number(animation.currentTime),
+      beforeDuration: before.animationDuration,
+      afterDuration: after.animationDuration,
+      beforeDelay: before.animationDelay,
+      afterDelay: after.animationDelay,
     };
   });
-  expect(initialAnimation.identity).toBe(haloStartEvent!.identity);
-  expect(initialAnimation.startTime).toBe(haloStartEvent!.startTime);
-  const haloCurrentTime = async () =>
-    halo.evaluate((element) => {
-      const animation = element
-        .getAnimations()
-        .find((candidate) => (candidate as CSSAnimation).animationName.includes("firstRankHalo"));
-      return animation?.currentTime == null ? -1 : Number(animation.currentTime);
-    });
+  expect(initialAnimation).toEqual({
+    beforeDuration: "0.4s",
+    afterDuration: "0.4s",
+    beforeDelay: "0s",
+    afterDelay: "0s",
+  });
+
   const refreshSnapshot = async () => {
     const priorDeckRefreshes = mock
       .getPresentationRouteEvents()
@@ -2685,106 +2621,17 @@ test("@chromium first-place halo stays suppressed after empty entry or winner di
       )
       .toBeGreaterThan(priorDeckRefreshes);
   };
-  const liveHaloTime = await haloCurrentTime();
-  expect(liveHaloTime).toBeGreaterThanOrEqual(800);
-  expect(liveHaloTime).toBeLessThan(3800);
+
   mock.setWinnerEntries([]);
   await refreshSnapshot();
   await expect(region.getByText("該当する受賞者はいません")).toBeVisible();
-  await expect(halo).toHaveAttribute("data-halo-eligible", "false");
-  await expect(halo).toHaveCSS("visibility", "hidden");
-  const hiddenAnimation = await halo.evaluate((element) => {
-    const animation = element
-      .getAnimations()
-      .find((candidate) => (candidate as CSSAnimation).animationName.includes("firstRankHalo"));
-    return {
-      identity: animation ? window.__rankAnimationIdentity(animation) : null,
-      startTime: animation?.startTime == null ? null : Number(animation.startTime),
-      currentTime: animation?.currentTime == null ? -1 : Number(animation.currentTime),
-    };
-  });
-  expect(hiddenAnimation.identity).toBe(initialAnimation.identity);
-  expect(hiddenAnimation.startTime).toBe(haloStartEvent!.startTime);
-  const hiddenAt = hiddenAnimation.currentTime;
-  expect(hiddenAt).toBeGreaterThanOrEqual(800);
-  expect(hiddenAt).toBeLessThan(3800);
-  await expect
-    .poll(() =>
-      halo.evaluate(
-        (element, { previousTime }) => {
-          const animation = element
-            .getAnimations()
-            .find((candidate) =>
-              (candidate as CSSAnimation).animationName.includes("firstRankHalo"),
-            );
-          return Boolean(
-            animation &&
-            animation.currentTime !== null &&
-            Number(animation.currentTime) > previousTime &&
-            getComputedStyle(element).visibility === "hidden",
-          );
-        },
-        { previousTime: hiddenAt },
-      ),
-    )
-    .toBe(true);
-  const progressedWhileHidden = await haloCurrentTime();
-  expect(progressedWhileHidden).toBeGreaterThan(hiddenAt);
-  expect(progressedWhileHidden).toBeLessThan(3800);
-  expect(
-    await page.evaluate(
-      () =>
-        window.__rankAnimationTimeline.filter(
-          ({ kind, rank, name }) =>
-            kind === "start" && rank === "first" && name.includes("firstRankHalo"),
-        ).length,
-    ),
-  ).toBe(1);
+  await expect(reveal).toHaveAttribute("data-reveal-eligible", "false");
+  await expectRankAnticipation(region, "first-place winner disappearance", false);
 
   mock.setWinnerEntries([{ displayName: "花子", score: 1, rank: 1 }]);
   await refreshSnapshot();
-  await expect(region.getByText("花子", { exact: false })).toBeVisible();
-  await expect(halo).toHaveAttribute("data-halo-eligible", "false");
-  await expect(halo).toHaveCSS("visibility", "hidden");
-  const restoredAnimation = await halo.evaluate((element) => {
-    const animation = element
-      .getAnimations()
-      .find((candidate) => (candidate as CSSAnimation).animationName.includes("firstRankHalo"));
-    return {
-      identity: animation ? window.__rankAnimationIdentity(animation) : null,
-      startTime: animation?.startTime == null ? null : Number(animation.startTime),
-      currentTime: animation?.currentTime == null ? -1 : Number(animation.currentTime),
-    };
-  });
-  expect(restoredAnimation.identity).toBe(initialAnimation.identity);
-  expect(restoredAnimation.startTime).toBe(haloStartEvent!.startTime);
-  expect(restoredAnimation.currentTime).toBeGreaterThan(progressedWhileHidden);
-  expect(
-    await page.evaluate(
-      () =>
-        window.__rankAnimationTimeline.filter(
-          ({ kind, rank, name }) =>
-            kind === "start" && rank === "first" && name.includes("firstRankHalo"),
-        ).length,
-    ),
-  ).toBe(1);
-
-  mock.setWinnerEntries([]);
-  mock.setPresentationPosition("first");
-  await page.reload();
-  const initiallyEmpty = rankRegionFor(page, "first");
-  await expect(initiallyEmpty).toHaveCount(1);
-  const initiallyEmptyHalo = await expectSingleRankHalo(
-    initiallyEmpty,
-    "initially empty first-place halo lifecycle",
-  );
-  await expect(initiallyEmpty.getByText("該当する受賞者はいません")).toBeVisible();
-  await expect(initiallyEmptyHalo).toHaveAttribute("data-halo-eligible", "false");
-
-  mock.setWinnerEntries([{ displayName: "花子", score: 1, rank: 1 }]);
-  await refreshSnapshot();
-  await expect(initiallyEmpty.getByText("花子", { exact: false })).toBeVisible();
-  await expect(initiallyEmptyHalo).toHaveAttribute("data-halo-eligible", "false");
+  await expect(reveal.getByText("花子", { exact: false })).toBeVisible();
+  await expectRankAnticipation(region, "winner restoration in the same first-place entry", false);
 });
 
 test("@chromium selected-answer and supplement groups reveal in order and replay only on entry", async ({
@@ -3602,7 +3449,9 @@ test("@chromium reference-size long presentation content stays readable after fi
   await next("finished");
 });
 
-test("@mobile tied first-place winners keep the halo and fit at 480x900", async ({ page }) => {
+test("@mobile tied first-place winners share eligible anticipation and fit at 480x900", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 480, height: 900 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const mock = await installAdminApiMock(page);
@@ -3634,23 +3483,12 @@ test("@mobile tied first-place winners keep the halo and fit at 480x900", async 
   await expect(secondName).toHaveText(`${secondWinner} 殿`);
   await expect(winners.nth(1).locator("[class*='winnerScore']")).toHaveText("0.87 ポイント");
 
-  const halo = await expectSingleRankHalo(region, "tied first-place winners");
-  await expect(halo).toHaveAttribute("data-halo-eligible", "true");
-  await expect(halo).toHaveCSS("visibility", "visible");
-  await expect
-    .poll(() =>
-      halo.evaluate((element) =>
-        element
-          .getAnimations()
-          .some(
-            (animation) =>
-              (animation as CSSAnimation).animationName.includes("firstRankHalo") &&
-              animation.playState === "finished",
-          ),
-      ),
-    )
-    .toBe(true);
-  await expect(halo).toHaveCSS("visibility", "visible");
+  const reveal = await expectRankAnticipation(region, "tied first-place winners", true);
+  await expect(reveal.locator("article")).toHaveCount(2);
+  const pseudoContent = await reveal.evaluate((element) =>
+    ["::before", "::after"].map((pseudo) => getComputedStyle(element, pseudo).content),
+  );
+  expect(pseudoContent).toEqual(['""', '""']);
   await expectRankRevealGeometry(region);
 
   const geometry = await page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
@@ -3682,7 +3520,9 @@ test("@mobile tied first-place winners keep the halo and fit at 480x900", async 
   expect(geometry.regionCanScroll).toBe(false);
 });
 
-test("@mobile 24 first-place winners fit with halo at 480x900", async ({ page }) => {
+test("@mobile 24 first-place winners fit with eligible anticipation at 480x900", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 480, height: 900 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const mock = await installAdminApiMock(page);
@@ -3712,39 +3552,9 @@ test("@mobile 24 first-place winners fit with halo at 480x900", async ({ page })
   }
   await expect(region.locator("[class*='additionalWinners']")).toHaveText("ほか 22 名");
 
-  const halo = await expectSingleRankHalo(region, "24 first-place winners");
-  await expect(halo).toHaveAttribute("data-halo-eligible", "true");
-  await expect(halo).toHaveCSS("visibility", "visible");
-  await expect
-    .poll(() =>
-      halo.evaluate((element) =>
-        element
-          .getAnimations()
-          .some(
-            (animation) =>
-              (animation as CSSAnimation).animationName.includes("firstRankHalo") &&
-              animation.playState === "running",
-          ),
-      ),
-    )
-    .toBe(true);
-  await expect
-    .poll(() => halo.evaluate((element) => Number(getComputedStyle(element).opacity)))
-    .toBeGreaterThan(0.8);
-  await expect
-    .poll(() =>
-      halo.evaluate((element) =>
-        element
-          .getAnimations()
-          .some(
-            (animation) =>
-              (animation as CSSAnimation).animationName.includes("firstRankHalo") &&
-              animation.playState === "finished",
-          ),
-      ),
-    )
-    .toBe(true);
-  await expect(halo).toHaveCSS("visibility", "visible");
+  const reveal = await expectRankAnticipation(region, "24 first-place winners", true);
+  await expect(reveal.locator("article")).toHaveCount(2);
+  await expect(reveal.locator("[class*='additionalWinners']")).toHaveText("ほか 22 名");
   await expectRankRevealGeometry(region);
 
   const geometry = await page.getByTestId("presentation-canvas").evaluate((canvas) => {
