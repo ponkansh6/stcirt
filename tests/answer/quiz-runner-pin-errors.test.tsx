@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { cleanup, render, screen, fireEvent, within, act, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent, act, waitFor } from "@testing-library/react";
 import QuizRunner from "@/app/answer/quiz-runner";
 import GlobalHeader from "@/app/GlobalHeader";
 import { ApiError } from "@/lib/api/client";
@@ -21,12 +21,6 @@ const quizzes = Array.from({ length: 5 }, (_, index) => ({
   },
 }));
 
-const visibleResultsPayload = {
-  state: "visible",
-  rank: 1,
-  score: 1,
-  questions: [{ position: 0, question: "設問", answer: { kind: "unanswered" } }],
-};
 const visibilityStateDescriptor = Object.getOwnPropertyDescriptor(document, "visibilityState");
 
 function session(phase: object, overrides: Record<string, unknown> = {}) {
@@ -66,14 +60,6 @@ function RunnerPage() {
       <QuizRunner />
     </>
   );
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
 }
 
 describe("QuizRunner batch answer sheet", () => {

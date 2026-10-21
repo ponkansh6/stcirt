@@ -13,65 +13,17 @@ import {
 } from "react";
 import Image from "next/image";
 import { canApplyPresenterPoll } from "@/lib/presentation/presenter-position";
+import {
+  usePublicProjection,
+  isProjectionData,
+  type ProjectionData,
+  type PublicAnswerQuestion,
+  type PublicQuestion,
+  type State,
+  type Winner,
+  type WinnerQuestionResult,
+} from "./use-public-projection";
 import styles from "./presentation-screen.module.css";
-
-type State =
-  | "standby"
-  | "not_started"
-  | "opening"
-  | "question"
-  | "answer"
-  | "podium_preview"
-  | "third"
-  | "second"
-  | "first"
-  | "finished";
-
-type PublicQuestion = {
-  id: string | number;
-  ordinal: number;
-  total: number;
-  question: string;
-  choices: string[];
-};
-type PublicAnswerQuestion = PublicQuestion & {
-  correctAnswer?: string;
-  correctIndex?: number;
-  explanation?: string | null;
-  answerType?: "selected" | "freeText";
-  expectedAnswer?: string | null;
-  responses?: {
-    displayName: string;
-    answer?: string | null;
-    answerKind: "selected" | "freeText" | "legacy" | "unanswered";
-    similarity: number | null;
-    score: number | null;
-  }[];
-};
-
-type WinnerQuestionResult = {
-  position: number;
-  question: string | null;
-  answer:
-    | { kind: "selected"; value: string | null }
-    | { kind: "freeText"; value: string | null }
-    | { kind: "unanswered" }
-    | { kind: "legacy" }
-    | { kind: "unavailable" };
-  correctness?: "correct" | "incorrect" | "unavailable";
-  normalizedScore?: number | null;
-  scoreStatus?: "unavailable";
-};
-type Winner = {
-  displayName: string;
-  score: number;
-  rank: number;
-  questionResults?: WinnerQuestionResult[];
-};
-type ProjectionData =
-  | { state: "question"; question: PublicQuestion }
-  | { state: "answer"; question: PublicAnswerQuestion }
-  | { state: Exclude<State, "question" | "answer">; winners?: Winner[] };
 type AdminState = Extract<
   State,
   | "not_started"
@@ -157,75 +109,6 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
       ),
     )
   );
-}
-
-async function getProjection(signal?: AbortSignal): Promise<ProjectionData> {
-  const response = await fetch("/api/presentation", {
-    cache: "no-store",
-    credentials: "omit",
-    signal,
-  });
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const detail =
-      typeof payload === "object" &&
-      payload !== null &&
-      "error" in payload &&
-      typeof payload.error === "string"
-        ? payload.error
-        : "投影状態を取得できませんでした。";
-    throw new Error(detail);
-  }
-  if (!isProjectionData(payload)) throw new Error("投影状態を取得できませんでした。");
-  return payload as ProjectionData;
-}
-
-function isProjectionData(payload: unknown): payload is ProjectionData {
-  if (typeof payload !== "object" || payload === null || !("state" in payload)) return false;
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.state !== "string" ||
-    ![
-      "standby",
-      "not_started",
-      "opening",
-      "question",
-      "answer",
-      "podium_preview",
-      "third",
-      "second",
-      "first",
-      "finished",
-    ].includes(value.state)
-  )
-    return false;
-  if (value.state === "question" || value.state === "answer") {
-    if (typeof value.question !== "object" || value.question === null) return false;
-    const question = value.question as Record<string, unknown>;
-    return (
-      (typeof question.id === "string" || typeof question.id === "number") &&
-      Number.isInteger(question.ordinal) &&
-      Number.isInteger(question.total) &&
-      typeof question.question === "string" &&
-      Array.isArray(question.choices) &&
-      question.choices.every((choice) => typeof choice === "string")
-    );
-  }
-  if (["third", "second", "first"].includes(value.state) && value.winners !== undefined) {
-    return (
-      Array.isArray(value.winners) &&
-      value.winners.every((winner) => {
-        if (typeof winner !== "object" || winner === null) return false;
-        const entry = winner as Record<string, unknown>;
-        return (
-          typeof entry.displayName === "string" &&
-          typeof entry.score === "number" &&
-          typeof entry.rank === "number"
-        );
-      })
-    );
-  }
-  return true;
 }
 
 async function getAdminControls(signal?: AbortSignal): Promise<AdminControls> {
@@ -355,7 +238,7 @@ function WinnerReveal({
       className={styles.winnerReveal}
       data-reveal-eligible={anticipationEligible && eligibleAtEntry.current}
     >
-      {children}
+      <div className={styles.winnerContent}>{children}</div>
     </div>
   );
 }
@@ -553,6 +436,8 @@ export default function PresentationScreen({
   } | null>(null);
   const suppressClick = useRef(false);
   const suppressClickTimer = useRef<number | undefined>(undefined);
+  // Keep authenticated controls, deck revision, cursor writes, retry state, and session refs
+  // in this screen as one presenter controller owner; their validity checks share generations.
   const adminSequence = useRef(0);
   const presenterAuthenticated = useRef(false);
   const presenterRequestedRef = useRef(presenterRequested);
@@ -604,36 +489,7 @@ export default function PresentationScreen({
   const applyProjection = useCallback((projection: ProjectionData) => {
     setData(projection);
   }, []);
-
-  useEffect(() => {
-    if (presenterRequested) return;
-    let active = true;
-    let timer = 0;
-    let controller: AbortController | null = null;
-    const refresh = async () => {
-      if (!active) return;
-      controller = new AbortController();
-      const timeout = window.setTimeout(() => controller?.abort(), POLL_TIMEOUT_MS);
-      try {
-        const next = await getProjection(controller.signal);
-        if (active) {
-          applyProjection(next);
-          setPollError(false);
-        }
-      } catch {
-        if (active) setPollError(true);
-      } finally {
-        window.clearTimeout(timeout);
-        if (active) timer = window.setTimeout(refresh, 1400);
-      }
-    };
-    void refresh();
-    return () => {
-      active = false;
-      controller?.abort();
-      window.clearTimeout(timer);
-    };
-  }, [applyProjection, presenterRequested]);
+  usePublicProjection(presenterRequested, applyProjection, setPollError);
 
   const performRefreshAdmin = useCallback(
     async (checkSession = false) => {

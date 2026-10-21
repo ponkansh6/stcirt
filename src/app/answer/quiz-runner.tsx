@@ -9,10 +9,11 @@ import { Button } from "@/components/Button";
 import { Spinner } from "@/components/Spinner";
 import styles from "./quiz-runner.module.css";
 import { ApiError } from "@/lib/api/client";
-import { parseParticipantResult } from "@/lib/participant-results-contract";
 import { HeaderPortal } from "./header-portal";
 import { resolveAnswererDisplay } from "./answerer-display";
 import { runIfSubmissionAllowed } from "./submission-gate";
+import { useParticipantResultsVisibility } from "./use-participant-results-visibility";
+import { useSubmissionVisibility } from "./use-submission-visibility";
 import type { AccessState, AnswerMode, Phase } from "./use-quiz-session";
 
 type AnswerUiSurface =
@@ -339,152 +340,21 @@ export default function QuizRunner() {
   const shouldFocusRetrySubmissionAfterReauthentication = useRef(false);
   const checkedSubmissionAfterReauthentication = useRef(false);
   const [reauthenticationSuccessCount, setReauthenticationSuccessCount] = useState(0);
-  const [participantResultsVisible, setParticipantResultsVisible] = useState(false);
-  const [participantResultsAuthExpired, setParticipantResultsAuthExpired] = useState(false);
-  const [submissionVisibility, setSubmissionVisibility] = useState<{
-    key: string;
-    status: "unknown" | "locked" | "unlocked";
-  } | null>(null);
-  const currentVisibilityKey = [
-    access.kind === "ready" ? access.participant.id : "unauthenticated",
-    answerMode,
-    answerMode === "assisted"
-      ? (assistedParticipant?.participant?.id ?? "missing-target")
-      : "owner",
-    submissionId ?? "missing-submission",
-  ].join(":");
-  const visibilityStatus =
-    submissionVisibility?.key === currentVisibilityKey ? submissionVisibility.status : "unknown";
-  const retryRequired = phase.kind === "answering" && phase.retryRequired;
-  useEffect(() => {
-    if (phase.kind !== "complete" || access.kind !== "ready") {
-      setParticipantResultsVisible(false);
-      setParticipantResultsAuthExpired(false);
-      return;
-    }
-    let active = true;
-    let pending = false;
-    let refreshQueued = false;
-    let requestRevision = 0;
-    const refresh = async () => {
-      if (pending) {
-        refreshQueued = true;
-        requestRevision += 1;
-        return;
-      }
-      pending = true;
-      const currentRevision = ++requestRevision;
-      try {
-        const resultsUrl =
-          answerMode === "assisted"
-            ? "/api/participants/results?scope=assisted"
-            : "/api/participants/results";
-        const response = await fetch(resultsUrl, {
-          cache: "no-store",
-          credentials: "same-origin",
-        });
-        if (!active || currentRevision !== requestRevision) return;
-        if (response.status === 401) {
-          setParticipantResultsVisible(false);
-          setParticipantResultsAuthExpired(true);
-          return;
-        }
-        if (!response.ok) return;
-        const result = parseParticipantResult(await response.json());
-        if (active && currentRevision === requestRevision) {
-          if (!result) return;
-          setParticipantResultsVisible(result.state === "visible");
-          setParticipantResultsAuthExpired(false);
-        }
-      } catch {
-        // Keep the last confirmed CTA state when a refresh fails.
-      } finally {
-        pending = false;
-        if (active && refreshQueued) {
-          refreshQueued = false;
-          void refresh();
-        }
-      }
-    };
-    void refresh();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") void refresh();
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      active = false;
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [access.kind, answerMode, phase.kind]);
-  useEffect(() => {
-    const editingSubmission = phase.kind === "answering" || phase.kind === "complete";
-    const visibilityKey = currentVisibilityKey;
-    const markVisibilityUnknown = () =>
-      setSubmissionVisibility((current) =>
-        current?.key === visibilityKey && current.status === "unknown"
-          ? current
-          : { key: visibilityKey, status: "unknown" },
-      );
-    if (!submissionId || revision === 0 || !editingSubmission || access.kind !== "ready") {
-      markVisibilityUnknown();
-      return;
-    }
-    let active = true;
-    let pending = false;
-    const refreshLock = async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const scope = answerMode === "assisted" ? "&scope=assisted" : "";
-        const response = await fetch(
-          `/api/answers/batch?submissionId=${encodeURIComponent(submissionId)}${scope}`,
-          { cache: "no-store", credentials: "same-origin" },
-        );
-        if (!active) return;
-        if (!response.ok) throw new Error("Visibility lookup failed");
-        const payload: unknown = await response.json();
-        if (!active) return;
-        if (typeof payload !== "object" || payload === null) {
-          markVisibilityUnknown();
-          return;
-        }
-        const resultsVisible = (payload as { resultsVisible?: unknown }).resultsVisible;
-        if (typeof resultsVisible === "boolean") {
-          setSubmissionVisibility({
-            key: visibilityKey,
-            status: resultsVisible ? "locked" : "unlocked",
-          });
-          if (!resultsVisible) clearPublishedLock?.();
-        } else {
-          markVisibilityUnknown();
-        }
-      } catch {
-        if (active) markVisibilityUnknown();
-      } finally {
-        pending = false;
-      }
-    };
-    void refreshLock();
-    const interval = window.setInterval(() => void refreshLock(), 30_000);
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") void refreshLock();
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      active = false;
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [
+  const {
+    visible: participantResultsVisible,
+    authExpired: participantResultsAuthExpired,
+    clearAuthExpired: clearParticipantResultsAuthExpired,
+  } = useParticipantResultsVisibility(phase, access, answerMode);
+  const visibilityStatus = useSubmissionVisibility({
     access,
     answerMode,
-    assistedParticipant?.participant?.id,
-    clearPublishedLock,
-    phase.kind,
-    revision,
+    assistedParticipantId: assistedParticipant?.participant?.id,
     submissionId,
-    currentVisibilityKey,
-  ]);
+    revision,
+    phase,
+    clearPublishedLock,
+  });
+  const retryRequired = phase.kind === "answering" && phase.retryRequired;
   useEffect(() => {
     const previousKind = previousPhaseKind.current;
     previousPhaseKind.current = phase.kind;
@@ -878,7 +748,7 @@ export default function QuizRunner() {
               <ParticipantForm
                 onLogin={login}
                 initialName={ownerName}
-                onSuccess={() => setParticipantResultsAuthExpired(false)}
+                onSuccess={clearParticipantResultsAuthExpired}
                 submitLabel="再ログインする"
               />
             </section>

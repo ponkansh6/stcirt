@@ -3291,8 +3291,8 @@ describe("PresentationScreen", () => {
     );
     const originalFullscreen = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
     let fullscreenTarget: Element | null = null;
-    const requestFullscreen = vi.fn(function (this: HTMLElement) {
-      fullscreenTarget = this;
+    const requestFullscreen = vi.fn(function () {
+      fullscreenTarget = document.querySelector("main");
       document.dispatchEvent(new Event("fullscreenchange"));
       return Promise.resolve();
     });
@@ -3487,7 +3487,7 @@ describe("PresentationScreen", () => {
     vi.useFakeTimers();
     let adminCalls = 0;
     let resolveAction!: (value: Response) => void;
-    const api = installApi({
+    installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 0 }),
       adminResponse: async () => {
@@ -3522,7 +3522,7 @@ describe("PresentationScreen", () => {
   it("resets recovery state and proceeds when server returns not_started during recovery", async () => {
     vi.useFakeTimers();
     let controlReads = 0;
-    const api = installApi({
+    installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
       actionError: 409,
@@ -3551,7 +3551,7 @@ describe("PresentationScreen", () => {
   it("applies conflict recovery successfully when revision matches deck and slides match", async () => {
     vi.useFakeTimers();
     let controlReads = 0;
-    const api = installApi({
+    installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
       actionError: 409,
@@ -3630,7 +3630,7 @@ describe("PresentationScreen", () => {
     const secondStarted = new Promise<void>((resolve) => {
       secondActionStarted = resolve;
     });
-    const api = installApi({
+    installApi({
       projection: { state: "question", question },
       admin: controls({ state: "question", questionIndex: 0, snapshotRevision: 1 }),
       actionResponse: () =>

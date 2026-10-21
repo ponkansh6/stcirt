@@ -421,6 +421,160 @@ describe("QuizRunner batch answer sheet", () => {
     expect(clearPublishedLock).not.toHaveBeenCalled();
   });
 
+  it("ignores a completed-results response after access leaves the authenticated state", async () => {
+    const pending = deferred<{ ok: boolean; status: number; json: () => Promise<unknown> }>();
+    const fetchMock = vi.fn().mockReturnValue(pending.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
+    const { rerender } = render(<RunnerPage />);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { access: { kind: "checking" } }),
+    );
+    rerender(<RunnerPage />);
+    await act(async () => {
+      pending.resolve({ ok: true, status: 200, json: async () => visibleResultsPayload });
+      await pending.promise;
+    });
+
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+  });
+
+  it("ignores a completed-results response after the authenticated participant changes", async () => {
+    const oldParticipantResponse = deferred<{
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }>();
+    const newParticipantResponse = deferred<{
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(oldParticipantResponse.promise)
+      .mockReturnValueOnce(newParticipantResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
+    const { rerender } = render(<RunnerPage />);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        { access: { kind: "ready", participant: { id: 8, name: "別の参加者" } } },
+      ),
+    );
+    rerender(<RunnerPage />);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      oldParticipantResponse.resolve({
+        ok: true,
+        status: 200,
+        json: async () => visibleResultsPayload,
+      });
+      await oldParticipantResponse.promise;
+    });
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      newParticipantResponse.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      });
+      await newParticipantResponse.promise;
+    });
+  });
+
+  it("changes saved-visibility scope with the assisted target and ignores the prior scope response", async () => {
+    const ownerLookup = deferred<{ ok: boolean; json: () => Promise<unknown> }>();
+    const assistedLookup = deferred<{ ok: boolean; json: () => Promise<unknown> }>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(ownerLookup.promise)
+      .mockReturnValueOnce(assistedLookup.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        {
+          revision: 1,
+          submissionId: "scope-submission",
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+          answeredCount: 5,
+        },
+      ),
+    );
+    const { rerender } = render(<RunnerPage />);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/answers/batch?submissionId=scope-submission",
+      expect.anything(),
+    );
+
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        {
+          answerMode: "assisted",
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+          revision: 1,
+          submissionId: "scope-submission",
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+          answeredCount: 5,
+        },
+      ),
+    );
+    rerender(<RunnerPage />);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/answers/batch?submissionId=scope-submission&scope=assisted",
+      expect.anything(),
+    );
+
+    await act(async () => {
+      ownerLookup.resolve({ ok: true, json: async () => ({ resultsVisible: false }) });
+      await ownerLookup.promise;
+    });
+    expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeDisabled();
+    expect(screen.getByText(/公開状態を確認できません/)).toBeVisible();
+
+    await act(async () => {
+      assistedLookup.resolve({ ok: true, json: async () => ({ resultsVisible: true }) });
+      await assistedLookup.promise;
+    });
+    expect(screen.queryByText(/公開状態を確認できません/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeDisabled();
+  });
+
+  it("cleans up saved-visibility interval and listener when the answer screen unmounts", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ resultsVisible: false }) }),
+    );
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    const clearIntervalSpy = vi.spyOn(window, "clearInterval");
+    const removeListenerSpy = vi.spyOn(document, "removeEventListener");
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "answering" }, { revision: 1, submissionId: "cleanup-submission" }),
+    );
+    const view = render(<RunnerPage />);
+
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30_000);
+    view.unmount();
+
+    expect(clearIntervalSpy).toHaveBeenCalled();
+    expect(removeListenerSpy).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+  });
+
   it("queues one tab-return refresh and ignores the stale in-flight completion response", async () => {
     const firstResponse = deferred<{ ok: boolean; json: () => Promise<{ state: string }> }>();
     const secondResponse = deferred<{ ok: boolean; json: () => Promise<{ state: string }> }>();

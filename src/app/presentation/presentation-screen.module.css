@@ -595,6 +595,13 @@
   --rank-reveal-boundary: 400ms;
   position: relative;
   z-index: 1;
+  width: 100%;
+  min-width: 0;
+}
+
+.winnerContent {
+  position: relative;
+  z-index: 1;
   display: flex;
   width: 100%;
   min-width: 0;
@@ -699,7 +706,7 @@
     animation: rankMedalEntrance 240ms ease-out both;
   }
 
-  .winnerReveal {
+  .winnerContent {
     animation: rankWinnerReveal var(--rank-reveal-boundary) ease-out var(--rank-reveal-boundary)
       both;
   }
@@ -1045,7 +1052,7 @@
     transition-duration: 0.01ms !important;
   }
 
-  .screen .winnerReveal {
+  .screen .winnerContent {
     animation: none !important;
   }
 

@@ -1285,7 +1285,7 @@ describe("presentation admin console", () => {
   it("focuses aggregate when hiding leaves publish unavailable", async () => {
     let participantResultsVisible = true;
     let participantResultsReady = true;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
       if (path === "/api/admin/session") return response(200, { authenticated: true });
       if (path === "/api/admin/participant-results") {

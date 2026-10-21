@@ -913,7 +913,10 @@ async function expectAnswerRevealFitDuringAndAfter(
 
 const rankRevealPauseStyles = `
   @media (prefers-reduced-motion: no-preference) {
-    [class*="winnerReveal"] {
+    [class*="winnerReveal"],
+    [class*="winnerReveal"]::before,
+    [class*="winnerReveal"]::after,
+    [class*="winnerContent"] {
       animation-play-state: paused !important;
     }
   }
@@ -955,7 +958,7 @@ async function expectRankRevealGeometry(
           () =>
             revealLocator.evaluate((element) =>
               element
-                .getAnimations()
+                .getAnimations({ subtree: true })
                 .some((candidate) =>
                   (candidate as CSSAnimation).animationName.includes("rankWinnerReveal"),
                 ),
@@ -963,9 +966,9 @@ async function expectRankRevealGeometry(
           { timeout: 3000 },
         )
         .toBe(true);
-      const pausedAnimation = await revealLocator.evaluate(async (element) => {
+      const timeline = await revealLocator.evaluate(async (element) => {
         const animation = element
-          .getAnimations()
+          .getAnimations({ subtree: true })
           .find((candidate) =>
             (candidate as CSSAnimation).animationName.includes("rankWinnerReveal"),
           );
@@ -973,24 +976,42 @@ async function expectRankRevealGeometry(
         animation.pause();
         await animation.ready;
         animation.currentTime = 0;
-        return true;
+        const stage = element as HTMLElement;
+        const inner = stage.querySelector<HTMLElement>("[class*='winnerContent']");
+        const pseudoAnimations = stage
+          .getAnimations({ subtree: true })
+          .filter((candidate) =>
+            (candidate as CSSAnimation).animationName.includes("rankRevealAnticipation"),
+          );
+        if (stage.dataset.revealEligible === "true") {
+          for (const pseudoAnimation of pseudoAnimations) {
+            pseudoAnimation.pause();
+            await pseudoAnimation.ready;
+            pseudoAnimation.currentTime = 200;
+          }
+        }
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        return {
+          stageOpacity: getComputedStyle(stage).opacity,
+          contentOpacity: inner ? getComputedStyle(inner).opacity : null,
+          pseudoOpacities: [
+            getComputedStyle(stage, "::before").opacity,
+            getComputedStyle(stage, "::after").opacity,
+          ],
+          delay: getComputedStyle((animation.effect as KeyframeEffect).target as HTMLElement)
+            .animationDelay,
+          duration: getComputedStyle((animation.effect as KeyframeEffect).target as HTMLElement)
+            .animationDuration,
+        };
       });
-      expect(pausedAnimation).toBe(true);
-
-      await expect(revealLocator).toHaveCSS("opacity", "0");
-      const cssTiming = await revealLocator.evaluate((element) => {
-        const style = getComputedStyle(element);
-        return { delay: style.animationDelay, duration: style.animationDuration };
-      });
-      const milliseconds = (value: string) => {
-        const numericValue = Number.parseFloat(value);
-        return value.trim().endsWith("ms") ? numericValue : numericValue * 1000;
-      };
-      expect(cssTiming.delay).toBe("0.4s");
-      expect(cssTiming.duration).toBe("0.4s");
-      expect(milliseconds(cssTiming.delay) + milliseconds(cssTiming.duration)).toBeLessThanOrEqual(
-        900,
-      );
+      expect(timeline).not.toBeNull();
+      expect(timeline?.stageOpacity).toBe("1");
+      if (timeline?.contentOpacity !== null) expect(timeline?.contentOpacity).toBe("0");
+      if ((await revealLocator.getAttribute("data-reveal-eligible")) === "true") {
+        expect(timeline?.pseudoOpacities.some((value) => Number(value) > 0)).toBe(true);
+      }
+      expect(timeline?.delay).toBe("0.4s");
+      expect(timeline?.duration).toBe("0.4s");
       await expect(region.locator("[class*='certificateLabel']")).toHaveCSS("opacity", "1");
       await expect(region.locator("[class*='rankHeader'] h1[class*='rank']")).toHaveCSS(
         "opacity",
@@ -1016,6 +1037,7 @@ async function expectRankRevealGeometry(
         rankRegion.querySelectorAll<HTMLElement>(
           [
             "winnerReveal",
+            "winnerContent",
             "winnerRankGroup",
             "winnerNames",
             "winnerIdentity",
@@ -1049,20 +1071,32 @@ async function expectRankRevealGeometry(
         const rect = element.getBoundingClientRect();
         const classes = element.className.toString();
         const isFitContainer = [
-          "winnerReveal",
+          "winnerContent",
           "winnerRankGroup",
           "winnerNames",
           "winner__",
           "winnerIdentity",
           "winnerQuestionResults",
         ].some((name) => classes.includes(name));
+        const isRevealStage = classes.includes("winnerReveal");
         return {
           rect,
+          element: `${element.tagName.toLowerCase()}.${classes
+            .split(/\s+/)
+            .filter(Boolean)
+            .join(".")}`,
           visible: getComputedStyle(element).visibility === "visible",
           overflows:
-            isFitContainer &&
-            (element.scrollWidth > element.clientWidth + 1 ||
-              element.scrollHeight > element.clientHeight + 1),
+            (isFitContainer &&
+              (element.scrollWidth > element.clientWidth + 1 ||
+                element.scrollHeight > element.clientHeight + 1)) ||
+            (isRevealStage && element.scrollWidth > element.clientWidth + 1),
+          scrollMetrics: {
+            scrollWidth: element.scrollWidth,
+            clientWidth: element.clientWidth,
+            scrollHeight: element.scrollHeight,
+            clientHeight: element.clientHeight,
+          },
         };
       });
       const cardRects = Array.from(rankRegion.querySelectorAll<HTMLElement>("article"), (card) =>
@@ -1133,6 +1167,9 @@ async function expectRankRevealGeometry(
           measured.length > 0 &&
           measured.every(({ rect, visible }) => rect.width > 0 && rect.height > 0 && visible),
         noClippedContainerContent: measured.every(({ overflows }) => !overflows),
+        overflowingContainers: measured
+          .filter(({ overflows }) => overflows)
+          .map(({ element, scrollMetrics }) => ({ element, ...scrollMetrics })),
         textInsideRegionAndViewport:
           (textRects.length > 0 || Boolean(rankRegion.querySelector("[class*='noWinner']"))) &&
           textRects.every((rect) => inside(rect, regionRect) && inside(rect, contentRect)),
@@ -1157,7 +1194,10 @@ async function expectRankRevealGeometry(
     expect(geometry.headerDoesNotOverlapReveal).toBe(true);
     expect(geometry.descendantsInsideRegionAndViewport).toBe(true);
     expect(geometry.descendantsHaveAreaAndAreVisible).toBe(true);
-    expect(geometry.noClippedContainerContent).toBe(true);
+    expect(
+      geometry.noClippedContainerContent,
+      `content containers fit without clipping: ${JSON.stringify(geometry.overflowingContainers)}`,
+    ).toBe(true);
     expect(geometry.textInsideRegionAndViewport).toBe(true);
     expect(geometry.cardsDoNotOverlap).toBe(true);
     expect(geometry.remainingCountDoesNotOverlapCards).toBe(true);
@@ -1185,16 +1225,17 @@ async function expectRankRevealGeometry(
   }
   if (phase === "during-delay") {
     try {
-      await revealLocator.evaluate((element) => {
-        const animation = element
-          .getAnimations()
-          .find((candidate) =>
-            (candidate as CSSAnimation).animationName.includes("rankWinnerReveal"),
+      await revealLocator.evaluate(async (element) => {
+        const animations = element
+          .getAnimations({ subtree: true })
+          .filter((animation) =>
+            ["rankWinnerReveal", "rankRevealAnticipation"].some((name) =>
+              (animation as CSSAnimation).animationName.includes(name),
+            ),
           );
-        if (!animation) return;
-        animation.play();
+        for (const animation of animations) animation.play();
+        await Promise.all(animations.map((animation) => animation.finished));
       });
-      await expect(revealLocator).toHaveCSS("opacity", "1", { timeout: 1500 });
     } catch (error) {
       cleanupError = error;
       hasCleanupError = true;
@@ -1204,6 +1245,469 @@ async function expectRankRevealGeometry(
   if (hasPrimaryError) throw primaryError;
   if (hasCleanupError) throw cleanupError;
 }
+
+async function captureFirstPlaceRevealTimeline(
+  page: import("@playwright/test").Page,
+  testInfo: import("@playwright/test").TestInfo,
+  region: import("@playwright/test").Locator,
+) {
+  const compareScreenshotLineBands = async (
+    screenshot: Buffer,
+    hiddenLineScreenshot: Buffer,
+    clip: { x: number; y: number; width: number; height: number },
+  ) => {
+    return page.evaluate(
+      async ({ lineBytes, hiddenBytes, clipHeight }) => {
+        const decode = async (bytes: number[]) =>
+          createImageBitmap(new Blob([Uint8Array.from(bytes)], { type: "image/png" }));
+        const [lineBitmap, hiddenBitmap] = await Promise.all([
+          decode(lineBytes),
+          decode(hiddenBytes),
+        ]);
+        if (lineBitmap.width !== hiddenBitmap.width || lineBitmap.height !== hiddenBitmap.height) {
+          throw new Error("Line and hidden-line screenshot dimensions differ");
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = lineBitmap.width;
+        canvas.height = lineBitmap.height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Canvas 2D context is unavailable");
+        context.drawImage(hiddenBitmap, 0, 0);
+        const hidden = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(lineBitmap, 0, 0);
+        const line = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        const bandHeight = Math.max(1, Math.ceil((lineBitmap.height / clipHeight) * 6));
+        const countLineBand = (top: boolean) => {
+          let changedPixels = 0;
+          let warmPixels = 0;
+          const startY = top ? 0 : lineBitmap.height - bandHeight;
+          const endY = top ? bandHeight : lineBitmap.height;
+          for (let y = startY; y < endY; y += 1) {
+            for (let x = 0; x < lineBitmap.width; x += 1) {
+              const index = (y * lineBitmap.width + x) * 4;
+              const red = line[index];
+              const green = line[index + 1];
+              const blue = line[index + 2];
+              const delta =
+                Math.abs(red - hidden[index]) +
+                Math.abs(green - hidden[index + 1]) +
+                Math.abs(blue - hidden[index + 2]);
+              if (delta >= 8) changedPixels += 1;
+              if (red >= green && red - blue >= 8) warmPixels += 1;
+            }
+          }
+          return { changedPixels, warmPixels };
+        };
+        return {
+          width: lineBitmap.width,
+          height: lineBitmap.height,
+          bandHeight,
+          lines: [countLineBand(true), countLineBand(false)],
+        };
+      },
+      {
+        lineBytes: Array.from(screenshot),
+        hiddenBytes: Array.from(hiddenLineScreenshot),
+        clipHeight: clip.height,
+      },
+    );
+  };
+  const stages = [
+    { width: 1280, height: 720 },
+    { width: 480, height: 900 },
+  ];
+  const times = [0, 80, 200, 300, 400, 600, 800] as const;
+  type TimelineFrame = {
+    stageOpacity: string;
+    rankRegionOpacity: string;
+    winnerOpacity: number | null;
+    contentZIndex: number | null;
+    lineBoxes: {
+      zIndex: number;
+      box: { left: number; top: number; right: number; bottom: number };
+    }[];
+    winnerTextRects: { left: number; top: number; right: number; bottom: number }[];
+    lineBoxesAvoidWinnerText: boolean;
+    lineOpacities: number[];
+    ancestorsVisible: boolean;
+    stageInsideViewport: boolean;
+    rankRegionInsideViewport: boolean;
+    stageRect: { x: number; y: number; width: number; height: number };
+    lineProbePointsUnclipped: boolean;
+  };
+
+  for (const viewport of stages) {
+    await page.setViewportSize(viewport);
+    await waitForRenderFrames(page);
+    let naturalStageRect: { x: number; y: number; width: number; height: number } | null = null;
+    let zeroMillisecondFrame: TimelineFrame | null = null;
+    const assertTimelineFrame = (frame: TimelineFrame, time: number) => {
+      expect(frame.stageOpacity, `stage opacity at ${time}ms`).toBe("1");
+      expect(frame.rankRegionOpacity, `rank region opacity at ${time}ms`).toBe("1");
+      expect(frame.winnerOpacity, `winner text composite opacity at ${time}ms`).not.toBeNull();
+      expect(frame.ancestorsVisible, `stage ancestors at ${time}ms`).toBe(true);
+      expect(frame.stageInsideViewport, `stage bounds at ${time}ms`).toBe(true);
+      expect(frame.rankRegionInsideViewport, `rank region bounds at ${time}ms`).toBe(true);
+      expect(frame.lineProbePointsUnclipped, `line clipping at ${time}ms`).toBe(true);
+      if (!naturalStageRect) naturalStageRect = frame.stageRect;
+      expect(frame.stageRect, `natural stage size at ${time}ms`).toEqual(naturalStageRect);
+
+      if (time === 200) {
+        expect(frame.contentZIndex, "winner content stacking index at 200ms").not.toBeNull();
+        expect(
+          frame.lineBoxes.every(
+            ({ zIndex }) => zIndex > (frame.contentZIndex ?? Number.POSITIVE_INFINITY),
+          ),
+          "announcement lines stack above winner content at 200ms",
+        ).toBe(true);
+        expect(
+          frame.lineBoxesAvoidWinnerText,
+          `transformed announcement line boxes do not overlap winner text rects at 200ms (lines: ${JSON.stringify(frame.lineBoxes.map(({ box }) => box))}; text: ${JSON.stringify(frame.winnerTextRects)})`,
+        ).toBe(true);
+      }
+
+      if (time > 0 && time < 400) {
+        expect(
+          frame.lineOpacities.every((opacity) => opacity > 0),
+          `both announcement lines are painted at ${time}ms`,
+        ).toBe(true);
+      } else {
+        expect(frame.lineOpacities).toEqual([0, 0]);
+      }
+      if (time <= 400) expect(frame.winnerOpacity).toBe(0);
+      if (time === 600) {
+        expect(Number(frame.winnerOpacity)).toBeGreaterThan(0);
+        expect(Number(frame.winnerOpacity)).toBeLessThan(1);
+      }
+      if (time === 800) expect(frame.winnerOpacity).toBe(1);
+    };
+
+    for (const time of times) {
+      const frame: TimelineFrame | null = await region.evaluate(async (rankRegion, currentTime) => {
+        const regionElement = rankRegion as HTMLElement;
+        const reveal = regionElement.matches("[class*='winnerReveal']")
+          ? regionElement
+          : regionElement.querySelector<HTMLElement>("[class*='winnerReveal']");
+        if (!reveal) return null;
+
+        const animations = reveal.getAnimations({ subtree: true });
+        const contentAnimation = animations.find((animation) =>
+          (animation as CSSAnimation).animationName.includes("rankWinnerReveal"),
+        );
+        const lineAnimations = animations.filter((animation) =>
+          (animation as CSSAnimation).animationName.includes("rankRevealAnticipation"),
+        );
+        if (!contentAnimation || lineAnimations.length !== 2) return null;
+
+        contentAnimation.pause();
+        contentAnimation.currentTime = currentTime;
+        for (const lineAnimation of lineAnimations) {
+          lineAnimation.pause();
+          lineAnimation.currentTime = currentTime;
+        }
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+        const host = reveal;
+        const winnerContent = host.querySelector<HTMLElement>("[class*='winnerContent']");
+        const rect = host.getBoundingClientRect();
+        const ancestors: HTMLElement[] = [];
+        for (let parent = host.parentElement; parent; parent = parent.parentElement) {
+          ancestors.push(parent);
+        }
+        const lineOpacities = [
+          getComputedStyle(host, "::before").opacity,
+          getComputedStyle(host, "::after").opacity,
+        ].map(Number);
+        const stageStyle = getComputedStyle(host);
+        const stageScaleX = rect.width / Number.parseFloat(stageStyle.width);
+        const stageScaleY = rect.height / Number.parseFloat(stageStyle.height);
+        const contentStyle = winnerContent ? getComputedStyle(winnerContent) : null;
+        const contentZIndex = contentStyle ? Number.parseInt(contentStyle.zIndex, 10) : null;
+        const lineBoxes = ["::before", "::after"].map((pseudo) => {
+          const style = getComputedStyle(host, pseudo);
+          const width = Number.parseFloat(style.width);
+          const height = Number.parseFloat(style.height);
+          const localLeft = Number.parseFloat(style.left);
+          const localTop =
+            style.top === "auto"
+              ? Number.parseFloat(stageStyle.height) - Number.parseFloat(style.bottom) - height
+              : Number.parseFloat(style.top);
+          const pseudoTransform = new DOMMatrixReadOnly(style.transform);
+          const transformedLocalWidth = width * Math.abs(pseudoTransform.a);
+          return {
+            zIndex: Number.parseInt(style.zIndex, 10),
+            box: {
+              left: rect.left + (localLeft + (width - transformedLocalWidth) / 2) * stageScaleX,
+              top: rect.top + localTop * stageScaleY,
+              right: rect.left + (localLeft + (width + transformedLocalWidth) / 2) * stageScaleX,
+              bottom: rect.top + (localTop + height) * stageScaleY,
+            },
+          };
+        });
+        const winnerTextRects = Array.from(
+          host.querySelectorAll<HTMLElement>("[class*='winnerIdentity']"),
+        ).flatMap((identity) => {
+          const walker = document.createTreeWalker(identity, NodeFilter.SHOW_TEXT);
+          const textRects: { left: number; top: number; right: number; bottom: number }[] = [];
+          while (walker.nextNode()) {
+            const textNode = walker.currentNode;
+            if (!textNode.textContent?.trim()) continue;
+            const range = document.createRange();
+            range.selectNodeContents(textNode);
+            for (const bounds of range.getClientRects()) {
+              textRects.push({
+                left: bounds.left,
+                top: bounds.top,
+                right: bounds.right,
+                bottom: bounds.bottom,
+              });
+            }
+          }
+          return textRects;
+        });
+        const lineBoxesAvoidWinnerText = lineBoxes.every((line) =>
+          winnerTextRects.every(
+            (text) =>
+              line.box.right <= text.left ||
+              text.right <= line.box.left ||
+              line.box.bottom <= text.top ||
+              text.bottom <= line.box.top,
+          ),
+        );
+        const winnerText = host.querySelector<HTMLElement>("[class*='winnerIdentity']");
+        let winnerOpacity = winnerText ? 1 : null;
+        for (let node = winnerText; node && node !== host; node = node.parentElement) {
+          winnerOpacity = Number(winnerOpacity) * Number(getComputedStyle(node).opacity);
+        }
+        return {
+          stageOpacity: getComputedStyle(host).opacity,
+          rankRegionOpacity: getComputedStyle(regionElement).opacity,
+          winnerOpacity,
+          contentOpacity: winnerContent ? getComputedStyle(winnerContent).opacity : null,
+          contentZIndex,
+          lineBoxes,
+          winnerTextRects,
+          lineBoxesAvoidWinnerText,
+          lineOpacities,
+          ancestorsVisible: ancestors.every(
+            (ancestor) =>
+              getComputedStyle(ancestor).opacity === "1" &&
+              getComputedStyle(ancestor).visibility === "visible",
+          ),
+          stageInsideViewport:
+            rect.left >= 0 &&
+            rect.top >= 0 &&
+            rect.right <= window.innerWidth &&
+            rect.bottom <= window.innerHeight,
+          rankRegionInsideViewport: (() => {
+            const regionRect = regionElement.getBoundingClientRect();
+            return (
+              regionRect.left >= 0 &&
+              regionRect.top >= 0 &&
+              regionRect.right <= window.innerWidth &&
+              regionRect.bottom <= window.innerHeight
+            );
+          })(),
+          stageRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          lineProbePoints: [
+            { x: rect.left + rect.width / 2, y: rect.top + 1 },
+            { x: rect.left + rect.width / 2, y: rect.bottom - 1 },
+          ],
+          lineProbePointsUnclipped: [
+            { x: rect.left + rect.width / 2, y: rect.top + 1 },
+            { x: rect.left + rect.width / 2, y: rect.bottom - 1 },
+          ].every(({ x, y }) =>
+            ancestors.every((ancestor) => {
+              const style = getComputedStyle(ancestor);
+              const bounds = ancestor.getBoundingClientRect();
+              const clipsX = ["hidden", "clip", "auto", "scroll"].includes(style.overflowX);
+              const clipsY = ["hidden", "clip", "auto", "scroll"].includes(style.overflowY);
+              return (
+                (!clipsX || (x >= bounds.left && x <= bounds.right)) &&
+                (!clipsY || (y >= bounds.top && y <= bounds.bottom))
+              );
+            }),
+          ),
+        };
+      }, time);
+
+      expect(frame, `first-place reveal frame at ${time}ms`).not.toBeNull();
+
+      const screenshotPath = [80, 200, 600, 800].includes(time)
+        ? testInfo.outputPath(`first-place-${viewport.width}x${viewport.height}-${time}ms.png`)
+        : undefined;
+      if (screenshotPath) {
+        await page.screenshot({ path: screenshotPath, animations: "allow" });
+      }
+      const clipX = Math.max(0, Math.floor(frame!.stageRect.x - 2));
+      const clipY = Math.max(0, Math.floor(frame!.stageRect.y - 2));
+      const pixelClip = {
+        x: clipX,
+        y: clipY,
+        width: Math.min(
+          viewport.width - clipX,
+          Math.ceil(frame!.stageRect.x + frame!.stageRect.width + 2) - clipX,
+        ),
+        height: Math.min(
+          viewport.height - clipY,
+          Math.ceil(frame!.stageRect.y + frame!.stageRect.height + 2) - clipY,
+        ),
+      };
+      const clipPath =
+        time === 80
+          ? testInfo.outputPath(
+              `first-place-${viewport.width}x${viewport.height}-80ms-lines-clip.png`,
+            )
+          : undefined;
+      const screenshot = await page.screenshot({
+        clip: pixelClip,
+        ...(clipPath ? { path: clipPath } : {}),
+        animations: "allow",
+      });
+      const hiddenLineStyle = await page.addStyleTag({
+        content: `
+          section[data-rank="first"] [class*="winnerReveal"]::before,
+          section[data-rank="first"] [class*="winnerReveal"]::after {
+            animation: none !important;
+            opacity: 0 !important;
+          }
+        `,
+      });
+      const noLineScreenshot = await page.screenshot({ clip: pixelClip, animations: "allow" });
+      await hiddenLineStyle.evaluate((style) => style.parentNode?.removeChild(style));
+      const lineBands = await compareScreenshotLineBands(screenshot, noLineScreenshot, pixelClip);
+      if (time > 0 && time < 400) {
+        expect(
+          lineBands.lines.every(({ changedPixels }) => changedPixels >= 4),
+          `both pseudo-element lines change rendered pixels at ${time}ms in ${viewport.width}x${viewport.height} (reveal ${frame!.stageRect.width}x${frame!.stageRect.height}; clip ${lineBands.width}x${lineBands.height}; band ${lineBands.bandHeight}px; changed pixels: ${lineBands.lines.map(({ changedPixels }) => changedPixels).join(", ")})`,
+        ).toBe(true);
+        expect(
+          lineBands.lines.every(({ warmPixels }) => warmPixels > 0),
+          `both announcement lines have visible warm pixels at ${viewport.width}x${viewport.height} (warm pixels: ${lineBands.lines.map(({ warmPixels }) => warmPixels).join(", ")})`,
+        ).toBe(true);
+      } else {
+        expect(
+          lineBands.lines.map(({ changedPixels }) => changedPixels),
+          `no line pixels remain at ${time}ms`,
+        ).toEqual([0, 0]);
+      }
+      if (time === 0) {
+        zeroMillisecondFrame = frame!;
+      } else if (time === 80) {
+        expect(zeroMillisecondFrame, "captured first-place frame at 0ms").not.toBeNull();
+        assertTimelineFrame(zeroMillisecondFrame!, 0);
+        assertTimelineFrame(frame!, 80);
+      } else {
+        assertTimelineFrame(frame!, time);
+      }
+    }
+  }
+
+  const playback = await region.evaluate(async (rankRegion) => {
+    const regionElement = rankRegion as HTMLElement;
+    const host = regionElement.matches("[class*='winnerReveal']")
+      ? regionElement
+      : regionElement.querySelector<HTMLElement>("[class*='winnerReveal']");
+    if (!host) throw new Error("First-place winner reveal stage is missing");
+    const animations = host
+      .getAnimations({ subtree: true })
+      .filter((animation) =>
+        /rankWinnerReveal|rankRevealAnticipation/.test((animation as CSSAnimation).animationName),
+      );
+    const content = host.querySelector<HTMLElement>("[class*='winnerContent']");
+    const frames: {
+      currentTime: number;
+      contentOpacity: number | null;
+      lineOpacities: number[];
+    }[] = [];
+    for (const animation of animations) {
+      animation.pause();
+      animation.currentTime = 0;
+      animation.play();
+    }
+    while (animations.some((animation) => animation.playState !== "finished")) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      frames.push({
+        currentTime: Math.max(...animations.map((animation) => Number(animation.currentTime ?? 0))),
+        contentOpacity: content ? Number(getComputedStyle(content).opacity) : null,
+        lineOpacities: [
+          Number(getComputedStyle(host, "::before").opacity),
+          Number(getComputedStyle(host, "::after").opacity),
+        ],
+      });
+    }
+    await Promise.all(animations.map((animation) => animation.finished));
+    return {
+      stageOpacity: getComputedStyle(host).opacity,
+      contentOpacity: content ? getComputedStyle(content).opacity : null,
+      lineOpacities: [
+        getComputedStyle(host, "::before").opacity,
+        getComputedStyle(host, "::after").opacity,
+      ],
+      frames,
+    };
+  });
+  expect(
+    playback.frames.some(
+      ({ currentTime, contentOpacity, lineOpacities }) =>
+        currentTime > 0 &&
+        currentTime < 400 &&
+        contentOpacity === 0 &&
+        lineOpacities.every((opacity) => opacity > 0),
+    ),
+    "normal playback paints anticipation lines before winner content",
+  ).toBe(true);
+  expect(
+    playback.frames.some(
+      ({ currentTime, contentOpacity, lineOpacities }) =>
+        currentTime >= 400 &&
+        currentTime < 800 &&
+        contentOpacity !== null &&
+        contentOpacity > 0 &&
+        lineOpacities.every((opacity) => opacity === 0),
+    ),
+    "normal playback reveals winner content after the anticipation lines",
+  ).toBe(true);
+  expect(playback.stageOpacity).toBe("1");
+  expect(playback.contentOpacity).toBe("1");
+  expect(playback.lineOpacities).toEqual(["0", "0"]);
+}
+
+test("@chromium first-place anticipation visibility timeline", async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const mock = await installAdminApiMock(page);
+  mock.setWinnerEntries([
+    { displayName: "花子", score: 1, rank: 1 },
+    { displayName: "太郎", score: 1, rank: 1 },
+  ]);
+  await signIn(page);
+  await startPresentation(page);
+  mock.setPresentationPosition("first");
+  await openPresenter(page);
+
+  const region = rankRegionFor(page, "first");
+  await expect(region).toHaveCount(1);
+  await expect(region.getByText("花子", { exact: false })).toBeVisible();
+  await expectRankAnticipation(region, "first-place visibility timeline", true);
+  const reveal = region.locator("[class*='winnerReveal']");
+  await expect
+    .poll(
+      () =>
+        reveal.evaluate((stage) => {
+          const names = stage
+            .getAnimations({ subtree: true })
+            .map((animation) => (animation as CSSAnimation).animationName);
+          return {
+            winnerReveal: names.filter((name) => name.includes("rankWinnerReveal")).length,
+            anticipation: names.filter((name) => name.includes("rankRevealAnticipation")).length,
+          };
+        }),
+      { message: "first-place stage CSS animations are attached before timeline seeking" },
+    )
+    .toEqual({ winnerReveal: 1, anticipation: 2 });
+  await captureFirstPlaceRevealTimeline(page, testInfo, region);
+});
 
 test("@chromium public and presenter routes are read-only unless an authenticated presenter progresses", async ({
   page,
@@ -1798,12 +2302,14 @@ test("@chromium all rank entries fit on the slide without vertical scrolling und
   await expect(winners).toBeVisible();
   await expect(winners).not.toHaveClass(/announce/);
   const reveal = winners.locator("[class*='winnerReveal']");
+  const content = reveal.locator("[class*='winnerContent']");
   await expectRankRevealGeometry(winners);
-  await expect(reveal).toHaveCSS("animation-name", "none");
+  await expect(content).toHaveCSS("animation-name", "none");
   await expect(reveal).toHaveCSS("opacity", "1");
-  await expect(reveal).toHaveCSS("transform", "none");
+  await expect(content).toHaveCSS("opacity", "1");
+  await expect(content).toHaveCSS("transform", "none");
   await expect
-    .poll(() => reveal.evaluate((node) => getComputedStyle(node).animationDelay))
+    .poll(() => content.evaluate((node) => getComputedStyle(node).animationDelay))
     .toBe("0s");
   const conciseAnnouncement = await page.getByRole("status").textContent();
   expect(conciseAnnouncement?.trim()).toBe("第三位を発表します");
@@ -2060,6 +2566,7 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
       const region = regions.length === 1 ? regions[0] : null;
       const reveal = region?.querySelector<HTMLElement>("[class*='winnerReveal']");
       const animation = reveal
+        ?.querySelector<HTMLElement>("[class*='winnerContent']")
         ?.getAnimations()
         .find((candidate) =>
           (candidate as CSSAnimation).animationName.includes("rankWinnerReveal"),
@@ -2114,7 +2621,7 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
             }
           : null;
       };
-      const reveal = find("[class*='winnerReveal']", "rankWinnerReveal");
+      const reveal = find("[class*='winnerContent']", "rankWinnerReveal");
       const ornament = find("[class*='rankOrnament']", "rankOrnamentEntrance");
       const medal = find("[data-testid='presentation-exam-stamp']", "rankMedalEntrance");
       return reveal && ornament && medal ? { reveal, ornament, medal } : null;
@@ -2151,15 +2658,17 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   await expectRankAnticipation(thirdRegion, "third-place entry", false);
   await expect(thirdRegion.getByRole("heading", { name: "第三位", exact: true })).toBeVisible();
   const thirdReveal = thirdRegion.locator("[class*='winnerReveal']");
+  const thirdContent = thirdReveal.locator("[class*='winnerContent']");
   await expect(thirdReveal).toHaveCount(1);
   await expect(thirdReveal.locator("article").first()).toBeAttached();
   expect(await thirdReveal.getAttribute("aria-hidden")).toBeNull();
-  await expect(thirdReveal).toHaveCSS("animation-delay", "0.4s");
-  await expect(thirdReveal).toHaveCSS("animation-duration", "0.4s");
+  await expect(thirdContent).toHaveCSS("animation-delay", "0.4s");
+  await expect(thirdContent).toHaveCSS("animation-duration", "0.4s");
   await expectRankRevealGeometry(thirdRegion, "during-delay", initialPauseStyle);
   const thirdRevealSnapshot = await waitForRankReveal("third");
   await latestDecorationEntry("third");
   await expect(thirdReveal).toHaveCSS("opacity", "1");
+  await expect(thirdContent).toHaveCSS("opacity", "1");
   await expectRankRevealGeometry(thirdRegion);
 
   const secondPauseStyle = await pauseRankRevealBeforeEntry(page);
@@ -2388,7 +2897,11 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
       "animationstart",
       (event) => {
         const target = event.target;
-        if (!(target instanceof HTMLElement) || !target.matches("[class*='winnerReveal']")) return;
+        if (
+          !(target instanceof HTMLElement) ||
+          !target.matches("[class*='winnerReveal'], [class*='winnerContent']")
+        )
+          return;
         window.__rankRevealAnimations.push({
           rank: target.closest("[data-rank]")?.getAttribute("data-rank") ?? null,
           name: (event as AnimationEvent).animationName,
@@ -2406,8 +2919,9 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   await page.emulateMedia({ reducedMotion: "reduce" });
   const reducedFirst = rankRegionFor(page, "first");
   await expect(reducedFirst).toHaveCount(1);
-  await expect(reducedFirst.locator("[class*='winnerReveal']")).toHaveCSS("animation-name", "none");
-  await expect(reducedFirst.locator("[class*='winnerReveal']")).toHaveCSS("transform", "none");
+  const reducedContent = reducedFirst.locator("[class*='winnerContent']");
+  await expect(reducedContent).toHaveCSS("animation-name", "none");
+  await expect(reducedContent).toHaveCSS("transform", "none");
   await expect(reducedFirst.locator("[class*='rankOrnament']")).toHaveCSS("animation-name", "none");
   await expect(reducedFirst.locator("[data-testid='presentation-exam-stamp']")).toHaveCSS(
     "animation-name",
@@ -2440,6 +2954,7 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
     content: `
       html body [class*="rankOrnament"],
       html body [data-testid="presentation-exam-stamp"],
+      html body [class*="winnerContent"],
       html body [class*="winnerReveal"],
       html body [class*="winnerReveal"]::before,
       html body [class*="winnerReveal"]::after {
@@ -2450,13 +2965,14 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
   const region = rankRegionFor(page, "second");
   await expect(region).toHaveCount(1);
   const reveal = region.locator("[class*='winnerReveal']");
+  const content = reveal.locator("[class*='winnerContent']");
   const ornament = region.locator("[class*='rankOrnament']");
   const medal = region.locator("[data-testid='presentation-exam-stamp']");
   await expect(region.getByText("太郎", { exact: false })).toBeVisible();
   await expectRankAnticipation(region, "second-place entry", false);
   await expect(ornament).toHaveCSS("animation-duration", "5s");
   await expect(medal).toHaveCSS("animation-duration", "5s");
-  await expect(reveal).toHaveCSS("animation-duration", "5s");
+  await expect(content).toHaveCSS("animation-duration", "5s");
   const activeRankAnimations = await page.evaluate(() => {
     const regions = document.querySelectorAll<HTMLElement>(
       '[data-testid="presentation-canvas"] section[class*="winners"][data-rank="second"]',
@@ -2484,7 +3000,7 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
         "rankMedalEntrance",
       ),
       winner: describe(
-        region?.querySelector("[class*='winnerReveal']") ?? null,
+        region?.querySelector("[class*='winnerContent']") ?? null,
         "rankWinnerReveal",
       ),
     };
@@ -2497,9 +3013,10 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
   expect(activeRankAnimations.winner?.currentTime).toBeLessThan(5000);
 
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(reveal).toHaveCSS("animation-name", "none");
+  await expect(content).toHaveCSS("animation-name", "none");
   await expect(reveal).toHaveCSS("opacity", "1");
-  await expect(reveal).toHaveCSS("transform", "none");
+  await expect(content).toHaveCSS("opacity", "1");
+  await expect(content).toHaveCSS("transform", "none");
   await expect(ornament).toHaveCSS("animation-name", "none");
   await expect(ornament).toHaveCSS("opacity", "0");
   await expect(medal).toHaveCSS("animation-name", "none");
@@ -2510,7 +3027,8 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
       () =>
         [
           ...document.querySelectorAll(
-            "[class*='rankOrnament'], [class*='rankStamp'], [class*='winnerReveal']",
+            "[class*='rankOrnament'], [class*='rankStamp'], [class*='winnerReveal'], " +
+              "[class*='winnerContent']",
           ),
         ]
           .flatMap((element) => element.getAnimations())
@@ -2529,7 +3047,7 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
   const firstRegion = rankRegionFor(page, "first");
   await expect(firstRegion).toHaveCount(1);
   await expect(firstRegion.getByText("花子", { exact: false })).toBeVisible();
-  await expect(firstRegion.locator("[class*='winnerReveal']")).toHaveCSS("animation-name", "none");
+  await expect(firstRegion.locator("[class*='winnerContent']")).toHaveCSS("animation-name", "none");
   await expectRankAnticipation(
     firstRegion,
     "dynamic reduced-motion first-place entry",
@@ -2554,13 +3072,15 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
     "reduced",
   );
   expect(
-    await firstReveal.evaluate((element) =>
-      element
-        .getAnimations()
-        .some((animation) =>
-          (animation as CSSAnimation).animationName.includes("rankRevealAnticipation"),
-        ),
-    ),
+    await firstRegion
+      .locator("[class*='winnerContent']")
+      .evaluate((element) =>
+        element
+          .getAnimations()
+          .some((animation) =>
+            (animation as CSSAnimation).animationName.includes("rankRevealAnticipation"),
+          ),
+      ),
   ).toBe(false);
 });
 
@@ -4233,23 +4753,23 @@ test("@chromium presenter progression never requests fullscreen and manual fulls
   const mock = await installAdminApiMock(page, { fullscreenSupported: true });
   await page.addInitScript(() => {
     window.__fullscreenRequests = 0;
-    let fullscreenTarget: Element | null = null;
+    let fullscreenActive = false;
     Object.defineProperty(document, "fullscreenElement", {
       configurable: true,
-      get: () => fullscreenTarget,
+      get: () => (fullscreenActive ? document.querySelector("main") : null),
     });
     Object.defineProperty(Element.prototype, "requestFullscreen", {
       configurable: true,
       value: function requestFullscreen() {
         window.__fullscreenRequests += 1;
-        fullscreenTarget = this;
+        fullscreenActive = true;
         document.dispatchEvent(new Event("fullscreenchange"));
         return Promise.resolve();
       },
     });
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && fullscreenTarget) {
-        fullscreenTarget = null;
+      if (event.key === "Escape" && fullscreenActive) {
+        fullscreenActive = false;
         document.dispatchEvent(new Event("fullscreenchange"));
       }
     });
