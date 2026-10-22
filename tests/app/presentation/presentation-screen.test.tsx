@@ -437,13 +437,14 @@ describe("presentation projection and presenter progression", () => {
     expect(stylesheet).toMatch(/animation-iteration-count:\s*1\s*!important/);
     expect(stylesheet).toMatch(/transition-duration:\s*0\.01ms\s*!important/);
     expect(stylesheet).toMatch(/scroll-behavior:\s*auto\s*!important/);
-    expect(stylesheet).toMatch(/\.winnerReveal\s*\{\s*--rank-reveal-boundary:\s*400ms;/);
+    expect(stylesheet).toMatch(/\.winners\s*\{[^}]*--rank-reveal-boundary:\s*760ms;/s);
+    expect(stylesheet).toMatch(/\.winners\s*\{[^}]*--rank-reveal-duration:\s*540ms;/s);
     expect(stylesheet).not.toMatch(/\.winnerReveal\s*\{[^}]*animation:\s*rankWinnerReveal/s);
     expect(stylesheet).toMatch(
       /\.winnerContent\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/s,
     );
     expect(stylesheet).toMatch(
-      /\.winnerContent\s*\{[^}]*animation:\s*rankWinnerReveal var\(--rank-reveal-boundary\) ease-out var\(--rank-reveal-boundary\)\s*both;/s,
+      /\.winnerContent\s*\{[^}]*animation:\s*rankWinnerReveal var\(--rank-reveal-duration\) cubic-bezier\(0\.2, 0\.8, 0\.2, 1\)\s*var\(--rank-reveal-boundary\) both;/s,
     );
     expect(stylesheet).toMatch(
       /\.winnerReveal\[data-reveal-eligible="true"\]::before,\s*\.winnerReveal\[data-reveal-eligible="true"\]::after\s*\{[^}]*animation:\s*rankRevealAnticipation var\(--rank-reveal-boundary\) ease-out 0ms both;/s,
@@ -460,7 +461,9 @@ describe("presentation projection and presenter progression", () => {
     expect(stylesheet).toMatch(
       /\.answerReveal,\s*\.answerSupplement\s*\{\s*animation:\s*none;\s*animation-delay:\s*0s;\s*opacity:\s*1;/,
     );
-    expect(stylesheet).toMatch(/\.screen \.winnerContent\s*\{\s*animation:\s*none !important;/);
+    expect(stylesheet).toMatch(
+      /\.screen \.winnerContent,\s*\.screen \.rankHeader,\s*\.screen \.rank::before\s*\{\s*animation:\s*none !important;/,
+    );
     expect(stylesheet).toMatch(
       /\.screen \.winnerReveal::before,\s*\.screen \.winnerReveal::after\s*\{[^}]*animation:\s*none !important;[^}]*opacity:\s*0\s*!important;/s,
     );

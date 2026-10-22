@@ -514,6 +514,15 @@
 }
 
 .winners {
+  --rank-header-duration: 640ms;
+  --rank-plate-duration: 380ms;
+  --rank-stamp-duration: 720ms;
+  --rank-ornament-duration: 650ms;
+  --rank-ornament-delay: 80ms;
+  --rank-shimmer-duration: 360ms;
+  --rank-shimmer-delay: 300ms;
+  --rank-reveal-boundary: 760ms;
+  --rank-reveal-duration: 540ms;
   position: relative;
   box-sizing: border-box;
   display: flex;
@@ -611,7 +620,6 @@
 }
 
 .winnerReveal {
-  --rank-reveal-boundary: 400ms;
   position: relative;
   z-index: 1;
   width: 100%;
@@ -661,12 +669,34 @@
 @keyframes rankWinnerReveal {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(24px) scale(0.975);
+  }
+
+  78% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1);
   }
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes rankHeaderEntrance {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.9);
+  }
+
+  76% {
+    opacity: 1;
+    transform: translateY(-3px) scale(1.035);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -685,7 +715,7 @@
 @keyframes rankOrnamentEntrance {
   from {
     opacity: 0;
-    transform: scaleX(0.25);
+    transform: scaleX(0.08);
   }
 
   to {
@@ -694,10 +724,15 @@
   }
 }
 
-@keyframes rankMedalEntrance {
+@keyframes rankStampEntrance {
   from {
     opacity: 0;
-    transform: rotate(8deg) scale(0.82);
+    transform: rotate(-28deg) scale(0.5);
+  }
+
+  68% {
+    opacity: 1;
+    transform: rotate(13deg) scale(1.12);
   }
 
   to {
@@ -729,13 +764,13 @@
   }
 
   12% {
-    opacity: 0.82;
+    opacity: 0.9;
     transform: scaleX(1);
   }
 
   82% {
-    opacity: 0.5;
-    transform: scaleX(0.08);
+    opacity: 0.58;
+    transform: scaleX(0.04);
   }
 
   100% {
@@ -745,26 +780,32 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  .rankHeader {
+    animation: rankHeaderEntrance var(--rank-header-duration) cubic-bezier(0.16, 1, 0.3, 1) both;
+    transform-origin: center;
+  }
+
   .rank::before {
-    animation: rankPlateEntrance 200ms cubic-bezier(0.2, 0.75, 0.3, 1) both;
+    animation: rankPlateEntrance var(--rank-plate-duration) cubic-bezier(0.2, 0.75, 0.3, 1) both;
     transform-origin: center;
   }
 
   .rankOrnament {
-    animation: rankOrnamentEntrance 160ms ease-out 80ms both;
+    animation: rankOrnamentEntrance var(--rank-ornament-duration) cubic-bezier(0.2, 0.8, 0.2, 1)
+      var(--rank-ornament-delay) both;
   }
 
   .rankHeading::after {
-    animation: rankLineShimmer 140ms ease-out 260ms both;
+    animation: rankLineShimmer var(--rank-shimmer-duration) ease-out var(--rank-shimmer-delay) both;
   }
 
   .rankStamp {
-    animation: rankMedalEntrance 240ms ease-out both;
+    animation: rankStampEntrance var(--rank-stamp-duration) cubic-bezier(0.18, 0.9, 0.25, 1) both;
   }
 
   .winnerContent {
-    animation: rankWinnerReveal var(--rank-reveal-boundary) ease-out var(--rank-reveal-boundary)
-      both;
+    animation: rankWinnerReveal var(--rank-reveal-duration) cubic-bezier(0.2, 0.8, 0.2, 1)
+      var(--rank-reveal-boundary) both;
   }
 
   .winnerReveal[data-reveal-eligible="true"]::before,
@@ -1134,7 +1175,9 @@
     transition-duration: 0.01ms !important;
   }
 
-  .screen .winnerContent {
+  .screen .winnerContent,
+  .screen .rankHeader,
+  .screen .rank::before {
     animation: none !important;
   }
 
@@ -1156,7 +1199,7 @@
 
   .screen .rankStamp {
     opacity: 1;
-    transform: rotate(8deg);
+    transform: rotate(8deg) scale(1);
   }
 
   .screen .rankHeading::after {

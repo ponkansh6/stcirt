@@ -1010,8 +1010,8 @@ async function expectRankRevealGeometry(
       if ((await revealLocator.getAttribute("data-reveal-eligible")) === "true") {
         expect(timeline?.pseudoOpacities.some((value) => Number(value) > 0)).toBe(true);
       }
-      expect(timeline?.delay).toBe("0.4s");
-      expect(timeline?.duration).toBe("0.4s");
+      expect(timeline?.delay).toBe("0.76s");
+      expect(timeline?.duration).toBe("0.54s");
       await expect(region.locator("[class*='certificateLabel']")).toHaveCSS("opacity", "1");
       await expect(region.locator("[class*='rankHeader'] h1[class*='rank']")).toHaveCSS(
         "opacity",
@@ -1030,6 +1030,11 @@ async function expectRankRevealGeometry(
       );
       const revealRect = reveal?.getBoundingClientRect();
       const headerRect = header?.getBoundingClientRect();
+      const winnerContent = reveal?.querySelector<HTMLElement>("[class*='winnerContent']");
+      const winnerContentRect = winnerContent?.getBoundingClientRect();
+      const winnerContentOpacity = winnerContent
+        ? Number(getComputedStyle(winnerContent).opacity)
+        : 0;
       const regionRect = rankRegion.getBoundingClientRect();
       const canvasRect = canvas?.getBoundingClientRect();
       const contentRect = content?.getBoundingClientRect();
@@ -1137,6 +1142,17 @@ async function expectRankRevealGeometry(
         range.selectNodeContents(element);
         return Array.from(range.getClientRects());
       });
+      const rectSummary = (rect: DOMRect | undefined) =>
+        rect
+          ? {
+              left: rect.left,
+              top: rect.top,
+              right: rect.right,
+              bottom: rect.bottom,
+              width: rect.width,
+              height: rect.height,
+            }
+          : null;
       const pairsDoNotOverlap = (rects: DOMRect[]) =>
         rects.every((rect, index) =>
           rects.slice(index + 1).every((other) => !overlaps(rect, other)),
@@ -1159,7 +1175,16 @@ async function expectRankRevealGeometry(
           ),
         revealInsideCanvas: Boolean(revealRect && inside(revealRect, canvasRect)),
         revealInsideContent: Boolean(revealRect && inside(revealRect, contentRect)),
-        headerDoesNotOverlapReveal: !overlaps(headerRect, revealRect),
+        headerInsideCanvas: Boolean(headerRect && inside(headerRect, canvasRect)),
+        headerDoesNotOverlapVisibleWinnerText:
+          winnerContentOpacity <= 0 || textRects.every((rect) => !overlaps(headerRect, rect)),
+        revealGeometry: {
+          phase: winnerContentOpacity > 0 ? "winner-visible" : "winner-hidden",
+          winnerContentOpacity,
+          header: rectSummary(headerRect),
+          winnerContent: rectSummary(winnerContentRect),
+          winnerText: textRects.map(rectSummary),
+        },
         descendantsInsideRegionAndViewport:
           measured.length > 0 &&
           measured.every(({ rect }) => inside(rect, regionRect) && inside(rect, contentRect)),
@@ -1173,6 +1198,7 @@ async function expectRankRevealGeometry(
         textInsideRegionAndViewport:
           (textRects.length > 0 || Boolean(rankRegion.querySelector("[class*='noWinner']"))) &&
           textRects.every((rect) => inside(rect, regionRect) && inside(rect, contentRect)),
+        textInsideCanvas: textRects.every((rect) => inside(rect, canvasRect)),
         cardsDoNotOverlap: pairsDoNotOverlap(cardRects),
         remainingCountDoesNotOverlapCards: additionalWinnerRects.every((summary) =>
           cardRects.every((card) => !overlaps(summary, card)),
@@ -1191,7 +1217,14 @@ async function expectRankRevealGeometry(
     expect(geometry.anticipationIsGeneratedOutsideTheDom).toBe(true);
     expect(geometry.revealInsideCanvas).toBe(true);
     expect(geometry.revealInsideContent).toBe(true);
-    expect(geometry.headerDoesNotOverlapReveal).toBe(true);
+    expect(
+      geometry.headerInsideCanvas,
+      `rank header stays within the presentation canvas: ${JSON.stringify(geometry.revealGeometry)}`,
+    ).toBe(true);
+    expect(
+      geometry.headerDoesNotOverlapVisibleWinnerText,
+      `rank header does not overlap visible winner text: ${JSON.stringify(geometry.revealGeometry)}`,
+    ).toBe(true);
     expect(geometry.descendantsInsideRegionAndViewport).toBe(true);
     expect(geometry.descendantsHaveAreaAndAreVisible).toBe(true);
     expect(
@@ -1199,6 +1232,10 @@ async function expectRankRevealGeometry(
       `content containers fit without clipping: ${JSON.stringify(geometry.overflowingContainers)}`,
     ).toBe(true);
     expect(geometry.textInsideRegionAndViewport).toBe(true);
+    expect(
+      geometry.textInsideCanvas,
+      `winner text stays within the presentation canvas: ${JSON.stringify(geometry.revealGeometry)}`,
+    ).toBe(true);
     expect(geometry.cardsDoNotOverlap).toBe(true);
     expect(geometry.remainingCountDoesNotOverlapCards).toBe(true);
     expect(geometry.namesDoNotOverlapScores).toBe(true);
@@ -1317,18 +1354,18 @@ async function captureFirstPlaceRevealTimeline(
     { width: 1280, height: 720 },
     { width: 480, height: 900 },
   ];
-  const times = [0, 80, 200, 300, 400, 600, 800] as const;
+  const times = [0, 120, 350, 500, 600, 759, 760, 761, 900, 1180, 1300] as const;
   type TimelineFrame = {
     stageOpacity: string;
     rankRegionOpacity: string;
     winnerOpacity: number | null;
+    winnerTranslateY: number | null;
+    winnerScale: number | null;
     contentZIndex: number | null;
     lineBoxes: {
       zIndex: number;
       box: { left: number; top: number; right: number; bottom: number };
     }[];
-    winnerTextRects: { left: number; top: number; right: number; bottom: number }[];
-    lineBoxesAvoidWinnerText: boolean;
     lineOpacities: number[];
     ancestorsVisible: boolean;
     stageInsideViewport: boolean;
@@ -1353,21 +1390,17 @@ async function captureFirstPlaceRevealTimeline(
       if (!naturalStageRect) naturalStageRect = frame.stageRect;
       expect(frame.stageRect, `natural stage size at ${time}ms`).toEqual(naturalStageRect);
 
-      if (time === 200) {
-        expect(frame.contentZIndex, "winner content stacking index at 200ms").not.toBeNull();
+      if (time === 350) {
+        expect(frame.contentZIndex, "winner content stacking index at 350ms").not.toBeNull();
         expect(
           frame.lineBoxes.every(
             ({ zIndex }) => zIndex > (frame.contentZIndex ?? Number.POSITIVE_INFINITY),
           ),
-          "announcement lines stack above winner content at 200ms",
-        ).toBe(true);
-        expect(
-          frame.lineBoxesAvoidWinnerText,
-          `transformed announcement line boxes do not overlap winner text rects at 200ms (lines: ${JSON.stringify(frame.lineBoxes.map(({ box }) => box))}; text: ${JSON.stringify(frame.winnerTextRects)})`,
+          "announcement lines stack above winner content at 350ms",
         ).toBe(true);
       }
 
-      if (time > 0 && time < 400) {
+      if (time > 0 && time < 760) {
         expect(
           frame.lineOpacities.every((opacity) => opacity > 0),
           `both announcement lines are painted at ${time}ms`,
@@ -1375,12 +1408,37 @@ async function captureFirstPlaceRevealTimeline(
       } else {
         expect(frame.lineOpacities).toEqual([0, 0]);
       }
-      if (time <= 400) expect(frame.winnerOpacity).toBe(0);
-      if (time === 600) {
+      if (time <= 760) expect(frame.winnerOpacity).toBe(0);
+      if (time === 759) expect(frame.winnerOpacity).toBe(0);
+      if (time === 760) expect(frame.winnerOpacity).toBe(0);
+      if (time === 761) {
         expect(Number(frame.winnerOpacity)).toBeGreaterThan(0);
         expect(Number(frame.winnerOpacity)).toBeLessThan(1);
       }
-      if (time === 800) expect(frame.winnerOpacity).toBe(1);
+      const linesVisible = frame.lineOpacities.some((opacity) => opacity > 0);
+      const winnerVisible = Number(frame.winnerOpacity) > 0;
+      if (linesVisible) {
+        expect(
+          frame.winnerOpacity,
+          `winner stays transparent while announcement lines are visible at ${time}ms (lines: ${JSON.stringify(frame.lineOpacities)})`,
+        ).toBe(0);
+      }
+      if (winnerVisible) {
+        expect(
+          frame.lineOpacities,
+          `announcement lines stay transparent while winner text is visible at ${time}ms (winner opacity: ${frame.winnerOpacity})`,
+        ).toEqual([0, 0]);
+      }
+      if (time === 0) expect(frame.winnerTranslateY).toBeGreaterThan(20);
+      if (time === 1180) {
+        expect(Math.abs(frame.winnerTranslateY ?? Number.POSITIVE_INFINITY)).toBeLessThan(4);
+        expect(frame.winnerScale).toBeLessThanOrEqual(1.005);
+      }
+      if (time === 900) {
+        expect(Number(frame.winnerOpacity)).toBeGreaterThan(0);
+        expect(Number(frame.winnerOpacity)).toBeLessThan(1);
+      }
+      if (time === 1300) expect(frame.winnerOpacity).toBe(1);
     };
 
     for (const time of times) {
@@ -1392,6 +1450,19 @@ async function captureFirstPlaceRevealTimeline(
         if (!reveal) return null;
 
         const animations = reveal.getAnimations({ subtree: true });
+        const slideAnimations = regionElement
+          .getAnimations({ subtree: true })
+          .filter((animation) =>
+            /rankHeaderEntrance|rankPlateEntrance|rankStampEntrance|rankOrnamentEntrance|rankLineShimmer/.test(
+              (animation as CSSAnimation).animationName,
+            ),
+          );
+        for (const animation of slideAnimations) {
+          const timing = animation.effect?.getComputedTiming();
+          const endTime = Number(timing?.delay ?? 0) + Number(timing?.duration ?? 0);
+          animation.pause();
+          animation.currentTime = Math.min(currentTime, endTime);
+        }
         const contentAnimation = animations.find((animation) =>
           (animation as CSSAnimation).animationName.includes("rankWinnerReveal"),
         );
@@ -1423,6 +1494,9 @@ async function captureFirstPlaceRevealTimeline(
         const stageScaleX = rect.width / Number.parseFloat(stageStyle.width);
         const stageScaleY = rect.height / Number.parseFloat(stageStyle.height);
         const contentStyle = winnerContent ? getComputedStyle(winnerContent) : null;
+        const contentTransform = contentStyle
+          ? new DOMMatrixReadOnly(contentStyle.transform)
+          : null;
         const contentZIndex = contentStyle ? Number.parseInt(contentStyle.zIndex, 10) : null;
         const lineBoxes = ["::before", "::after"].map((pseudo) => {
           const style = getComputedStyle(host, pseudo);
@@ -1445,36 +1519,6 @@ async function captureFirstPlaceRevealTimeline(
             },
           };
         });
-        const winnerTextRects = Array.from(
-          host.querySelectorAll<HTMLElement>("[class*='winnerIdentity']"),
-        ).flatMap((identity) => {
-          const walker = document.createTreeWalker(identity, NodeFilter.SHOW_TEXT);
-          const textRects: { left: number; top: number; right: number; bottom: number }[] = [];
-          while (walker.nextNode()) {
-            const textNode = walker.currentNode;
-            if (!textNode.textContent?.trim()) continue;
-            const range = document.createRange();
-            range.selectNodeContents(textNode);
-            for (const bounds of range.getClientRects()) {
-              textRects.push({
-                left: bounds.left,
-                top: bounds.top,
-                right: bounds.right,
-                bottom: bounds.bottom,
-              });
-            }
-          }
-          return textRects;
-        });
-        const lineBoxesAvoidWinnerText = lineBoxes.every((line) =>
-          winnerTextRects.every(
-            (text) =>
-              line.box.right <= text.left ||
-              text.right <= line.box.left ||
-              line.box.bottom <= text.top ||
-              text.bottom <= line.box.top,
-          ),
-        );
         const winnerText = host.querySelector<HTMLElement>("[class*='winnerIdentity']");
         let winnerOpacity = winnerText ? 1 : null;
         for (let node = winnerText; node && node !== host; node = node.parentElement) {
@@ -1484,11 +1528,11 @@ async function captureFirstPlaceRevealTimeline(
           stageOpacity: getComputedStyle(host).opacity,
           rankRegionOpacity: getComputedStyle(regionElement).opacity,
           winnerOpacity,
+          winnerTranslateY: contentTransform?.f ?? null,
+          winnerScale: contentTransform ? Math.hypot(contentTransform.a, contentTransform.b) : null,
           contentOpacity: winnerContent ? getComputedStyle(winnerContent).opacity : null,
           contentZIndex,
           lineBoxes,
-          winnerTextRects,
-          lineBoxesAvoidWinnerText,
           lineOpacities,
           ancestorsVisible: ancestors.every(
             (ancestor) =>
@@ -1534,7 +1578,7 @@ async function captureFirstPlaceRevealTimeline(
 
       expect(frame, `first-place reveal frame at ${time}ms`).not.toBeNull();
 
-      const screenshotPath = [80, 200, 600, 800].includes(time)
+      const screenshotPath = [500, 1300].includes(time)
         ? testInfo.outputPath(`first-place-${viewport.width}x${viewport.height}-${time}ms.png`)
         : undefined;
       if (screenshotPath) {
@@ -1555,9 +1599,9 @@ async function captureFirstPlaceRevealTimeline(
         ),
       };
       const clipPath =
-        time === 80
+        time === 500
           ? testInfo.outputPath(
-              `first-place-${viewport.width}x${viewport.height}-80ms-lines-clip.png`,
+              `first-place-${viewport.width}x${viewport.height}-500ms-lines-clip.png`,
             )
           : undefined;
       const screenshot = await page.screenshot({
@@ -1577,7 +1621,7 @@ async function captureFirstPlaceRevealTimeline(
       const noLineScreenshot = await page.screenshot({ clip: pixelClip, animations: "allow" });
       await hiddenLineStyle.evaluate((style) => style.parentNode?.removeChild(style));
       const lineBands = await compareScreenshotLineBands(screenshot, noLineScreenshot, pixelClip);
-      if (time > 0 && time < 400) {
+      if ([120, 350, 500].includes(time)) {
         expect(
           lineBands.lines.every(({ changedPixels }) => changedPixels >= 4),
           `both pseudo-element lines change rendered pixels at ${time}ms in ${viewport.width}x${viewport.height} (reveal ${frame!.stageRect.width}x${frame!.stageRect.height}; clip ${lineBands.width}x${lineBands.height}; band ${lineBands.bandHeight}px; changed pixels: ${lineBands.lines.map(({ changedPixels }) => changedPixels).join(", ")})`,
@@ -1586,7 +1630,7 @@ async function captureFirstPlaceRevealTimeline(
           lineBands.lines.every(({ warmPixels }) => warmPixels > 0),
           `both announcement lines have visible warm pixels at ${viewport.width}x${viewport.height} (warm pixels: ${lineBands.lines.map(({ warmPixels }) => warmPixels).join(", ")})`,
         ).toBe(true);
-      } else {
+      } else if (time === 0 || time >= 760) {
         expect(
           lineBands.lines.map(({ changedPixels }) => changedPixels),
           `no line pixels remain at ${time}ms`,
@@ -1594,10 +1638,10 @@ async function captureFirstPlaceRevealTimeline(
       }
       if (time === 0) {
         zeroMillisecondFrame = frame!;
-      } else if (time === 80) {
+      } else if (time === 120) {
         expect(zeroMillisecondFrame, "captured first-place frame at 0ms").not.toBeNull();
         assertTimelineFrame(zeroMillisecondFrame!, 0);
-        assertTimelineFrame(frame!, 80);
+        assertTimelineFrame(frame!, 120);
       } else {
         assertTimelineFrame(frame!, time);
       }
@@ -1652,7 +1696,7 @@ async function captureFirstPlaceRevealTimeline(
     playback.frames.some(
       ({ currentTime, contentOpacity, lineOpacities }) =>
         currentTime > 0 &&
-        currentTime < 400 &&
+        currentTime < 760 &&
         contentOpacity === 0 &&
         lineOpacities.every((opacity) => opacity > 0),
     ),
@@ -1661,8 +1705,8 @@ async function captureFirstPlaceRevealTimeline(
   expect(
     playback.frames.some(
       ({ currentTime, contentOpacity, lineOpacities }) =>
-        currentTime >= 400 &&
-        currentTime < 800 &&
+        currentTime >= 760 &&
+        currentTime < 1300 &&
         contentOpacity !== null &&
         contentOpacity > 0 &&
         lineOpacities.every((opacity) => opacity === 0),
@@ -1689,6 +1733,70 @@ test("@chromium first-place anticipation visibility timeline", async ({ page }, 
   const region = rankRegionFor(page, "first");
   await expect(region).toHaveCount(1);
   await expect(region.getByText("花子", { exact: false })).toBeVisible();
+  const headerMotion = await region.locator("[class*='rankHeader']").evaluate(async (header) => {
+    const animation = header
+      .getAnimations()
+      .find((candidate) =>
+        (candidate as CSSAnimation).animationName.includes("rankHeaderEntrance"),
+      );
+    if (!animation) return null;
+    animation.pause();
+    await animation.ready;
+    const duration = Number(animation.effect?.getComputedTiming().duration);
+    const sample = async (currentTime: number) => {
+      animation.currentTime = currentTime;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const transform = new DOMMatrixReadOnly(getComputedStyle(header).transform);
+      return { translateY: transform.f, scale: Math.hypot(transform.a, transform.b) };
+    };
+    const start = await sample(0);
+    const overshoot = await sample(duration * 0.76);
+    const end = await sample(duration);
+    animation.play();
+    return { duration, start, overshoot, end };
+  });
+  expect(headerMotion, "the shared rank heading has an entrance animation").not.toBeNull();
+  expect(headerMotion!.duration).toBe(640);
+  expect(headerMotion!.start.translateY).toBeGreaterThan(20);
+  expect(headerMotion!.start.scale).toBeLessThan(0.95);
+  expect(headerMotion!.overshoot.scale).toBeGreaterThan(1.02);
+  expect(headerMotion!.end.translateY).toBeCloseTo(0, 0);
+  expect(headerMotion!.end.scale).toBeCloseTo(1, 2);
+  const stampMotion = await region
+    .locator("[data-testid='presentation-exam-stamp']")
+    .evaluate(async (stamp) => {
+      const animation = stamp
+        .getAnimations()
+        .find((candidate) =>
+          (candidate as CSSAnimation).animationName.includes("rankStampEntrance"),
+        );
+      if (!animation) return null;
+      animation.pause();
+      await animation.ready;
+      const duration = Number(animation.effect?.getComputedTiming().duration);
+      const sample = async (currentTime: number) => {
+        animation.currentTime = currentTime;
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        const transform = new DOMMatrixReadOnly(getComputedStyle(stamp).transform);
+        return {
+          angle: (Math.atan2(transform.b, transform.a) * 180) / Math.PI,
+          scale: Math.hypot(transform.a, transform.b),
+        };
+      };
+      const start = await sample(0);
+      const overshoot = await sample(duration * 0.68);
+      const end = await sample(duration);
+      animation.play();
+      return { duration, start, overshoot, end };
+    });
+  expect(stampMotion, "the exam stamp has its own entrance animation").not.toBeNull();
+  expect(stampMotion!.duration).toBe(720);
+  expect(stampMotion!.start.angle).toBeCloseTo(-28, 0);
+  expect(stampMotion!.start.scale).toBeCloseTo(0.5, 1);
+  expect(stampMotion!.overshoot.angle).toBeGreaterThan(10);
+  expect(stampMotion!.overshoot.scale).toBeGreaterThan(1.1);
+  expect(stampMotion!.end.angle).toBeCloseTo(8, 0);
+  expect(stampMotion!.end.scale).toBeCloseTo(1, 2);
   const shimmer = await region.locator("[class*='rankHeading']").evaluate(async (heading) => {
     const animation = heading
       .getAnimations({ subtree: true })
@@ -1709,25 +1817,22 @@ test("@chromium first-place anticipation visibility timeline", async ({ page }, 
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     const finalOpacity = Number.parseFloat(getComputedStyle(heading, "::after").opacity);
     const rank = heading.querySelector<HTMLElement>("h1");
-    const rankStyle = rank ? getComputedStyle(rank) : null;
     return {
       duration,
       delay,
       startOpacity,
       middleOpacity,
       finalOpacity,
-      rankOpacity: rankStyle?.opacity ?? null,
-      rankTransform: rankStyle?.transform ?? null,
+      rankOpacity: rank ? getComputedStyle(rank).opacity : null,
     };
   });
   expect(shimmer, "rank plate shimmer is attached to the shared heading").not.toBeNull();
-  expect(shimmer!.duration).toBe(140);
-  expect(shimmer!.delay).toBe(260);
+  expect(shimmer!.duration).toBe(360);
+  expect(shimmer!.delay).toBe(300);
   expect(shimmer!.startOpacity).toBe(0);
   expect(shimmer!.middleOpacity).toBeGreaterThan(0);
   expect(shimmer!.finalOpacity).toBe(0);
   expect(shimmer!.rankOpacity).toBe("1");
-  expect(shimmer!.rankTransform).toBe("none");
   await expectRankAnticipation(region, "first-place visibility timeline", true);
   const reveal = region.locator("[class*='winnerReveal']");
   await expect
@@ -2559,7 +2664,7 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
           if (!(target instanceof HTMLElement)) return;
           const name = (event as AnimationEvent).animationName;
           if (
-            !/rankWinnerReveal|rankOrnamentEntrance|rankMedalEntrance|rankRevealAnticipation/.test(
+            !/rankHeaderEntrance|rankPlateEntrance|rankWinnerReveal|rankOrnamentEntrance|rankStampEntrance|rankRevealAnticipation|rankLineShimmer/.test(
               name,
             )
           )
@@ -2629,8 +2734,11 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   };
   type RankEffectSnapshot = {
     reveal: RankRevealSnapshot;
+    header: RankRevealSnapshot;
+    plate: RankRevealSnapshot;
     ornament: RankRevealSnapshot;
     medal: RankRevealSnapshot;
+    shimmer: RankRevealSnapshot;
   };
   const captureRankEffects = async (rank: string): Promise<RankEffectSnapshot | null> =>
     page.evaluate((entryRank): RankEffectSnapshot | null => {
@@ -2648,7 +2756,7 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
       const find = (selector: string, fragment: string): RankRevealSnapshot | null => {
         const element = region.querySelector<HTMLElement>(selector);
         const animation = element
-          ?.getAnimations()
+          ?.getAnimations({ subtree: true })
           .find((candidate) => (candidate as CSSAnimation).animationName.includes(fragment));
         return animation
           ? {
@@ -2661,25 +2769,42 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
           : null;
       };
       const reveal = find("[class*='winnerContent']", "rankWinnerReveal");
+      const header = find("[class*='rankHeader']", "rankHeaderEntrance");
+      const plate = find("[class*='rankHeader'] h1[class*='rank']", "rankPlateEntrance");
       const ornament = find("[class*='rankOrnament']", "rankOrnamentEntrance");
-      const medal = find("[data-testid='presentation-exam-stamp']", "rankMedalEntrance");
-      return reveal && ornament && medal ? { reveal, ornament, medal } : null;
+      const medal = find("[data-testid='presentation-exam-stamp']", "rankStampEntrance");
+      const shimmer = find("[class*='rankHeading']", "rankLineShimmer");
+      return reveal && header && plate && ornament && medal && shimmer
+        ? { reveal, header, plate, ornament, medal, shimmer }
+        : null;
     }, rank);
   const waitForRankEffects = async (rank: string) => {
     await expect.poll(async () => (await captureRankEffects(rank)) !== null).toBe(true);
     return (await captureRankEffects(rank))!;
   };
-  type DecorationIdentityPair = Record<"ornament" | "medal", number>;
+  type DecorationIdentityPair = Record<
+    "header" | "plate" | "ornament" | "medal" | "shimmer",
+    number
+  >;
   const latestDecorationEntry = async (rank: string): Promise<DecorationIdentityPair> => {
     const effects = await waitForRankEffects(rank);
-    return { ornament: effects.ornament.identity, medal: effects.medal.identity };
+    return {
+      header: effects.header.identity,
+      plate: effects.plate.identity,
+      ornament: effects.ornament.identity,
+      medal: effects.medal.identity,
+      shimmer: effects.shimmer.identity,
+    };
   };
   const expectFreshDecorationEntry = (
     actual: DecorationIdentityPair,
     previous: DecorationIdentityPair,
   ) => {
+    expect(actual.header).not.toBe(previous.header);
+    expect(actual.plate).not.toBe(previous.plate);
     expect(actual.ornament).not.toBe(previous.ornament);
     expect(actual.medal).not.toBe(previous.medal);
+    expect(actual.shimmer).not.toBe(previous.shimmer);
   };
   const mock = await installAdminApiMock(page);
   mock.setWinnerEntries([
@@ -2701,8 +2826,8 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   await expect(thirdReveal).toHaveCount(1);
   await expect(thirdReveal.locator("article").first()).toBeAttached();
   expect(await thirdReveal.getAttribute("aria-hidden")).toBeNull();
-  await expect(thirdContent).toHaveCSS("animation-delay", "0.4s");
-  await expect(thirdContent).toHaveCSS("animation-duration", "0.4s");
+  await expect(thirdContent).toHaveCSS("animation-delay", "0.76s");
+  await expect(thirdContent).toHaveCSS("animation-duration", "0.54s");
   await expectRankRevealGeometry(thirdRegion, "during-delay", initialPauseStyle);
   const thirdRevealSnapshot = await waitForRankReveal("third");
   await latestDecorationEntry("third");
@@ -2742,9 +2867,13 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   const firstOrnament = firstRegion.locator("[class*='rankOrnament']");
   const firstStamp = firstRegion.locator("[data-testid='presentation-exam-stamp']");
   await expectRankAnticipation(firstRegion, "first-place rank entry reveal", true);
-  await expect(firstOrnament).toHaveCSS("animation-duration", "0.16s");
+  await expect(firstOrnament).toHaveCSS("animation-duration", "0.65s");
   await expect(firstOrnament).toHaveCSS("animation-delay", "0.08s");
-  await expect(firstStamp).toHaveCSS("animation-duration", "0.24s");
+  await expect(firstStamp).toHaveCSS("animation-duration", "0.72s");
+  await expect(firstRegion.locator("[class*='rankHeader']")).toHaveCSS(
+    "animation-duration",
+    "0.64s",
+  );
   await expect(firstOrnament).toHaveAttribute("aria-hidden", "true");
   await expect(firstStamp).toHaveAttribute("aria-hidden", "true");
   const anticipationGeometry = await firstRegion
@@ -2763,13 +2892,13 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   expect(anticipationGeometry).toEqual([
     {
       animationNameIncludes: true,
-      animationDuration: "0.4s",
+      animationDuration: "0.76s",
       animationDelay: "0s",
       pointerEvents: "none",
     },
     {
       animationNameIncludes: true,
-      animationDuration: "0.4s",
+      animationDuration: "0.76s",
       animationDelay: "0s",
       pointerEvents: "none",
     },
@@ -2962,6 +3091,12 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   const reducedContent = reducedFirst.locator("[class*='winnerContent']");
   await expect(reducedContent).toHaveCSS("animation-name", "none");
   await expect(reducedContent).toHaveCSS("transform", "none");
+  await expect(reducedFirst.locator("[class*='rankHeader']")).toHaveCSS("animation-name", "none");
+  expect(
+    await reducedFirst
+      .locator("[class*='rankHeader'] h1[class*='rank']")
+      .evaluate((rank) => getComputedStyle(rank, "::before").animationName),
+  ).toBe("none");
   await expect(reducedFirst.locator("[class*='rankOrnament']")).toHaveCSS("animation-name", "none");
   await expect(reducedFirst.locator("[class*='rankOrnament']")).toHaveCSS("opacity", "0.55");
   await expect(reducedFirst.locator("[data-testid='presentation-exam-stamp']")).toHaveCSS(
@@ -3052,7 +3187,7 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
       ),
       medal: describe(
         region?.querySelector("[data-testid='presentation-exam-stamp']") ?? null,
-        "rankMedalEntrance",
+        "rankStampEntrance",
       ),
       winner: describe(
         region?.querySelector("[class*='winnerContent']") ?? null,
@@ -3092,13 +3227,13 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
       () =>
         [
           ...document.querySelectorAll(
-            "[class*='rankOrnament'], [class*='rankStamp'], [class*='winnerReveal'], " +
-              "[class*='winnerContent']",
+            "[class*='rankHeader'], [class*='rankOrnament'], [class*='rankStamp'], " +
+              "[class*='rankHeading'], [class*='winnerReveal'], [class*='winnerContent']",
           ),
         ]
           .flatMap((element) => element.getAnimations())
           .filter((animation) =>
-            /rankWinnerReveal|rankOrnamentEntrance|rankMedalEntrance|rankRevealAnticipation/.test(
+            /rankHeaderEntrance|rankPlateEntrance|rankWinnerReveal|rankOrnamentEntrance|rankStampEntrance|rankRevealAnticipation|rankLineShimmer/.test(
               (animation as CSSAnimation).animationName,
             ),
           ).length,
@@ -3113,6 +3248,12 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
   await expect(firstRegion).toHaveCount(1);
   await expect(firstRegion.getByText("花子", { exact: false })).toBeVisible();
   await expect(firstRegion.locator("[class*='winnerContent']")).toHaveCSS("animation-name", "none");
+  await expect(firstRegion.locator("[class*='rankHeader']")).toHaveCSS("animation-name", "none");
+  expect(
+    await firstRegion
+      .locator("[class*='rankHeader'] h1[class*='rank']")
+      .evaluate((rank) => getComputedStyle(rank, "::before").animationName),
+  ).toBe("none");
   await expectRankAnticipation(
     firstRegion,
     "dynamic reduced-motion first-place entry",
@@ -3192,8 +3333,8 @@ test("@chromium first-place anticipation eligibility stays fixed for the rank en
     };
   });
   expect(initialAnimation).toEqual({
-    beforeDuration: "0.4s",
-    afterDuration: "0.4s",
+    beforeDuration: "0.76s",
+    afterDuration: "0.76s",
     beforeDelay: "0s",
     afterDelay: "0s",
   });
