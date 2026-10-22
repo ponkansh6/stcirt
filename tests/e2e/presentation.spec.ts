@@ -681,8 +681,8 @@ async function inspectEntryAnimation(target: import("@playwright/test").Locator)
       animation?.effect instanceof KeyframeEffect ? animation.effect.getKeyframes() : [];
     const first = frames[0];
     const last = frames.at(-1);
-    const matrixFor = (transform: string | null | undefined) =>
-      new DOMMatrixReadOnly(transform || "none").m42;
+    const matrixFor = (transform: unknown) =>
+      new DOMMatrixReadOnly(typeof transform === "string" ? transform : "none").m42;
     return {
       animationName: style.animationName,
       animationDuration: style.animationDuration,
