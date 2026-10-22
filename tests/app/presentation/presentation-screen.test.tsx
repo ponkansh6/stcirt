@@ -260,6 +260,7 @@ describe("presentation projection and presenter progression", () => {
     const api = setup({ authenticated: true });
     render(<PresentationScreen />);
     expect(await screen.findByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+    expect(document.querySelector("[class*='questionMotion']")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "全画面表示" })).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     fireEvent.click(screen.getByTestId("presentation-canvas"));
@@ -271,6 +272,114 @@ describe("presentation projection and presenter progression", () => {
       ),
     ).toBe(false);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["opening", { state: "opening" }, "openingMotion"],
+    [
+      "question",
+      {
+        state: "question",
+        question: { id: 1, ordinal: 1, total: 5, question: "設問", choices: ["A", "B"] },
+      },
+      "questionMotion",
+    ],
+    ["podium preview", { state: "podium_preview" }, "podiumPreviewMotion"],
+    ["finished", { state: "finished" }, "finishedMotion"],
+    [
+      "answer",
+      {
+        state: "answer",
+        question: {
+          id: 1,
+          ordinal: 1,
+          total: 5,
+          question: "設問",
+          choices: ["A", "B"],
+          correctIndex: 0,
+          explanation: "補足",
+        },
+      },
+      null,
+    ],
+    ["rank", { state: "third", winners: [{ displayName: "花子", score: 1, rank: 3 }] }, null],
+  ] as const)(
+    "applies generic entry only to the selected %s stage",
+    async (_name, projection, entryClass) => {
+      setup({ projection });
+      render(<PresentationScreen />);
+      await settled();
+
+      const slide = screen.getByTestId("presentation-natural-layer");
+      if (entryClass) {
+        expect(slide.querySelector(`[class*='${entryClass}']`)).toBeInTheDocument();
+        expect(slide.querySelectorAll("[class*='Motion']")).toHaveLength(1);
+      } else {
+        expect(slide.querySelector("[class*='Motion']")).not.toBeInTheDocument();
+      }
+      if (_name === "rank") {
+        expect(slide.querySelector("[class*='winnerReveal']")).toBeInTheDocument();
+      }
+    },
+  );
+
+  it("keeps a question entry mounted across same-ID polls and replaces it for a new question ID", async () => {
+    vi.useFakeTimers();
+    let projection: Record<string, unknown> = {
+      state: "question",
+      question: {
+        id: 11,
+        ordinal: 1,
+        total: 5,
+        question: "短い設問",
+        choices: ["A", "B"],
+      },
+    };
+    const api = setup({ projectionGetter: async () => response(projection) });
+    render(<PresentationScreen />);
+    await settled();
+    const firstEntry = document.querySelector("[class*='questionMotion']");
+    expect(firstEntry).toBeInTheDocument();
+
+    projection = {
+      state: "question",
+      question: {
+        id: 11,
+        ordinal: 1,
+        total: 5,
+        question: "同じIDのpollで届いた長い設問文".repeat(8),
+        choices: ["A", "B", "C", "D"],
+      },
+    };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1400);
+    });
+    await settled();
+
+    expect(document.querySelector("[class*='questionMotion']")).toBe(firstEntry);
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
+    expect(screen.getByRole("heading", { name: /同じIDのpoll/ })).toBeInTheDocument();
+
+    projection = {
+      state: "question",
+      question: {
+        id: 12,
+        ordinal: 2,
+        total: 5,
+        question: "新しい設問",
+        choices: ["次の選択肢"],
+      },
+    };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1400);
+    });
+    await settled();
+
+    const nextEntry = document.querySelector("[class*='questionMotion']");
+    expect(nextEntry).toBeInTheDocument();
+    expect(nextEntry).not.toBe(firstEntry);
+    expect(screen.getByRole("heading", { name: "新しい設問" })).toBeInTheDocument();
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(3);
   });
 
   it("announces only the concise slide stage and documents focused keyboard controls", async () => {
@@ -433,6 +542,30 @@ describe("presentation projection and presenter progression", () => {
     );
 
     expect(stylesheet).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+    expect(stylesheet).toMatch(
+      /@keyframes presentationEntry\s*\{[^}]*opacity:\s*0;[^}]*transform:\s*translateY\(-12px\);/s,
+    );
+    const entryKeyframes = stylesheet.match(/@keyframes presentationEntry\s*\{([\s\S]*?)\n\}/)?.[1];
+    expect(entryKeyframes).toBeDefined();
+    expect(
+      Array.from(
+        new Set(
+          Array.from(
+            entryKeyframes!.matchAll(/^\s*([a-z-]+):/gm),
+            ([, property]) => property ?? "",
+          ),
+        ),
+      ).sort(),
+    ).toEqual(["opacity", "transform"]);
+    expect(stylesheet).toMatch(
+      /\.questionMotion > \.choices > li:nth-child\(n \+ 4\)\s*\{[^}]*animation-delay:\s*255ms;/s,
+    );
+    expect(stylesheet).toMatch(
+      /\.openingMotion \.openingTitle,[\s\S]*?\.finishedMotion \.subtitle\s*\{[^}]*animation:\s*none !important;[^}]*animation-delay:\s*0s !important;[^}]*opacity:\s*1 !important;[^}]*transform:\s*none !important;/,
+    );
+    expect(stylesheet).not.toMatch(
+      /\.(?:answerReview|winners)\s*\{[^}]*animation:\s*presentationEntry/,
+    );
     expect(stylesheet).toMatch(/animation-duration:\s*0\.01ms\s*!important/);
     expect(stylesheet).toMatch(/animation-iteration-count:\s*1\s*!important/);
     expect(stylesheet).toMatch(/transition-duration:\s*0\.01ms\s*!important/);
@@ -2046,6 +2179,9 @@ describe("presentation projection and presenter progression", () => {
     expect(answerHeading.closest("[class*='answerReveal']")).toContainElement(
       screen.getByText("家族で旅行"),
     );
+    expect(
+      screen.getByTestId("presentation-natural-layer").querySelector("[class*='Motion']"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/秘密の回答者|秘密の参加者回答/)).not.toBeInTheDocument();
   });
 
@@ -2150,6 +2286,7 @@ describe("presentation projection and presenter progression", () => {
     render(<PresentationScreen />);
 
     const region = await screen.findByRole("region", { name: "第一位の勝者一覧" });
+    expect(region.querySelector("[class*='Motion']")).not.toBeInTheDocument();
     const reveal = region.querySelector("[class*='winnerReveal']");
     expect(reveal).toHaveAttribute("data-reveal-eligible", "true");
     expect(reveal?.querySelectorAll("article")).toHaveLength(2);

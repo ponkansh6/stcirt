@@ -654,6 +654,82 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
   }
 }
 
+function entryFor(page: import("@playwright/test").Page, state: PresentationState) {
+  switch (state) {
+    case "opening":
+      return page.locator("#opening-title").locator("xpath=..");
+    case "question":
+      return page.locator("#question-heading");
+    case "podium_preview":
+      return page.locator("#podium-title");
+    case "finished":
+      return page.locator("#finished-title");
+    default:
+      throw new Error(`No generic entrance target for ${state}`);
+  }
+}
+
+async function inspectEntryAnimation(target: import("@playwright/test").Locator) {
+  return target.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const animation = element
+      .getAnimations()
+      .find((candidate) => (candidate as CSSAnimation).animationName.endsWith("presentationEntry"));
+    animation?.pause();
+    if (animation) animation.currentTime = 0;
+    const frames =
+      animation?.effect instanceof KeyframeEffect ? animation.effect.getKeyframes() : [];
+    const first = frames[0];
+    const last = frames.at(-1);
+    const matrixFor = (transform: string | null | undefined) =>
+      new DOMMatrixReadOnly(transform || "none").m42;
+    return {
+      animationName: style.animationName,
+      animationDuration: style.animationDuration,
+      animationFillMode: style.animationFillMode,
+      firstOpacity: first?.opacity,
+      firstTranslateY: matrixFor(first?.transform),
+      lastOpacity: last?.opacity,
+      lastTranslateY: matrixFor(last?.transform),
+    };
+  });
+}
+
+async function expectPresentationEntryAnimation(target: import("@playwright/test").Locator) {
+  const animation = await inspectEntryAnimation(target);
+  const durationMs = Number.parseFloat(animation.animationDuration);
+  const durationInMs = animation.animationDuration.endsWith("ms") ? durationMs : durationMs * 1000;
+  expect(animation.animationName).toMatch(/presentationEntry$/);
+  expect(durationInMs).toBeGreaterThan(0);
+  expect(durationInMs).toBeLessThanOrEqual(400);
+  expect(animation.animationFillMode).toBe("both");
+  expect(Number(animation.firstOpacity)).toBe(0);
+  expect(animation.firstTranslateY).toBe(-12);
+  expect(Number(animation.lastOpacity)).toBe(1);
+  expect(animation.lastTranslateY).toBe(0);
+}
+
+async function expectReducedEntry(target: import("@playwright/test").Locator) {
+  await expect(target).toHaveCSS("animation-name", "none");
+  await expect(target).toHaveCSS("animation-delay", "0s");
+  await expect(target).toHaveCSS("opacity", "1");
+  await expect(target).toHaveCSS("transform", "none");
+}
+
+async function advancePresenterTo(page: import("@playwright/test").Page, state: PresentationState) {
+  const mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, state)).toBeVisible();
+  await mutation;
+}
+
+async function returnPresenterTo(page: import("@playwright/test").Page, state: PresentationState) {
+  const mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, state)).toBeVisible();
+  await mutation;
+}
+
 function rankRegionFor(page: import("@playwright/test").Page, rank: "third" | "second" | "first") {
   return page
     .getByTestId("presentation-canvas")
@@ -3124,6 +3200,96 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
     ["::before", "::after"].map((pseudo) => getComputedStyle(element, pseudo).opacity),
   );
   expect(reducedPseudoOpacity).toEqual(["0", "0"]);
+});
+
+test("@chromium generic slide entrances honor their stage and dynamic reduced motion", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  mock.setPresentationPosition("opening");
+  await openPresenter(page);
+
+  const normalMotionStages: PresentationState[] = [
+    "opening",
+    "question",
+    "podium_preview",
+    "finished",
+  ];
+  for (const state of normalMotionStages) {
+    await expect(slideFor(page, state)).toBeVisible();
+    await expectPresentationEntryAnimation(entryFor(page, state));
+    if (state === "question") {
+      const firstChoice = page.locator("#question-heading + ol li").first();
+      expect(
+        await firstChoice.evaluate((element) => getComputedStyle(element).animationName),
+      ).toMatch(/presentationEntry$/);
+      const delay = await firstChoice.evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).animationDelay),
+      );
+      expect(delay).toBeGreaterThan(0);
+    }
+    if (state !== "finished") {
+      const nextState: PresentationState =
+        state === "opening"
+          ? "question"
+          : state === "question"
+            ? "answer"
+            : state === "podium_preview"
+              ? "third"
+              : "finished";
+      await advancePresenterTo(page, nextState);
+      if (nextState === "answer") await advancePresenterTo(page, "podium_preview");
+      if (nextState === "third") {
+        await advancePresenterTo(page, "second");
+        await advancePresenterTo(page, "first");
+        await advancePresenterTo(page, "finished");
+      }
+    }
+  }
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expectReducedEntry(entryFor(page, "finished"));
+
+  const reducedMotionStages: PresentationState[] = [
+    "first",
+    "second",
+    "third",
+    "podium_preview",
+    "answer",
+    "question",
+    "opening",
+  ];
+  for (const state of reducedMotionStages) {
+    await returnPresenterTo(page, state);
+    if (state === "opening" || state === "question" || state === "podium_preview") {
+      await expectReducedEntry(entryFor(page, state));
+    }
+    if (state === "question") {
+      const choices = page.locator("#question-heading + ol li");
+      await expect(choices).toHaveCount(questions[0].choices.length);
+      const choiceStyles = await choices.evaluateAll((elements) =>
+        elements.map((element) => {
+          const style = getComputedStyle(element);
+          return {
+            animationName: style.animationName,
+            animationDelay: style.animationDelay,
+            opacity: style.opacity,
+            transform: style.transform,
+          };
+        }),
+      );
+      for (const style of choiceStyles) {
+        expect(style).toEqual({
+          animationName: "none",
+          animationDelay: "0s",
+          opacity: "1",
+          transform: "none",
+        });
+      }
+    }
+  }
 });
 
 test("@chromium rank effects respond immediately to a dynamic reduced-motion change", async ({

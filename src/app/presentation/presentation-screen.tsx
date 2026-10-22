@@ -318,9 +318,9 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
     </ol>
   );
 }
-function QuestionPrompt({ question }: { question: PublicQuestion }) {
+function QuestionPrompt({ question, className }: { question: PublicQuestion; className: string }) {
   return (
-    <section className={styles.question} aria-labelledby="question-heading">
+    <section className={`${styles.question} ${className}`} aria-labelledby="question-heading">
       <p className={styles.ordinal}>
         問 <strong>{question.ordinal}</strong>
       </p>
@@ -1348,7 +1348,10 @@ export default function PresentationScreen({
                   )}
 
                   {state === "opening" && (
-                    <section className={styles.opening} aria-labelledby="opening-title">
+                    <section
+                      className={`${styles.opening} ${styles.openingMotion}`}
+                      aria-labelledby="opening-title"
+                    >
                       <div className={styles.openingLockup}>
                         <div className={styles.openingTitle}>
                           <h1 id="opening-title" aria-label="しゅんたま検定">
@@ -1365,7 +1368,11 @@ export default function PresentationScreen({
                   )}
 
                   {state === "question" && data?.question && (
-                    <QuestionPrompt question={data.question} />
+                    <QuestionPrompt
+                      key={`question:${String(data.question.id)}`}
+                      question={data.question}
+                      className={styles.questionMotion}
+                    />
                   )}
                   {state === "answer" && data?.question && (
                     <AnswerReview
@@ -1375,7 +1382,10 @@ export default function PresentationScreen({
                   )}
 
                   {state === "podium_preview" && (
-                    <section className={styles.podiumPreview} aria-labelledby="podium-title">
+                    <section
+                      className={`${styles.podiumPreview} ${styles.podiumPreviewMotion}`}
+                      aria-labelledby="podium-title"
+                    >
                       <h1 id="podium-title">いよいよ、結果発表です</h1>
                       <p className={styles.subtitle}>
                         これから入賞者を発表します。どうぞお楽しみに
@@ -1448,7 +1458,10 @@ export default function PresentationScreen({
                   )}
 
                   {state === "finished" && (
-                    <section className={styles.finished} aria-labelledby="finished-title">
+                    <section
+                      className={`${styles.finished} ${styles.finishedMotion}`}
+                      aria-labelledby="finished-title"
+                    >
                       <h1 id="finished-title">
                         ご参加
                         <br />

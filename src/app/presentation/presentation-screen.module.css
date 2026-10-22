@@ -196,6 +196,18 @@
   flex: 0 0 auto;
 }
 
+.openingMotion .openingTitle {
+  animation: presentationEntry 340ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+.openingMotion .openingSubtitle {
+  animation: presentationEntry 320ms cubic-bezier(0.2, 0.75, 0.25, 1) 60ms both;
+}
+
+.openingMotion .openingWait {
+  animation: presentationEntry 300ms cubic-bezier(0.2, 0.75, 0.25, 1) 120ms both;
+}
+
 .opening .openingTitle h1 {
   display: flex;
   flex-wrap: nowrap;
@@ -331,6 +343,76 @@
   justify-content: center;
   width: 100%;
   max-width: 1360px;
+}
+
+.questionMotion > .ordinal {
+  animation: presentationEntry 300ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+.questionMotion > h1 {
+  animation: presentationEntry 330ms cubic-bezier(0.2, 0.75, 0.25, 1) 45ms both;
+}
+
+.questionMotion > .choices > li {
+  animation: presentationEntry 320ms cubic-bezier(0.2, 0.75, 0.25, 1) 90ms both;
+}
+
+.questionMotion > .choices > li:nth-child(2) {
+  animation-delay: 145ms;
+}
+
+.questionMotion > .choices > li:nth-child(3) {
+  animation-delay: 200ms;
+}
+
+.questionMotion > .choices > li:nth-child(n + 4) {
+  animation-delay: 255ms;
+}
+
+@keyframes presentationEntry {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.podiumPreviewMotion h1 {
+  animation: presentationEntry 360ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+.podiumPreviewMotion .subtitle {
+  animation: presentationEntry 320ms cubic-bezier(0.2, 0.75, 0.25, 1) 70ms both;
+}
+
+.finishedMotion h1 {
+  animation: presentationEntry 360ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+.finishedMotion .subtitle {
+  animation: presentationEntry 320ms cubic-bezier(0.2, 0.75, 0.25, 1) 80ms both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .openingMotion .openingTitle,
+  .openingMotion .openingSubtitle,
+  .openingMotion .openingWait,
+  .questionMotion > .ordinal,
+  .questionMotion > h1,
+  .questionMotion > .choices > li,
+  .podiumPreviewMotion h1,
+  .podiumPreviewMotion .subtitle,
+  .finishedMotion h1,
+  .finishedMotion .subtitle {
+    animation: none !important;
+    animation-delay: 0s !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
 }
 
 .answerReview {
