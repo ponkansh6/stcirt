@@ -499,7 +499,7 @@ export default function QuizRunner() {
           />
           {access.kind === "reauthentication" && (
             <section
-              className="mt-8 border-t border-border pt-6"
+              className="mt-8 border-t border-border-subtle pt-6"
               aria-labelledby="assisted-reauth-title"
             >
               <h2 id="assisted-reauth-title" className="text-lg font-bold">
@@ -613,7 +613,7 @@ export default function QuizRunner() {
           </p>
           {access.kind === "reauthentication" && (
             <section
-              className="mt-6 rounded-xl border border-border bg-surface-2 p-5"
+              className="mt-6 rounded-xl border border-border-subtle bg-surface-2 p-5"
               aria-labelledby="owner-return-reauth-title"
             >
               <h2 id="owner-return-reauth-title" className="text-lg font-bold">
@@ -731,7 +731,7 @@ export default function QuizRunner() {
           )}
           {(access.kind === "reauthentication" || participantResultsAuthExpired) && (
             <section
-              className="mt-6 rounded-xl border border-border bg-surface-2 p-5"
+              className="mt-6 rounded-xl border border-border-subtle bg-surface-2 p-5"
               aria-labelledby="complete-reauth-title"
             >
               <h2 id="complete-reauth-title" className="text-lg font-bold">
@@ -895,10 +895,10 @@ export default function QuizRunner() {
                       jumpToQuestion(question.id);
                     }}
                     aria-label={`第${index + 1}問へ移動、${answered ? "回答済み" : "未回答"}`}
-                    className={`flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${answered ? "border-primary bg-primary text-on-primary" : "border-border bg-surface-2 text-muted"}`}
+                    className={`flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${answered ? "border-primary bg-primary text-on-primary" : "border-control-border bg-surface-2 text-muted"}`}
                   >
                     <span>第{index + 1}問</span>
-                    {answered ? "回答済み" : "未回答"}
+                    {answered ? "✓ 済" : "未回答"}
                   </a>
                 </li>
               );
@@ -907,7 +907,7 @@ export default function QuizRunner() {
         </nav>
       </HeaderPortal>
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-7 sm:py-10">
-        <header className="mb-7 border-b border-border pb-6">
+        <header className="mb-7 border-b border-border-subtle pb-6">
           <div className="mt-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
             <div>
               <h1 className="text-3xl font-bold tracking-tight">しゅんたま検定</h1>
@@ -920,7 +920,10 @@ export default function QuizRunner() {
                 />
               )}
             </div>
-            <p className="text-base font-bold" aria-live="polite">
+            <p
+              className="rounded-full border border-border-subtle bg-surface-2 px-3 py-1 text-sm font-bold"
+              aria-live="polite"
+            >
               回答済み {answeredCount}/5
             </p>
           </div>
@@ -938,7 +941,7 @@ export default function QuizRunner() {
           !authExpired &&
           (ui.busy || ui.statusRole === "alert") && (
             <p
-              className={`mb-5 rounded-lg border p-4 text-sm font-medium ${ui.statusRole === "alert" ? "border-error/50 bg-error/10 text-error" : "border-border bg-surface-2"}`}
+              className={`mb-5 rounded-lg border p-4 text-sm font-medium ${ui.statusRole === "alert" ? "border-error/50 bg-error/10 text-error" : "border-border-subtle bg-surface-2"}`}
               role={ui.statusRole}
               aria-live={ui.statusRole === "alert" ? "assertive" : "polite"}
               aria-busy={ui.busy || undefined}
@@ -950,7 +953,7 @@ export default function QuizRunner() {
 
         {authExpired && (
           <section
-            className="mb-6 rounded-xl border border-border bg-surface-2 p-5 sm:p-6"
+            className="mb-6 rounded-xl border border-border-subtle bg-surface-2 p-5 sm:p-6"
             aria-labelledby="reauth-title"
           >
             <h2 id="reauth-title" className="text-lg font-bold">
@@ -984,11 +987,11 @@ export default function QuizRunner() {
               <section
                 key={question.id}
                 id={`question-${question.id}`}
-                className="rounded-2xl border border-border bg-surface p-4 shadow-card sm:p-7"
+                className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-card sm:p-7"
                 aria-labelledby={questionTitleId}
               >
-                <p className="mb-2 text-sm font-semibold tracking-widest text-primary">
-                  第{index + 1}問{" "}
+                <p className="mb-2 text-sm font-semibold tracking-widest">
+                  <span className="text-accent">第{index + 1}問</span>{" "}
                   <span className="font-medium tracking-normal text-muted">/ 全5問</span>
                 </p>
                 <h2
@@ -1003,7 +1006,7 @@ export default function QuizRunner() {
                 </h2>
                 <fieldset
                   disabled={isLocked}
-                  className="min-w-0 space-y-3 border-t border-border pt-5"
+                  className="min-w-0 space-y-3 border-t border-border-subtle pt-5"
                 >
                   <legend className="sr-only">
                     <span className="sr-only">第{index + 1}問 / 全5問：</span>
@@ -1031,7 +1034,7 @@ export default function QuizRunner() {
                         onChange={(event) =>
                           setFreeResponse(question.id, event.currentTarget.value)
                         }
-                        className={`min-h-36 w-full resize-y rounded-lg border border-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 ${styles.freeText}`}
+                        className={`min-h-36 w-full resize-y rounded-lg border border-control-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 ${styles.freeText}`}
                         disabled={isLocked}
                       />
                     </div>
@@ -1058,10 +1061,10 @@ export default function QuizRunner() {
         </div>
 
         <section
-          className="mt-7 rounded-2xl border-2 border-primary/30 bg-surface p-5 shadow-card sm:p-7"
+          className="mt-7 rounded-2xl border border-border-subtle border-l-4 border-l-accent bg-surface p-5 shadow-card sm:p-7"
           aria-labelledby="final-check-title"
         >
-          <p className="text-sm font-semibold tracking-widest text-primary">最終確認</p>
+          <p className="text-sm font-semibold tracking-widest text-accent">最終確認</p>
           {visibilityUnknown && !publishedLock && (
             <p className="mt-3 text-sm text-muted" role="status" aria-live="polite">
               公開状態を確認できません。確認できるまで編集はできません。
@@ -1076,7 +1079,7 @@ export default function QuizRunner() {
             回答内容を確認してください
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-muted">保存すると回答完了になります。</p>
-          <dl className="mt-4 rounded-lg border border-border bg-surface-2 p-4">
+          <dl className="mt-4 rounded-lg border border-border-subtle bg-surface-2 p-4">
             <dt className="text-sm text-muted">回答先</dt>
             <dd className="mt-1 break-words font-semibold">
               {answerer.name}さん（{answerer.kind}）
@@ -1103,7 +1106,7 @@ export default function QuizRunner() {
                       <button
                         type="button"
                         onClick={() => jumpToQuestion(question.id)}
-                        className="min-h-11 rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm font-semibold underline decoration-1 underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        className="min-h-11 rounded-lg border border-control-border bg-surface-2 px-4 py-2 text-sm font-semibold underline decoration-1 underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                       >
                         第{questionIndex + 1}問へ
                       </button>
@@ -1133,7 +1136,7 @@ export default function QuizRunner() {
               return (
                 <li
                   key={question.id}
-                  className="min-w-0 rounded-lg border border-border bg-surface-2 p-4"
+                  className="min-w-0 rounded-lg border border-border-subtle bg-surface-2 p-4"
                 >
                   <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -1153,7 +1156,7 @@ export default function QuizRunner() {
                       編集する
                     </button>
                   </div>
-                  <div className="mt-3 min-w-0 border-t border-border pt-3">
+                  <div className="mt-3 min-w-0 border-t border-border-subtle pt-3">
                     <p className="text-sm font-semibold">{answered ? "回答" : "未回答"}</p>
                     {question.answerType === "selected" && selectedChoice !== undefined && (
                       <p className="mt-1 break-words leading-relaxed">
@@ -1235,7 +1238,7 @@ function AnswererNameField({
 
   return (
     <div
-      className={`flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm ${className}`}
+      className={`flex min-w-0 max-w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-border-subtle bg-surface-2 px-3 py-2 text-sm ${className}`}
     >
       <dl className="flex min-w-0 items-baseline gap-2">
         <dt className="shrink-0 text-muted">氏名</dt>
@@ -1250,7 +1253,7 @@ function AnswererNameField({
 
 function ParticipantCard({ children }: { children: ReactNode }) {
   return (
-    <section className="rounded-2xl border border-border bg-surface p-6 shadow-card sm:p-10">
+    <section className="rounded-2xl border border-border-subtle bg-surface p-6 shadow-card sm:p-10">
       {children}
     </section>
   );
@@ -1338,7 +1341,7 @@ function ParticipantForm({
           value={name}
           onChange={(event) => setName(event.currentTarget.value)}
           aria-describedby={feedback ? "participant-form-message" : undefined}
-          className="min-h-12 w-full rounded-lg border border-border bg-bg px-4 text-base text-text shadow-sm outline-none transition focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+          className="min-h-12 w-full rounded-lg border border-control-border bg-bg px-4 text-base text-text shadow-sm outline-none transition focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
         />
       </div>
       <div className="space-y-2">
@@ -1359,7 +1362,7 @@ function ParticipantForm({
           onChange={(event) => setPin(event.currentTarget.value.replace(/[^0-9]/g, "").slice(0, 4))}
           aria-describedby={`participant-pin-hint${feedback ? " participant-form-message" : ""}`}
           aria-invalid={Boolean(error) || undefined}
-          className="min-h-12 w-full rounded-lg border border-border bg-bg px-4 text-base tracking-[0.35em] text-text shadow-sm outline-none transition focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+          className="min-h-12 w-full rounded-lg border border-control-border bg-bg px-4 text-base tracking-[0.35em] text-text shadow-sm outline-none transition focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
         />
         <p id="participant-pin-hint" className="text-sm text-muted">
           主催者から案内された数字を入力してください。
@@ -1421,7 +1424,7 @@ function AssistedParticipantForm({
           maxLength={120}
           value={name}
           onChange={(event) => setName(event.currentTarget.value)}
-          className="min-h-12 w-full rounded-lg border border-border bg-bg px-4 text-base text-text shadow-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+          className="min-h-12 w-full rounded-lg border border-control-border bg-bg px-4 text-base text-text shadow-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
           disabled={busy}
         />
       </div>

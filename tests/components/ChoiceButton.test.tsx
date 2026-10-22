@@ -19,7 +19,7 @@ describe("ChoiceButton", () => {
     expect(screen.getByText("A.")).toBeInTheDocument();
     expect(screen.getByText("Choice text")).toBeInTheDocument();
     expect(screen.getByText("Choice text").closest("label")).toHaveClass(
-      "border-border",
+      "border-control-border",
       "bg-surface",
       "hover:border-primary",
     );

@@ -32,10 +32,10 @@ export default function ChoiceButton({
       case "muted":
         return "border-border/60 bg-surface/40 opacity-50";
       case "selected":
-        return "border-primary bg-primary/10 shadow-sm";
+        return "border-primary bg-selection shadow-sm ring-1 ring-primary/20";
       case "idle":
       default:
-        return "border-border bg-surface hover:border-primary hover:shadow-card";
+        return "border-control-border bg-surface hover:border-primary hover:shadow-card";
     }
   };
 
@@ -55,14 +55,18 @@ export default function ChoiceButton({
         className="peer sr-only"
       />
       <span
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 font-bold text-sm ${checked ? "border-primary bg-primary text-on-primary" : "border-border bg-surface"}`}
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 font-bold text-sm ${checked ? "border-primary bg-primary text-on-primary" : "border-control-border bg-surface"}`}
       >
         {label}
       </span>
       <span className="min-w-0 flex-1 break-words font-medium">{text}</span>
       {checked && (
-        <span aria-hidden="true" className="shrink-0 text-sm font-bold text-primary">
-          選択中
+        <span
+          aria-hidden="true"
+          className="inline-flex shrink-0 items-center gap-1 text-sm font-bold text-primary"
+        >
+          <span>✓</span>
+          <span>選択中</span>
         </span>
       )}
     </label>
