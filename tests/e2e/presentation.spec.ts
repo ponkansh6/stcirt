@@ -614,6 +614,63 @@ async function waitForRenderFrames(page: import("@playwright/test").Page) {
   );
 }
 
+async function waitForCurrentPresentationEntryAnimations(page: import("@playwright/test").Page) {
+  const result = await page.evaluate(async () => {
+    const openingTitle = document.querySelector<HTMLElement>("#opening-title");
+    const questionHeading = document.querySelector<HTMLElement>("#question-heading");
+    const podiumTitle = document.querySelector<HTMLElement>("#podium-title");
+    const finishedTitle = document.querySelector<HTMLElement>("#finished-title");
+    let targets: HTMLElement[] = [];
+
+    if (openingTitle) {
+      const section = openingTitle.closest("section");
+      targets = [
+        openingTitle.parentElement,
+        ...Array.from(section?.querySelectorAll("p") ?? []),
+      ].filter((element): element is HTMLElement => element instanceof HTMLElement);
+    } else if (questionHeading?.nextElementSibling instanceof HTMLOListElement) {
+      targets = [
+        questionHeading.previousElementSibling,
+        questionHeading,
+        ...Array.from(questionHeading.nextElementSibling.querySelectorAll("li")),
+      ].filter((element): element is HTMLElement => element instanceof HTMLElement);
+    } else if (podiumTitle) {
+      targets = [podiumTitle, podiumTitle.nextElementSibling].filter(
+        (element): element is HTMLElement => element instanceof HTMLElement,
+      );
+    } else if (finishedTitle) {
+      targets = [finishedTitle, finishedTitle.nextElementSibling].filter(
+        (element): element is HTMLElement => element instanceof HTMLElement,
+      );
+    }
+
+    const animations = targets.flatMap((target) => {
+      const matches = target
+        .getAnimations()
+        .filter((animation) =>
+          (animation as CSSAnimation).animationName.endsWith("presentationEntry"),
+        );
+      if (matches.length !== 1) {
+        throw new Error(`Expected one presentationEntry animation on ${target.tagName}`);
+      }
+      const endTime = matches[0]?.effect?.getComputedTiming().endTime;
+      if (typeof endTime !== "number" || !Number.isFinite(endTime) || endTime <= 0) {
+        throw new Error("Expected a finite presentationEntry animation");
+      }
+      return matches;
+    });
+    await Promise.all(animations.map((animation) => animation.finished));
+    return {
+      targetCount: targets.length,
+      animationCount: animations.length,
+      finishedCount: animations.filter((animation) => animation.playState === "finished").length,
+    };
+  });
+  expect(result.targetCount).toBeGreaterThan(0);
+  expect(result.animationCount).toBe(result.targetCount);
+  expect(result.finishedCount).toBe(result.animationCount);
+}
+
 function nextAdminRefresh(page: import("@playwright/test").Page) {
   return page.waitForResponse(
     (response) =>
@@ -3977,6 +4034,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
   for (let index = 0; index < stages.length; index += 1) {
     const stage = stages[index]!;
     await expect(slideFor(page, stage.state)).toBeVisible();
+    if (stage.state === "question") await waitForCurrentPresentationEntryAnimations(page);
     const inspection = await inspectSlide();
     for (const text of stage.text) expect(inspection.text).toContain(text);
     if (stage.state === "question" || stage.state === "answer") {
