@@ -1689,6 +1689,45 @@ test("@chromium first-place anticipation visibility timeline", async ({ page }, 
   const region = rankRegionFor(page, "first");
   await expect(region).toHaveCount(1);
   await expect(region.getByText("花子", { exact: false })).toBeVisible();
+  const shimmer = await region.locator("[class*='rankHeading']").evaluate(async (heading) => {
+    const animation = heading
+      .getAnimations({ subtree: true })
+      .find((candidate) => (candidate as CSSAnimation).animationName.includes("rankLineShimmer"));
+    if (!animation) return null;
+    animation.pause();
+    await animation.ready;
+    const timing = animation.effect?.getComputedTiming();
+    const duration = Number(timing?.duration);
+    const delay = Number(timing?.delay);
+    animation.currentTime = delay;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const startOpacity = Number.parseFloat(getComputedStyle(heading, "::after").opacity);
+    animation.currentTime = delay + duration / 2;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const middleOpacity = Number.parseFloat(getComputedStyle(heading, "::after").opacity);
+    animation.currentTime = delay + duration;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const finalOpacity = Number.parseFloat(getComputedStyle(heading, "::after").opacity);
+    const rank = heading.querySelector<HTMLElement>("h1");
+    const rankStyle = rank ? getComputedStyle(rank) : null;
+    return {
+      duration,
+      delay,
+      startOpacity,
+      middleOpacity,
+      finalOpacity,
+      rankOpacity: rankStyle?.opacity ?? null,
+      rankTransform: rankStyle?.transform ?? null,
+    };
+  });
+  expect(shimmer, "rank plate shimmer is attached to the shared heading").not.toBeNull();
+  expect(shimmer!.duration).toBe(140);
+  expect(shimmer!.delay).toBe(260);
+  expect(shimmer!.startOpacity).toBe(0);
+  expect(shimmer!.middleOpacity).toBeGreaterThan(0);
+  expect(shimmer!.finalOpacity).toBe(0);
+  expect(shimmer!.rankOpacity).toBe("1");
+  expect(shimmer!.rankTransform).toBe("none");
   await expectRankAnticipation(region, "first-place visibility timeline", true);
   const reveal = region.locator("[class*='winnerReveal']");
   await expect
@@ -2703,7 +2742,8 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   const firstOrnament = firstRegion.locator("[class*='rankOrnament']");
   const firstStamp = firstRegion.locator("[data-testid='presentation-exam-stamp']");
   await expectRankAnticipation(firstRegion, "first-place rank entry reveal", true);
-  await expect(firstOrnament).toHaveCSS("animation-duration", "0.24s");
+  await expect(firstOrnament).toHaveCSS("animation-duration", "0.16s");
+  await expect(firstOrnament).toHaveCSS("animation-delay", "0.08s");
   await expect(firstStamp).toHaveCSS("animation-duration", "0.24s");
   await expect(firstOrnament).toHaveAttribute("aria-hidden", "true");
   await expect(firstStamp).toHaveAttribute("aria-hidden", "true");
@@ -2923,10 +2963,25 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   await expect(reducedContent).toHaveCSS("animation-name", "none");
   await expect(reducedContent).toHaveCSS("transform", "none");
   await expect(reducedFirst.locator("[class*='rankOrnament']")).toHaveCSS("animation-name", "none");
+  await expect(reducedFirst.locator("[class*='rankOrnament']")).toHaveCSS("opacity", "0.55");
   await expect(reducedFirst.locator("[data-testid='presentation-exam-stamp']")).toHaveCSS(
     "animation-name",
     "none",
   );
+  await expect(reducedFirst.locator("[data-testid='presentation-exam-stamp']")).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  expect(
+    await reducedFirst
+      .locator("[class*='rankHeading']")
+      .evaluate((heading) => getComputedStyle(heading, "::after").animationName),
+  ).toBe("none");
+  expect(
+    await reducedFirst
+      .locator("[class*='rankHeading']")
+      .evaluate((heading) => getComputedStyle(heading, "::after").opacity),
+  ).toBe("0");
   await expectRankAnticipation(reducedFirst, "reduced-motion first-place reveal", true, "reduced");
   const reducedReveal = reducedFirst.locator("[class*='winnerReveal']");
   await expect(reducedReveal).toHaveCSS("opacity", "1");
@@ -3018,9 +3073,19 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
   await expect(content).toHaveCSS("opacity", "1");
   await expect(content).toHaveCSS("transform", "none");
   await expect(ornament).toHaveCSS("animation-name", "none");
-  await expect(ornament).toHaveCSS("opacity", "0");
+  await expect(ornament).toHaveCSS("opacity", "0.55");
   await expect(medal).toHaveCSS("animation-name", "none");
-  await expect(medal).toHaveCSS("opacity", "0");
+  await expect(medal).toHaveCSS("opacity", "1");
+  expect(
+    await region
+      .locator("[class*='rankHeading']")
+      .evaluate((heading) => getComputedStyle(heading, "::after").animationName),
+  ).toBe("none");
+  expect(
+    await region
+      .locator("[class*='rankHeading']")
+      .evaluate((heading) => getComputedStyle(heading, "::after").opacity),
+  ).toBe("0");
   await expect(region.getByText("太郎", { exact: false })).toBeVisible();
   expect(
     await page.evaluate(
@@ -3054,6 +3119,18 @@ test("@chromium rank effects respond immediately to a dynamic reduced-motion cha
     true,
     "reduced",
   );
+  await expect
+    .poll(() =>
+      firstRegion
+        .locator("[class*='rankHeading']")
+        .evaluate((heading) => getComputedStyle(heading, "::after").animationName),
+    )
+    .toBe("none");
+  expect(
+    await firstRegion
+      .locator("[class*='rankHeading']")
+      .evaluate((heading) => getComputedStyle(heading, "::after").opacity),
+  ).toBe("0");
   const firstReveal = firstRegion.locator("[class*='winnerReveal']");
   await expect(firstReveal).toHaveCSS("opacity", "1");
 
@@ -3971,7 +4048,7 @@ test("@chromium reference-size long presentation content stays readable after fi
 
 test("@mobile tied first-place winners share eligible anticipation and fit at 480x900", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.setViewportSize({ width: 480, height: 900 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const mock = await installAdminApiMock(page);
@@ -4038,6 +4115,10 @@ test("@mobile tied first-place winners share eligible anticipation and fit at 48
   expect(geometry.regionInsideViewport).toBe(true);
   expect(geometry.pageCanScroll).toBe(false);
   expect(geometry.regionCanScroll).toBe(false);
+  await page.screenshot({
+    path: testInfo.outputPath("tied-first-place-480x900.png"),
+    animations: "disabled",
+  });
 });
 
 test("@mobile 24 first-place winners fit with eligible anticipation at 480x900", async ({
@@ -4124,7 +4205,9 @@ test("@mobile 24 first-place winners fit with eligible anticipation at 480x900",
   expect(geometry.regionCanScroll).toBe(false);
 });
 
-test("@mobile a single long winner name wraps fully inside the slide", async ({ page }) => {
+test("@mobile a single long winner name wraps fully inside the slide", async ({
+  page,
+}, testInfo) => {
   test.setTimeout(60_000);
   await page.emulateMedia({ reducedMotion: "no-preference" });
   const mock = await installAdminApiMock(page);
@@ -4386,6 +4469,12 @@ test("@mobile a single long winner name wraps fully inside the slide", async ({ 
       }
       expect(geometry.contrasts.every((ratio) => ratio >= 4.5)).toBe(true);
       expect(geometry.nameFits).toBe(true);
+      if (viewport.width === 480 && rankStage.state === "first") {
+        await page.screenshot({
+          path: testInfo.outputPath("long-first-place-name-480x900.png"),
+          animations: "disabled",
+        });
+      }
       expect(
         Math.max(geometry.outerHorizontalWidths.document, geometry.outerHorizontalWidths.body),
       ).toBeLessThanOrEqual(geometry.outerHorizontalWidths.viewport + 1);

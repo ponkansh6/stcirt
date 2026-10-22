@@ -579,6 +579,25 @@
   justify-content: center;
 }
 
+.rankHeading::after {
+  position: absolute;
+  z-index: 0;
+  inset: 50% -0.65em auto;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgb(255 255 255 / 96%) 46%,
+    #f5e5b0 50%,
+    rgb(255 255 255 / 96%) 54%,
+    transparent 100%
+  );
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-115%);
+}
+
 .rankOrnament {
   position: absolute;
   z-index: 0;
@@ -651,6 +670,18 @@
   }
 }
 
+@keyframes rankPlateEntrance {
+  from {
+    opacity: 0.65;
+    transform: translateY(5px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @keyframes rankOrnamentEntrance {
   from {
     opacity: 0;
@@ -672,6 +703,22 @@
   to {
     opacity: 1;
     transform: rotate(8deg) scale(1);
+  }
+}
+
+@keyframes rankLineShimmer {
+  0% {
+    opacity: 0;
+    transform: translateX(-115%);
+  }
+
+  25% {
+    opacity: 0.85;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(115%);
   }
 }
 
@@ -698,8 +745,17 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  .rank::before {
+    animation: rankPlateEntrance 200ms cubic-bezier(0.2, 0.75, 0.3, 1) both;
+    transform-origin: center;
+  }
+
   .rankOrnament {
-    animation: rankOrnamentEntrance 240ms ease-out both;
+    animation: rankOrnamentEntrance 160ms ease-out 80ms both;
+  }
+
+  .rankHeading::after {
+    animation: rankLineShimmer 140ms ease-out 260ms both;
   }
 
   .rankStamp {
@@ -728,17 +784,13 @@
 
 .rank {
   position: relative;
+  isolation: isolate;
   z-index: 1;
   box-sizing: border-box;
   max-width: 100%;
   width: fit-content;
   margin: 0;
   padding: 0.16em 0.8em;
-  border: 3px double var(--rank-metal, #8e6e31);
-  background: linear-gradient(180deg, var(--rank-light, #fffdf5), #ead9aa);
-  box-shadow:
-    inset 0 1px 0 #fff,
-    0 1px 0 rgb(116 88 37 / 22%);
   color: #30291f;
   font-family: "Yu Mincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", serif;
   font-size: clamp(var(--presentation-min-readable-size), 2.2cqw, 2.2rem);
@@ -749,7 +801,20 @@
   overflow-wrap: anywhere;
 }
 
-.winners[data-rank="second"] .rank {
+.rank::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border: 3px double var(--rank-metal, #8e6e31);
+  background: linear-gradient(180deg, var(--rank-light, #fffdf5), #ead9aa);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 0 rgb(116 88 37 / 22%);
+  content: "";
+  pointer-events: none;
+}
+
+.winners[data-rank="second"] .rank::before {
   background: linear-gradient(
     105deg,
     #eee6d2 0%,
@@ -760,7 +825,7 @@
   );
 }
 
-.winners[data-rank="first"] .rank {
+.winners[data-rank="first"] .rank::before {
   border-width: 4px;
   background: linear-gradient(
     105deg,
@@ -773,7 +838,24 @@
   box-shadow:
     inset 0 1px 0 #fff,
     0 1px 0 #9e7d3c,
-    0 2px 5px rgb(142 110 49 / 20%);
+    0 2px 8px rgb(142 110 49 / 30%),
+    0 0 16px rgb(243 223 157 / 26%);
+}
+
+.winners[data-rank="first"] .rankOrnament {
+  background: linear-gradient(90deg, #9f7728, #f3df9d 50%, #9f7728);
+}
+
+.winners[data-rank="first"] .rankHeading::after {
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgb(255 255 255 / 98%) 46%,
+    #f8e5a8 50%,
+    rgb(255 255 255 / 98%) 54%,
+    transparent 100%
+  );
 }
 
 .winnerRankGroup {
@@ -1064,6 +1146,20 @@
 
   .screen .rankOrnament,
   .screen .rankStamp {
+    animation: none !important;
+  }
+
+  .screen .rankOrnament {
+    opacity: 0.55;
+    transform: none;
+  }
+
+  .screen .rankStamp {
+    opacity: 1;
+    transform: rotate(8deg);
+  }
+
+  .screen .rankHeading::after {
     animation: none !important;
     opacity: 0;
   }
