@@ -146,6 +146,7 @@ async function installAdminApiMock(
   let snapshotRevision = 0;
   let failAdminRead = false;
   let failNextAdminRead = false;
+  let failNextDeckRead = false;
   let failNextMutationUnauthorized = false;
   let failNextMutationConflict = false;
   let pauseNextMutation = false;
@@ -285,6 +286,11 @@ async function installAdminApiMock(
     .then(() =>
       context.route("**/api/admin/presentation/deck", async (route) => {
         presentationRouteEvents.push(`deck:get:${snapshotRevision}:${state}`);
+        if (failNextDeckRead) {
+          failNextDeckRead = false;
+          await route.fulfill({ status: 503, json: { error: "Unavailable" } });
+          return;
+        }
         await route.fulfill({ json: deck() });
       }),
     )
@@ -503,6 +509,13 @@ async function installAdminApiMock(
       },
       failNextAdminRead: () => {
         failNextAdminRead = true;
+      },
+      failNextDeckRead: () => {
+        failNextDeckRead = true;
+      },
+      advanceSnapshotRevision: () => {
+        snapshotRevision += 1;
+        version += 1;
       },
       failNextMutationAsUnauthorized: () => {
         failNextMutationUnauthorized = true;
@@ -3268,6 +3281,7 @@ test("@chromium generic slide entrances honor their stage and dynamic reduced mo
   mock.setPresentationPosition("opening");
   await openPresenter(page);
 
+  const naturalLayer = page.getByTestId("presentation-natural-layer");
   const normalMotionStages: PresentationState[] = [
     "opening",
     "question",
@@ -3277,6 +3291,11 @@ test("@chromium generic slide entrances honor their stage and dynamic reduced mo
   for (const state of normalMotionStages) {
     await expect(slideFor(page, state)).toBeVisible();
     await expectPresentationEntryAnimation(entryFor(page, state));
+    const presenceEntry = naturalLayer.locator(":scope > div > div");
+    await expect(presenceEntry).toHaveCSS("opacity", "1");
+    const liveRegions = page.locator('main [aria-live="polite"]');
+    await expect(liveRegions).toHaveCount(1);
+    await expect(naturalLayer.locator('[aria-live="polite"]')).toHaveCount(0);
     if (state === "question") {
       const firstChoice = page.locator("#question-heading + ol li").first();
       expect(
@@ -3297,10 +3316,30 @@ test("@chromium generic slide entrances honor their stage and dynamic reduced mo
               ? "third"
               : "finished";
       await advancePresenterTo(page, nextState);
-      if (nextState === "answer") await advancePresenterTo(page, "podium_preview");
+      if (nextState === "answer") {
+        const answerReveal = page.locator("[class*='answerReveal']");
+        await expect(answerReveal).toHaveCSS("animation-name", /answerRevealFade/);
+        await expect(naturalLayer.locator(":scope > div > div")).toHaveCSS("opacity", "1");
+        await advancePresenterTo(page, "podium_preview");
+        await expect(naturalLayer.locator(":scope > div > div")).toHaveCSS("opacity", "1");
+      }
+      if (nextState === "third") {
+        await expectRankAnticipation(
+          rankRegionFor(page, "third"),
+          "rank ceremony coexists with the Motion slide wrapper",
+          false,
+        );
+        await expect(naturalLayer.locator(":scope > div > div")).toHaveCSS("opacity", "1");
+      }
       if (nextState === "third") {
         await advancePresenterTo(page, "second");
         await advancePresenterTo(page, "first");
+        await expectRankAnticipation(
+          rankRegionFor(page, "first"),
+          "first-place ceremony coexists with the Motion slide wrapper",
+          true,
+        );
+        await expect(naturalLayer.locator(":scope > div > div")).toHaveCSS("opacity", "1");
         await advancePresenterTo(page, "finished");
       }
     }
@@ -3347,6 +3386,191 @@ test("@chromium generic slide entrances honor their stage and dynamic reduced mo
       }
     }
   }
+});
+
+test("@chromium fit readiness hides an unmeasured slide and reveals it after layout recovers", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    class NoopResizeObserver {
+      constructor(_callback: ResizeObserverCallback) {}
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    Object.defineProperty(window, "ResizeObserver", {
+      configurable: true,
+      value: NoopResizeObserver,
+    });
+    const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const fitReadyForTest = (window as Window & { __presentationFitReadyForTest?: boolean })
+        .__presentationFitReadyForTest;
+      if (
+        fitReadyForTest !== true &&
+        this.getAttribute("data-testid") === "presentation-fit-viewport"
+      ) {
+        return new DOMRect(0, 0, 0, 0);
+      }
+      return originalGetBoundingClientRect.call(this);
+    };
+  });
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  mock.setPresentationPosition("opening");
+  await openPresenter(page);
+
+  const naturalLayer = page.getByTestId("presentation-natural-layer");
+  await expect(naturalLayer).toHaveAttribute("data-fit-ready", "false");
+  await expect(naturalLayer).toHaveCSS("visibility", "hidden");
+  await page.evaluate(() => {
+    (window as Window & { __presentationFitReadyForTest?: boolean }).__presentationFitReadyForTest =
+      true;
+    window.dispatchEvent(new Event("resize"));
+  });
+  await expect(naturalLayer).toHaveAttribute("data-fit-ready", "true");
+  await expect(naturalLayer).toHaveCSS("visibility", "visible");
+  await expect(slideFor(page, "opening")).toBeVisible();
+});
+
+test("@chromium stale slide mask releases after the matching deck is fetched", async ({ page }) => {
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  mock.setPresentationPosition("question");
+  await openPresenter(page);
+  const naturalLayer = page.getByTestId("presentation-natural-layer");
+  await expect(slideFor(page, "question")).toBeVisible();
+
+  mock.advanceSnapshotRevision();
+  mock.failNextDeckRead();
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+
+  await expect(naturalLayer).toHaveAttribute("data-stale-hidden", "true");
+  const staleContent = naturalLayer.locator("[data-stale-hidden='true']");
+  await expect(staleContent).toHaveAttribute("aria-hidden", "true");
+  await expect(staleContent).toHaveAttribute("inert", "");
+
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(naturalLayer).not.toHaveAttribute("data-stale-hidden", "true");
+  await expect(slideFor(page, "question")).toBeVisible();
+  await expect(naturalLayer.locator("[aria-hidden='true'][inert]")).toHaveCount(0);
+  expect(mock.getPresentationRouteEvents()).toContain("deck:get:1:question");
+});
+
+test("@chromium exiting presentation slides become unavailable while the next stage waits", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  mock.setPresentationPosition("opening");
+  await openPresenter(page);
+  await expect(slideFor(page, "opening")).toBeVisible();
+  const main = page.locator("main");
+  await page
+    .getByTestId("presentation-natural-layer")
+    .locator("h1")
+    .evaluate((heading) => {
+      heading.setAttribute("tabindex", "-1");
+      heading.focus();
+    });
+
+  const mutation = nextAdminMutation(page);
+  await page.keyboard.press("ArrowRight");
+  await mutation;
+
+  const exitingSlide = page
+    .getByTestId("presentation-natural-layer")
+    .locator('[aria-hidden="true"][inert]');
+  await expect(exitingSlide).toHaveCount(1);
+  await expect(exitingSlide).toHaveAttribute("aria-hidden", "true");
+  await expect(exitingSlide).toHaveAttribute("inert", "");
+  await expect(exitingSlide).toHaveCSS("pointer-events", "none");
+  await expect(slideFor(page, "question")).toHaveCount(0);
+  await expect(
+    page
+      .getByTestId("presentation-natural-layer")
+      .locator('section[class*="opening"], section[class*="question"], section[class*="answer"]'),
+  ).toHaveCount(1);
+  await expect(page.getByTestId("presentation-fit-layer")).toHaveCount(1);
+  await expect(page.getByTestId("presentation-natural-layer")).toHaveCount(1);
+  const exitAnimation = await exitingSlide.evaluate((element) =>
+    element
+      .getAnimations()
+      .map((animation) => {
+        const effect = animation.effect;
+        if (!(effect instanceof KeyframeEffect)) return null;
+        return {
+          duration: effect.getComputedTiming().duration,
+          easing: effect.getTiming().easing,
+          keyframes: effect.getKeyframes(),
+        };
+      })
+      .find((animation) => animation?.duration === 140),
+  );
+  expect(exitAnimation).toBeDefined();
+  expect(["ease-out", "cubic-bezier(0, 0, 0.58, 1)"]).toContain(exitAnimation?.easing);
+  expect(Number(exitAnimation?.keyframes.at(-1)?.opacity)).toBe(0);
+  await expect
+    .poll(() => main.evaluate((element) => element.ownerDocument.activeElement === element))
+    .toBe(true);
+  await expect(slideFor(page, "question")).toBeVisible();
+});
+
+test("@chromium reduced motion removes the outgoing presentation slide immediately", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  mock.setPresentationPosition("opening");
+  await openPresenter(page);
+  await expect(slideFor(page, "opening")).toBeVisible();
+
+  const mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await mutation;
+
+  await expect(slideFor(page, "question")).toBeVisible({ timeout: 100 });
+  await expect(
+    page.getByTestId("presentation-natural-layer").locator('[aria-hidden="true"][inert]'),
+  ).toHaveCount(0);
+});
+
+test("@chromium rapid presenter navigation settles on the latest slide after exit", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  mock.setPresentationPosition("opening");
+  await openPresenter(page);
+  await expect(slideFor(page, "opening")).toBeVisible();
+
+  const firstMutationStarted = mock.pauseNextMutation();
+  const firstMutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await firstMutationStarted;
+
+  const latestMutation = page.waitForResponse((response) => {
+    const request = response.request();
+    if (
+      new URL(response.url()).pathname !== "/api/admin/presentation" ||
+      request.method() !== "POST"
+    ) {
+      return false;
+    }
+    return request.postDataJSON().state === "podium_preview";
+  });
+  await page.locator("main").evaluate((element) => {
+    element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+  });
+
+  mock.releasePausedMutation();
+  await Promise.all([firstMutation, latestMutation]);
+  await expect(slideFor(page, "podium_preview")).toBeVisible();
+  expect(mock.positionLog.at(-1)).toMatchObject({ state: "podium_preview", questionIndex: 0 });
 });
 
 test("@chromium rank effects respond immediately to a dynamic reduced-motion change", async ({

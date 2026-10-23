@@ -79,8 +79,22 @@ async function getProjection(signal: AbortSignal): Promise<ProjectionData> {
         : "投影状態を取得できませんでした。";
     throw new Error(detail);
   }
+  if (isMissingQuestionPayload(payload)) {
+    throw Object.assign(new Error("投影状態に問題データがありません。"), {
+      missingQuestionPayload: true,
+    });
+  }
   if (!isProjectionData(payload)) throw new Error("投影状態を取得できませんでした。");
   return payload;
+}
+
+export function isMissingQuestionPayload(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) return false;
+  const value = payload as Record<string, unknown>;
+  return (
+    (value.state === "question" || value.state === "answer") &&
+    (!("question" in value) || value.question === null)
+  );
 }
 
 export function isProjectionData(payload: unknown): payload is ProjectionData {
@@ -134,7 +148,7 @@ export function isProjectionData(payload: unknown): payload is ProjectionData {
 /** Owns the public projection poll and its timeout, abort, and timer cleanup. */
 export function usePublicProjection(
   presenterRequested: boolean,
-  applyProjection: (projection: ProjectionData) => void,
+  applyProjection: (projection: ProjectionData | null) => void,
   setPollError: (error: boolean) => void,
 ) {
   useEffect(() => {
@@ -152,8 +166,15 @@ export function usePublicProjection(
           applyProjection(next);
           setPollError(false);
         }
-      } catch {
-        if (active) setPollError(true);
+      } catch (error) {
+        if (active) {
+          if ((error as { missingQuestionPayload?: boolean })?.missingQuestionPayload) {
+            applyProjection(null);
+            setPollError(false);
+          } else {
+            setPollError(true);
+          }
+        }
       } finally {
         window.clearTimeout(timeout);
         if (active) timer = window.setTimeout(refresh, 1400);

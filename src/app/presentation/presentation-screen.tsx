@@ -11,11 +11,13 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
+import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "motion/react";
 import Image from "next/image";
 import { canApplyPresenterPoll } from "@/lib/presentation/presenter-position";
 import {
   usePublicProjection,
   isProjectionData,
+  isMissingQuestionPayload,
   type ProjectionData,
   type PublicAnswerQuestion,
   type PublicQuestion,
@@ -99,6 +101,54 @@ type WakeLockNavigator = Navigator & {
 const POLL_TIMEOUT_MS = 8_000;
 const OPENING_WAIT_MESSAGE = "発表が始まるまで、少々お待ちください";
 
+function PresenceSlide({
+  children,
+  focusTargetRef,
+}: {
+  children: ReactNode;
+  focusTargetRef: { current: HTMLElement | null };
+}) {
+  const isPresent = useIsPresent();
+  const shouldReduceMotion = useReducedMotion();
+  const slideRef = useRef<HTMLDivElement | null>(null);
+  const hadFocus = useRef(false);
+
+  useLayoutEffect(() => {
+    if (isPresent) return;
+    if (hadFocus.current) {
+      focusTargetRef.current?.focus({ preventScroll: true });
+      hadFocus.current = false;
+    }
+  }, [focusTargetRef, isPresent]);
+
+  return (
+    <motion.div
+      ref={slideRef}
+      initial={false}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ opacity: { duration: shouldReduceMotion ? 0 : 0.14, ease: "easeOut" } }}
+      aria-hidden={!isPresent || undefined}
+      inert={!isPresent}
+      style={{ pointerEvents: isPresent ? "auto" : "none" }}
+      onFocusCapture={() => {
+        hadFocus.current = true;
+      }}
+      onBlurCapture={(event) => {
+        if (
+          isPresent &&
+          (!(event.relatedTarget instanceof Node) ||
+            !slideRef.current?.contains(event.relatedTarget))
+        ) {
+          hadFocus.current = false;
+        }
+      }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 function isInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return (
@@ -134,6 +184,18 @@ async function getPresenterDeck(signal?: AbortSignal): Promise<PresenterDeck> {
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok)
     throw Object.assign(new Error("スライドを読み込めませんでした。"), { status: response.status });
+  const missingQuestionPayload =
+    typeof payload === "object" &&
+    payload !== null &&
+    "slides" in payload &&
+    Array.isArray(payload.slides) &&
+    payload.slides.some(
+      (slide) =>
+        typeof slide === "object" &&
+        slide !== null &&
+        "projection" in slide &&
+        isMissingQuestionPayload(slide.projection),
+    );
   if (
     typeof payload !== "object" ||
     payload === null ||
@@ -155,6 +217,7 @@ async function getPresenterDeck(signal?: AbortSignal): Promise<PresenterDeck> {
   )
     throw Object.assign(new Error("スライドを読み込めませんでした。"), {
       invalidPayload: true,
+      missingQuestionPayload,
     });
   return payload as unknown as PresenterDeck;
 }
@@ -415,6 +478,7 @@ export default function PresentationScreen({
   presenterRequested?: boolean;
 }) {
   const [data, setData] = useState<ProjectionData | null>(null);
+  const [missingQuestionPayload, setMissingQuestionPayload] = useState(false);
   const [adminControls, setAdminControls] = useState<AdminControls | null>(null);
   const adminControlsRef = useRef<AdminControls | null>(null);
   const [presenterDeck, setPresenterDeck] = useState<PresenterDeck | null>(null);
@@ -486,9 +550,19 @@ export default function PresentationScreen({
     adminControlsRef.current = controls;
     setAdminControls(controls);
   }, []);
-  const applyProjection = useCallback((projection: ProjectionData) => {
-    setData(projection);
-  }, []);
+  const applyScreenProjection = useCallback(
+    (projection: ProjectionData | null, missingQuestion = false) => {
+      setData(projection);
+      setMissingQuestionPayload(missingQuestion);
+    },
+    [],
+  );
+  const applyProjection = useCallback(
+    (projection: ProjectionData | null) => {
+      applyScreenProjection(projection, projection === null);
+    },
+    [applyScreenProjection],
+  );
   usePublicProjection(presenterRequested, applyProjection, setPollError);
 
   const performRefreshAdmin = useCallback(
@@ -539,7 +613,7 @@ export default function PresentationScreen({
             applyAdminControls(null);
             setDeckSyncPending(false);
             setDeckLoadError(false);
-            setData({ state: "standby" });
+            applyScreenProjection({ state: "standby" });
             setPollError(false);
             return;
           }
@@ -573,7 +647,7 @@ export default function PresentationScreen({
           setDeckSyncPending(false);
           setDeckLoadError(false);
           setPollError(false);
-          setData({ state: "not_started" });
+          applyScreenProjection({ state: "not_started" });
           return;
         }
         let deck = presenterDeckRef.current;
@@ -624,7 +698,7 @@ export default function PresentationScreen({
           applyAdminControls(null);
           presenterDeckRef.current = null;
           setPresenterDeck(null);
-          setData(null);
+          applyScreenProjection(null);
           setDeckSyncPending(true);
           setDeckLoadError(false);
           loadingDeck = true;
@@ -658,7 +732,7 @@ export default function PresentationScreen({
             positionUnconfirmed.current = false;
             positionConflictRecovery.current = false;
           }
-          setData(recoveredProjection);
+          applyScreenProjection(recoveredProjection);
           applyAdminControls(controls);
           setPollError(false);
           return;
@@ -682,7 +756,7 @@ export default function PresentationScreen({
             });
             setDeckLoadError(false);
             setPollError(false);
-            setData(targetSlide.projection);
+            applyScreenProjection(targetSlide.projection);
             window.setTimeout(() => {
               if (pendingPosition.current && !positionWriterRunning.current) {
                 positionWriterRunning.current = true;
@@ -698,10 +772,18 @@ export default function PresentationScreen({
         applyAdminControls(controls);
         setDeckLoadError(false);
         setPollError(false);
-        setData(projection);
+        applyScreenProjection(projection);
       } catch (error) {
         const unauthorized = (error as { status?: number })?.status === 401;
-        if (unauthorized || (sequence === adminSequence.current && canApply())) {
+        const missingQuestion =
+          (error as { missingQuestionPayload?: boolean })?.missingQuestionPayload === true;
+        if (missingQuestion && sequence === adminSequence.current && canApply()) {
+          applyScreenProjection(null, true);
+          setDeckSyncPending(false);
+          setDeckLoadError(false);
+          setStaleDeckContent(false);
+          setPollError(false);
+        } else if (unauthorized || (sequence === adminSequence.current && canApply())) {
           if (unauthorized) {
             if (!presenterRequestedRef.current) return;
             clearPendingPosition();
@@ -712,7 +794,7 @@ export default function PresentationScreen({
             applyAdminControls(null);
             setDeckSyncPending(false);
             setDeckLoadError(false);
-            setData({ state: "standby" });
+            applyScreenProjection({ state: "standby" });
             setPollError(false);
           } else {
             setPollError(true);
@@ -729,7 +811,7 @@ export default function PresentationScreen({
         if (adminPollAbort.current === controller) adminPollAbort.current = null;
       }
     },
-    [applyAdminControls, clearPendingPosition],
+    [applyAdminControls, applyScreenProjection, clearPendingPosition],
   );
 
   const refreshAdmin = useCallback(
@@ -829,8 +911,8 @@ export default function PresentationScreen({
     setDeckSyncPending(false);
     setDeckLoadError(false);
     setPollError(false);
-    setData({ state: "standby" });
-  }, [applyAdminControls, clearPendingPosition]);
+    applyScreenProjection({ state: "standby" });
+  }, [applyAdminControls, applyScreenProjection, clearPendingPosition]);
 
   useLayoutEffect(() => {
     const syncFullscreenState = () => setIsFullscreen(Boolean(document.fullscreenElement));
@@ -876,7 +958,7 @@ export default function PresentationScreen({
       // Update the local cursor immediately so rapid input is based on the latest slide.
       adminControlsRef.current = { ...currentControls, ...position };
       setAdminControls(adminControlsRef.current);
-      setData(targetSlide.projection);
+      applyScreenProjection(targetSlide.projection);
       pendingPosition.current = position;
       if (positionConflictRecovery.current) {
         window.setTimeout(() => void refreshAdmin(true), 0);
@@ -985,7 +1067,7 @@ export default function PresentationScreen({
       flushPositionRef.current = flushPosition;
       flushPosition();
     },
-    [recoverUnauthorized, refreshAdmin],
+    [applyScreenProjection, recoverUnauthorized, refreshAdmin],
   );
 
   useEffect(() => {
@@ -1135,6 +1217,7 @@ export default function PresentationScreen({
   const state = data?.state;
   const loadingPresenterDeck =
     presenterRequested &&
+    !missingQuestionPayload &&
     (deckSyncPending ||
       deckLoadError ||
       (adminControls !== null && adminControls.state !== "not_started" && presenterDeck === null));
@@ -1240,6 +1323,30 @@ export default function PresentationScreen({
     group.winners.push(winner);
     return groups;
   }, []);
+  const slideDescriptor = (() => {
+    if (!data || state === "standby") return null;
+    if (state === "question" || state === "answer") {
+      /* v8 ignore next -- missing question payloads are reset before apply; this remains defensive for internal callers. */
+      return data.question ? { key: `${state}:${String(data.question.id)}` } : null;
+    }
+    if (state === "not_started") {
+      return loadingPresenterDeck ? null : { key: "stage:not_started" };
+    }
+    /* v8 ignore next -- validated ProjectionData has a closed State union; after the earlier cases only these stage states remain. */
+    if (
+      state === "opening" ||
+      state === "podium_preview" ||
+      state === "third" ||
+      state === "second" ||
+      state === "first" ||
+      state === "finished"
+    ) {
+      return { key: `stage:${state}` };
+    }
+    /* v8 ignore next -- validated ProjectionData has a closed State union; this is a defensive fallback. */
+    return null;
+  })();
+  const presenceResetKey = `${staleDeckContent ? "stale" : "current"}:${fit.ready ? "fit" : "unfit"}`;
 
   return (
     <main
@@ -1330,7 +1437,7 @@ export default function PresentationScreen({
                     </section>
                   )}
 
-                  {!loadingPresenterDeck && (!data || state === "not_started") && (
+                  {!loadingPresenterDeck && !data && !missingQuestionPayload && (
                     <section className={styles.opening} aria-labelledby="presentation-title">
                       <div className={styles.openingLockup}>
                         <div className={styles.openingTitle}>
@@ -1347,130 +1454,157 @@ export default function PresentationScreen({
                     </section>
                   )}
 
-                  {state === "opening" && (
-                    <section
-                      className={`${styles.opening} ${styles.openingMotion}`}
-                      aria-labelledby="opening-title"
-                    >
-                      <div className={styles.openingLockup}>
-                        <div className={styles.openingTitle}>
-                          <h1 id="opening-title" aria-label="しゅんたま検定">
-                            <span>しゅんたま</span>
-                            <span>検定</span>
-                          </h1>
-                        </div>
-                      </div>
-                      <p className={styles.openingSubtitle}>解答解説・表彰</p>
-                      <div className={styles.openingWaitSlot} aria-hidden="true">
-                        <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
-                      </div>
-                    </section>
-                  )}
-
-                  {state === "question" && data?.question && (
-                    <QuestionPrompt
-                      key={`question:${String(data.question.id)}`}
-                      question={data.question}
-                      className={styles.questionMotion}
-                    />
-                  )}
-                  {state === "answer" && data?.question && (
-                    <AnswerReview
-                      key={`answer:${String(data.question.id)}`}
-                      question={data.question}
-                    />
-                  )}
-
-                  {state === "podium_preview" && (
-                    <section
-                      className={`${styles.podiumPreview} ${styles.podiumPreviewMotion}`}
-                      aria-labelledby="podium-title"
-                    >
-                      <h1 id="podium-title">いよいよ、結果発表です</h1>
-                      <p className={styles.subtitle}>
-                        これから入賞者を発表します。どうぞお楽しみに
-                      </p>
-                    </section>
-                  )}
-
-                  {(state === "third" || state === "second" || state === "first") && (
-                    <section
-                      key={state}
-                      className={styles.winners}
-                      role="region"
-                      aria-label={`${rankTitle[state]}の勝者一覧`}
-                      data-rank={state}
-                      tabIndex={0}
-                    >
-                      <ExamStamp className={styles.rankStamp} />
-                      <div className={styles.rankHeader}>
-                        <span className={styles.certificateLabel}>認定証</span>
-                        <div className={styles.rankHeading}>
-                          <span className={styles.rankOrnament} aria-hidden="true" />
-                          <h1 className={styles.rank}>{rankTitle[state]}</h1>
-                        </div>
-                      </div>
-                      <WinnerReveal
-                        anticipationEligible={
-                          state === "first" && winnerGroups.some(({ rank }) => rank === 1)
-                        }
-                      >
-                        {winnerGroups.length ? (
-                          winnerGroups.map(({ rank, winners }) => (
-                            <div className={styles.winnerRankGroup} key={rank}>
-                              <div
-                                className={`${styles.winnerNames} ${winners.length === 1 ? styles.singleWinner : ""}`}
-                              >
-                                {winners.slice(0, 2).map((winner, index) => (
-                                  <article
-                                    className={styles.winner}
-                                    key={`${winner.rank}-${winner.displayName}-${index}`}
-                                  >
-                                    <div className={styles.winnerIdentity}>
-                                      <h1>
-                                        <span className={styles.winnerName}>
-                                          {winner.displayName}
-                                          <span className={styles.winnerHonorific}>&nbsp;殿</span>
-                                        </span>
-                                      </h1>
-                                      <p className={styles.winnerScore}>
-                                        {winner.score.toFixed(2)} ポイント
-                                      </p>
-                                    </div>
-                                    {winner.questionResults && (
-                                      <WinnerQuestionBreakdown results={winner.questionResults} />
-                                    )}
-                                  </article>
-                                ))}
+                  {slideDescriptor && (
+                    <AnimatePresence mode="wait" initial={false} key={presenceResetKey}>
+                      <PresenceSlide key={slideDescriptor.key} focusTargetRef={wrapperRef}>
+                        {state === "not_started" && (
+                          <section className={styles.opening} aria-labelledby="presentation-title">
+                            <div className={styles.openingLockup}>
+                              <div className={styles.openingTitle}>
+                                <h1 id="presentation-title" aria-label="しゅんたま検定">
+                                  <span>しゅんたま</span>
+                                  <span>検定</span>
+                                </h1>
                               </div>
-                              {winners.length > 2 && (
-                                <p className={styles.additionalWinners}>
-                                  ほか {winners.length - 2} 名
-                                </p>
-                              )}
                             </div>
-                          ))
-                        ) : (
-                          <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
+                            <p className={styles.openingSubtitle}>解答解説・表彰</p>
+                            <div className={styles.openingWaitSlot}>
+                              <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
+                            </div>
+                          </section>
                         )}
-                      </WinnerReveal>
-                    </section>
-                  )}
 
-                  {state === "finished" && (
-                    <section
-                      className={`${styles.finished} ${styles.finishedMotion}`}
-                      aria-labelledby="finished-title"
-                    >
-                      <h1 id="finished-title">
-                        ご参加
-                        <br />
-                        ありがとうございました
-                      </h1>
-                      <p className={styles.subtitle}>
-                        ふたりの思い出を一緒に祝ってくださり、心から感謝します
-                      </p>
-                    </section>
+                        {state === "opening" && (
+                          <section
+                            className={`${styles.opening} ${styles.openingMotion}`}
+                            aria-labelledby="opening-title"
+                          >
+                            <div className={styles.openingLockup}>
+                              <div className={styles.openingTitle}>
+                                <h1 id="opening-title" aria-label="しゅんたま検定">
+                                  <span>しゅんたま</span>
+                                  <span>検定</span>
+                                </h1>
+                              </div>
+                            </div>
+                            <p className={styles.openingSubtitle}>解答解説・表彰</p>
+                            <div className={styles.openingWaitSlot} aria-hidden="true">
+                              <p className={styles.openingWait}>{OPENING_WAIT_MESSAGE}</p>
+                            </div>
+                          </section>
+                        )}
+
+                        {state === "question" && data?.question && (
+                          <QuestionPrompt
+                            key={`question:${String(data.question.id)}`}
+                            question={data.question}
+                            className={styles.questionMotion}
+                          />
+                        )}
+                        {state === "answer" && data?.question && (
+                          <AnswerReview
+                            key={`answer:${String(data.question.id)}`}
+                            question={data.question}
+                          />
+                        )}
+
+                        {state === "podium_preview" && (
+                          <section
+                            className={`${styles.podiumPreview} ${styles.podiumPreviewMotion}`}
+                            aria-labelledby="podium-title"
+                          >
+                            <h1 id="podium-title">いよいよ、結果発表です</h1>
+                            <p className={styles.subtitle}>
+                              これから入賞者を発表します。どうぞお楽しみに
+                            </p>
+                          </section>
+                        )}
+
+                        {(state === "third" || state === "second" || state === "first") && (
+                          <section
+                            key={state}
+                            className={styles.winners}
+                            role="region"
+                            aria-label={`${rankTitle[state]}の勝者一覧`}
+                            data-rank={state}
+                            tabIndex={0}
+                          >
+                            <ExamStamp className={styles.rankStamp} />
+                            <div className={styles.rankHeader}>
+                              <span className={styles.certificateLabel}>認定証</span>
+                              <div className={styles.rankHeading}>
+                                <span className={styles.rankOrnament} aria-hidden="true" />
+                                <h1 className={styles.rank}>{rankTitle[state]}</h1>
+                              </div>
+                            </div>
+                            <WinnerReveal
+                              anticipationEligible={
+                                state === "first" && winnerGroups.some(({ rank }) => rank === 1)
+                              }
+                            >
+                              {winnerGroups.length ? (
+                                winnerGroups.map(({ rank, winners }) => (
+                                  <div className={styles.winnerRankGroup} key={rank}>
+                                    <div
+                                      className={`${styles.winnerNames} ${winners.length === 1 ? styles.singleWinner : ""}`}
+                                    >
+                                      {winners.slice(0, 2).map((winner, index) => (
+                                        <article
+                                          className={styles.winner}
+                                          key={`${winner.rank}-${winner.displayName}-${index}`}
+                                        >
+                                          <div className={styles.winnerIdentity}>
+                                            <h1>
+                                              <span className={styles.winnerName}>
+                                                {winner.displayName}
+                                                <span className={styles.winnerHonorific}>
+                                                  &nbsp;殿
+                                                </span>
+                                              </span>
+                                            </h1>
+                                            <p className={styles.winnerScore}>
+                                              {winner.score.toFixed(2)} ポイント
+                                            </p>
+                                          </div>
+                                          {winner.questionResults && (
+                                            <WinnerQuestionBreakdown
+                                              results={winner.questionResults}
+                                            />
+                                          )}
+                                        </article>
+                                      ))}
+                                    </div>
+                                    {winners.length > 2 && (
+                                      <p className={styles.additionalWinners}>
+                                        ほか {winners.length - 2} 名
+                                      </p>
+                                    )}
+                                  </div>
+                                ))
+                              ) : (
+                                <h1 className={styles.noWinner}>該当する受賞者はいません</h1>
+                              )}
+                            </WinnerReveal>
+                          </section>
+                        )}
+
+                        {state === "finished" && (
+                          <section
+                            className={`${styles.finished} ${styles.finishedMotion}`}
+                            aria-labelledby="finished-title"
+                          >
+                            <h1 id="finished-title">
+                              ご参加
+                              <br />
+                              ありがとうございました
+                            </h1>
+                            <p className={styles.subtitle}>
+                              ふたりの思い出を一緒に祝ってくださり、心から感謝します
+                            </p>
+                          </section>
+                        )}
+                      </PresenceSlide>
+                    </AnimatePresence>
                   )}
                 </div>
               </div>

@@ -241,13 +241,32 @@ async function settled() {
   });
 }
 
+function createMediaQueryList(matches: boolean): MediaQueryList {
+  return {
+    matches,
+    media: "",
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(() => true),
+  } as unknown as MediaQueryList;
+}
+
+function currentPresenceEntry(className: string) {
+  return Array.from(document.querySelectorAll<HTMLElement>(`[class*='${className}']`)).find(
+    (entry) => !entry.closest('[aria-hidden="true"]'),
+  );
+}
+
 describe("presentation projection and presenter progression", () => {
   beforeEach(() => {
     installPresentationFitLayout();
     vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "op-1") });
     vi.stubGlobal(
       "matchMedia",
-      vi.fn(() => ({ matches: false, addListener: vi.fn(), removeListener: vi.fn() })),
+      vi.fn(() => createMediaQueryList(true)),
     );
   });
   afterEach(() => {
@@ -338,7 +357,7 @@ describe("presentation projection and presenter progression", () => {
     const api = setup({ projectionGetter: async () => response(projection) });
     render(<PresentationScreen />);
     await settled();
-    const firstEntry = document.querySelector("[class*='questionMotion']");
+    const firstEntry = currentPresenceEntry("questionMotion");
     expect(firstEntry).toBeInTheDocument();
 
     projection = {
@@ -356,7 +375,7 @@ describe("presentation projection and presenter progression", () => {
     });
     await settled();
 
-    expect(document.querySelector("[class*='questionMotion']")).toBe(firstEntry);
+    expect(currentPresenceEntry("questionMotion")).toBe(firstEntry);
     expect(screen.getAllByRole("listitem")).toHaveLength(4);
     expect(screen.getByRole("heading", { name: /同じIDのpoll/ })).toBeInTheDocument();
 
@@ -375,11 +394,96 @@ describe("presentation projection and presenter progression", () => {
     });
     await settled();
 
-    const nextEntry = document.querySelector("[class*='questionMotion']");
+    const nextEntry = currentPresenceEntry("questionMotion");
     expect(nextEntry).toBeInTheDocument();
     expect(nextEntry).not.toBe(firstEntry);
     expect(screen.getByRole("heading", { name: "新しい設問" })).toBeInTheDocument();
     expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(3);
+  });
+
+  it("keeps an answer entry mounted across same-ID polls and replaces it for a new ID", async () => {
+    vi.useFakeTimers();
+    let projection: Record<string, unknown> = {
+      state: "answer",
+      question: {
+        id: 21,
+        ordinal: 1,
+        total: 5,
+        question: "短い設問",
+        choices: ["A", "B"],
+        correctIndex: 0,
+        explanation: "最初の補足",
+      },
+    };
+    const api = setup({ projectionGetter: async () => response(projection) });
+    render(<PresentationScreen />);
+    await settled();
+    const firstEntry = currentPresenceEntry("answerReveal");
+    expect(firstEntry).toBeInTheDocument();
+
+    projection = {
+      state: "answer",
+      question: {
+        id: 21,
+        ordinal: 1,
+        total: 5,
+        question: "更新後の設問",
+        choices: ["A", "B", "C"],
+        correctIndex: 1,
+        explanation: "同じIDの補足更新",
+      },
+    };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1400);
+    });
+    await settled();
+
+    expect(currentPresenceEntry("answerReveal")).toBe(firstEntry);
+    expect(screen.getByText("同じIDの補足更新")).toBeInTheDocument();
+
+    projection = {
+      state: "answer",
+      question: {
+        id: 22,
+        ordinal: 2,
+        total: 5,
+        question: "次の設問",
+        choices: ["C", "D"],
+        correctIndex: 0,
+        explanation: "次の補足",
+      },
+    };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1400);
+    });
+    await settled();
+
+    const nextEntry = currentPresenceEntry("answerReveal");
+    expect(nextEntry).toBeInTheDocument();
+    expect(nextEntry).not.toBe(firstEntry);
+    expect(screen.getByText("次の補足")).toBeInTheDocument();
+    expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(3);
+  });
+
+  it("does not retain an exiting slide when reduced motion is enabled", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => createMediaQueryList(true)),
+    );
+    setup();
+    render(<PresentationScreen presenterRequested />);
+    const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+    await settled();
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    expect(await screen.findByText("正解")).toBeInTheDocument();
+    await settled();
+
+    expect(
+      document.querySelector(
+        "[data-testid='presentation-natural-layer'] [aria-hidden='true'][inert]",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("announces only the concise slide stage and documents focused keyboard controls", async () => {
@@ -779,14 +883,14 @@ describe("presentation projection and presenter progression", () => {
       admin: { state: "not_started", questionIndex: 0, questionCount: 5 },
     });
     render(<PresentationScreen presenterRequested />);
-    expect(await screen.findByText("発表が始まるまで、少々お待ちください")).toBeInTheDocument();
-    await settled();
+    const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
+    await within(main).findByRole("button", { name: "全画面表示" });
     const presenter = within(screen.getByRole("main"));
     expect(presenter.getByRole("button", { name: "全画面表示" })).toBeVisible();
     expect(presenter.queryByRole("button", { name: "発表を開始" })).not.toBeInTheDocument();
     expect(presenter.queryByRole("button", { name: "参加者結果を公開" })).not.toBeInTheDocument();
-    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    fireEvent.keyDown(screen.getByRole("main"), { key: "Enter" });
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    fireEvent.keyDown(main, { key: "Enter" });
     fireEvent.click(screen.getByTestId("presentation-canvas"));
     await settled();
     expect(
@@ -1900,13 +2004,19 @@ describe("presentation projection and presenter progression", () => {
 
   it("applies not-started controls through polling after navigation", async () => {
     vi.useFakeTimers();
-    setup({ actionAdmin: { state: "not_started", questionIndex: 0 } });
+    const api = setup({ actionAdmin: { state: "not_started", questionIndex: 0 } });
     render(<PresentationScreen presenterRequested />);
     await settled();
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    expect(screen.getByText("正解")).toBeInTheDocument();
+    await settled();
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
     await act(async () => vi.advanceTimersByTimeAsync(2500));
+    await settled();
     expect(screen.getByText("発表が始まるまで、少々お待ちください")).toBeInTheDocument();
   });
 
@@ -1917,7 +2027,12 @@ describe("presentation projection and presenter progression", () => {
     await settled();
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
-    expect(screen.getByText("正解")).toBeInTheDocument();
+    await settled();
+    expect(
+      api.calls.filter(
+        ({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
     await act(async () => vi.advanceTimersByTimeAsync(1000));
     await settled();
 
@@ -2523,7 +2638,7 @@ describe("presentation projection and presenter progression", () => {
   it("renders rank content immediately under reduced motion with decorative markup hidden from assistive technology", async () => {
     vi.stubGlobal(
       "matchMedia",
-      vi.fn(() => ({ matches: true, addListener: vi.fn(), removeListener: vi.fn() })),
+      vi.fn(() => createMediaQueryList(true)),
     );
     const api = setup({
       projection: { state: "podium_preview" },

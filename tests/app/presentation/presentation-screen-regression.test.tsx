@@ -251,6 +251,43 @@ async function flush() {
   });
 }
 
+let mediaQueryMatches = true;
+const mediaQueryListeners = new Set<EventListenerOrEventListenerObject>();
+const sharedMediaQueryList = {
+  get matches() {
+    return mediaQueryMatches;
+  },
+  media: "(prefers-reduced-motion)",
+  onchange: null,
+  addListener(listener: (this: MediaQueryList, event: MediaQueryListEvent) => unknown) {
+    mediaQueryListeners.add(listener as unknown as EventListenerOrEventListenerObject);
+  },
+  removeListener(listener: (this: MediaQueryList, event: MediaQueryListEvent) => unknown) {
+    mediaQueryListeners.delete(listener as unknown as EventListenerOrEventListenerObject);
+  },
+  addEventListener(_type: string, listener: EventListenerOrEventListenerObject) {
+    mediaQueryListeners.add(listener);
+  },
+  removeEventListener(_type: string, listener: EventListenerOrEventListenerObject) {
+    mediaQueryListeners.delete(listener);
+  },
+  dispatchEvent(event: Event) {
+    mediaQueryListeners.forEach((listener) => {
+      if (typeof listener === "function") listener.call(sharedMediaQueryList, event);
+      else listener.handleEvent(event);
+    });
+    return true;
+  },
+} as unknown as MediaQueryList;
+
+function createMediaQueryList(matches: boolean): MediaQueryList {
+  mediaQueryMatches = matches;
+  sharedMediaQueryList.dispatchEvent(
+    Object.assign(new Event("change"), { matches, media: sharedMediaQueryList.media }),
+  );
+  return sharedMediaQueryList;
+}
+
 function expectPollErrorNotice() {
   const notice = screen.getByText("スライドの状態を確認できません。自動で再試行します", {
     selector: '[role="note"]',
@@ -274,6 +311,11 @@ describe("PresentationScreen", () => {
   beforeEach(() => {
     fitLayout = installPresentationFitLayout();
     vi.useRealTimers();
+    createMediaQueryList(true);
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => sharedMediaQueryList),
+    );
     vi.stubGlobal("fetch", vi.fn());
     vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "presentation-operation") });
   });
@@ -459,7 +501,7 @@ describe("PresentationScreen", () => {
     expect(screen.getByText("ただいま休憩中です")).toBeInTheDocument();
   });
 
-  it("keeps the displayed stage when a later public projection payload is invalid", async () => {
+  it("resets the displayed slide when a later public projection omits its question payload", async () => {
     vi.useFakeTimers();
     let projectionCalls = 0;
     installApi({
@@ -478,8 +520,12 @@ describe("PresentationScreen", () => {
     await flush();
 
     expect(projectionCalls).toBe(2);
-    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
-    expectPollErrorNotice();
+    expect(screen.queryByRole("heading", { name: question.question })).not.toBeInTheDocument();
+    expect(
+      document.querySelector(
+        "[data-testid='presentation-natural-layer'] [aria-hidden='true'][inert]",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the displayed stage when a later public projection has an unknown state", async () => {
@@ -1302,6 +1348,11 @@ describe("PresentationScreen", () => {
     await act(async () => vi.advanceTimersByTimeAsync(2500));
     await flush();
     expect(screen.getByRole("heading", { name: "ただいま休憩中です" })).toBeInTheDocument();
+    expect(
+      document.querySelector(
+        "[data-testid='presentation-natural-layer'] [aria-hidden='true'][inert]",
+      ),
+    ).not.toBeInTheDocument();
     expect(api.actions).toHaveLength(0);
     await act(async () => vi.advanceTimersByTimeAsync(5000));
     expect(reads).toBe(2);
@@ -1647,6 +1698,8 @@ describe("PresentationScreen", () => {
     await flush();
     expect(api.actions).toHaveLength(1);
     expect(api.actions[0]).toMatchObject({ action: "position", expectedSnapshotRevision: 1 });
+    await act(async () => vi.advanceTimersByTimeAsync(140));
+    await flush();
     expect(screen.getByText("正解")).toBeInTheDocument();
   });
 
@@ -2305,7 +2358,7 @@ describe("PresentationScreen", () => {
     expect(
       api.fetchMock.mock.calls.filter(([path]) => String(path) === "/api/admin/presentation/deck"),
     ).toHaveLength(deckReadsBeforeAction);
-    expect(screen.getByText("正解")).toBeInTheDocument();
+    expect(await screen.findByText("正解")).toBeInTheDocument();
 
     fireEvent.keyDown(main, { key: "ArrowLeft" });
     await waitFor(() => expect(api.actions).toHaveLength(2));
@@ -2336,7 +2389,7 @@ describe("PresentationScreen", () => {
         ([path]) => String(path) === "/api/admin/presentation?view=controls",
       ),
     ).toHaveLength(readsBeforeAction);
-    expect(screen.getByText("正解")).toBeInTheDocument();
+    expect(await screen.findByText("正解")).toBeInTheDocument();
   });
 
   it("sends navigation during an active controls poll and ignores its stale response", async () => {
@@ -2398,7 +2451,7 @@ describe("PresentationScreen", () => {
         ([path]) => String(path) === "/api/admin/presentation?view=controls",
       ),
     ).toHaveLength(readsBeforeAction);
-    expect(screen.getByText("正解")).toBeInTheDocument();
+    expect(await screen.findByText("正解")).toBeInTheDocument();
 
     fireEvent.keyDown(main, { key: "ArrowRight" });
     await waitFor(() => expect(api.actions).toHaveLength(2));
@@ -2408,7 +2461,7 @@ describe("PresentationScreen", () => {
     const waitForControls = observePresenterControls();
     vi.stubGlobal(
       "matchMedia",
-      vi.fn(() => ({ matches: false })),
+      vi.fn(() => createMediaQueryList(true)),
     );
     const winners = [
       { displayName: "凛", score: 12, rank: 2 },
@@ -2563,7 +2616,7 @@ describe("PresentationScreen", () => {
     const waitForControls = observePresenterControls();
     vi.stubGlobal(
       "matchMedia",
-      vi.fn(() => ({ matches: false })),
+      vi.fn(() => createMediaQueryList(true)),
     );
     const api = installApi({
       projection: {
@@ -3679,11 +3732,17 @@ describe("PresentationScreen", () => {
     });
     api.setDeckSlide("question", 1, {
       state: "question",
-      question: { ...question, ordinal: 2 },
+      question: { ...question, ordinal: 2, question: "二問目の設問" },
     });
     api.setDeckSlide("answer", 1, {
       state: "answer",
-      question: { ...question, ordinal: 2, correctIndex: 0, explanation: "ふたりの思い出です。" },
+      question: {
+        ...question,
+        ordinal: 2,
+        question: "二問目の設問",
+        correctIndex: 0,
+        explanation: "二問目の解説",
+      },
     });
     const view = render(<PresentationScreen presenterRequested />);
     try {
@@ -3733,6 +3792,8 @@ describe("PresentationScreen", () => {
       });
       await flush();
       expect(screen.getByRole("status")).toHaveTextContent("第2問の解説");
+      expect(screen.getByRole("heading", { name: "二問目の設問" })).toBeInTheDocument();
+      expect(screen.getByText("二問目の解説")).toBeInTheDocument();
     } finally {
       let resolved = 0;
       while (resolved < pendingActions.length) {
@@ -3755,6 +3816,376 @@ describe("PresentationScreen", () => {
       }
       view.unmount();
     }
+  });
+
+  it("returns to the latest question when a deferred answer transition is reversed", async () => {
+    const pendingActions: Array<(value: Response) => void> = [];
+    let secondActionStarted!: () => void;
+    const secondStarted = new Promise<void>((resolve) => {
+      secondActionStarted = resolve;
+    });
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, questionCount: 2 }),
+      actionResponse: () =>
+        new Promise<Response>((resolve) => {
+          pendingActions.push(resolve);
+          if (pendingActions.length === 2) secondActionStarted();
+        }),
+    });
+    const view = render(<PresentationScreen presenterRequested />);
+    try {
+      const main = await screen.findByRole("main", { name: "プレゼンテーションスライド" });
+      await flush();
+
+      fireEvent.keyDown(main, { key: "ArrowRight" });
+      await waitFor(() => expect(pendingActions).toHaveLength(1));
+      expect(await screen.findByText("正解")).toBeInTheDocument();
+      const intermediateAnswer = screen
+        .getByTestId("presentation-natural-layer")
+        .querySelector("[class*='answerReview']");
+      expect(intermediateAnswer).toBeInTheDocument();
+      fireEvent.keyDown(main, { key: "ArrowLeft" });
+
+      await act(async () => {
+        pendingActions[0]!(
+          response(controls({ state: "answer", questionIndex: 0, version: 1, questionCount: 2 })),
+        );
+        await Promise.resolve();
+      });
+      await secondStarted;
+
+      expect(api.actions[1]).toMatchObject({
+        action: "position",
+        state: "question",
+        questionIndex: 0,
+      });
+      await act(async () => {
+        pendingActions[1]!(
+          response(controls({ state: "question", questionIndex: 0, version: 2, questionCount: 2 })),
+        );
+        await Promise.resolve();
+      });
+      await flush();
+
+      expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("第1問");
+      expect(screen.queryByText("正解")).not.toBeInTheDocument();
+      expect(
+        screen.getByTestId("presentation-natural-layer").querySelector("[class*='answerReview']"),
+      ).not.toBe(intermediateAnswer);
+    } finally {
+      for (let index = 0; index < pendingActions.length; index += 1) {
+        await act(async () => {
+          pendingActions[index]!(
+            response(controls({ state: "question", questionIndex: 0, version: index + 1 })),
+          );
+          await Promise.resolve();
+        });
+        await flush();
+      }
+      view.unmount();
+    }
+  });
+
+  it("returns to question A while its exit is still in progress", async () => {
+    vi.useFakeTimers();
+    createMediaQueryList(false);
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, questionCount: 2 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions[0]).toMatchObject({ state: "answer", questionIndex: 0 });
+    const exitingQuestion = document.querySelector(
+      "[data-testid='presentation-natural-layer'] [aria-hidden='true'][inert]",
+    );
+    expect(exitingQuestion).toHaveTextContent(question.question);
+    expect(screen.queryByText("正解")).not.toBeInTheDocument();
+
+    // Reverse before advancing the 140ms exit animation: A -> B -> A.
+    fireEvent.keyDown(main, { key: "ArrowLeft" });
+    await flush();
+
+    expect(api.actions[1]).toMatchObject({ state: "question", questionIndex: 0 });
+    await act(async () => vi.advanceTimersByTimeAsync(140));
+    await flush();
+    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(screen.queryByText("正解")).not.toBeInTheDocument();
+  });
+
+  it("drops an exiting slide immediately when projection is put on standby", async () => {
+    vi.useFakeTimers();
+    createMediaQueryList(false);
+    let adminReads = 0;
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, questionCount: 2 }),
+      adminResponse: async () => {
+        adminReads += 1;
+        return response(
+          controls({
+            state: adminReads === 1 ? "question" : "answer",
+            questionIndex: 0,
+            version: adminReads,
+            projectionHidden: adminReads > 1,
+          }),
+        );
+      },
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    expect(
+      document.querySelector(
+        "[data-testid='presentation-natural-layer'] [aria-hidden='true'][inert]",
+      ),
+    ).toHaveTextContent(question.question);
+
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await flush();
+
+    expect(screen.getByRole("heading", { name: "ただいま休憩中です" })).toBeInTheDocument();
+    expect(screen.queryByText(question.question)).not.toBeInTheDocument();
+    expect(
+      document.querySelector(
+        "[data-testid='presentation-natural-layer'] [aria-hidden='true'][inert]",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("drops an exiting slide immediately when an action request returns 401", async () => {
+    vi.useFakeTimers();
+    createMediaQueryList(false);
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0, questionCount: 2 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    expect(
+      document.querySelector(
+        "[data-testid='presentation-natural-layer'] [aria-hidden='true'][inert]",
+      ),
+    ).toHaveTextContent(question.question);
+
+    api.setActionError(401);
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+
+    expect(api.actions).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: "ただいま休憩中です" })).toBeInTheDocument();
+    expect(screen.queryByText(question.question)).not.toBeInTheDocument();
+    expect(
+      document.querySelector(
+        "[data-testid='presentation-natural-layer'] [aria-hidden='true'][inert]",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(["question", "answer"] as const)(
+    "drops an exiting slide immediately when the private %s payload is missing",
+    async (missingState) => {
+      vi.useFakeTimers();
+      createMediaQueryList(false);
+      const initialState = missingState === "question" ? "answer" : "question";
+      let adminReads = 0;
+      let deckReads = 0;
+      const api = installApi({
+        projection:
+          initialState === "question"
+            ? { state: "question", question }
+            : {
+                state: "answer",
+                question: { ...question, correctIndex: 0, explanation: "ふたりの思い出です。" },
+              },
+        admin: controls({ state: initialState, questionIndex: 0, questionCount: 2 }),
+        adminResponse: async () => {
+          adminReads += 1;
+          return response(
+            controls({
+              state: adminReads === 1 ? initialState : missingState,
+              questionIndex: 0,
+              questionCount: 2,
+              snapshotRevision: adminReads === 1 ? 1 : 2,
+              version: adminReads,
+            }),
+          );
+        },
+        deckResponse: async () => {
+          deckReads += 1;
+          if (deckReads === 1) {
+            return response({
+              snapshotRevision: 1,
+              questionCount: 2,
+              questionIndex: 0,
+              slides: [
+                deckSlide("question", 0, { state: "question", question }),
+                deckSlide("answer", 0, {
+                  state: "answer",
+                  question: { ...question, correctIndex: 0, explanation: "ふたりの思い出です。" },
+                }),
+              ],
+            });
+          }
+          return response({
+            snapshotRevision: 2,
+            questionCount: 2,
+            questionIndex: 0,
+            slides: [deckSlide(missingState, 0, { state: missingState, question: null })],
+          });
+        },
+      });
+      render(<PresentationScreen presenterRequested />);
+      await flush();
+      const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
+
+      fireEvent.keyDown(main, { key: initialState === "question" ? "ArrowRight" : "ArrowLeft" });
+      await flush();
+      expect(api.actions).toHaveLength(1);
+      expect(
+        document.querySelector(
+          "[data-testid='presentation-natural-layer'] [aria-hidden='true'][inert]",
+        ),
+      ).toBeInTheDocument();
+
+      act(() => document.dispatchEvent(new Event("visibilitychange")));
+      await flush();
+
+      expect(adminReads).toBe(2);
+      expect(deckReads).toBe(2);
+      expect(screen.queryByText(question.question)).not.toBeInTheDocument();
+      expect(screen.queryByText("正解")).not.toBeInTheDocument();
+      expect(
+        document.querySelector(
+          "[data-testid='presentation-natural-layer'] [aria-hidden='true'][inert]",
+        ),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("returns focus from a normally exiting focused slide to the presenter surface", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => sharedMediaQueryList),
+    );
+    createMediaQueryList(false);
+    expect(window.matchMedia("(prefers-reduced-motion)").matches).toBe(false);
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      actionProjection: {
+        state: "answer",
+        question: { ...question, correctIndex: 0, explanation: "答えの補足" },
+      },
+      actionAdmin: controls({ state: "answer", questionIndex: 0, version: 1 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
+    const heading = screen.getByRole("heading", { name: question.question });
+    heading.setAttribute("tabindex", "-1");
+    heading.focus();
+    expect(heading).toHaveFocus();
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions).toHaveLength(1);
+    const naturalLayer = screen.getByTestId("presentation-natural-layer");
+    expect(main).toHaveFocus();
+    expect(naturalLayer.contains(document.activeElement)).toBe(false);
+  });
+
+  it("does not steal focus already moved outside the outgoing slide", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => sharedMediaQueryList),
+    );
+    createMediaQueryList(false);
+    expect(window.matchMedia("(prefers-reduced-motion)").matches).toBe(false);
+    const api = installApi({
+      projection: { state: "question", question },
+      admin: controls({ state: "question", questionIndex: 0 }),
+      actionProjection: {
+        state: "answer",
+        question: { ...question, correctIndex: 0, explanation: "答えの補足" },
+      },
+      actionAdmin: controls({ state: "answer", questionIndex: 0, version: 1 }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+    const main = screen.getByRole("main", { name: "プレゼンテーションスライド" });
+    const heading = screen.getByRole("heading", { name: question.question });
+    const outsideButton = document.createElement("button");
+    outsideButton.textContent = "外部操作";
+    document.body.append(outsideButton);
+    heading.setAttribute("tabindex", "-1");
+    heading.focus();
+    fireEvent.blur(heading, { relatedTarget: null });
+    outsideButton.focus();
+    expect(outsideButton).toHaveFocus();
+
+    try {
+      fireEvent.keyDown(main, { key: "ArrowRight" });
+      await flush();
+      expect(api.actions).toHaveLength(1);
+      expect(outsideButton).toHaveFocus();
+    } finally {
+      outsideButton.remove();
+    }
+  });
+
+  it("does not mount a not-started presence slide while its presenter deck is loading", async () => {
+    let resolveDeck!: (value: Response) => void;
+    installApi({
+      projection: { state: "not_started" },
+      admin: controls({ state: "opening", questionIndex: 0 }),
+      deckResponse: () =>
+        new Promise<Response>((resolve) => {
+          resolveDeck = resolve;
+        }),
+    });
+    const view = render(<PresentationScreen />);
+    await screen.findByRole("heading", { name: "しゅんたま検定" });
+    view.rerender(<PresentationScreen presenterRequested />);
+    await flush();
+
+    const slideContent = screen
+      .getByTestId("presentation-natural-layer")
+      .querySelector("[class*='slideContent']");
+    expect(screen.getByText("スライドを読み込んでいます")).toBeInTheDocument();
+    expect(slideContent?.querySelector(":scope > div")).toBeNull();
+
+    await act(async () => {
+      resolveDeck(
+        response({
+          snapshotRevision: 1,
+          questionCount: 2,
+          questionIndex: 0,
+          slides: [deckSlide("opening", 0, { state: "opening" })],
+        }),
+      );
+      await Promise.resolve();
+    });
+    await flush();
+    expect(
+      screen.getByTestId("presentation-natural-layer").querySelector(":scope > div > div"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
   });
 
   it("falls back to standard application when recovery target has no pending position", async () => {
