@@ -2463,6 +2463,7 @@ test("@chromium opening cover geometry matches before and after presentation sta
     )
     .toBe("opening");
   await expect(page.locator("#opening-title")).toBeVisible();
+  await waitForCurrentPresentationEntryAnimations(page);
   await page.evaluate(() => document.fonts.ready);
   await waitForRenderFrames(page);
 
@@ -3231,6 +3232,8 @@ test("@chromium rank winner reveal plays once per stage entry and not on same-st
   expect(await spectator.evaluate(() => window.__rankRevealAnimations[0]?.rank)).toBe("second");
   await spectator.close();
 
+  mock.setPresentationPosition("first");
+  await expect(slideFor(page, "first")).toBeVisible();
   await page.emulateMedia({ reducedMotion: "reduce" });
   const reducedFirst = rankRegionFor(page, "first");
   await expect(reducedFirst).toHaveCount(1);
