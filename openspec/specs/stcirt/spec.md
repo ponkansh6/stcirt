@@ -455,6 +455,7 @@ Public presentation responses MUST disclose only the data permitted for the curr
 - AND a question-ID key keeps the same question entry stable across polls and rerenders while a changed question ID or a later re-entry creates a new entrance
 - AND `answer`, `third`, `second`, and `first` receive no generic slide entrance motion; answer's two reveal groups and rank's rank-keyed decoration, winner reveal, and first-place eligibility keep their existing timing and lifecycle
 - AND the exit wrapper does not change the shared fit scale, natural layout, or existing CSS entrance and answer/rank ceremony; an exiting slide becomes inert, aria-hidden, and pointer-inactive, and focus moves to the stable outer screen only when focus was inside that slide
+- AND while an answer or rank slide exits, its answer, supplement, or winner-content reveal does not restart and retains its current visual state until the slide is removed
 - WHEN reduced motion is requested
 - THEN these slide entrances have no translate or stagger delay and all content is immediately visible, and slide exits use zero duration
 

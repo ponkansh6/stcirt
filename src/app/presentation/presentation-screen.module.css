@@ -465,6 +465,22 @@
   animation: answerRevealFade 300ms ease 350ms backwards;
 }
 
+[data-exiting] .answerReveal,
+[data-exiting] .answerSupplement {
+  animation-play-state: paused;
+}
+
+[data-exiting] .rankHeader,
+[data-exiting] .rank::before,
+[data-exiting] .rankOrnament,
+[data-exiting] .rankHeading::after,
+[data-exiting] .rankStamp,
+[data-exiting] .winnerContent,
+[data-exiting] .winnerReveal::before,
+[data-exiting] .winnerReveal::after {
+  animation-play-state: paused;
+}
+
 @keyframes answerRevealFade {
   from {
     opacity: 0;

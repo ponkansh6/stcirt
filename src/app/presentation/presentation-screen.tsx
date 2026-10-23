@@ -130,6 +130,7 @@ function PresenceSlide({
       transition={{ opacity: { duration: shouldReduceMotion ? 0 : 0.14, ease: "easeOut" } }}
       aria-hidden={!isPresent || undefined}
       inert={!isPresent}
+      data-exiting={!isPresent || undefined}
       style={{ pointerEvents: isPresent ? "auto" : "none" }}
       onFocusCapture={() => {
         hadFocus.current = true;
