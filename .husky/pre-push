@@ -156,7 +156,7 @@ PID_PRE=$!
 
 PID_TEST=""
 if [ "$NEED_TEST" = "1" ]; then
-  ( set -e; vitest run --coverage; node scripts/check-coverage-tiers.mjs; node scripts/check-coverage-completeness.mjs ) >"$LOG_TEST" 2>&1 &
+  ( set -e; vitest run --coverage --maxWorkers=1; node scripts/check-coverage-tiers.mjs; node scripts/check-coverage-completeness.mjs ) >"$LOG_TEST" 2>&1 &
   PID_TEST=$!
 fi
 
