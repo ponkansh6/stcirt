@@ -2159,8 +2159,9 @@ describe("PresentationScreen", () => {
     fireEvent.keyDown(main, { key: "ArrowRight" });
 
     await waitFor(() => expect(api.actions).toHaveLength(1));
-    expect(await screen.findByText("問")).toBeInTheDocument();
-    expect(await screen.findByText("正解")).toBeInTheDocument();
+    await screen.findByText("正解");
+    const answerSlide = screen.getByRole("region", { name: question.question });
+    expect(within(answerSlide).getByText("問")).toBeInTheDocument();
     expect(
       api.fetchMock.mock.calls.filter(
         ([path]) => String(path) === "/api/admin/presentation?view=controls",
