@@ -22,7 +22,6 @@ export default function ResultsPanel({
       : (parseParticipantResult(initial) ?? { state: "unavailable" }),
   );
   const [authorized, setAuthorized] = useState(initial.state !== "unauthenticated");
-  const [manuallyRefreshing, setManuallyRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(false);
   const pendingRef = useRef(false);
   const queuedRef = useRef(false);
@@ -42,80 +41,68 @@ export default function ResultsPanel({
     return { label: "不正解", icon: "×", className: "text-error" };
   };
 
-  const refresh = useCallback(
-    async (manual = false) => {
-      if (scope === null) return;
-      if (pendingRef.current) {
-        queuedRef.current = true;
-        requestRevisionRef.current += 1;
+  const refresh = useCallback(async () => {
+    if (scope === null) return;
+    if (pendingRef.current) {
+      queuedRef.current = true;
+      requestRevisionRef.current += 1;
+      return;
+    }
+    pendingRef.current = true;
+    const currentRevision = ++requestRevisionRef.current;
+    const requestId = ++requestIdRef.current;
+    inFlightRequestRef.current = requestId;
+    try {
+      const response = await fetch(
+        scope === "assisted"
+          ? "/api/participants/results?scope=assisted"
+          : "/api/participants/results",
+        {
+          cache: "no-store",
+          credentials: "same-origin",
+        },
+      );
+      if (currentRevision !== requestRevisionRef.current) return;
+      if (response.status === 401) {
+        setAuthorized(false);
+        setResult({ state: "waiting" });
+        setRefreshError(false);
         return;
       }
-      pendingRef.current = true;
-      if (manual) {
-        setStatusAnnouncement("");
-        setManuallyRefreshing(true);
+      if (!response.ok) {
+        setRefreshError(true);
+        return;
       }
-      const currentRevision = ++requestRevisionRef.current;
-      const requestId = ++requestIdRef.current;
-      inFlightRequestRef.current = requestId;
+      let payload: unknown;
       try {
-        const response = await fetch(
-          scope === "assisted"
-            ? "/api/participants/results?scope=assisted"
-            : "/api/participants/results",
-          {
-            cache: "no-store",
-            credentials: "same-origin",
-          },
-        );
-        if (currentRevision !== requestRevisionRef.current) return;
-        if (response.status === 401) {
-          setAuthorized(false);
-          setResult({ state: "waiting" });
-          setRefreshError(false);
-          return;
-        }
-        if (!response.ok) {
-          setRefreshError(true);
-          return;
-        }
-        let payload: unknown;
-        try {
-          payload = await response.json();
-        } catch {
-          if (currentRevision !== requestRevisionRef.current) return;
-          setRefreshError(true);
-          return;
-        }
-        if (currentRevision !== requestRevisionRef.current) return;
-        const parsed = parseParticipantResult(payload);
-        if (!parsed) {
-          setRefreshError(true);
-          return;
-        }
-        setAuthorized(true);
-        setResult(parsed);
-        if (manual && parsed.state === "waiting" && !waitingNoticeIssuedRef.current) {
-          waitingNoticeIssuedRef.current = true;
-          pendingStatusAnnouncementRef.current = "集計期間中です。結果は公開後に確認できます。";
-        }
-        setRefreshError(false);
+        payload = await response.json();
       } catch {
-        if (currentRevision === requestRevisionRef.current) setRefreshError(true);
-      } finally {
-        if (inFlightRequestRef.current === requestId) {
-          inFlightRequestRef.current = null;
-          pendingRef.current = false;
-          if (manual) setManuallyRefreshing(false);
-          if (queuedRef.current) {
-            queuedRef.current = false;
-            void refresh();
-          }
+        if (currentRevision !== requestRevisionRef.current) return;
+        setRefreshError(true);
+        return;
+      }
+      if (currentRevision !== requestRevisionRef.current) return;
+      const parsed = parseParticipantResult(payload);
+      if (!parsed) {
+        setRefreshError(true);
+        return;
+      }
+      setAuthorized(true);
+      setResult(parsed);
+      setRefreshError(false);
+    } catch {
+      if (currentRevision === requestRevisionRef.current) setRefreshError(true);
+    } finally {
+      if (inFlightRequestRef.current === requestId) {
+        inFlightRequestRef.current = null;
+        pendingRef.current = false;
+        if (queuedRef.current) {
+          queuedRef.current = false;
+          void refresh();
         }
       }
-    },
-    [scope],
-  );
+    }
+  }, [scope]);
 
   useEffect(() => {
     if (scope === null) return;
@@ -154,11 +141,11 @@ export default function ResultsPanel({
       }
     }
 
-    if (!manuallyRefreshing && pendingStatusAnnouncementRef.current) {
+    if (pendingStatusAnnouncementRef.current) {
       setStatusAnnouncement(pendingStatusAnnouncementRef.current);
       pendingStatusAnnouncementRef.current = null;
     }
-  }, [authorized, currentStatusKey, manuallyRefreshing, result.state]);
+  }, [authorized, currentStatusKey, result.state]);
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
@@ -309,11 +296,6 @@ export default function ResultsPanel({
       {statusAnnouncement ? (
         <p role="status" aria-live="polite" className="sr-only">
           {statusAnnouncement}
-        </p>
-      ) : null}
-      {manuallyRefreshing ? (
-        <p role="status" aria-live="polite" className="sr-only">
-          更新中…
         </p>
       ) : null}
     </main>
