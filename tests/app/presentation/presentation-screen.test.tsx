@@ -706,6 +706,24 @@ describe("presentation projection and presenter progression", () => {
     );
   });
 
+  it("keeps the opening frame decorative and outside the fitted content layer", () => {
+    const stylesheet = readFileSync(
+      join(process.cwd(), "src/app/presentation/presentation-screen.module.css"),
+      "utf8",
+    );
+
+    expect(stylesheet).toMatch(
+      /\.openingFrame\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*0;[^}]*pointer-events:\s*none;/s,
+    );
+    expect(stylesheet).toMatch(
+      /\.openingFrame::before\s*\{[^}]*inset:\s*2\.5%;[^}]*border:\s*1px solid/s,
+    );
+    expect(stylesheet).toMatch(
+      /\.openingFrame::after\s*\{[^}]*inset:\s*calc\(2\.5% \+ 6px\);[^}]*border:\s*1px solid/s,
+    );
+    expect(stylesheet).toMatch(/\.fitViewport\s*\{[^}]*z-index:\s*1;/s);
+  });
+
   it("exposes a single slide region without persistent presentation chrome", async () => {
     setup();
     render(<PresentationScreen />);
@@ -851,9 +869,8 @@ describe("presentation projection and presenter progression", () => {
       const slide = await screen.findByRole("region", { name: "現在のスライド" });
       expect(within(slide).getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
       expect(within(slide).getByText("解答解説・表彰")).toBeInTheDocument();
-      const frame = slide.querySelector("img[class*='presentationFrame']");
-      expect(frame).toHaveAttribute("src", "/certificate_ornate_frame_16x9_silver.svg");
-      expect(frame).toHaveAttribute("alt", "");
+      expect(slide.querySelector("img[class*='presentationFrame']")).toBeNull();
+      const frame = slide.querySelector("[class*='openingFrame']");
       expect(frame).toHaveAttribute("aria-hidden", "true");
       expect(frame?.parentElement).toBe(slide);
       expect(frame?.closest("[data-testid='presentation-fit-layer']")).toBeNull();

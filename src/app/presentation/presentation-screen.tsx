@@ -307,15 +307,11 @@ function WinnerReveal({
   );
 }
 
-function PresentationFrame({ color }: { color: "silver" | "gold" }) {
+function PresentationFrame() {
   return (
     <Image
       className={styles.presentationFrame}
-      src={
-        color === "silver"
-          ? "/certificate_ornate_frame_16x9_silver.svg"
-          : "/certificate_reference_style_16x9.svg"
-      }
+      src="/certificate_reference_style_16x9.svg"
       alt=""
       aria-hidden="true"
       fill
@@ -1378,12 +1374,10 @@ export default function PresentationScreen({
           aria-label="現在のスライド"
         >
           {!loadingPresenterDeck && (state === "not_started" || state === "opening") && (
-            <PresentationFrame color="silver" />
+            <div className={styles.openingFrame} aria-hidden="true" />
           )}
           {!loadingPresenterDeck &&
-            (state === "third" || state === "second" || state === "first") && (
-              <PresentationFrame color="gold" />
-            )}
+            (state === "third" || state === "second" || state === "first") && <PresentationFrame />}
           <div
             ref={fitViewportRef}
             className={styles.fitViewport}

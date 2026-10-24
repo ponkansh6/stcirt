@@ -121,6 +121,40 @@
   user-select: none;
 }
 
+.openingFrame {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.openingFrame::before,
+.openingFrame::after {
+  position: absolute;
+  box-sizing: border-box;
+  content: "";
+}
+
+.openingFrame::before {
+  inset: 2.5%;
+  border: 1px solid #b9ad8d;
+  background:
+    linear-gradient(#9f916d, #9f916d) left top / 2% 1px no-repeat,
+    linear-gradient(#9f916d, #9f916d) right top / 2% 1px no-repeat,
+    linear-gradient(#9f916d, #9f916d) left bottom / 2% 1px no-repeat,
+    linear-gradient(#9f916d, #9f916d) right bottom / 2% 1px no-repeat,
+    linear-gradient(#9f916d, #9f916d) left top / 1px 2% no-repeat,
+    linear-gradient(#9f916d, #9f916d) right top / 1px 2% no-repeat,
+    linear-gradient(#9f916d, #9f916d) left bottom / 1px 2% no-repeat,
+    linear-gradient(#9f916d, #9f916d) right bottom / 1px 2% no-repeat;
+}
+
+.openingFrame::after {
+  inset: calc(2.5% + 6px);
+  border: 1px solid #c9c0aa;
+}
+
 .fitTransform {
   position: absolute;
   top: 0;
