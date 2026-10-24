@@ -533,8 +533,6 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
-          <h1 className="text-3xl font-bold tracking-tight">参加して検定を受ける</h1>
           <ParticipantForm
             onLogin={login}
             message={access.message}
@@ -1329,7 +1327,11 @@ function ParticipantForm({
   }
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="mt-7 space-y-5">
+    <form
+      ref={formRef}
+      onSubmit={handleSubmit}
+      className={`${showExamTitle ? "mt-0" : "mt-7"} space-y-5`}
+    >
       {showExamTitle && (
         <div className={styles.examHeading}>
           <Image

@@ -36,7 +36,7 @@ describe("AnswerPage", () => {
   it("shows the participant form after session lookup reports no participant", () => {
     mockSession({ kind: "login" }, { kind: "ready" });
     render(<AnswerPage />);
-    expect(screen.getByRole("heading", { name: "参加して検定を受ける" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "参加して検定を受ける" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("受験者氏名")).toBeInTheDocument();
     expect(screen.getByLabelText("受験コード")).toBeInTheDocument();
   });
