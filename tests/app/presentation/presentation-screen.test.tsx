@@ -800,15 +800,7 @@ describe("presentation projection and presenter progression", () => {
       { state: "first", winners: [{ displayName: "悠", score: 10, rank: 1 }] },
       ["第一位", "10.00 ポイント", "悠"],
     ],
-    [
-      "finished",
-      { state: "finished" },
-      [
-        "ご参加",
-        "ありがとうございました",
-        "ふたりの思い出を一緒に祝ってくださり、心から感謝します",
-      ],
-    ],
+    ["finished", { state: "finished" }, ["ご参加", "ありがとうございました"]],
   ] as const)(
     "preserves the meaning and labels of the %s slide",
     async (_state, projection, contents) => {

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Button } from "@/components/Button";
 import { parseParticipantResult, type ParticipantResult } from "@/lib/participant-results-contract";
 
 export type InitialResult = ParticipantResult | { state: "unauthenticated" };
@@ -23,7 +22,6 @@ export default function ResultsPanel({
       : (parseParticipantResult(initial) ?? { state: "unavailable" }),
   );
   const [authorized, setAuthorized] = useState(initial.state !== "unauthenticated");
-  const [refreshing, setRefreshing] = useState(false);
   const [manuallyRefreshing, setManuallyRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(false);
   const pendingRef = useRef(false);
@@ -53,7 +51,6 @@ export default function ResultsPanel({
         return;
       }
       pendingRef.current = true;
-      setRefreshing(true);
       if (manual) {
         setStatusAnnouncement("");
         setManuallyRefreshing(true);
@@ -109,7 +106,6 @@ export default function ResultsPanel({
         if (inFlightRequestRef.current === requestId) {
           inFlightRequestRef.current = null;
           pendingRef.current = false;
-          setRefreshing(false);
           if (manual) setManuallyRefreshing(false);
           if (queuedRef.current) {
             queuedRef.current = false;
@@ -309,14 +305,6 @@ export default function ResultsPanel({
             ) : null}
           </nav>
         )}
-        <Button
-          variant="outline"
-          onClick={() => void refresh(true)}
-          disabled={refreshing}
-          className="mt-6 self-start"
-        >
-          結果を再読み込み
-        </Button>
       </section>
       {statusAnnouncement ? (
         <p role="status" aria-live="polite" className="sr-only">

@@ -1607,9 +1607,6 @@ export default function PresentationScreen({
                               <br />
                               ありがとうございました
                             </h1>
-                            <p className={styles.subtitle}>
-                              ふたりの思い出を一緒に祝ってくださり、心から感謝します
-                            </p>
                           </section>
                         )}
                       </PresenceSlide>
