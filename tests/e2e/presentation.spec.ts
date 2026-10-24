@@ -629,7 +629,9 @@ async function waitForRenderFrames(page: import("@playwright/test").Page) {
 
 async function waitForCurrentPresentationEntryAnimations(page: import("@playwright/test").Page) {
   const result = await page.evaluate(async () => {
-    const openingTitle = document.querySelector<HTMLElement>("#opening-title");
+    const openingTitle = document.querySelector<HTMLElement>(
+      "[class*='openingMotion'] [class*='openingTitle']",
+    );
     const questionHeading = document.querySelector<HTMLElement>("#question-heading");
     const podiumTitle = document.querySelector<HTMLElement>("#podium-title");
     const finishedTitle = document.querySelector<HTMLElement>("#finished-title");
@@ -723,7 +725,7 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
 function entryFor(page: import("@playwright/test").Page, state: PresentationState) {
   switch (state) {
     case "opening":
-      return page.locator("#opening-title");
+      return page.locator("[class*='openingMotion'] [class*='openingTitle']");
     case "question":
       return page.locator("#question-heading");
     case "podium_preview":
