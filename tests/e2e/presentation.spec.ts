@@ -2618,7 +2618,7 @@ test("@chromium all rank entries fit on the slide without vertical scrolling und
   const canvas = page.getByTestId("presentation-canvas");
   const frame = canvas.locator("img[class*='presentationFrame']");
   await expect(frame).toHaveCount(1);
-  await expect(frame).toHaveAttribute("src", "/certificate_ornate_frame_16x9_gold.svg");
+  await expect(frame).toHaveAttribute("src", "/certificate_reference_style_16x9.svg");
   await expect
     .poll(() =>
       Promise.all([
