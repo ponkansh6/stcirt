@@ -716,7 +716,7 @@ describe("presentation projection and presenter progression", () => {
       /\.openingFrame\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*0;[^}]*pointer-events:\s*none;/s,
     );
     expect(stylesheet).toMatch(
-      /\.openingFrame::before\s*\{[^}]*inset:\s*2\.5%;[^}]*border:\s*1px solid/s,
+      /\.openingFrame::before\s*\{[^}]*inset:\s*2\.5%;[^}]*border:\s*2px solid/s,
     );
     expect(stylesheet).toMatch(
       /\.openingFrame::after\s*\{[^}]*inset:\s*calc\(2\.5% \+ 6px\);[^}]*border:\s*1px solid/s,
@@ -877,7 +877,9 @@ describe("presentation projection and presenter progression", () => {
       const lockup = slide.querySelector("[class*='openingLockup']");
       const waitSlot = slide.querySelector("[class*='openingWaitSlot']");
       expect(lockup).not.toBeNull();
-      expect(slide.querySelectorAll("[data-testid='presentation-exam-stamp']")).toHaveLength(0);
+      expect(slide.querySelectorAll("[data-testid='presentation-exam-stamp']")).toHaveLength(
+        state === "opening" ? 1 : 0,
+      );
       expect(waitSlot).not.toBeNull();
       if (state === "opening") {
         expect(waitSlot).toHaveAttribute("aria-hidden", "true");

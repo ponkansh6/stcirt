@@ -138,7 +138,7 @@
 
 .openingFrame::before {
   inset: 2.5%;
-  border: 1px solid #b9ad8d;
+  border: 2px solid #b9ad8d;
   background:
     linear-gradient(#9f916d, #9f916d) left top / 2% 1px no-repeat,
     linear-gradient(#9f916d, #9f916d) right top / 2% 1px no-repeat,
@@ -305,6 +305,14 @@
   height: auto;
   transform: rotate(8deg);
   pointer-events: none;
+}
+
+.openingStamp {
+  position: absolute;
+  z-index: 2;
+  top: clamp(28px, 4cqh, 48px);
+  right: clamp(28px, 4cqw, 58px);
+  width: clamp(58px, 7cqw, 100px);
 }
 
 .openingWaitSlot {

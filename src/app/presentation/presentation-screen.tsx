@@ -1476,6 +1476,7 @@ export default function PresentationScreen({
                             className={`${styles.opening} ${styles.openingMotion}`}
                             aria-labelledby="opening-title"
                           >
+                            <ExamStamp className={styles.openingStamp} />
                             <div className={styles.openingLockup}>
                               <div className={styles.openingTitle}>
                                 <h1 id="opening-title" aria-label="しゅんたま検定">
