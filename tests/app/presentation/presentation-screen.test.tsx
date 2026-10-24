@@ -811,7 +811,7 @@ describe("presentation projection and presenter progression", () => {
       ) {
         expect(slide.querySelector("img[class*='presentationFrame']")).toHaveAttribute(
           "src",
-          "/certificate_ornate_frame_16x9_gold.svg",
+          "/certificate_reference_style_16x9.svg",
         );
         const rank = slide.querySelector("[class*='rankHeader'] h1[class*='rank']");
         const winner = slide.querySelector("article");

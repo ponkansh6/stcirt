@@ -629,8 +629,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: clamp(48px, 8cqh, 86px) clamp(58px, 6cqw, 96px);
-  background: #fffefa url("/certificate_reference_style_16x9.svg") center / 100% 100% no-repeat;
+  padding: clamp(22px, 4cqh, 44px) clamp(28px, 4.5cqw, 72px);
   text-align: center;
 }
 
