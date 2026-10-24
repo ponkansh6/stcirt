@@ -2611,7 +2611,7 @@ test("@chromium all rank entries fit on the slide without vertical scrolling und
   const stamp = winners.locator("[data-testid='presentation-exam-stamp']");
   await expect(stamp).toHaveCount(1);
   await expect(stamp).toHaveAttribute("aria-hidden", "true");
-  await expect(stamp).toHaveText("しゅんたま検定");
+  await expect(stamp).toHaveAttribute("src", /cert_stamp\.png/);
   await expect(winners.locator("[class*='rankOrnament']")).toHaveCSS("animation-name", "none");
   await expect(stamp).toHaveCSS("animation-name", "none");
   await expectRankAnticipation(winners, "reduced-motion third-place entry", false);
