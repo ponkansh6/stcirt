@@ -48,7 +48,9 @@ check_prod_schema() {
     echo "[error] .env.local に TURSO_DATABASE_URL と TURSO_AUTH_TOKEN の両方が必要です。push を中止します。" >&2
     return 1
   fi
-  TURSO_DATABASE_URL="$T_URL" TURSO_AUTH_TOKEN="$T_TOK" bash scripts/check-prod-schema.sh
+  SCHEMA_FILE="$ROOT/src/lib/db/schema.ts" \
+    TURSO_DATABASE_URL="$T_URL" TURSO_AUTH_TOKEN="$T_TOK" \
+    bash scripts/check-prod-schema.sh
 }
 
 TIP=""
