@@ -41,73 +41,76 @@ export default function ResultsPanel({
     return { label: "不正解", icon: "×", className: "text-error" };
   };
 
-  const refresh = useCallback(async () => {
-    if (scope === null) return;
-    if (pendingRef.current) {
-      queuedRef.current = true;
-      requestRevisionRef.current += 1;
-      return;
-    }
-    pendingRef.current = true;
-    const currentRevision = ++requestRevisionRef.current;
-    const requestId = ++requestIdRef.current;
-    inFlightRequestRef.current = requestId;
-    try {
-      const response = await fetch(
-        scope === "assisted"
-          ? "/api/participants/results?scope=assisted"
-          : "/api/participants/results",
-        {
-          cache: "no-store",
-          credentials: "same-origin",
-        },
-      );
-      if (currentRevision !== requestRevisionRef.current) return;
-      if (response.status === 401) {
-        setAuthorized(false);
-        setResult({ state: "waiting" });
-        setRefreshError(false);
+  const refresh = useCallback((activeScope: NonNullable<typeof scope>) => {
+    const poll = async (): Promise<void> => {
+      if (pendingRef.current) {
+        queuedRef.current = true;
+        requestRevisionRef.current += 1;
         return;
       }
-      if (!response.ok) {
-        setRefreshError(true);
-        return;
-      }
-      let payload: unknown;
+      pendingRef.current = true;
+      const currentRevision = ++requestRevisionRef.current;
+      const requestId = ++requestIdRef.current;
+      inFlightRequestRef.current = requestId;
       try {
-        payload = await response.json();
-      } catch {
+        const response = await fetch(
+          activeScope === "assisted"
+            ? "/api/participants/results?scope=assisted"
+            : "/api/participants/results",
+          {
+            cache: "no-store",
+            credentials: "same-origin",
+          },
+        );
         if (currentRevision !== requestRevisionRef.current) return;
-        setRefreshError(true);
-        return;
-      }
-      if (currentRevision !== requestRevisionRef.current) return;
-      const parsed = parseParticipantResult(payload);
-      if (!parsed) {
-        setRefreshError(true);
-        return;
-      }
-      setAuthorized(true);
-      setResult(parsed);
-      setRefreshError(false);
-    } catch {
-      if (currentRevision === requestRevisionRef.current) setRefreshError(true);
-    } finally {
-      if (inFlightRequestRef.current === requestId) {
-        inFlightRequestRef.current = null;
-        pendingRef.current = false;
-        if (queuedRef.current) {
-          queuedRef.current = false;
-          void refresh();
+        if (response.status === 401) {
+          setAuthorized(false);
+          setResult({ state: "waiting" });
+          setRefreshError(false);
+          return;
+        }
+        if (!response.ok) {
+          setRefreshError(true);
+          return;
+        }
+        let payload: unknown;
+        try {
+          payload = await response.json();
+        } catch {
+          if (currentRevision !== requestRevisionRef.current) return;
+          setRefreshError(true);
+          return;
+        }
+        if (currentRevision !== requestRevisionRef.current) return;
+        const parsed = parseParticipantResult(payload);
+        if (!parsed) {
+          setRefreshError(true);
+          return;
+        }
+        setAuthorized(true);
+        setResult(parsed);
+        setRefreshError(false);
+      } catch {
+        if (currentRevision === requestRevisionRef.current) setRefreshError(true);
+      } finally {
+        if (inFlightRequestRef.current === requestId) {
+          inFlightRequestRef.current = null;
+          pendingRef.current = false;
+          if (queuedRef.current) {
+            queuedRef.current = false;
+            void poll();
+          }
         }
       }
-    }
-  }, [scope]);
+    };
+
+    void poll();
+  }, []);
 
   useEffect(() => {
     if (scope === null) return;
     const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible") refresh(scope);
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {

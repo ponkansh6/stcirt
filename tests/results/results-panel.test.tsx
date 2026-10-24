@@ -455,6 +455,44 @@ describe("ResultsPanel", () => {
     expect(screen.getByRole("link", { name: "回答画面へ戻る" })).toHaveAttribute("href", "/answer");
   });
 
+  it("does not repeat the waiting announcement after a session expires and recovers", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ state: "waiting" }) })
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ state: "waiting" }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ state: "waiting" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ResultsPanel initial={visibleResult} />);
+
+    setVisibility("visible");
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "集計期間中です。結果は公開後に確認できます。",
+      ),
+    );
+
+    setVisibility("visible");
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "参加者セッションを確認できません。回答画面からもう一度参加してください。",
+      ),
+    );
+
+    setVisibility("visible");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "参加者セッションを確認できません" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "参加者セッションを確認できません。回答画面からもう一度参加してください。",
+    );
+    expect(screen.getByRole("status")).not.toHaveTextContent(
+      "集計期間中です。結果は公開後に確認できます。",
+    );
+  });
+
   it("keeps the last confirmed result when the API returns a server error or the request rejects", async () => {
     const unavailableJson = vi.fn(async () => ({ state: "unavailable" }));
     const fetchMock = vi
