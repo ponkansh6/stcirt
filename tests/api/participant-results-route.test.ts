@@ -114,7 +114,13 @@ describe("GET /api/participants/results", () => {
   it("returns only the authenticated participant's rank, score, and question details", async () => {
     vi.mocked(getParticipantResult).mockResolvedValueOnce(
       Object.assign(
-        { state: "visible" as const, rank: 3, score: 0.5 },
+        {
+          state: "visible" as const,
+          rank: 3,
+          participantCount: 5,
+          score: 0.5,
+          maxScore: 1,
+        },
         {
           questions: [
             {
@@ -138,7 +144,9 @@ describe("GET /api/participants/results", () => {
     await expect(response.json()).resolves.toEqual({
       state: "visible",
       rank: 3,
+      participantCount: 5,
       score: 0.5,
+      maxScore: 1,
       questions: [
         {
           position: 0,
@@ -155,7 +163,9 @@ describe("GET /api/participants/results", () => {
     vi.mocked(getParticipantResult).mockResolvedValueOnce({
       state: "visible",
       rank: 1,
+      participantCount: 1,
       score: 0.75,
+      maxScore: 2,
       questions: [
         {
           position: 0,
@@ -179,7 +189,9 @@ describe("GET /api/participants/results", () => {
     await expect(response.json()).resolves.toEqual({
       state: "visible",
       rank: 1,
+      participantCount: 1,
       score: 0.75,
+      maxScore: 2,
       questions: [
         {
           position: 0,

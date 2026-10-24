@@ -143,7 +143,9 @@ describe("GET /api/participants/results with SQLite persistence", () => {
     await expect(response.json()).resolves.toEqual({
       state: "visible",
       rank: 2,
+      participantCount: 3,
       score: 0,
+      maxScore: 1,
       questions: [
         {
           position: 0,
@@ -190,7 +192,9 @@ describe("GET /api/participants/results with SQLite persistence", () => {
     await expect(assisted.json()).resolves.toMatchObject({
       state: "visible",
       rank: 1,
+      participantCount: 3,
       score: 1,
+      maxScore: 1,
       questions: [{ answer: { value: "Beta", correctness: "correct" } }],
     });
 

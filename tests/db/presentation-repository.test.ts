@@ -1460,7 +1460,9 @@ describe("presentation repository", () => {
     await expect(getParticipantResult(1)).resolves.toEqual({
       state: "visible",
       score: 0.5,
+      maxScore: 1,
       rank: 1,
+      participantCount: 1,
       questions: [
         {
           position: 0,
@@ -2209,7 +2211,9 @@ describe("presentation repository", () => {
     expect(participantResult).toEqual({
       state: "visible",
       rank: 1,
+      participantCount: 1,
       score: 0,
+      maxScore: 2,
       questions: [
         {
           position: 0,
@@ -2845,7 +2849,9 @@ describe("presentation repository", () => {
     await expect(getParticipantResult(first)).resolves.toEqual({
       state: "visible",
       rank: 1,
+      participantCount: 2,
       score: 2,
+      maxScore: 2,
       questions: [
         {
           position: 0,
@@ -2862,7 +2868,9 @@ describe("presentation repository", () => {
     await expect(getParticipantResult(second)).resolves.toEqual({
       state: "visible",
       rank: 2,
+      participantCount: 2,
       score: 1,
+      maxScore: 2,
       questions: [
         {
           position: 0,
@@ -2948,7 +2956,9 @@ describe("presentation repository", () => {
     await expect(getParticipantResult(first)).resolves.toEqual({
       state: "visible",
       rank: 1,
+      participantCount: 2,
       score: 2,
+      maxScore: 2,
       questions: [
         { position: 0, question: "Question 1", answer: { kind: "unanswered" } },
         { position: 1, question: "Question 5", answer: { kind: "legacy" } },
@@ -3020,7 +3030,9 @@ describe("presentation repository", () => {
     expect(freeTextResult).toEqual({
       state: "visible",
       rank: 2,
+      participantCount: 2,
       score: 1,
+      maxScore: 2,
       questions: [
         {
           position: 0,

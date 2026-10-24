@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   examQuestions,
@@ -87,7 +87,14 @@ export type ParticipantResultQuestion = {
 export type ParticipantResult =
   | { state: "waiting" }
   | { state: "unavailable" }
-  | { state: "visible"; score: number; rank: number; questions: ParticipantResultQuestion[] };
+  | {
+      state: "visible";
+      score: number;
+      maxScore: number;
+      rank: number;
+      participantCount: number;
+      questions: ParticipantResultQuestion[];
+    };
 
 export function stageForRank(rank: number): PresentationState {
   return rank === 3 ? "third" : rank === 2 ? "second" : "first";
@@ -195,12 +202,18 @@ export async function getParticipantResult(participantId: number): Promise<Parti
       .from(presentationQuestions)
       .where(eq(presentationQuestions.sessionId, 1))
       .orderBy(asc(presentationQuestions.position));
+    const [entryCount] = await tx
+      .select({ value: count() })
+      .from(presentationEntries)
+      .where(eq(presentationEntries.sessionId, 1));
     if (
       !Number.isFinite(entry.score) ||
       entry.score < 0 ||
       entry.score > questionRows.length ||
       !Number.isInteger(entry.rank) ||
       entry.rank < 1 ||
+      entry.rank > entryCount.value ||
+      entryCount.value < 1 ||
       questionRows.length === 0 ||
       !Array.isArray(entry.answers) ||
       entry.answers.length !== questionRows.length
@@ -308,7 +321,14 @@ export async function getParticipantResult(participantId: number): Promise<Parti
         answer: answerDto,
       });
     }
-    return { state: "visible" as const, score: entry.score, rank: entry.rank, questions };
+    return {
+      state: "visible" as const,
+      score: entry.score,
+      maxScore: questionRows.length,
+      rank: entry.rank,
+      participantCount: entryCount.value,
+      questions,
+    };
   });
 }
 export async function getAdminPresentation() {

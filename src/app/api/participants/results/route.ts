@@ -40,7 +40,14 @@ export async function GET(request: Request) {
               : { kind: answer.kind },
       }));
       return NextResponse.json(
-        { state: "visible", rank: result.rank, score: result.score, questions },
+        {
+          state: "visible",
+          rank: result.rank,
+          participantCount: result.participantCount,
+          score: result.score,
+          maxScore: result.maxScore,
+          questions,
+        },
         { headers: noStore },
       );
     }

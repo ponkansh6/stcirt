@@ -11,7 +11,14 @@ export type ParticipantResultQuestion = {
 export type ParticipantResult =
   | { state: "waiting" }
   | { state: "unavailable" }
-  | { state: "visible"; score: number; rank: number; questions: ParticipantResultQuestion[] };
+  | {
+      state: "visible";
+      score: number;
+      maxScore: number;
+      rank: number;
+      participantCount: number;
+      questions: ParticipantResultQuestion[];
+    };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -35,6 +42,9 @@ export const parseParticipantResult = (payload: unknown): ParticipantResult | nu
   if (
     payload.state !== "visible" ||
     !isPositiveInteger(payload.rank) ||
+    !isPositiveInteger(payload.participantCount) ||
+    payload.rank > payload.participantCount ||
+    !isPositiveInteger(payload.maxScore) ||
     !isFiniteNumber(payload.score) ||
     !Array.isArray(payload.questions) ||
     payload.questions.length === 0
@@ -97,7 +107,20 @@ export const parseParticipantResult = (payload: unknown): ParticipantResult | nu
     }
   }
 
-  if (payload.score < 0 || payload.score > questions.length) return null;
+  if (
+    payload.maxScore !== questions.length ||
+    payload.score < 0 ||
+    payload.score > payload.maxScore
+  ) {
+    return null;
+  }
 
-  return { state: "visible", score: payload.score, rank: payload.rank, questions };
+  return {
+    state: "visible",
+    score: payload.score,
+    maxScore: payload.maxScore,
+    rank: payload.rank,
+    participantCount: payload.participantCount,
+    questions,
+  };
 };

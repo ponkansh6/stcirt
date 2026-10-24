@@ -186,11 +186,15 @@ export default function ResultsPanel({
             <dl className="mt-8 grid grid-cols-2 gap-4">
               <div className="rounded-xl bg-surface-2 p-5">
                 <dt className="text-sm text-muted text-balance">順位</dt>
-                <dd className="mt-1 text-3xl font-bold">{result.rank}位</dd>
+                <dd className="mt-1 text-3xl font-bold">
+                  {result.rank}位 / {result.participantCount}人
+                </dd>
               </div>
               <div className="rounded-xl bg-surface-2 p-5">
                 <dt className="text-sm text-muted text-balance">得点</dt>
-                <dd className="mt-1 text-3xl font-bold">{result.score.toFixed(2)}点</dd>
+                <dd className="mt-1 text-3xl font-bold">
+                  {result.score.toFixed(2)}点 / {result.maxScore}点
+                </dd>
               </div>
             </dl>
             <section className="mt-10" aria-labelledby="answer-details-heading">

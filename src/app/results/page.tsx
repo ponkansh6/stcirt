@@ -77,7 +77,9 @@ async function ResultsContent({
       ? {
           state: "visible",
           rank: result.rank,
+          participantCount: result.participantCount,
           score: result.score,
+          maxScore: result.maxScore,
           questions: result.questions.map(({ position, question, answer }) => ({
             position,
             question,

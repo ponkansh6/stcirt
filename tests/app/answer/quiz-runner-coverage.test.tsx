@@ -21,7 +21,9 @@ const selectedQuizzes = Array.from({ length: 5 }, (_, index) => ({
 const visibleResultsPayload = {
   state: "visible",
   rank: 1,
+  participantCount: 1,
   score: 1,
+  maxScore: 1,
   questions: [{ position: 0, question: "設問", answer: { kind: "unanswered" } }],
 };
 
