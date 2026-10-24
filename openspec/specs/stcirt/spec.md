@@ -428,6 +428,7 @@ Public presentation responses MUST disclose only the data permitted for the curr
 - WHEN a third-, second-, or first-place stage is entered with normal motion enabled
 - THEN the centered rank header (certificate label and rank heading) rises 30px and scales from 0.90 through a 1.035 overshoot before settling over 640ms
 - AND its rank plate enters over 380ms, its decorative heading line expands over 650ms after an 80ms delay, and its stamp rotates and settles into place over 720ms
+- AND the rank heading plate uses a warm-white ground, a muted-gold double outline, and small corner flourishes inspired by `public/certificate_reference_style_A4_landscape.svg`, with the same frame design for first, second, and third place
 - AND one decorative shimmer crosses the heading line once over 360ms beginning after a 300ms delay, with stronger light on first place
 - AND the rank section keeps its identity across same-rank polls but remounts when the rank state changes or is re-entered, replaying its stamp and heading-decoration entrance
 - AND one rank-keyed, always-visible winner stage contains all displayed winner content or the empty-state message in the initial DOM and accessibility tree, contributing to natural layout; a single inner content wrapper preserves the group's natural size and reveals its content after 760ms over 540ms with opacity, a 24px lift, and scale from 0.975 to 1

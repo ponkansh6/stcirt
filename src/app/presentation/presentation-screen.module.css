@@ -944,41 +944,39 @@
   position: absolute;
   z-index: -1;
   inset: 0;
-  border: 3px double var(--rank-metal, #8e6e31);
-  background: linear-gradient(180deg, var(--rank-light, #fffdf5), #ead9aa);
-  box-shadow:
-    inset 0 1px 0 #fff,
-    0 1px 0 rgb(116 88 37 / 22%);
+  border: 3px double #807529;
+  background-color: #fffefa;
+  background-image:
+    radial-gradient(ellipse at center, transparent 43%, #807529 47% 51%, transparent 56%),
+    radial-gradient(ellipse at center, transparent 43%, #807529 47% 51%, transparent 56%),
+    radial-gradient(ellipse at center, transparent 43%, #807529 47% 51%, transparent 56%),
+    radial-gradient(ellipse at center, transparent 43%, #807529 47% 51%, transparent 56%),
+    linear-gradient(#807529, #807529),
+    linear-gradient(#807529, #807529),
+    linear-gradient(#807529, #807529),
+    linear-gradient(#807529, #807529);
+  background-position:
+    6px 5px,
+    calc(100% - 6px) 5px,
+    6px calc(100% - 5px),
+    calc(100% - 6px) calc(100% - 5px),
+    left 8px top 5px,
+    right 8px top 5px,
+    left 8px bottom 5px,
+    right 8px bottom 5px;
+  background-repeat: no-repeat;
+  background-size:
+    12px 12px,
+    12px 12px,
+    12px 12px,
+    12px 12px,
+    9px 1px,
+    9px 1px,
+    9px 1px,
+    9px 1px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 88%);
   content: "";
   pointer-events: none;
-}
-
-.winners[data-rank="second"] .rank::before {
-  background: linear-gradient(
-    105deg,
-    #eee6d2 0%,
-    #fffdf5 30%,
-    #e3d5b3 52%,
-    #fffdf5 74%,
-    #e9dec6 100%
-  );
-}
-
-.winners[data-rank="first"] .rank::before {
-  border-width: 4px;
-  background: linear-gradient(
-    105deg,
-    #f0e2b8 0%,
-    #fffef8 24%,
-    #d8bb70 46%,
-    #fff9e5 64%,
-    #e5ce91 100%
-  );
-  box-shadow:
-    inset 0 1px 0 #fff,
-    0 1px 0 #9e7d3c,
-    0 2px 8px rgb(142 110 49 / 30%),
-    0 0 16px rgb(243 223 157 / 26%);
 }
 
 .winners[data-rank="first"] .rankOrnament {
