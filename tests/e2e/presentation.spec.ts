@@ -634,13 +634,11 @@ async function waitForCurrentPresentationEntryAnimations(page: import("@playwrig
     const podiumTitle = document.querySelector<HTMLElement>("#podium-title");
     const finishedTitle = document.querySelector<HTMLElement>("#finished-title");
     let targets: HTMLElement[] = [];
+    let animationName = "presentationEntry";
 
     if (openingTitle) {
-      const section = openingTitle.closest("section");
-      targets = [
-        openingTitle.parentElement,
-        ...Array.from(section?.querySelectorAll("p") ?? []),
-      ].filter((element): element is HTMLElement => element instanceof HTMLElement);
+      targets = [openingTitle];
+      animationName = "openingTitleEntry";
     } else if (questionHeading?.nextElementSibling instanceof HTMLOListElement) {
       targets = [
         questionHeading.previousElementSibling,
@@ -660,15 +658,13 @@ async function waitForCurrentPresentationEntryAnimations(page: import("@playwrig
     const animations = targets.flatMap((target) => {
       const matches = target
         .getAnimations()
-        .filter((animation) =>
-          (animation as CSSAnimation).animationName.endsWith("presentationEntry"),
-        );
+        .filter((animation) => (animation as CSSAnimation).animationName.endsWith(animationName));
       if (matches.length !== 1) {
-        throw new Error(`Expected one presentationEntry animation on ${target.tagName}`);
+        throw new Error(`Expected one ${animationName} animation on ${target.tagName}`);
       }
       const endTime = matches[0]?.effect?.getComputedTiming().endTime;
       if (typeof endTime !== "number" || !Number.isFinite(endTime) || endTime <= 0) {
-        throw new Error("Expected a finite presentationEntry animation");
+        throw new Error(`Expected a finite ${animationName} animation`);
       }
       return matches;
     });
@@ -727,7 +723,7 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
 function entryFor(page: import("@playwright/test").Page, state: PresentationState) {
   switch (state) {
     case "opening":
-      return page.locator("#opening-title").locator("xpath=..");
+      return page.locator("#opening-title");
     case "question":
       return page.locator("#question-heading");
     case "podium_preview":
@@ -739,12 +735,17 @@ function entryFor(page: import("@playwright/test").Page, state: PresentationStat
   }
 }
 
-async function inspectEntryAnimation(target: import("@playwright/test").Locator) {
-  return target.evaluate((element) => {
+async function inspectEntryAnimation(
+  target: import("@playwright/test").Locator,
+  animationName = "presentationEntry",
+) {
+  return target.evaluate((element, expectedAnimationName) => {
     const style = getComputedStyle(element);
     const animation = element
       .getAnimations()
-      .find((candidate) => (candidate as CSSAnimation).animationName.endsWith("presentationEntry"));
+      .find((candidate) =>
+        (candidate as CSSAnimation).animationName.endsWith(expectedAnimationName),
+      );
     animation?.pause();
     if (animation) animation.currentTime = 0;
     const frames =
@@ -762,21 +763,33 @@ async function inspectEntryAnimation(target: import("@playwright/test").Locator)
       lastOpacity: last?.opacity,
       lastTranslateY: matrixFor(last?.transform),
     };
-  });
+  }, animationName);
 }
 
-async function expectPresentationEntryAnimation(target: import("@playwright/test").Locator) {
-  const animation = await inspectEntryAnimation(target);
+async function expectPresentationEntryAnimation(
+  target: import("@playwright/test").Locator,
+  state: PresentationState,
+) {
+  const isOpening = state === "opening";
+  const animation = await inspectEntryAnimation(
+    target,
+    isOpening ? "openingTitleEntry" : "presentationEntry",
+  );
   const durationMs = Number.parseFloat(animation.animationDuration);
   const durationInMs = animation.animationDuration.endsWith("ms") ? durationMs : durationMs * 1000;
-  expect(animation.animationName).toMatch(/presentationEntry$/);
+  expect(animation.animationName).toMatch(isOpening ? /openingTitleEntry$/ : /presentationEntry$/);
   expect(durationInMs).toBeGreaterThan(0);
   expect(durationInMs).toBeLessThanOrEqual(400);
   expect(animation.animationFillMode).toBe("both");
   expect(Number(animation.firstOpacity)).toBe(0);
-  expect(animation.firstTranslateY).toBe(-12);
   expect(Number(animation.lastOpacity)).toBe(1);
-  expect(animation.lastTranslateY).toBe(0);
+  if (isOpening) {
+    expect(animation.firstTranslateY).toBe(0);
+    expect(animation.lastTranslateY).toBe(0);
+  } else {
+    expect(animation.firstTranslateY).toBe(-12);
+    expect(animation.lastTranslateY).toBe(0);
+  }
 }
 
 async function expectReducedEntry(target: import("@playwright/test").Locator) {
@@ -3290,7 +3303,7 @@ test("@chromium generic slide entrances honor their stage and dynamic reduced mo
   ];
   for (const state of normalMotionStages) {
     await expect(slideFor(page, state)).toBeVisible();
-    await expectPresentationEntryAnimation(entryFor(page, state));
+    await expectPresentationEntryAnimation(entryFor(page, state), state);
     const presenceEntry = naturalLayer.locator(":scope > div > div");
     await expect(presenceEntry).toHaveCSS("opacity", "1");
     const liveRegions = page.locator('main [aria-live="polite"]');
