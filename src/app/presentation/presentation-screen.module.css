@@ -951,10 +951,8 @@
     radial-gradient(ellipse at center, transparent 43%, #807529 47% 51%, transparent 56%),
     radial-gradient(ellipse at center, transparent 43%, #807529 47% 51%, transparent 56%),
     radial-gradient(ellipse at center, transparent 43%, #807529 47% 51%, transparent 56%),
-    linear-gradient(#807529, #807529),
-    linear-gradient(#807529, #807529),
-    linear-gradient(#807529, #807529),
-    linear-gradient(#807529, #807529);
+    linear-gradient(#807529, #807529), linear-gradient(#807529, #807529),
+    linear-gradient(#807529, #807529), linear-gradient(#807529, #807529);
   background-position:
     6px 5px,
     calc(100% - 6px) 5px,
