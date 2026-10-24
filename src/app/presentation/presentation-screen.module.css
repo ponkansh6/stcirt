@@ -215,6 +215,7 @@
 }
 
 .opening {
+  --opening-title-size: clamp(var(--presentation-min-readable-size), 6.1cqw, 7.2rem);
   position: relative;
   display: flex;
   box-sizing: border-box;
@@ -230,8 +231,30 @@
   flex: 0 0 auto;
 }
 
+.openingAnchor {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.openingEdition {
+  position: absolute;
+  top: -1.7em;
+  left: 50%;
+  width: max-content;
+  margin: 0;
+  transform: translateX(-50%);
+  color: #37424c;
+  font-size: clamp(var(--presentation-min-readable-size), 2.5cqw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
 .openingMotion .openingTitle {
-  animation: presentationEntry 340ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+  animation: openingTitleEntry 340ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
 }
 
 .openingMotion .openingSubtitle {
@@ -256,7 +279,7 @@
   border-bottom: 3px solid #173e27;
   color: #173e27;
   font-family: Meiryo, メイリオ, sans-serif;
-  font-size: clamp(var(--presentation-min-readable-size), 6.1cqw, 7.2rem);
+  font-size: var(--opening-title-size);
   font-weight: 650;
   letter-spacing: 0.12em;
   line-height: 1.18;
@@ -289,9 +312,9 @@
 }
 
 .openingLockup {
-  position: relative;
   z-index: 1;
   display: flex;
+  min-height: calc(var(--opening-title-size) * 1.36);
   width: 100%;
   align-items: center;
   justify-content: center;
@@ -406,6 +429,16 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes openingTitleEntry {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }
 
@@ -1279,8 +1312,12 @@
     gap: 16px;
   }
 
+  .opening {
+    --opening-title-size: clamp(var(--presentation-min-readable-size), 8cqw, 4rem);
+  }
+
   .opening .openingTitle h1 {
-    font-size: clamp(var(--presentation-min-readable-size), 8cqw, 4rem);
+    font-size: var(--opening-title-size);
   }
 
   .winner {

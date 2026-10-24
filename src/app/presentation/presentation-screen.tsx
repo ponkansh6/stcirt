@@ -1437,11 +1437,14 @@ export default function PresentationScreen({
                   {!loadingPresenterDeck && !data && !missingQuestionPayload && (
                     <section className={styles.opening} aria-labelledby="presentation-title">
                       <div className={styles.openingLockup}>
-                        <div className={styles.openingTitle}>
-                          <h1 id="presentation-title" aria-label="しゅんたま検定">
-                            <span>しゅんたま</span>
-                            <span>検定</span>
-                          </h1>
+                        <div className={styles.openingAnchor}>
+                          <p className={styles.openingEdition}>令和八年度第一回</p>
+                          <div className={styles.openingTitle}>
+                            <h1 id="presentation-title" aria-label="しゅんたま検定">
+                              <span>しゅんたま</span>
+                              <span>検定</span>
+                            </h1>
+                          </div>
                         </div>
                       </div>
                       <p className={styles.openingSubtitle}>解答解説・表彰</p>
@@ -1457,11 +1460,14 @@ export default function PresentationScreen({
                         {state === "not_started" && (
                           <section className={styles.opening} aria-labelledby="presentation-title">
                             <div className={styles.openingLockup}>
-                              <div className={styles.openingTitle}>
-                                <h1 id="presentation-title" aria-label="しゅんたま検定">
-                                  <span>しゅんたま</span>
-                                  <span>検定</span>
-                                </h1>
+                              <div className={styles.openingAnchor}>
+                                <p className={styles.openingEdition}>令和八年度第一回</p>
+                                <div className={styles.openingTitle}>
+                                  <h1 id="presentation-title" aria-label="しゅんたま検定">
+                                    <span>しゅんたま</span>
+                                    <span>検定</span>
+                                  </h1>
+                                </div>
                               </div>
                             </div>
                             <p className={styles.openingSubtitle}>解答解説・表彰</p>
@@ -1478,11 +1484,14 @@ export default function PresentationScreen({
                           >
                             <ExamStamp className={styles.openingStamp} />
                             <div className={styles.openingLockup}>
-                              <div className={styles.openingTitle}>
-                                <h1 id="opening-title" aria-label="しゅんたま検定">
-                                  <span>しゅんたま</span>
-                                  <span>検定</span>
-                                </h1>
+                              <div className={styles.openingAnchor}>
+                                <p className={styles.openingEdition}>令和八年度第一回</p>
+                                <div className={styles.openingTitle}>
+                                  <h1 id="opening-title" aria-label="しゅんたま検定">
+                                    <span>しゅんたま</span>
+                                    <span>検定</span>
+                                  </h1>
+                                </div>
                               </div>
                             </div>
                             <p className={styles.openingSubtitle}>解答解説・表彰</p>
