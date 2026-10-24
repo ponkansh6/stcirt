@@ -826,7 +826,7 @@ test("@chromium returns to owner completion after an assisted save and opens tar
   await expect(page.getByRole("button", { name: "代理回答を行う" })).toBeVisible();
   await page.getByRole("button", { name: "代理回答を行う" }).click();
   await expect(page.getByRole("heading", { name: "代理回答" })).toBeVisible();
-  await page.getByLabel("回答する人のお名前").fill("代理回答者");
+  await page.getByLabel("本来回答する人のお名前").fill("代理回答者");
   await page.getByRole("button", { name: "回答をはじめる" }).click();
   await expect(
     page.locator('section[aria-labelledby="question-title-1"]').getByRole("heading", {

@@ -137,7 +137,8 @@ function deriveAnswerUi({
     return {
       surface,
       status: "代理回答",
-      message: "回答する人のお名前を入力してください。この画面からは、お一人分の回答を行えます。",
+      message:
+        "本来回答する人のお名前を入力してください。この画面からは、お一人分の回答を行えます。",
       statusRole: "status",
       busy: false,
       primaryAction: "start-assisted",
@@ -1396,7 +1397,7 @@ function ParticipantForm({
         />
         {showExamTitle && (
           <p id="participant-pin-hint" className="text-sm text-muted">
-            ※自身で入力が難しい方の為の代理回答は自分の回答完了後に行えます
+            披露宴までには回答を完了させてください。※自身で入力が難しい方の為の代理回答は自分の回答完了後に行えます
           </p>
         )}
       </div>
@@ -1445,7 +1446,7 @@ function AssistedParticipantForm({
     <form onSubmit={handleSubmit} className="mt-7 space-y-5">
       <div>
         <label htmlFor="assisted-name" className="mb-2 block text-sm font-semibold">
-          回答する人のお名前
+          本来回答する人のお名前
         </label>
         <input
           id="assisted-name"

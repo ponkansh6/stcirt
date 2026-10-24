@@ -293,9 +293,9 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
 
     expect(screen.getByRole("heading", { name: "代理回答" })).toBeInTheDocument();
-    expect(screen.getByLabelText("回答する人のお名前")).toBeInTheDocument();
+    expect(screen.getByLabelText("本来回答する人のお名前")).toBeInTheDocument();
     expect(screen.queryByLabelText("4桁PIN")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("回答する人のお名前"), {
+    fireEvent.change(screen.getByLabelText("本来回答する人のお名前"), {
       target: { value: "代理回答者" },
     });
     fireEvent.click(screen.getByRole("button", { name: "回答をはじめる" }));

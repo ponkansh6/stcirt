@@ -844,7 +844,7 @@ describe("QuizRunner remaining coverage states", () => {
 
     expect(screen.getByRole("button", { name: "回答を準備しています…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "自分の回答に戻る" })).toBeDisabled();
-    fireEvent.submit(screen.getByLabelText("回答する人のお名前").closest("form")!);
+    fireEvent.submit(screen.getByLabelText("本来回答する人のお名前").closest("form")!);
     expect(startAssisted).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "自分の回答に戻る" }));
     expect(returnToOwner).not.toHaveBeenCalled();
@@ -860,7 +860,7 @@ describe("QuizRunner remaining coverage states", () => {
     );
     render(<QuizRunner />);
 
-    fireEvent.change(screen.getByLabelText("回答する人のお名前"), {
+    fireEvent.change(screen.getByLabelText("本来回答する人のお名前"), {
       target: { value: "代理回答者" },
     });
     fireEvent.submit(screen.getByRole("button", { name: "回答をはじめる" }).closest("form")!);
