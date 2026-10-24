@@ -475,11 +475,11 @@ function buildPublicProjection(
   const rank = rankForStage(state);
   if (rank !== null) {
     const winners = admin.entries
-      .filter((entry) => entry.rank === rank)
+      .filter((entry) => entry.isAggregationTarget && entry.rank !== null && entry.rank === rank)
       .map((entry) => ({
         displayName: entry.displayName,
         score: entry.score,
-        rank: entry.rank,
+        rank,
         questionResults: admin.questions.map((question, position): WinnerQuestionResult => {
           const answer = entry.answers?.find((item) => item.questionId === question.id);
           const validQuestion =

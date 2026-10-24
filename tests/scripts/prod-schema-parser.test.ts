@@ -129,7 +129,15 @@ const expectedSchemaManifest = [
   },
   {
     tableName: "presentation_entries",
-    columns: ["session_id", "participant_id", "display_name", "score", "rank", "answers"],
+    columns: [
+      "session_id",
+      "participant_id",
+      "display_name",
+      "score",
+      "rank",
+      "answers",
+      "is_aggregation_target",
+    ],
   },
   {
     tableName: "presentation_operations",
@@ -168,7 +176,7 @@ describe("production schema parser", () => {
     const parsed = parseExpectedSchema(schema);
 
     expect(parsed).toHaveLength(17);
-    expect(parsed.reduce((count, table) => count + table.columns.length, 0)).toBe(104);
+    expect(parsed.reduce((count, table) => count + table.columns.length, 0)).toBe(105);
     expect(normalizeManifest(parsed)).toEqual(normalizeManifest(expectedSchemaManifest));
   });
 });
