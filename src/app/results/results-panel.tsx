@@ -183,14 +183,26 @@ export default function ResultsPanel({
             <dl className="mt-8 grid grid-cols-2 gap-4">
               <div className="rounded-xl bg-surface-2 p-5">
                 <dt className="text-sm text-muted text-balance">順位</dt>
-                <dd className="mt-1 text-3xl font-bold">
-                  {result.rank}位 / {result.participantCount}人
+                <dd className="mt-1 flex min-h-10 items-baseline gap-2">
+                  {result.rank === null ? (
+                    <span className="text-xl font-bold tracking-tight text-muted">集計対象外</span>
+                  ) : (
+                    <span className="text-3xl font-bold tracking-tight sm:text-4xl">
+                      {result.rank}位
+                    </span>
+                  )}
+                  <span className="text-sm font-medium text-muted">
+                    / {result.participantCount}人
+                  </span>
                 </dd>
               </div>
               <div className="rounded-xl bg-surface-2 p-5">
                 <dt className="text-sm text-muted text-balance">得点</dt>
-                <dd className="mt-1 text-3xl font-bold">
-                  {result.score.toFixed(2)}点 / {result.maxScore}点
+                <dd className="mt-1 flex min-h-10 items-baseline gap-2">
+                  <span className="text-3xl font-bold tracking-tight sm:text-4xl">
+                    {result.score.toFixed(2)}点
+                  </span>
+                  <span className="text-sm font-medium text-muted">/ {result.maxScore}点</span>
                 </dd>
               </div>
             </dl>

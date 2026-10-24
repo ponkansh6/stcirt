@@ -16,6 +16,7 @@ afterEach(() => {
 const visibleResult = {
   state: "visible" as const,
   rank: 2,
+  isAggregationTarget: true,
   participantCount: 5,
   score: 1.5,
   maxScore: 2,
@@ -71,7 +72,23 @@ describe("ResultsPanel", () => {
     setVisibility("visible");
     expect(screen.queryByRole("button", { name: "結果を再読み込み" })).not.toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
+    expect(screen.getByText("/ 5人")).toBeVisible();
+  });
+
+  it("labels a participant outside the aggregation target without showing a rank", () => {
+    const outsideTarget = {
+      ...visibleResult,
+      rank: null,
+      isAggregationTarget: false,
+      participantCount: 0,
+    };
+    mockPoll(outsideTarget);
+    render(<ResultsPanel initial={outsideTarget} scope={null} />);
+
+    expect(screen.getByText("集計対象外")).toBeVisible();
+    expect(screen.getByText("/ 0人")).toBeVisible();
+    expect(screen.queryByText(/^\d+位$/)).not.toBeInTheDocument();
   });
 
   it("announces manual refresh progress and the waiting response", async () => {
@@ -121,7 +138,7 @@ describe("ResultsPanel", () => {
     expect(screen.queryByRole("status")).not.toHaveTextContent("更新中…");
 
     fireEvent.click(refresh);
-    await waitFor(() => expect(screen.getByText("3位 / 5人")).toBeVisible());
+    await waitFor(() => expect(screen.getByText("3位")).toBeVisible());
     fireEvent.click(refresh);
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
@@ -174,7 +191,7 @@ describe("ResultsPanel", () => {
 
     render(<ResultsPanel initial={visibleResult} />);
 
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
     expect(fetch).not.toHaveBeenCalled();
     setVisibility("hidden");
     expect(fetch).not.toHaveBeenCalled();
@@ -214,13 +231,13 @@ describe("ResultsPanel", () => {
       await firstResponse.promise;
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
 
     await act(async () => {
       secondResponse.resolve({ ok: true, status: 200, json: async () => visibleResult });
       await secondResponse.promise;
     });
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
   });
 
   it("ignores a poll response superseded while its JSON body is pending", async () => {
@@ -252,7 +269,7 @@ describe("ResultsPanel", () => {
       await body.promise;
     });
 
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
     expect(screen.queryByText("99位")).not.toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
@@ -308,8 +325,8 @@ describe("ResultsPanel", () => {
       await newResponse.promise;
     });
 
-    expect(screen.getByText("3位 / 5人")).toBeVisible();
-    expect(screen.queryByText("2位 / 5人")).not.toBeInTheDocument();
+    expect(screen.getByText("3位")).toBeVisible();
+    expect(screen.queryByText("2位")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -318,8 +335,10 @@ describe("ResultsPanel", () => {
 
     render(<ResultsPanel initial={visibleResult} />);
 
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
-    expect(screen.getByText("1.50点 / 2点")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
+    expect(screen.getByText("/ 5人")).toBeVisible();
+    expect(screen.getByText("1.50点")).toBeVisible();
+    expect(screen.getByText("/ 2点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(screen.getByText("不正解")).toBeVisible();
@@ -333,7 +352,7 @@ describe("ResultsPanel", () => {
         "集計期間中です。結果は公開後に確認できます。",
       ),
     );
-    expect(screen.queryByText("2位 / 5人")).not.toBeInTheDocument();
+    expect(screen.queryByText("2位")).not.toBeInTheDocument();
     expect(screen.queryByText("1.50点")).not.toBeInTheDocument();
     expect(screen.queryByText("最初の問題")).not.toBeInTheDocument();
     expect(screen.queryByText("選択した回答")).not.toBeInTheDocument();
@@ -358,7 +377,7 @@ describe("ResultsPanel", () => {
     render(<ResultsPanel initial={{ state: "waiting" }} />);
 
     setVisibility("visible");
-    await waitFor(() => expect(screen.getByText("2位 / 5人")).toBeVisible());
+    await waitFor(() => expect(screen.getByText("2位")).toBeVisible());
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent("結果を表示しました。"),
     );
@@ -402,8 +421,8 @@ describe("ResultsPanel", () => {
 
       render(<ResultsPanel initial={visibleResult} />);
 
-      expect(screen.getByText("2位 / 5人")).toBeVisible();
-      expect(screen.getByText("1.50点 / 2点")).toBeVisible();
+      expect(screen.getByText("2位")).toBeVisible();
+      expect(screen.getByText("1.50点")).toBeVisible();
       expect(screen.getByText("最初の問題")).toBeVisible();
       expect(screen.getByText("選択した回答")).toBeVisible();
 
@@ -412,8 +431,8 @@ describe("ResultsPanel", () => {
       await waitFor(() =>
         expect(screen.getByRole("heading", { name: "あなたの結果" })).toBeVisible(),
       );
-      expect(screen.getByText("2位 / 5人")).toBeVisible();
-      expect(screen.getByText("1.50点 / 2点")).toBeVisible();
+      expect(screen.getByText("2位")).toBeVisible();
+      expect(screen.getByText("1.50点")).toBeVisible();
       expect(screen.getByText("最初の問題")).toBeVisible();
       expect(screen.getByText("選択した回答")).toBeVisible();
       expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
@@ -425,8 +444,8 @@ describe("ResultsPanel", () => {
     mockPoll({ state: "waiting" });
     render(<ResultsPanel initial={visibleResult} />);
 
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
-    expect(screen.getByText("1.50点 / 2点")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
+    expect(screen.getByText("1.50点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(screen.getByText("不正解")).toBeVisible();
@@ -475,7 +494,7 @@ describe("ResultsPanel", () => {
     );
 
     expect(screen.getByRole("heading", { name: "結果を確認できません" })).toBeVisible();
-    expect(screen.queryByText("2位 / 5人")).not.toBeInTheDocument();
+    expect(screen.queryByText("2位")).not.toBeInTheDocument();
   });
 
   it("shows the unauthenticated recovery prompt and clears it after a successful session refresh", async () => {
@@ -512,7 +531,7 @@ describe("ResultsPanel", () => {
         screen.getByRole("heading", { name: "参加者セッションを確認できません" }),
       ).toBeVisible(),
     );
-    expect(screen.queryByText("2位 / 5人")).not.toBeInTheDocument();
+    expect(screen.queryByText("2位")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "回答画面へ戻る" })).toHaveAttribute("href", "/answer");
   });
 
@@ -566,12 +585,12 @@ describe("ResultsPanel", () => {
 
     setVisibility("visible");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
 
     setVisibility("visible");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
     expect(screen.queryByRole("heading", { name: "結果を確認できません" })).not.toBeInTheDocument();
     expect(unavailableJson).not.toHaveBeenCalled();
@@ -627,8 +646,8 @@ describe("ResultsPanel", () => {
 
     setVisibility("visible");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
-    expect(screen.getByText("1.50点 / 2点")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
+    expect(screen.getByText("1.50点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
@@ -643,8 +662,8 @@ describe("ResultsPanel", () => {
 
     setVisibility("visible");
     await waitFor(() => expect(json).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
-    expect(screen.getByText("1.50点 / 2点")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
+    expect(screen.getByText("1.50点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
@@ -658,6 +677,7 @@ describe("ResultsPanel", () => {
         initial={{
           state: "visible",
           rank: 1,
+          isAggregationTarget: true,
           participantCount: 1,
           score: 2,
           maxScore: 5,
@@ -706,8 +726,8 @@ describe("ResultsPanel", () => {
     setVisibility("visible");
 
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
-    expect(screen.getByText("2位 / 5人")).toBeVisible();
-    expect(screen.getByText("1.50点 / 2点")).toBeVisible();
+    expect(screen.getByText("2位")).toBeVisible();
+    expect(screen.getByText("1.50点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");

@@ -242,11 +242,11 @@ describe("free-response presentation scoring and immutable snapshots", () => {
   it("keeps response data for an unrelated free-text answer stage", async () => {
     const participantId = await addParticipant("other-free-text-source");
     await addFreeTextSubmission(participantId, 1, "other-free-text-source");
-    await testDb.db
-      .update(schema.examQuestions)
-      .set({ choices: [] })
-      .where(eq(schema.examQuestions.id, 3));
     await startWithAggregate("other-free-text-start");
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ choices: [] })
+      .where(eq(schema.presentationQuestions.position, 2));
     for (let index = 0; index < 6; index += 1)
       await operatePresentation(`other-free-text-forward-${index}`, "advance");
 

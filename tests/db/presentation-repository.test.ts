@@ -691,13 +691,32 @@ describe("presentation repository", () => {
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
   });
 
-  it("snapshots a participant without a submission with a zero score", async () => {
+  it("includes valid zero-score submissions and excludes participants without submissions", async () => {
     await addQuestions();
-    await addParticipant("No submission");
+    const noSubmission = await addParticipant("No submission");
+    const zeroScore = await addParticipant("Valid zero score");
+    await addSubmission(zeroScore, [1, 1]);
 
     const aggregated = await op("aggregate", "no-submission-zero-score");
 
-    expect(aggregated.entries).toMatchObject([{ displayName: "No submission", score: 0, rank: 1 }]);
+    expect(aggregated.entries).toEqual([
+      expect.objectContaining({
+        displayName: "No submission",
+        score: 0,
+        rank: null,
+        isAggregationTarget: false,
+      }),
+      expect.objectContaining({
+        displayName: "Valid zero score",
+        score: 0,
+        rank: 1,
+        isAggregationTarget: true,
+      }),
+    ]);
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
+      { participantId: noSubmission, rank: 0, isAggregationTarget: false },
+      { participantId: zeroScore, rank: 1, isAggregationTarget: true },
+    ]);
   });
 
   it("advances an opening presentation with no questions to the podium preview", async () => {
@@ -966,16 +985,16 @@ describe("presentation repository", () => {
     });
   });
 
-  it("snapshots questions in ID order and freezes every participant score and standard tie rank", async () => {
+  it("snapshots questions in ID order and ranks only participants with current complete submissions", async () => {
     const participants = await addRankFixture();
 
     const started = await startWithAggregate("start");
     expect(started.questions.map(({ id }) => id)).toEqual([1, 5]);
     expect(started.entries).toMatchObject([
+      { displayName: "Unanswered", score: 0, rank: null, isAggregationTarget: false },
       { displayName: "First", score: 2, rank: 1 },
       { displayName: "Tied", score: 2, rank: 1 },
       { displayName: "Third", score: 1, rank: 3 },
-      { displayName: "Unanswered", score: 0, rank: 4 },
     ]);
 
     await testDb.db
@@ -1002,7 +1021,11 @@ describe("presentation repository", () => {
       question: "Question 1",
       explanation: "Explanation 1",
     });
-    expect(restored.entries[0]).toMatchObject({ displayName: "First", score: 2, rank: 1 });
+    expect(restored.entries.find(({ displayName }) => displayName === "First")).toMatchObject({
+      displayName: "First",
+      score: 2,
+      rank: 1,
+    });
   });
 
   it("keeps correct answers private on question stages and exposes only announced winners", async () => {
@@ -1462,6 +1485,7 @@ describe("presentation repository", () => {
       score: 0.5,
       maxScore: 1,
       rank: 1,
+      isAggregationTarget: true,
       participantCount: 1,
       questions: [
         {
@@ -2212,6 +2236,7 @@ describe("presentation repository", () => {
       state: "visible",
       rank: 1,
       participantCount: 1,
+      isAggregationTarget: true,
       score: 0,
       maxScore: 2,
       questions: [
@@ -2850,6 +2875,7 @@ describe("presentation repository", () => {
       state: "visible",
       rank: 1,
       participantCount: 2,
+      isAggregationTarget: true,
       score: 2,
       maxScore: 2,
       questions: [
@@ -2869,6 +2895,7 @@ describe("presentation repository", () => {
       state: "visible",
       rank: 2,
       participantCount: 2,
+      isAggregationTarget: true,
       score: 1,
       maxScore: 2,
       questions: [
@@ -2957,6 +2984,7 @@ describe("presentation repository", () => {
       state: "visible",
       rank: 1,
       participantCount: 2,
+      isAggregationTarget: true,
       score: 2,
       maxScore: 2,
       questions: [
@@ -3031,6 +3059,7 @@ describe("presentation repository", () => {
       state: "visible",
       rank: 2,
       participantCount: 2,
+      isAggregationTarget: true,
       score: 1,
       maxScore: 2,
       questions: [

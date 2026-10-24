@@ -21,6 +21,7 @@ const selectedQuizzes = Array.from({ length: 5 }, (_, index) => ({
 const visibleResultsPayload = {
   state: "visible",
   rank: 1,
+  isAggregationTarget: true,
   participantCount: 1,
   score: 1,
   maxScore: 1,

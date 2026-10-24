@@ -58,6 +58,7 @@ describe("/results server entry", () => {
         {
           state: "visible" as const,
           rank: 4,
+          isAggregationTarget: true,
           participantCount: 5,
           score: 0.5,
           maxScore: 1,
@@ -102,6 +103,7 @@ describe("/results server entry", () => {
     expect(panel.props.initial).toEqual({
       state: "visible",
       rank: 4,
+      isAggregationTarget: true,
       participantCount: 5,
       score: 0.5,
       maxScore: 1,
@@ -246,6 +248,7 @@ describe("/results server entry", () => {
     vi.mocked(getParticipantResult).mockResolvedValueOnce({
       state: "visible",
       rank: 1,
+      isAggregationTarget: true,
       participantCount: 1,
       score: 1,
       maxScore: 3,
@@ -274,6 +277,7 @@ describe("/results server entry", () => {
     expect(panel.props.initial).toEqual({
       state: "visible",
       rank: 1,
+      isAggregationTarget: true,
       participantCount: 1,
       score: 1,
       maxScore: 3,

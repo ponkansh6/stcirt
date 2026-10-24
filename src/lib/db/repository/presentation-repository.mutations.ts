@@ -387,20 +387,33 @@ async function ensurePresentationSnapshot(
           return sum + Number(answers?.get(question.id)?.selectedIndex === question.correctIndex);
         }, 0)
       : 0;
-    return { participant, answers: answerSnapshot, score };
+    return {
+      participant,
+      answers: answerSnapshot,
+      score,
+      isAggregationTarget: validCompleteSet,
+    };
   });
-  scored.sort(
+  const eligibleScored = scored.filter((entry) => entry.isAggregationTarget);
+  eligibleScored.sort(
     (left, right) => right.score - left.score || left.participant.id - right.participant.id,
   );
   let priorScore: number | undefined;
   let priorRank = 0;
-  const ranked = scored.map((entry, index) => {
+  const rankedEligible = eligibleScored.map((entry, index) => {
     if (entry.score !== priorScore) {
       priorRank = index + 1;
       priorScore = entry.score;
     }
     return { ...entry, rank: priorRank };
   });
+  const rankByParticipantId = new Map(
+    rankedEligible.map((entry) => [entry.participant.id, entry.rank]),
+  );
+  const ranked = scored.map((entry) => ({
+    ...entry,
+    rank: rankByParticipantId.get(entry.participant.id) ?? 0,
+  }));
 
   setOperationPhase?.("delete_entries");
   await tx.delete(presentationEntries).where(eq(presentationEntries.sessionId, 1));
@@ -421,12 +434,13 @@ async function ensurePresentationSnapshot(
   if (ranked.length) {
     setOperationPhase?.("insert_entries");
     await tx.insert(presentationEntries).values(
-      ranked.map(({ participant, score, rank, answers }) => ({
+      ranked.map(({ participant, score, rank, answers, isAggregationTarget }) => ({
         sessionId: 1,
         participantId: participant.id,
         displayName: participant.displayName,
         score,
         rank,
+        isAggregationTarget,
         answers,
       })),
     );

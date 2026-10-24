@@ -15,7 +15,8 @@ export type ParticipantResult =
       state: "visible";
       score: number;
       maxScore: number;
-      rank: number;
+      rank: number | null;
+      isAggregationTarget: boolean;
       participantCount: number;
       questions: ParticipantResultQuestion[];
     };
@@ -41,9 +42,12 @@ export const parseParticipantResult = (payload: unknown): ParticipantResult | nu
   if (payload.state === "unavailable") return { state: "unavailable" };
   if (
     payload.state !== "visible" ||
-    !isPositiveInteger(payload.rank) ||
-    !isPositiveInteger(payload.participantCount) ||
-    payload.rank > payload.participantCount ||
+    !(payload.rank === null || isPositiveInteger(payload.rank)) ||
+    !isNonNegativeInteger(payload.participantCount) ||
+    typeof payload.isAggregationTarget !== "boolean" ||
+    (payload.isAggregationTarget &&
+      (!isPositiveInteger(payload.rank) || payload.rank > payload.participantCount)) ||
+    (!payload.isAggregationTarget && payload.rank !== null) ||
     !isPositiveInteger(payload.maxScore) ||
     !isFiniteNumber(payload.score) ||
     !Array.isArray(payload.questions) ||
@@ -120,6 +124,7 @@ export const parseParticipantResult = (payload: unknown): ParticipantResult | nu
     score: payload.score,
     maxScore: payload.maxScore,
     rank: payload.rank,
+    isAggregationTarget: payload.isAggregationTarget,
     participantCount: payload.participantCount,
     questions,
   };

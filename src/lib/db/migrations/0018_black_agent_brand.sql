@@ -1,0 +1,1 @@
+ALTER TABLE `presentation_entries` ADD `is_aggregation_target` integer DEFAULT true NOT NULL;

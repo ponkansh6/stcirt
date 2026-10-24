@@ -117,6 +117,7 @@ describe("GET /api/participants/results", () => {
         {
           state: "visible" as const,
           rank: 3,
+          isAggregationTarget: true,
           participantCount: 5,
           score: 0.5,
           maxScore: 1,
@@ -144,6 +145,7 @@ describe("GET /api/participants/results", () => {
     await expect(response.json()).resolves.toEqual({
       state: "visible",
       rank: 3,
+      isAggregationTarget: true,
       participantCount: 5,
       score: 0.5,
       maxScore: 1,
@@ -163,6 +165,7 @@ describe("GET /api/participants/results", () => {
     vi.mocked(getParticipantResult).mockResolvedValueOnce({
       state: "visible",
       rank: 1,
+      isAggregationTarget: true,
       participantCount: 1,
       score: 0.75,
       maxScore: 2,
@@ -189,6 +192,7 @@ describe("GET /api/participants/results", () => {
     await expect(response.json()).resolves.toEqual({
       state: "visible",
       rank: 1,
+      isAggregationTarget: true,
       participantCount: 1,
       score: 0.75,
       maxScore: 2,

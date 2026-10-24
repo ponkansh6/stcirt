@@ -48,7 +48,8 @@ type AdminPresentation = {
   entries: {
     displayName: string;
     score: number;
-    rank: number;
+    rank: number | null;
+    isAggregationTarget: boolean;
     answers?: {
       questionId: number;
       answerKind: "selected" | "freeText" | "legacy" | "unanswered";
@@ -91,7 +92,8 @@ export type ParticipantResult =
       state: "visible";
       score: number;
       maxScore: number;
-      rank: number;
+      rank: number | null;
+      isAggregationTarget: boolean;
       participantCount: number;
       questions: ParticipantResultQuestion[];
     };
@@ -165,10 +167,11 @@ export async function readAdminPresentation(
       explanation: question.explanation,
       answerType: question.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
     })),
-    entries: entries.map(({ displayName, score, rank, answers }) => ({
+    entries: entries.map(({ displayName, score, rank, isAggregationTarget, answers }) => ({
       displayName,
       score,
-      rank,
+      rank: isAggregationTarget ? rank : null,
+      isAggregationTarget,
       answers,
     })),
   } satisfies AdminPresentation;
@@ -187,6 +190,7 @@ export async function getParticipantResult(participantId: number): Promise<Parti
       .select({
         score: presentationEntries.score,
         rank: presentationEntries.rank,
+        isAggregationTarget: presentationEntries.isAggregationTarget,
         answers: presentationEntries.answers,
       })
       .from(presentationEntries)
@@ -205,15 +209,20 @@ export async function getParticipantResult(participantId: number): Promise<Parti
     const [entryCount] = await tx
       .select({ value: count() })
       .from(presentationEntries)
-      .where(eq(presentationEntries.sessionId, 1));
+      .where(
+        and(
+          eq(presentationEntries.sessionId, 1),
+          eq(presentationEntries.isAggregationTarget, true),
+        ),
+      );
     if (
       !Number.isFinite(entry.score) ||
       entry.score < 0 ||
       entry.score > questionRows.length ||
-      !Number.isInteger(entry.rank) ||
-      entry.rank < 1 ||
-      entry.rank > entryCount.value ||
-      entryCount.value < 1 ||
+      (entry.isAggregationTarget &&
+        (!Number.isInteger(entry.rank) || entry.rank < 1 || entry.rank > entryCount.value)) ||
+      (!entry.isAggregationTarget && entry.rank !== 0) ||
+      (entry.isAggregationTarget && entryCount.value < 1) ||
       questionRows.length === 0 ||
       !Array.isArray(entry.answers) ||
       entry.answers.length !== questionRows.length
@@ -325,7 +334,8 @@ export async function getParticipantResult(participantId: number): Promise<Parti
       state: "visible" as const,
       score: entry.score,
       maxScore: questionRows.length,
-      rank: entry.rank,
+      rank: entry.isAggregationTarget ? entry.rank : null,
+      isAggregationTarget: entry.isAggregationTarget,
       participantCount: entryCount.value,
       questions,
     };
@@ -775,9 +785,15 @@ export async function getPublicPresentation(): Promise<
           displayName: presentationEntries.displayName,
           answers: presentationEntries.answers,
           rank: presentationEntries.rank,
+          isAggregationTarget: presentationEntries.isAggregationTarget,
         })
         .from(presentationEntries)
-        .where(eq(presentationEntries.sessionId, 1))
+        .where(
+          and(
+            eq(presentationEntries.sessionId, 1),
+            eq(presentationEntries.isAggregationTarget, true),
+          ),
+        )
         .orderBy(asc(presentationEntries.rank), asc(presentationEntries.displayName));
       admin.entries = entryRows.map((entry) => ({ ...entry, score: 0 }));
     } else if (rank !== null) {
@@ -786,10 +802,17 @@ export async function getPublicPresentation(): Promise<
           displayName: presentationEntries.displayName,
           score: presentationEntries.score,
           rank: presentationEntries.rank,
+          isAggregationTarget: presentationEntries.isAggregationTarget,
           answers: presentationEntries.answers,
         })
         .from(presentationEntries)
-        .where(and(eq(presentationEntries.sessionId, 1), eq(presentationEntries.rank, rank)))
+        .where(
+          and(
+            eq(presentationEntries.sessionId, 1),
+            eq(presentationEntries.isAggregationTarget, true),
+            eq(presentationEntries.rank, rank),
+          ),
+        )
         .orderBy(asc(presentationEntries.rank), asc(presentationEntries.displayName));
       admin.entries = entryRows;
     }

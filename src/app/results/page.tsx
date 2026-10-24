@@ -77,6 +77,7 @@ async function ResultsContent({
       ? {
           state: "visible",
           rank: result.rank,
+          isAggregationTarget: result.isAggregationTarget,
           participantCount: result.participantCount,
           score: result.score,
           maxScore: result.maxScore,

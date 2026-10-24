@@ -249,6 +249,9 @@ export const presentationEntries = sqliteTable(
     displayName: text("display_name").notNull(),
     score: real("score").notNull(),
     rank: integer("rank").notNull(),
+    isAggregationTarget: integer("is_aggregation_target", { mode: "boolean" })
+      .notNull()
+      .default(true),
     answers: text("answers", { mode: "json" }).notNull().$type<
       {
         questionId: number;
