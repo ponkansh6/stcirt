@@ -274,14 +274,16 @@ const rankTitle: Record<string, string> = { third: "第三位", second: "第二�
 
 function ExamStamp({ className }: { className: string }) {
   return (
-    <span
+    <Image
       className={`${styles.examStamp} ${className}`}
+      src="/cert_stamp.png"
+      width={1254}
+      height={1254}
+      alt=""
       data-testid="presentation-exam-stamp"
       aria-hidden="true"
-    >
-      <span>しゅんたま</span>
-      <span>検定</span>
-    </span>
+      draggable={false}
+    />
   );
 }
 

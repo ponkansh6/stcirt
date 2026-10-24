@@ -302,23 +302,11 @@
 
 .examStamp {
   position: relative;
-  box-sizing: border-box;
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  aspect-ratio: 1;
-  border: 3px double #b33b32;
-  color: #b33b32;
-  font-size: clamp(0.65rem, 0.95cqw, 1rem);
-  font-weight: 800;
-  line-height: 1.2;
-  text-align: center;
+  display: block;
+  max-width: 100%;
+  height: auto;
   transform: rotate(8deg);
   pointer-events: none;
-}
-
-.examStamp span {
-  white-space: nowrap;
 }
 
 .openingWaitSlot {
