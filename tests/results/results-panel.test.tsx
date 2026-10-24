@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import ResultsPanel from "@/app/results/results-panel";
 
 const originalVisibilityState = Object.getOwnPropertyDescriptor(document, "visibilityState");
@@ -72,6 +72,67 @@ describe("ResultsPanel", () => {
     expect(screen.queryByRole("button", { name: "結果を再読み込み" })).not.toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalled();
     expect(screen.getByText("2位 / 5人")).toBeVisible();
+  });
+
+  it("announces manual refresh progress and the waiting response", async () => {
+    const response = deferred<{ ok: boolean; status: number; json: () => Promise<unknown> }>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(response.promise)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ ...visibleResult, rank: 3 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ResultsPanel initial={visibleResult} />);
+
+    const refresh = screen.getByRole("button", { name: "結果を再読み込み" });
+    fireEvent.click(refresh);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(refresh).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("更新中…");
+    expect(
+      screen.queryByText("集計期間中です。結果は公開後に確認できます。"),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      response.resolve({ ok: true, status: 200, json: async () => ({ state: "waiting" }) });
+      await response.promise;
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "集計期間中です。結果は公開後に確認できます。",
+      ),
+    );
+    expect(refresh).toBeEnabled();
+    expect(screen.queryByRole("status")).not.toHaveTextContent("更新中…");
+
+    fireEvent.click(refresh);
+    await waitFor(() => expect(screen.getByText("3位 / 5人")).toBeVisible());
+    fireEvent.click(refresh);
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "集計期間中です。結果は公開後に確認できます。",
+      ),
+    );
+    fireEvent.click(refresh);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    expect(
+      screen.queryByText("集計期間中です。結果は公開後に確認できます。"),
+    ).not.toBeInTheDocument();
   });
 
   it("polls the assisted result endpoint and labels the result for the assisted respondent", async () => {
@@ -356,7 +417,7 @@ describe("ResultsPanel", () => {
       expect(screen.getByText("最初の問題")).toBeVisible();
       expect(screen.getByText("選択した回答")).toBeVisible();
       expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
-      expect(screen.queryByRole("button", { name: "結果を再読み込み" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeVisible();
     },
   );
 
@@ -392,7 +453,7 @@ describe("ResultsPanel", () => {
       screen.queryByText("集計期間中です。結果は公開後に確認できます。"),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "結果を再読み込み" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeVisible();
   });
 
   it.each([
@@ -571,7 +632,7 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
-    expect(screen.queryByRole("button", { name: "結果を再読み込み" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeVisible();
   });
 
   it("preserves the last confirmed result after parsing a successful response with a null payload", async () => {
@@ -587,7 +648,7 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
-    expect(screen.queryByRole("button", { name: "結果を再読み込み" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeVisible();
   });
 
   it("renders selected unavailable, correct, free-text without a score, unanswered, and legacy answers explicitly", () => {
@@ -650,6 +711,6 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent("結果を更新できませんでした");
-    expect(screen.queryByRole("button", { name: "結果を再読み込み" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "結果を再読み込み" })).toBeVisible();
   });
 });
