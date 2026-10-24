@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useQuizSession } from "./use-quiz-session";
 import ChoiceButton from "@/components/ChoiceButton";
@@ -146,7 +147,7 @@ function deriveAnswerUi({
     return {
       surface,
       status: "参加して検定を受ける",
-      message: "受験者氏名と主催者から案内された受験コードを入力してください。",
+      message: "",
       statusRole: "status",
       busy: false,
       primaryAction: "login",
@@ -534,10 +535,10 @@ export default function QuizRunner() {
         <ParticipantCard>
           <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">参加して検定を受ける</h1>
-          <p className="mt-4 max-w-xl leading-relaxed text-muted">{ui.message}</p>
           <ParticipantForm
             onLogin={login}
             message={access.message}
+            showExamTitle
             nameLabel="受験者氏名"
             pinLabel="受験コード"
           />
@@ -1264,6 +1265,7 @@ function ParticipantForm({
   onSuccess,
   initialName = "",
   message,
+  showExamTitle = false,
   submitLabel = "はじめる",
   nameLabel = "お名前",
   pinLabel = "4桁PIN",
@@ -1272,6 +1274,7 @@ function ParticipantForm({
   onSuccess?: (participantId: number, canHandoffFocus: boolean) => void;
   initialName?: string;
   message?: string;
+  showExamTitle?: boolean;
   submitLabel?: string;
   nameLabel?: string;
   pinLabel?: string;
@@ -1327,6 +1330,24 @@ function ParticipantForm({
 
   return (
     <form ref={formRef} onSubmit={handleSubmit} className="mt-7 space-y-5">
+      {showExamTitle && (
+        <div className={styles.examHeading}>
+          <Image
+            className={styles.examStamp}
+            src="/cert_stamp.png"
+            width={1254}
+            height={1254}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            data-testid="answer-exam-stamp"
+          />
+          <div className="space-y-1 text-center">
+            <p className="text-base font-semibold tracking-wide">令和八年度第一回</p>
+            <p className="text-2xl font-bold tracking-tight">しゅんたま検定</p>
+          </div>
+        </div>
+      )}
       <div className="space-y-2">
         <label htmlFor="participant-name" className="block text-sm font-semibold">
           {nameLabel}
@@ -1360,13 +1381,22 @@ function ParticipantForm({
           required
           value={pin}
           onChange={(event) => setPin(event.currentTarget.value.replace(/[^0-9]/g, "").slice(0, 4))}
-          aria-describedby={`participant-pin-hint${feedback ? " participant-form-message" : ""}`}
+          aria-describedby={
+            [
+              showExamTitle ? "participant-pin-hint" : null,
+              feedback ? "participant-form-message" : null,
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined
+          }
           aria-invalid={Boolean(error) || undefined}
           className="min-h-12 w-full rounded-lg border border-control-border bg-bg px-4 text-base tracking-[0.35em] text-text shadow-sm outline-none transition focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
         />
-        <p id="participant-pin-hint" className="text-sm text-muted">
-          主催者から案内された数字を入力してください。
-        </p>
+        {showExamTitle && (
+          <p id="participant-pin-hint" className="text-sm text-muted">
+            ※自身で入力が難しい方の為の代理回答は自分の回答完了後に行えます
+          </p>
+        )}
       </div>
       {feedback && (
         <p id="participant-form-message" className="text-sm font-medium text-error" role="alert">
