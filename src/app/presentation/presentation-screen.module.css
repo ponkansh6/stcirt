@@ -12,7 +12,7 @@
   place-items: center;
   background: #dedede;
   color: #1f2933;
-  font-family: var(--font-geist), "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  font-family: Meiryo, メイリオ, sans-serif;
   touch-action: pan-y;
 }
 
@@ -255,9 +255,7 @@
   padding: 0 0 0.18em;
   border-bottom: 3px solid #173e27;
   color: #173e27;
-  font-family:
-    "Yu Mincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", "Noto Serif CJK JP",
-    "Noto Serif JP", serif;
+  font-family: Meiryo, メイリオ, sans-serif;
   font-size: clamp(var(--presentation-min-readable-size), 6.1cqw, 7.2rem);
   font-weight: 650;
   letter-spacing: 0.12em;
@@ -684,8 +682,8 @@
 
 .certificateLabel {
   color: #51432b;
-  font-family: "Yu Mincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", serif;
-  font-size: clamp(var(--presentation-min-readable-size), 1.7cqw, 1.8rem);
+  font-family: Meiryo, メイリオ, sans-serif;
+  font-size: clamp(var(--presentation-min-readable-size), 1.9cqw, 2rem);
   font-weight: 650;
   letter-spacing: 0.18em;
   line-height: 1;
@@ -953,8 +951,8 @@
   margin: 0;
   padding: 0.16em 0.8em;
   color: #30291f;
-  font-family: "Yu Mincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", serif;
-  font-size: clamp(var(--presentation-min-readable-size), 2.2cqw, 2.2rem);
+  font-family: Meiryo, メイリオ, sans-serif;
+  font-size: clamp(var(--presentation-min-readable-size), 2.4cqw, 2.4rem);
   font-weight: 650;
   letter-spacing: 0.1em;
   line-height: 1.05;
@@ -1092,7 +1090,7 @@
 }
 
 .singleWinner .winner h1 {
-  font-family: "Yu Mincho", "Hiragino Mincho ProN", "Hiragino Mincho Pro", serif;
+  font-family: Meiryo, メイリオ, sans-serif;
   font-size: clamp(var(--presentation-min-readable-size), 7.5cqw, 7.5rem);
   line-height: 1.16;
 }
@@ -1108,6 +1106,12 @@
   font-weight: inherit;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+@media (min-width: 641px) {
+  .winner h1 .shortWinnerName {
+    white-space: nowrap;
+  }
 }
 
 .winner h1 .winnerHonorific {
@@ -1254,7 +1258,7 @@
   }
 
   .rank {
-    font-size: clamp(var(--presentation-min-readable-size), 3.5cqw, 2rem);
+    font-size: clamp(var(--presentation-min-readable-size), 3.8cqw, 2.2rem);
   }
 
   .opening {
