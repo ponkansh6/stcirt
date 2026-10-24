@@ -3109,6 +3109,43 @@ describe("presentation repository", () => {
     await expect(getParticipantResult(second)).resolves.toEqual({ state: "unavailable" });
   });
 
+  it("returns a score without a rank for participants outside the aggregation target", async () => {
+    await addQuestions();
+    const first = await addParticipant("First");
+    const second = await addParticipant("Second");
+    await addSubmission(first, [0, 0]);
+    await addSubmission(second, [0, 1]);
+    await startWithAggregate("result-outside-target");
+    await setParticipantResultsVisible(true);
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ isAggregationTarget: false, rank: 0 })
+      .where(eq(schema.presentationEntries.participantId, first));
+
+    await expect(getParticipantResult(first)).resolves.toMatchObject({
+      state: "visible",
+      score: 2,
+      maxScore: 2,
+      rank: null,
+      isAggregationTarget: false,
+      participantCount: 1,
+    });
+  });
+
+  it("fails closed when a presentation entry score is non-finite", async () => {
+    await addQuestions();
+    const participant = await addParticipant("Participant");
+    await addSubmission(participant, [0, 0]);
+    await startWithAggregate("result-non-finite-score");
+    await setParticipantResultsVisible(true);
+    await testDb.client.execute({
+      sql: "UPDATE presentation_entries SET score = 1e999 WHERE participant_id = ?",
+      args: [participant],
+    });
+
+    await expect(getParticipantResult(participant)).resolves.toEqual({ state: "unavailable" });
+  });
+
   it("recovers an operation retry after an adapter conflict without advancing twice", async () => {
     await addQuestions();
     await startWithAggregate("start");
