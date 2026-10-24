@@ -2485,7 +2485,7 @@ test("@chromium opening cover geometry matches before and after presentation sta
       "rgb(23, 62, 39)",
     ]);
     expect(geometry.titleDividerColor).toBe("rgb(23, 62, 39)");
-    expect(geometry.openingStampCount).toBe(0);
+    expect(geometry.openingStampCount).toBe(1);
     for (const span of geometry.titleSpans) {
       const beforeSpan = beforeStart.titleSpans.find(
         (candidate) => candidate.content === span.content,
