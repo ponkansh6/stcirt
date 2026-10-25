@@ -22,7 +22,7 @@ export default function ParticipantResultDetails({
         <div className="rounded-xl bg-surface-2 p-1.5 sm:p-5">
           <dt className="text-sm text-muted text-balance">得点</dt>
           <dd className="mt-1 flex min-h-10 flex-nowrap items-baseline gap-1 whitespace-nowrap sm:gap-2">
-            <span className="text-[clamp(0.75rem,4vw,1.125rem)] font-bold sm:text-4xl">
+            <span className="text-[clamp(1rem,5vw,1.375rem)] font-bold sm:text-4xl">
               {result.score.toFixed(2)}点
             </span>
             <span className="text-[clamp(0.5625rem,2.8vw,0.875rem)] font-medium text-muted">
