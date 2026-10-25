@@ -3,10 +3,8 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import ResultsPanel from "./results-panel";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
-import {
-  getParticipantResult,
-  type ParticipantResult,
-} from "@/lib/db/repository/presentation-repository";
+import { getParticipantResult } from "@/lib/db/repository/presentation-repository";
+import { mapParticipantResult } from "@/lib/participant-result-projection";
 import { resolveAnswerScope } from "@/lib/participants/answer-scope";
 import { getAssistedParticipant } from "@/lib/db/repository/assisted-participant-repository";
 import { getLatestAnswerSubmission } from "@/lib/db/repository/answer-repository";
@@ -75,31 +73,7 @@ async function ResultsContent({
   hasAssistedSubmission: boolean;
 }) {
   const result = await getParticipantResult(participantId);
-  const initial: ParticipantResult =
-    result.state === "visible"
-      ? {
-          state: "visible",
-          rank: result.rank,
-          isAggregationTarget: result.isAggregationTarget,
-          participantCount: result.participantCount,
-          score: result.score,
-          maxScore: result.maxScore,
-          questions: result.questions.map(({ position, question, answer }) => ({
-            position,
-            question,
-            answer:
-              answer.kind === "selected"
-                ? {
-                    kind: "selected" as const,
-                    value: answer.value,
-                    correctness: answer.correctness,
-                  }
-                : answer.kind === "freeText"
-                  ? { kind: "freeText" as const, value: answer.value, score: answer.score }
-                  : { kind: answer.kind },
-          })),
-        }
-      : result;
+  const initial = mapParticipantResult(result);
 
   return (
     <ResultsPanel initial={initial} scope={scope} hasAssistedSubmission={hasAssistedSubmission} />

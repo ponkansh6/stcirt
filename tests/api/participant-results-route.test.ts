@@ -123,16 +123,23 @@ describe("GET /api/participants/results", () => {
           maxScore: 1,
         },
         {
+          internalParticipantId: 42,
           questions: [
-            {
-              position: 0,
-              question: "Question",
-              answer: {
-                kind: "selected" as const,
-                value: "My choice",
-                correctness: "incorrect" as const,
+            Object.assign(
+              {
+                position: 0,
+                question: "Question",
+                answer: Object.assign(
+                  {
+                    kind: "selected" as const,
+                    value: "My choice",
+                    correctness: "incorrect" as const,
+                  },
+                  { selectedIndex: 1 },
+                ),
               },
-            },
+              { questionId: 123 },
+            ),
           ],
         },
       ),

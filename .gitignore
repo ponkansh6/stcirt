@@ -49,6 +49,9 @@ yarn-error.log*
 
 # Shared plans
 /shared_plan/
+!/shared_plan/
+/shared_plan/*
+!/shared_plan/97-UNNECESSARY_COMMUNICATION_AND_MAINTAINABILITY_REVIEW_PLAN.md
 
 # Claude session summaries
 .claude/

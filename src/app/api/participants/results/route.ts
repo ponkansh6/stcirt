@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
 import { getParticipantResult } from "@/lib/db/repository/presentation-repository";
+import { mapParticipantResult } from "@/lib/participant-result-projection";
 import { resolveAnswerScope } from "@/lib/participants/answer-scope";
 import { getParticipantCookie, verifyParticipantSession } from "@/lib/participants/security";
 
@@ -24,35 +25,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: scope.error }, { status: scope.status, headers: noStore });
     }
     const result = await getParticipantResult(scope.participantId);
-    if (result.state === "visible") {
-      const questions = result.questions.map(({ position, question, answer }) => ({
-        position,
-        question,
-        answer:
-          answer.kind === "selected"
-            ? {
-                kind: "selected" as const,
-                value: answer.value,
-                correctness: answer.correctness,
-              }
-            : answer.kind === "freeText"
-              ? { kind: "freeText" as const, value: answer.value, score: answer.score }
-              : { kind: answer.kind },
-      }));
-      return NextResponse.json(
-        {
-          state: "visible",
-          rank: result.rank,
-          isAggregationTarget: result.isAggregationTarget,
-          participantCount: result.participantCount,
-          score: result.score,
-          maxScore: result.maxScore,
-          questions,
-        },
-        { headers: noStore },
-      );
-    }
-    return NextResponse.json(result, { headers: noStore });
+    return NextResponse.json(mapParticipantResult(result), { headers: noStore });
   } catch {
     return NextResponse.json(
       { error: "Results are unavailable" },
