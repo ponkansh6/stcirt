@@ -2,12 +2,22 @@ import type { ParticipantResult } from "@/lib/participant-results-contract";
 
 export default function ParticipantResultDetails({
   result,
+  name,
 }: {
   result: Extract<ParticipantResult, { state: "visible" }>;
+  name?: string;
 }) {
   return (
     <>
       <dl className="mt-8 grid grid-cols-2 gap-2 sm:gap-4">
+        {name !== undefined ? (
+          <div className="col-span-2 min-w-0 rounded-xl bg-surface-2 p-1.5 sm:p-5">
+            <dt className="text-sm text-muted text-balance">名前</dt>
+            <dd className="mt-1 min-w-0 break-words text-lg font-semibold [overflow-wrap:anywhere]">
+              {name}
+            </dd>
+          </div>
+        ) : null}
         <div className="rounded-xl bg-surface-2 p-1.5 sm:p-5">
           <dt className="text-sm text-muted text-balance">順位</dt>
           <dd className="mt-1 flex min-h-10 items-baseline gap-2">
@@ -22,7 +32,7 @@ export default function ParticipantResultDetails({
         <div className="rounded-xl bg-surface-2 p-1.5 sm:p-5">
           <dt className="text-sm text-muted text-balance">得点</dt>
           <dd className="mt-1 flex min-h-10 flex-nowrap items-baseline gap-1 whitespace-nowrap sm:gap-2">
-            <span className="text-[clamp(1rem,5vw,1.375rem)] font-bold sm:text-4xl">
+            <span className="text-[clamp(1.125rem,5.5vw,1.5rem)] font-bold sm:text-4xl">
               {result.score.toFixed(2)}点
             </span>
             <span className="text-[clamp(0.5625rem,2.8vw,0.875rem)] font-medium text-muted">

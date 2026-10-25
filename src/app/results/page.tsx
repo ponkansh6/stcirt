@@ -25,7 +25,11 @@ export default async function ResultsPage({
     else if (requestedScope !== undefined) scopeMode = null;
     const token = (await cookies()).get(PARTICIPANT_COOKIE)?.value;
     const session = verifyParticipantSession(token);
-    if (!session || !(await findParticipantById(session.id))) {
+    if (!session) {
+      return <ResultsPanel initial={{ state: "unauthenticated" }} scope={scopeMode} />;
+    }
+    const participant = await findParticipantById(session.id);
+    if (!participant) {
       return <ResultsPanel initial={{ state: "unauthenticated" }} scope={scopeMode} />;
     }
     if (scopeMode === null) {
@@ -40,7 +44,11 @@ export default async function ResultsPage({
       return <ResultsPanel initial={{ state: "unavailable" }} scope={scopeMode} />;
     }
 
-    const assistedTarget = scopeMode === "owner" ? await getAssistedParticipant(session.id) : null;
+    const assistedTarget = await getAssistedParticipant(session.id);
+    const resultParticipant = scopeMode === "assisted" ? assistedTarget : participant;
+    if (!resultParticipant || resultParticipant.id !== scope.participantId) {
+      return <ResultsPanel initial={{ state: "unavailable" }} scope={scopeMode} />;
+    }
     const hasAssistedSubmission =
       scopeMode === "assisted"
         ? Boolean(await getLatestAnswerSubmission(scope.participantId))
@@ -52,6 +60,7 @@ export default async function ResultsPage({
       <Suspense fallback={<ResultsShell scope={scopeMode} />}>
         <ResultsContent
           participantId={scope.participantId}
+          participantName={resultParticipant.name}
           scope={scopeMode}
           hasAssistedSubmission={hasAssistedSubmission}
         />
@@ -65,10 +74,12 @@ export default async function ResultsPage({
 
 async function ResultsContent({
   participantId,
+  participantName,
   scope,
   hasAssistedSubmission,
 }: {
   participantId: number;
+  participantName: string;
   scope: "owner" | "assisted";
   hasAssistedSubmission: boolean;
 }) {
@@ -76,7 +87,12 @@ async function ResultsContent({
   const initial = mapParticipantResult(result);
 
   return (
-    <ResultsPanel initial={initial} scope={scope} hasAssistedSubmission={hasAssistedSubmission} />
+    <ResultsPanel
+      initial={initial}
+      participantName={participantName}
+      scope={scope}
+      hasAssistedSubmission={hasAssistedSubmission}
+    />
   );
 }
 

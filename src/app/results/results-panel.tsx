@@ -12,10 +12,12 @@ type PollResult = ParticipantResult;
 
 export default function ResultsPanel({
   initial,
+  participantName,
   scope = "owner",
   hasAssistedSubmission = false,
 }: {
   initial: InitialResult;
+  participantName?: string;
   scope?: "owner" | "assisted" | null;
   hasAssistedSubmission?: boolean;
 }) {
@@ -175,7 +177,7 @@ export default function ResultsPanel({
             <h1 className="text-3xl font-bold tracking-tight text-balance">
               {scope === "assisted" ? "代理回答の結果" : "あなたの結果"}
             </h1>
-            <ParticipantResultDetails result={result} />
+            <ParticipantResultDetails result={result} name={participantName} />
             <Link className="mt-8 inline-flex font-semibold text-primary underline" href="/answer">
               回答画面へ戻る
             </Link>

@@ -40,7 +40,11 @@ beforeEach(() => {
 
 async function renderProtectedResult(element: ReactElement) {
   const boundary = element as ReactElement<{
-    children: ReactElement<{ participantId: number; scope: "owner" | "assisted" }>;
+    children: ReactElement<{
+      participantId: number;
+      participantName: string;
+      scope: "owner" | "assisted";
+    }>;
     fallback: ReactElement;
   }>;
   expect(boundary.type).toBe(Suspense);
@@ -53,6 +57,7 @@ async function renderProtectedResult(element: ReactElement) {
 describe("/results server entry", () => {
   it("resolves the assisted participant and passes their published result to the client panel", async () => {
     vi.mocked(resolveAnswerScope).mockResolvedValueOnce({ participantId: 18 });
+    vi.mocked(getAssistedParticipant).mockResolvedValueOnce({ id: 18, name: "Assistant" });
     vi.mocked(getLatestAnswerSubmission).mockResolvedValueOnce({
       submissionId: "00000000-0000-4000-8000-000000000018",
       revision: 1,
@@ -101,11 +106,13 @@ describe("/results server entry", () => {
     expect(markup).not.toContain("4位");
     const panel = (await renderProtectedResult(element)) as ReactElement<{
       initial: unknown;
+      participantName: string;
       scope: string;
       hasAssistedSubmission?: boolean;
     }>;
 
     expect(panel.props.scope).toBe("assisted");
+    expect(panel.props.participantName).toBe("Assistant");
     expect(panel.props.hasAssistedSubmission).toBe(true);
     expect(panel.props.initial).toEqual({
       state: "visible",
@@ -126,7 +133,7 @@ describe("/results server entry", () => {
     expect(resolveAnswerScope).toHaveBeenCalledWith(12, "assisted");
     expect(getLatestAnswerSubmission).toHaveBeenCalledWith(18);
     expect(getParticipantResult).toHaveBeenCalledWith(18);
-    expect(getAssistedParticipant).not.toHaveBeenCalled();
+    expect(getAssistedParticipant).toHaveBeenCalledWith(12);
   });
 
   it("fails closed for an invalid scope without resolving or querying a result", async () => {
@@ -150,12 +157,14 @@ describe("/results server entry", () => {
     const markup = renderToStaticMarkup(fallback);
     const panel = (await renderProtectedResult(element)) as ReactElement<{
       initial: unknown;
+      participantName: string;
       scope: string;
     }>;
 
     expect(markup).toContain("あなたの結果");
     expect(markup).not.toContain("代理回答の結果");
     expect(panel.props.scope).toBe("owner");
+    expect(panel.props.participantName).toBe("Participant");
     expect(panel.props.initial).toEqual({ state: "waiting" });
     expect(resolveAnswerScope).toHaveBeenCalledWith(12, null);
     expect(getParticipantResult).toHaveBeenCalledWith(12);
