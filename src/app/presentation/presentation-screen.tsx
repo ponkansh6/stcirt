@@ -1563,7 +1563,7 @@ export default function PresentationScreen({
                                           <div className={styles.winnerIdentity}>
                                             <h1>
                                               <span
-                                                className={`${styles.winnerName} ${[...winner.displayName].length <= 5 ? styles.shortWinnerName : ""}`}
+                                                className={`${styles.winnerName} ${[...winner.displayName].length <= 7 ? styles.shortWinnerName : ""}`}
                                               >
                                                 {winner.displayName}
                                                 <span className={styles.winnerHonorific}>

@@ -1155,10 +1155,8 @@
   overflow-wrap: anywhere;
 }
 
-@media (min-width: 641px) {
-  .winner h1 .shortWinnerName {
-    white-space: nowrap;
-  }
+.winner h1 .shortWinnerName {
+  white-space: nowrap;
 }
 
 .winner h1 .winnerHonorific {
