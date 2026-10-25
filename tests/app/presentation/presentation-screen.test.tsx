@@ -2370,6 +2370,22 @@ describe("presentation projection and presenter progression", () => {
     expect(reveal).not.toHaveAttribute("aria-hidden");
   });
 
+  it("does not apply the short-name style to winner names longer than seven characters", async () => {
+    setup({
+      projection: {
+        state: "third",
+        winners: [{ displayName: "長い表彰者の名前", score: 12.5, rank: 3 }],
+      },
+      admin: { state: "third", questionIndex: 5, questionCount: 5 },
+    });
+    render(<PresentationScreen />);
+
+    const region = await screen.findByRole("region", { name: "第三位の勝者一覧" });
+    const winnerName = region.querySelector("article h1 span[class*='winnerName']");
+    expect(winnerName).toHaveTextContent("長い表彰者の名前");
+    expect(winnerName).not.toHaveClass(/shortWinnerName/);
+  });
+
   it("limits visible tied winners to two and reports the remaining count", async () => {
     setup({
       projection: {

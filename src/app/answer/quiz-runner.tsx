@@ -773,40 +773,37 @@ export default function QuizRunner() {
               自分の回答に戻る
             </Button>
           )}
-          {visibilityStatus !== "locked" &&
-            !answeringForAssisted &&
-            canAnswerForAssisted &&
-            (!assistedParticipant?.hasSubmission || visibilityStatus !== "locked") && (
-              <div className="mt-4">
-                {assistedError && (
-                  <p className="mb-2 text-sm text-error" role="alert">
-                    {assistedError}
-                  </p>
-                )}
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    if (assistedParticipant?.participant) void resumeAssisted();
-                    else openAssistedLogin();
-                  }}
-                  disabled={
-                    assistedBusy ||
-                    Boolean(assistedParticipant?.hasSubmission && visibilityStatus !== "unlocked")
-                  }
-                >
-                  {assistedBusy
-                    ? "回答状態を確認しています…"
-                    : assistedParticipant?.hasSubmission
-                      ? "代理回答を修正する"
-                      : "代理回答を行う"}
-                </Button>
-                {assistedParticipant?.participant && !assistedParticipant.hasSubmission && (
-                  <p className="mt-2 text-sm text-muted">
-                    {assistedParticipant.participant.name}さんの回答を再開できます。
-                  </p>
-                )}
-              </div>
-            )}
+          {visibilityStatus !== "locked" && !answeringForAssisted && canAnswerForAssisted && (
+            <div className="mt-4">
+              {assistedError && (
+                <p className="mb-2 text-sm text-error" role="alert">
+                  {assistedError}
+                </p>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (assistedParticipant?.participant) void resumeAssisted();
+                  else openAssistedLogin();
+                }}
+                disabled={
+                  assistedBusy ||
+                  Boolean(assistedParticipant?.hasSubmission && visibilityStatus !== "unlocked")
+                }
+              >
+                {assistedBusy
+                  ? "回答状態を確認しています…"
+                  : assistedParticipant?.hasSubmission
+                    ? "代理回答を修正する"
+                    : "代理回答を行う"}
+              </Button>
+              {assistedParticipant?.participant && !assistedParticipant.hasSubmission && (
+                <p className="mt-2 text-sm text-muted">
+                  {assistedParticipant.participant.name}さんの回答を再開できます。
+                </p>
+              )}
+            </div>
+          )}
           {participantResultsVisible && !participantResultsAuthExpired && (
             <div className="mt-3 flex flex-col items-start gap-2">
               <Link
