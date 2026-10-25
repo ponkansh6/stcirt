@@ -154,7 +154,7 @@ describe("ResultsPanel", () => {
 
   it("polls the assisted result endpoint and labels the result for the assisted respondent", async () => {
     mockPoll(visibleResult);
-    render(<ResultsPanel initial={visibleResult} scope="assisted" />);
+    render(<ResultsPanel initial={visibleResult} participantName="Assistant" scope="assisted" />);
 
     setVisibility("visible");
 
@@ -164,6 +164,8 @@ describe("ResultsPanel", () => {
       credentials: "same-origin",
     });
     expect(screen.getByRole("heading", { name: "代理回答の結果" })).toBeVisible();
+    expect(screen.getByText("名前")).toBeVisible();
+    expect(screen.getByText("Assistant")).toBeVisible();
     expect(screen.getByRole("link", { name: "自分の結果を見る" })).toHaveAttribute(
       "href",
       "/results",

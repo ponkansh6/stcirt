@@ -237,6 +237,36 @@ describe("/results server entry", () => {
     expect(getParticipantResult).not.toHaveBeenCalled();
   });
 
+  it("fails closed when the assisted participant record is missing after scope resolution", async () => {
+    vi.mocked(resolveAnswerScope).mockResolvedValueOnce({ participantId: 18 });
+    vi.mocked(getAssistedParticipant).mockResolvedValueOnce(null);
+
+    const element = (await ResultsPage({
+      searchParams: Promise.resolve({ scope: "assisted" }),
+    })) as ReactElement<{ initial: unknown; scope: string }>;
+
+    expect(element.props.scope).toBe("assisted");
+    expect(element.props.initial).toEqual({ state: "unavailable" });
+    expect(resolveAnswerScope).toHaveBeenCalledWith(12, "assisted");
+    expect(getAssistedParticipant).toHaveBeenCalledWith(12);
+    expect(getParticipantResult).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the assisted participant does not match the resolved scope", async () => {
+    vi.mocked(resolveAnswerScope).mockResolvedValueOnce({ participantId: 18 });
+    vi.mocked(getAssistedParticipant).mockResolvedValueOnce({ id: 19, name: "別の対象" });
+
+    const element = (await ResultsPage({
+      searchParams: Promise.resolve({ scope: "assisted" }),
+    })) as ReactElement<{ initial: unknown; scope: string }>;
+
+    expect(element.props.scope).toBe("assisted");
+    expect(element.props.initial).toEqual({ state: "unavailable" });
+    expect(resolveAnswerScope).toHaveBeenCalledWith(12, "assisted");
+    expect(getAssistedParticipant).toHaveBeenCalledWith(12);
+    expect(getParticipantResult).not.toHaveBeenCalled();
+  });
+
   it("does not query results for an unauthenticated visitor", async () => {
     cookieState.token = undefined;
 
