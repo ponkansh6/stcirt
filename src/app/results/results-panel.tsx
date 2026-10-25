@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/Button";
+import ShareManager from "./share-manager";
+import ParticipantResultDetails from "./participant-result-details";
 import { parseParticipantResult, type ParticipantResult } from "@/lib/participant-results-contract";
 
 export type InitialResult = ParticipantResult | { state: "unauthenticated" };
@@ -35,13 +37,6 @@ export default function ResultsPanel({
   const pendingStatusAnnouncementRef = useRef<string | null>(null);
   const waitingNoticeIssuedRef = useRef(false);
   const [statusAnnouncement, setStatusAnnouncement] = useState("");
-
-  const answerStatus = (correctness: "correct" | "incorrect") => {
-    if (correctness === "correct") {
-      return { label: "正解", icon: "✓", className: "text-success" };
-    }
-    return { label: "不正解", icon: "×", className: "text-error" };
-  };
 
   const refresh = useCallback((activeScope: NonNullable<typeof scope>, manual = false) => {
     const poll = async (): Promise<void> => {
@@ -180,114 +175,7 @@ export default function ResultsPanel({
             <h1 className="text-3xl font-bold tracking-tight text-balance">
               {scope === "assisted" ? "代理回答の結果" : "あなたの結果"}
             </h1>
-            <dl className="mt-8 grid grid-cols-2 gap-4">
-              <div className="rounded-xl bg-surface-2 p-5">
-                <dt className="text-sm text-muted text-balance">順位</dt>
-                <dd className="mt-1 flex min-h-10 items-baseline gap-2">
-                  {result.rank === null ? (
-                    <span className="text-xl font-bold tracking-tight text-muted">集計対象外</span>
-                  ) : (
-                    <span className="text-3xl font-bold tracking-tight sm:text-4xl">
-                      {result.rank}位
-                    </span>
-                  )}
-                  <span className="text-sm font-medium text-muted">
-                    / {result.participantCount}人
-                  </span>
-                </dd>
-              </div>
-              <div className="rounded-xl bg-surface-2 p-5">
-                <dt className="text-sm text-muted text-balance">得点</dt>
-                <dd className="mt-1 flex min-h-10 items-baseline gap-2">
-                  <span className="text-3xl font-bold tracking-tight sm:text-4xl">
-                    {result.score.toFixed(2)}点
-                  </span>
-                  <span className="text-sm font-medium text-muted">/ {result.maxScore}点</span>
-                </dd>
-              </div>
-            </dl>
-            <section className="mt-10" aria-labelledby="answer-details-heading">
-              <h2
-                id="answer-details-heading"
-                className="text-xl font-bold tracking-tight text-balance"
-              >
-                回答明細
-              </h2>
-              <ol className="mt-4 space-y-3">
-                {result.questions.map((item) => (
-                  <li
-                    key={item.position}
-                    className="min-w-0 rounded-xl border border-border bg-surface-2 p-4 sm:p-5"
-                  >
-                    <p className="break-words text-sm font-semibold text-muted [overflow-wrap:anywhere] text-pretty">
-                      問題 {item.position + 1}
-                    </p>
-                    <p className="mt-2 whitespace-pre-wrap break-words font-medium [overflow-wrap:anywhere] text-pretty">
-                      {item.question}
-                    </p>
-                    <div className="mt-4 border-t border-border/70 pt-3">
-                      {item.answer.kind === "selected" &&
-                      item.answer.correctness === "unavailable" ? (
-                        <p className="text-sm font-medium text-muted text-pretty">
-                          回答を確認できません
-                        </p>
-                      ) : item.answer.kind === "selected" ? (
-                        <>
-                          <p className="text-xs font-semibold tracking-wide text-muted text-balance">
-                            あなたの回答
-                          </p>
-                          <p className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-pretty">
-                            {item.answer.value}
-                          </p>
-                          {(() => {
-                            const status = answerStatus(
-                              item.answer.correctness === "correct" ? "correct" : "incorrect",
-                            );
-                            return (
-                              <p
-                                className={`mt-3 inline-flex items-center gap-2 text-sm font-semibold ${status.className}`}
-                              >
-                                <span aria-hidden="true" className="text-base leading-none">
-                                  {status.icon}
-                                </span>
-                                <span>{status.label}</span>
-                              </p>
-                            );
-                          })()}
-                        </>
-                      ) : item.answer.kind === "freeText" ? (
-                        <>
-                          <p className="text-xs font-semibold tracking-wide text-muted text-balance">
-                            あなたの回答
-                          </p>
-                          <p className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-pretty">
-                            {item.answer.value}
-                          </p>
-                          {typeof item.answer.score === "number" ? (
-                            <p className="mt-3 text-sm text-muted text-pretty">
-                              記録済みスコア:{" "}
-                              <span className="font-semibold text-text">
-                                {item.answer.score.toFixed(2)}
-                              </span>
-                            </p>
-                          ) : (
-                            <p className="mt-3 text-sm text-muted text-pretty">
-                              設問別スコアは記録されていません
-                            </p>
-                          )}
-                        </>
-                      ) : item.answer.kind === "unanswered" ? (
-                        <p className="text-sm font-medium text-muted text-pretty">未回答</p>
-                      ) : (
-                        <p className="text-sm font-medium text-muted text-pretty">
-                          この回答の詳細は確認できません
-                        </p>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </section>
+            <ParticipantResultDetails result={result} />
             <Link className="mt-8 inline-flex font-semibold text-primary underline" href="/answer">
               回答画面へ戻る
             </Link>
@@ -318,6 +206,9 @@ export default function ResultsPanel({
             ) : null}
           </nav>
         )}
+        {scope === "assisted" && authorized && hasAssistedSubmission ? (
+          <ShareManager canIssue={result.state === "visible"} />
+        ) : null}
         {scope !== null ? (
           <Button
             variant="outline"

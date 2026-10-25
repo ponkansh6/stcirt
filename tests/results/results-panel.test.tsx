@@ -173,6 +173,20 @@ describe("ResultsPanel", () => {
     ).not.toContain("18");
   });
 
+  it("shows share controls only for an authorized submitted assisted result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ exists: false, issuedAt: null, expiresAt: null, expired: false }),
+      }),
+    );
+    render(<ResultsPanel initial={visibleResult} scope="assisted" hasAssistedSubmission />);
+    expect(await screen.findByRole("heading", { name: "代理回答結果を共有" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "共有URLを発行" })).toBeEnabled();
+  });
+
   it("shows the assisted result switch only when an assisted submission exists and keeps IDs out of links", () => {
     const { rerender } = render(
       <ResultsPanel initial={{ state: "waiting" }} scope="owner" hasAssistedSubmission={false} />,
@@ -341,7 +355,7 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("/ 2点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
-    expect(screen.getByText("不正解")).toBeVisible();
+    expect(screen.getByText(/× 不正解/)).toBeVisible();
     expect(screen.getByText("自由記述回答")).toBeVisible();
     expect(screen.getByText(/記録済みスコア:/)).toHaveTextContent("0.75");
 
@@ -356,7 +370,7 @@ describe("ResultsPanel", () => {
     expect(screen.queryByText("1.50点")).not.toBeInTheDocument();
     expect(screen.queryByText("最初の問題")).not.toBeInTheDocument();
     expect(screen.queryByText("選択した回答")).not.toBeInTheDocument();
-    expect(screen.queryByText("不正解")).not.toBeInTheDocument();
+    expect(screen.queryByText(/× 不正解/)).not.toBeInTheDocument();
     expect(screen.queryByText("自由記述回答")).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith("/api/participants/results", {
       cache: "no-store",
@@ -448,7 +462,7 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("1.50点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
-    expect(screen.getByText("不正解")).toBeVisible();
+    expect(screen.getByText(/× 不正解/)).toBeVisible();
     expect(screen.getByText("自由記述回答")).toBeVisible();
     expect(screen.queryByText("全体ランキング")).not.toBeInTheDocument();
   });
@@ -705,7 +719,8 @@ describe("ResultsPanel", () => {
     );
 
     expect(screen.getByText("回答を確認できません")).toBeVisible();
-    expect(screen.getByText("正解")).toBeVisible();
+    expect(screen.getByText("確認中の回答")).toBeVisible();
+    expect(screen.getByText(/✓ 正解/)).toBeVisible();
     expect(screen.getByText("設問別スコアは記録されていません")).toBeVisible();
     expect(screen.getByText("未回答")).toBeVisible();
     expect(screen.getByText("この回答の詳細は確認できません")).toBeVisible();

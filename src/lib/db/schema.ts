@@ -87,6 +87,19 @@ export const assistedParticipants = sqliteTable("assisted_participants", {
     .default(sql`(unixepoch())`),
 });
 
+export const assistedResultShares = sqliteTable("assisted_result_shares", {
+  ownerParticipantId: integer("owner_participant_id")
+    .primaryKey()
+    .references(() => examParticipants.id, { onDelete: "cascade" }),
+  targetParticipantId: integer("target_participant_id")
+    .notNull()
+    .unique()
+    .references(() => examParticipants.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  issuedAt: integer("issued_at", { mode: "timestamp" }).notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+});
+
 export const participantRateLimits = sqliteTable("participant_rate_limits", {
   fingerprint: text("fingerprint").primaryKey(),
   attempts: integer("attempts").notNull(),

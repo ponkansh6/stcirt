@@ -51,6 +51,16 @@ const expectedSchemaManifest = [
     columns: ["owner_participant_id", "target_participant_id", "created_at"],
   },
   {
+    tableName: "assisted_result_shares",
+    columns: [
+      "owner_participant_id",
+      "target_participant_id",
+      "token_hash",
+      "issued_at",
+      "expires_at",
+    ],
+  },
+  {
     tableName: "participant_rate_limits",
     columns: ["fingerprint", "attempts", "window_started_at"],
   },
@@ -175,8 +185,8 @@ describe("production schema parser", () => {
     const schema = readFileSync(join(process.cwd(), "src/lib/db/schema.ts"), "utf8");
     const parsed = parseExpectedSchema(schema);
 
-    expect(parsed).toHaveLength(17);
-    expect(parsed.reduce((count, table) => count + table.columns.length, 0)).toBe(105);
+    expect(parsed).toHaveLength(18);
+    expect(parsed.reduce((count, table) => count + table.columns.length, 0)).toBe(110);
     expect(normalizeManifest(parsed)).toEqual(normalizeManifest(expectedSchemaManifest));
   });
 });

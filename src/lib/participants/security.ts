@@ -6,6 +6,9 @@ const DEFAULT_SESSION_SECONDS = 30 * 24 * 60 * 60;
 type SessionPayload = { id: number; exp: number };
 const SESSION_KEY_PURPOSE = "stcirt-participant-session-v1";
 const RATE_LIMIT_KEY_PURPOSE = "stcirt-participant-rate-limit-v1";
+const SHARE_TOKEN_KEY_PURPOSE = "stcirt-assisted-result-share-token-key-v1";
+const SHARE_TOKEN_PURPOSE = "stcirt-assisted-result-share-token-v1";
+const SHARE_TOKEN_PATTERN = /^v1\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{43})$/;
 
 function sessionConfig() {
   const secret = process.env.PARTICIPANT_SESSION_SECRET;
@@ -130,4 +133,37 @@ export function getRateLimitKey(value: string) {
   return createHmac("sha256", deriveKey(config.secret, RATE_LIMIT_KEY_PURPOSE))
     .update(value)
     .digest("hex");
+}
+
+export function signParticipantShareToken(randomPart: string) {
+  const config = sessionConfig();
+  if (!config || !/^[A-Za-z0-9_-]{43}$/.test(randomPart)) return null;
+  const randomBytes = Buffer.from(randomPart, "base64url");
+  if (randomBytes.length !== 32 || randomBytes.toString("base64url") !== randomPart) return null;
+  const signature = createHmac("sha256", deriveKey(config.secret, SHARE_TOKEN_KEY_PURPOSE))
+    .update(`${SHARE_TOKEN_PURPOSE}\0v1.${randomPart}`)
+    .digest("base64url");
+  return `v1.${randomPart}.${signature}`;
+}
+
+export function verifyParticipantShareToken(token: string) {
+  const config = sessionConfig();
+  if (!config) return false;
+  const match = SHARE_TOKEN_PATTERN.exec(token);
+  if (!match) return false;
+  const [, randomPart, signature] = match;
+  const randomBytes = Buffer.from(randomPart, "base64url");
+  const actual = Buffer.from(signature, "base64url");
+  if (
+    randomBytes.length !== 32 ||
+    randomBytes.toString("base64url") !== randomPart ||
+    actual.length !== 32 ||
+    actual.toString("base64url") !== signature
+  ) {
+    return false;
+  }
+  const expected = createHmac("sha256", deriveKey(config.secret, SHARE_TOKEN_KEY_PURPOSE))
+    .update(`${SHARE_TOKEN_PURPOSE}\0v1.${randomPart}`)
+    .digest();
+  return timingSafeEqual(actual, expected);
 }

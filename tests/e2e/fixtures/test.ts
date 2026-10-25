@@ -1,7 +1,11 @@
 import { expect, test as base } from "@playwright/test";
 
 // These real-handler requests are intentional and narrowly scoped.
-export const E2E_REAL_API_ALLOWLIST = [{ method: "POST", pathname: "/api/admin/session" }] as const;
+export const E2E_REAL_API_ALLOWLIST = [
+  { method: "POST", pathname: "/api/admin/session" },
+  { method: "GET", pathname: "/api/shared-results/not-a-token" },
+  { method: "GET", pathname: /^\/api\/shared-results\/v1\.[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/ },
+] as const;
 
 export const test = base.extend({
   page: async ({ page }, use) => {
@@ -12,7 +16,11 @@ export const test = base.extend({
       const request = route.request();
       const pathname = new URL(request.url()).pathname;
       const isExplicitlyAllowed = E2E_REAL_API_ALLOWLIST.some(
-        (entry) => entry.method === request.method() && entry.pathname === pathname,
+        (entry) =>
+          entry.method === request.method() &&
+          (typeof entry.pathname === "string"
+            ? entry.pathname === pathname
+            : entry.pathname.test(pathname)),
       );
 
       if (isExplicitlyAllowed) {

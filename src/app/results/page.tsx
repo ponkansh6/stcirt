@@ -43,9 +43,12 @@ export default async function ResultsPage({
     }
 
     const assistedTarget = scopeMode === "owner" ? await getAssistedParticipant(session.id) : null;
-    const hasAssistedSubmission = assistedTarget
-      ? Boolean(await getLatestAnswerSubmission(assistedTarget.id))
-      : false;
+    const hasAssistedSubmission =
+      scopeMode === "assisted"
+        ? Boolean(await getLatestAnswerSubmission(scope.participantId))
+        : assistedTarget
+          ? Boolean(await getLatestAnswerSubmission(assistedTarget.id))
+          : false;
 
     return (
       <Suspense fallback={<ResultsShell scope={scopeMode} />}>

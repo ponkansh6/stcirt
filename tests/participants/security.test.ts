@@ -7,7 +7,9 @@ import {
   isParticipantAuthConfigured,
   participantSessionLifetimeSeconds,
   requestHasValidOrigin,
+  signParticipantShareToken,
   verifyEventPin,
+  verifyParticipantShareToken,
   verifyParticipantSession,
 } from "@/lib/participants/security";
 
@@ -233,5 +235,33 @@ describe("participant security", () => {
     expect(getRateLimitKey("client-2")).not.toBe(key);
     delete process.env.PARTICIPANT_SESSION_SECRET;
     expect(getRateLimitKey("client-1")).toBeNull();
+  });
+
+  it("signs the 32-byte random share part and rejects tampering in constant-time validation", () => {
+    configure();
+    const randomPart = Buffer.alloc(32, 7).toString("base64url");
+    const token = signParticipantShareToken(randomPart);
+    expect(token).toMatch(/^v1\.[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/);
+    expect(verifyParticipantShareToken(token!)).toBe(true);
+    expect(verifyParticipantShareToken(`${token}x`)).toBe(false);
+    expect(verifyParticipantShareToken(`v1.${randomPart}.${"A".repeat(42)}B`)).toBe(false);
+    const tamperedToken = `${token!.slice(0, -1)}${token!.endsWith("A") ? "B" : "A"}`;
+    expect(verifyParticipantShareToken(tamperedToken)).toBe(false);
+    expect(signParticipantShareToken(Buffer.alloc(31, 7).toString("base64url"))).toBeNull();
+
+    const nonCanonicalRandomPart = Array.from(
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_",
+      (character) => `${randomPart.slice(0, -1)}${character}`,
+    ).find((part) => {
+      const decoded = Buffer.from(part, "base64url");
+      return decoded.length === 32 && decoded.toString("base64url") !== part;
+    });
+    expect(nonCanonicalRandomPart).toBeDefined();
+    expect(signParticipantShareToken(nonCanonicalRandomPart!)).toBeNull();
+
+    process.env.PARTICIPANT_SESSION_SECRET = "a-different-secret-that-is-also-more-than-32-bytes";
+    expect(verifyParticipantShareToken(token!)).toBe(false);
+    delete process.env.PARTICIPANT_SESSION_SECRET;
+    expect(verifyParticipantShareToken(token!)).toBe(false);
   });
 });
