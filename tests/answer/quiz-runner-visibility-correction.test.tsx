@@ -280,12 +280,11 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "回答を修正する" })).toBeDisabled(),
+      expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument(),
     );
     expect(
       screen.queryByText(/結果が公開されているため、回答は修正できません/),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "回答を修正する" })).toBeDisabled();
   });
 
   it("skips interval refreshes while a visibility request is pending", async () => {

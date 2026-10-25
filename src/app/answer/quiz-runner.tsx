@@ -753,14 +753,16 @@ export default function QuizRunner() {
               />
             </section>
           )}
-          <Button
-            onClick={editAnswers}
-            className="mt-8"
-            disabled={Boolean(restoreError) || visibilityStatus !== "unlocked"}
-            variant={ui.primaryAction === "edit-answers" ? "primary" : "outline"}
-          >
-            回答を修正する
-          </Button>
+          {visibilityStatus !== "locked" && (
+            <Button
+              onClick={editAnswers}
+              className="mt-8"
+              disabled={Boolean(restoreError) || visibilityStatus !== "unlocked"}
+              variant={ui.primaryAction === "edit-answers" ? "primary" : "outline"}
+            >
+              回答を修正する
+            </Button>
+          )}
           {visibilityStatus === "unknown" && !restoreError && (
             <p className="mt-3 text-sm leading-relaxed text-muted" role="status" aria-live="polite">
               回答の公開状態を確認しています。確認できるまで編集はできません。
@@ -771,7 +773,8 @@ export default function QuizRunner() {
               自分の回答に戻る
             </Button>
           )}
-          {!answeringForAssisted &&
+          {visibilityStatus !== "locked" &&
+            !answeringForAssisted &&
             canAnswerForAssisted &&
             (!assistedParticipant?.hasSubmission || visibilityStatus !== "locked") && (
               <div className="mt-4">
@@ -1397,7 +1400,7 @@ function ParticipantForm({
         />
         {showExamTitle && (
           <p id="participant-pin-hint" className="text-sm text-muted">
-            披露宴までには回答を完了させてください。※自身で入力が難しい方の為の代理回答は自分の回答完了後に行えます
+            披露宴までに回答を完了させてください。自身で入力が難しい方の為の代理回答は自分の回答完了後に行えます。
           </p>
         )}
       </div>

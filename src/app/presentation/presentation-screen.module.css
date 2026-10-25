@@ -301,9 +301,12 @@
 }
 
 .openingSubtitle {
-  position: relative;
+  position: absolute;
+  top: calc(50% + var(--opening-title-size) * 0.68 + clamp(8px, 1.4cqh, 16px));
+  right: 0;
+  left: 0;
   z-index: 1;
-  margin: -0.5em 0 0;
+  margin: 0;
   color: #37424c;
   font-size: clamp(var(--presentation-min-readable-size), 2.4cqw, 2.5rem);
   font-weight: 700;
@@ -339,7 +342,10 @@
 }
 
 .openingWaitSlot {
-  position: relative;
+  position: absolute;
+  right: 0;
+  bottom: clamp(24px, 6cqh, 48px);
+  left: 0;
   z-index: 1;
   display: grid;
   min-height: 1.5em;
