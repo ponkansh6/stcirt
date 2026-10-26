@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { cookies } from "next/headers";
 import Link from "next/link";
+import { Spinner } from "@/components/Spinner";
 import ResultsPanel from "./results-panel";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
 import { getParticipantResult } from "@/lib/db/repository/presentation-repository";
@@ -107,7 +108,8 @@ function ResultsShell({ scope }: { scope: "owner" | "assisted" }) {
         <h1 className="text-3xl font-bold tracking-tight">
           {scope === "assisted" ? "代理回答の結果" : "あなたの結果"}
         </h1>
-        <p className="mt-8" role="status" aria-live="polite">
+        <p className="mt-8 flex items-center gap-2" role="status" aria-live="polite">
+          <Spinner />
           結果を読み込んでいます。
         </p>
         <p className="mt-4 text-muted">

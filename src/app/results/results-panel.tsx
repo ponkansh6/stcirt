@@ -215,6 +215,7 @@ export default function ResultsPanel({
           <Button
             variant="outline"
             onClick={() => void refresh(scope, true)}
+            loading={manuallyRefreshing}
             disabled={manuallyRefreshing}
             aria-label="結果を再読み込み"
             className="mt-6 self-start"
