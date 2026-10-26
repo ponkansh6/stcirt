@@ -254,9 +254,7 @@ describe("QuizRunner remaining coverage states", () => {
       session({ kind: "answering" }, { quizzes, freeResponses: { 5: "保存した記述回答" } }),
     );
     render(<QuizRunner />);
-    expect(screen.getByRole("textbox", { name: "回答（1000字以内）" })).toHaveValue(
-      "保存した記述回答",
-    );
+    expect(screen.getByRole("textbox", { name: "回答" })).toHaveValue("保存した記述回答");
   });
 
   it("reviews all five selected and free-text answers and reflects an edited selection", () => {
@@ -332,7 +330,7 @@ describe("QuizRunner remaining coverage states", () => {
       session({ kind: "answering" }, { quizzes, setFreeResponse }),
     );
     render(<QuizRunner />);
-    const textbox = screen.getByRole("textbox", { name: "回答（1000字以内）" });
+    const textbox = screen.getByRole("textbox", { name: "回答" });
     expect(textbox).toHaveValue("");
     fireEvent.change(textbox, { target: { value: "入力中の回答" } });
     expect(setFreeResponse).toHaveBeenCalledWith(5, "入力中の回答");

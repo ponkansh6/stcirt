@@ -185,7 +185,7 @@ describe("QuizRunner batch answer sheet", () => {
     );
     render(<RunnerPage />);
 
-    const response = screen.getByRole("textbox", { name: "回答（1000字以内）" });
+    const response = screen.getByRole("textbox", { name: "回答" });
     expect(response).toHaveAttribute("maxLength", "1000");
     expect(response).toHaveAttribute("rows", "6");
     expect(response.className).toContain("freeText");

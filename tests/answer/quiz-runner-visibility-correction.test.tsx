@@ -706,9 +706,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     const question2 = within(document.getElementById("question-2") as HTMLElement);
     expect(question2.getByRole("radio", { name: /D2/ })).toBeChecked();
-    expect(screen.getByRole("textbox", { name: "回答（1000字以内）" })).toHaveValue(
-      "競合後も保持する記述回答",
-    );
+    expect(screen.getByRole("textbox", { name: "回答" })).toHaveValue("競合後も保持する記述回答");
     fireEvent.click(screen.getByRole("button", { name: "修正内容を確定する" }));
     expect(retryDrafts).toHaveLength(1);
 
@@ -719,9 +717,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(question2.getByRole("radio", { name: /D2/ })).toBeChecked();
     expect(document.getElementById("answer-3-0")).toBeChecked();
     expect(document.getElementById("answer-4-3")).toBeChecked();
-    expect(screen.getByRole("textbox", { name: "回答（1000字以内）" })).toHaveValue(
-      "競合後も保持する記述回答",
-    );
+    expect(screen.getByRole("textbox", { name: "回答" })).toHaveValue("競合後も保持する記述回答");
     expect(screen.getByRole("list", { name: "回答内容" })).toHaveTextContent(
       "競合後も保持する記述回答",
     );

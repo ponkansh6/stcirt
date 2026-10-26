@@ -960,9 +960,6 @@ export default function QuizRunner() {
               回答済み {answeredCount}/5
             </p>
           </div>
-          <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted">
-            全5問を縦に確認しながら回答してください。回答は最後にまとめて確定します。
-          </p>
           {answerMode === "assisted" && (
             <Button variant="outline" className="mt-4" onClick={() => returnToOwner()}>
               自分の回答に戻る
@@ -1051,7 +1048,7 @@ export default function QuizRunner() {
                         htmlFor={`answer-${question.id}`}
                         className="mb-2 block text-sm font-semibold"
                       >
-                        回答（1000字以内）
+                        回答
                       </label>
                       {legacyAnswerIds.includes(question.id) && (
                         <p className="mb-3 text-sm text-muted">

@@ -545,7 +545,7 @@ async function expectCenteredHitTest(locator: Locator, name: string) {
 
 async function answerQuestion(page: Page, id: number, choice: string) {
   if (id === 5) {
-    await page.getByRole("textbox", { name: "回答（1000字以内）" }).fill(`自由記載${choice}`);
+    await page.getByRole("textbox", { name: "回答" }).fill(`自由記載${choice}`);
   } else {
     await selectRadio(page, new RegExp(`Option ${id}${choice}`));
   }
@@ -712,7 +712,7 @@ test("@chromium pending batch preserves accessible motion behavior and locks the
     await signIn(page, "Aki");
     await startQuiz(page);
     for (let id = 1; id <= 4; id += 1) await answerQuestion(page, id, "B");
-    await page.getByRole("textbox", { name: "回答（1000字以内）" }).fill("pending animation state");
+    await page.getByRole("textbox", { name: "回答" }).fill("pending animation state");
     await page.getByRole("button", { name: "5問の回答を確定する" }).click();
     await postStarted;
 
@@ -814,7 +814,7 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   await expect(longOptionRadios).toHaveCount(4);
   const radios = page.getByRole("radio");
   await expect(radios).toHaveCount(16);
-  await expect(page.getByRole("textbox", { name: "回答（1000字以内）" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "回答" })).toBeVisible();
   const firstRadio = group.getByRole("radio", { name: /長文の選択肢Aです/ });
   await page.evaluate(() => document.fonts.ready);
   await expectCenteredHitTest(
@@ -894,9 +894,7 @@ test("@mobile reviews and edits an answer at 320px with a hittable review target
   await startQuiz(page);
 
   for (let id = 1; id <= 4; id += 1) await answerQuestion(page, id, "B");
-  await page
-    .getByRole("textbox", { name: "回答（1000字以内）" })
-    .fill("小画面で編集する回答です。");
+  await page.getByRole("textbox", { name: "回答" }).fill("小画面で編集する回答です。");
   await page
     .getByRole("navigation", { name: "設問へ移動" })
     .getByRole("link", { name: "第5問へ移動、回答済み" })
@@ -1263,9 +1261,9 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
   expect(canonicalReads).toHaveLength(0);
 
   await answerQuestion(secondTab, 1, "D");
-  await secondTab.getByRole("textbox", { name: "回答（1000字以内）" }).fill("Bタブの未保存案");
+  await secondTab.getByRole("textbox", { name: "回答" }).fill("Bタブの未保存案");
   await answerQuestion(page, 1, "B");
-  await page.getByRole("textbox", { name: "回答（1000字以内）" }).fill("Aタブで保存した回答");
+  await page.getByRole("textbox", { name: "回答" }).fill("Aタブで保存した回答");
   await page.getByRole("button", { name: "修正内容を確定する" }).click();
   await expectResultsWaiting(page);
   expect(canonical.revision).toBe(2);
@@ -1276,9 +1274,7 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
   ).toContainText("回答案は保持しています。内容を確認して、もう一度確定してください。");
   expect(canonicalReads).toEqual([{ revision: 2, answers: canonical.answers }]);
   await expect(secondTab.getByRole("radio", { name: /Option 1D/ })).toBeChecked();
-  await expect(secondTab.getByRole("textbox", { name: "回答（1000字以内）" })).toHaveValue(
-    "Bタブの未保存案",
-  );
+  await expect(secondTab.getByRole("textbox", { name: "回答" })).toHaveValue("Bタブの未保存案");
 
   const savedQuestionOne = canonical.answers.find((answer) => answer.questionId === 1);
   const localQuestionOne = writes[1]?.answers.find((answer) => answer.questionId === 1);
