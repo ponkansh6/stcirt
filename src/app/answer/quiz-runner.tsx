@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Image from "next/image";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { useQuizSession } from "./use-quiz-session";
 import ChoiceButton from "@/components/ChoiceButton";
 import { choiceLabel } from "@/lib/choice-label";
@@ -31,6 +31,23 @@ type AnswerUiSurface =
   | "load-error"
   | "complete"
   | "answering";
+
+function ResultLinkPending() {
+  const { pending } = useLinkStatus();
+
+  return (
+    <>
+      <span aria-hidden="true" className="ml-2 inline-flex h-4 w-4 items-center justify-center">
+        {pending && <Spinner />}
+      </span>
+      {pending && (
+        <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          結果ページへ移動しています。
+        </span>
+      )}
+    </>
+  );
+}
 
 type AnswerUiAction =
   | "login"
@@ -808,16 +825,20 @@ export default function QuizRunner() {
             <div className="mt-3 flex flex-col items-start gap-2">
               <Link
                 href="/results"
+                aria-label="自分の結果を見る"
                 className="inline-flex min-h-11 items-center justify-center rounded-md border border-primary px-5 font-semibold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               >
                 自分の結果を見る
+                <ResultLinkPending />
               </Link>
               {assistedParticipant?.hasSubmission && (
                 <Link
                   href="/results?scope=assisted"
+                  aria-label="代理回答の結果を見る"
                   className="inline-flex min-h-11 items-center justify-center rounded-md border border-primary px-5 font-semibold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   代理回答の結果を見る
+                  <ResultLinkPending />
                 </Link>
               )}
             </div>

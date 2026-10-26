@@ -1,12 +1,37 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import type * as ReactTypes from "react";
 import { useState } from "react";
 import QuizRunner from "@/app/answer/quiz-runner";
 import { runIfSubmissionAllowed } from "@/app/answer/submission-gate";
 
 const mockUseQuizSession = vi.hoisted(() => vi.fn());
+const linkStatusState = vi.hoisted(() => ({ pendingHref: null as string | null }));
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/answer" }));
+vi.mock("next/link", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/link")>();
+  const React = await import("react");
+  const LinkStatusContext = React.createContext<string | null>(null);
+  function MockLink({
+    href,
+    children,
+    ...props
+  }: ReactTypes.ComponentProps<"a"> & { href: string }) {
+    return React.createElement(
+      LinkStatusContext.Provider,
+      { value: href },
+      React.createElement("a", { ...props, href }, children),
+    );
+  }
+  return {
+    ...actual,
+    default: MockLink,
+    useLinkStatus: () => ({
+      pending: React.useContext(LinkStatusContext) === linkStatusState.pendingHref,
+    }),
+  };
+});
 
 const selectedQuizzes = Array.from({ length: 5 }, (_, index) => ({
   question: {
@@ -92,7 +117,10 @@ function getAnswererNameField(container: HTMLElement) {
 }
 
 describe("QuizRunner remaining coverage states", () => {
-  beforeEach(() => vi.stubGlobal("fetch", vi.fn()));
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+    linkStatusState.pendingHref = null;
+  });
   afterEach(() => vi.unstubAllGlobals());
 
   it("shows the submission lookup spinner and a retry action after lookup failure", () => {
@@ -173,6 +201,47 @@ describe("QuizRunner remaining coverage states", () => {
 
     const resultsLink = await screen.findByRole("link", { name: "代理回答の結果を見る" });
     expect(resultsLink).toHaveAttribute("href", "/results?scope=assisted");
+  });
+
+  it("announces pending state only for the result link being navigated and clears it when navigation settles", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => visibleResultsPayload,
+    } as Response);
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          answerMode: "assisted",
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+        },
+      ),
+    );
+    const view = render(<QuizRunner />);
+    const ownerLink = await screen.findByRole("link", { name: "自分の結果を見る" });
+    const assistedLink = screen.getByRole("link", { name: "代理回答の結果を見る" });
+
+    expect(within(ownerLink).queryByRole("status")).not.toBeInTheDocument();
+    expect(within(assistedLink).queryByRole("status")).not.toBeInTheDocument();
+
+    linkStatusState.pendingHref = "/results?scope=assisted";
+    view.rerender(<QuizRunner />);
+    expect(assistedLink).toHaveAccessibleName("代理回答の結果を見る");
+    expect(within(assistedLink).getByRole("status")).toHaveTextContent(
+      "結果ページへ移動しています。",
+    );
+    expect(within(assistedLink).getByRole("status")).toHaveAttribute("aria-live", "polite");
+    expect(within(ownerLink).queryByRole("status")).not.toBeInTheDocument();
+
+    linkStatusState.pendingHref = null;
+    view.rerender(<QuizRunner />);
+    expect(within(assistedLink).queryByRole("status")).not.toBeInTheDocument();
+    expect(assistedLink).toHaveAttribute("href", "/results?scope=assisted");
+    expect(ownerLink).toHaveAttribute("href", "/results");
   });
 
   it("renders a nonempty saved free response in the answer field", () => {

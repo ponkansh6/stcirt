@@ -1,7 +1,14 @@
+import { createClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
+import { migrate } from "drizzle-orm/libsql/migrator";
+import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { test, expect, type Locator, type Page, type Route } from "./fixtures/test";
 import { makeQuestion } from "../fixtures/question";
 import { expectNoAccessibilityViolations } from "./axe";
 import { expectPrimaryTargetGeometry } from "./target-geometry";
+import * as schema from "../../src/lib/db/schema";
+import { e2eDatabaseUrl, e2eParticipantPin } from "./fixtures/admin-auth";
 
 const questionFor = (id: number) =>
   makeQuestion({
@@ -256,6 +263,240 @@ async function mockQuestions(page: Page, requests: string[] = []) {
     });
   });
 }
+
+test("@chromium result navigation keeps completion visible with link pending until the RSC request continues", async ({
+  browser,
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "chromium",
+    "The signed participant session and isolated DB navigation flow runs in Chromium only.",
+  );
+  test.setTimeout(90_000);
+
+  const client = createClient({ url: e2eDatabaseUrl, authToken: "" });
+  const db = drizzle({ client, schema });
+  const ownerName = `E2E result navigation ${randomUUID()}`;
+  const baseUrl = "http://127.0.0.1:3001";
+  const ownerContext = await browser.newContext();
+  let ownerId: number | null = null;
+  let migrationReady = false;
+  let releaseHeldNavigationRequest: (() => void) | null = null;
+
+  try {
+    await migrate(db, { migrationsFolder: "./src/lib/db/migrations" });
+    migrationReady = true;
+    // The active presentation and participant result settings use ID 1.
+    // Clear this isolated E2E database's previous fixture state first.
+    await db.delete(schema.presentationEntries);
+    await db.delete(schema.presentationQuestions);
+    await db.delete(schema.presentationSessions);
+    await db.delete(schema.participantResultSettings);
+    const [owner] = await db
+      .insert(schema.examParticipants)
+      .values({ normalizedName: ownerName.normalize("NFC"), displayName: ownerName })
+      .returning({ id: schema.examParticipants.id });
+    if (!owner) throw new Error("Failed to seed the result navigation participant");
+    ownerId = owner.id;
+    await db.insert(schema.presentationSessions).values({
+      id: 1,
+      state: "finished",
+      version: 1,
+      questionIndex: 0,
+      questionCount: 5,
+      snapshotRevision: 1,
+      projectionHidden: false,
+      presentationMode: "full",
+    });
+    const seededQuestions = [1, 2, 3, 4, 5].map((position) => ({
+      sessionId: 1,
+      position: position - 1,
+      sourceQuestionId: 98000 + position,
+      question: `Question ${position}?`,
+      choices: position === 5 ? [] : [`Option ${position}A`, `Option ${position}B`],
+      correctIndex: 0,
+      explanation: null,
+    }));
+    await db.insert(schema.presentationQuestions).values(seededQuestions);
+    await db.insert(schema.presentationEntries).values({
+      sessionId: 1,
+      participantId: owner.id,
+      displayName: ownerName,
+      score: 0,
+      rank: 1,
+      isAggregationTarget: true,
+      answers: seededQuestions.map((question) => ({
+        questionId: question.sourceQuestionId,
+        answerKind: "unanswered" as const,
+        selectedIndex: null,
+        freeText: null,
+        rawScore: null,
+        normalizedScore: null,
+      })),
+    });
+    await db.insert(schema.participantResultSettings).values({
+      id: 1,
+      visible: true,
+      everPublished: true,
+    });
+
+    const login = await ownerContext.request.post(`${baseUrl}/api/participants/session`, {
+      data: { name: ownerName, pin: e2eParticipantPin },
+      headers: { Origin: baseUrl },
+    });
+    expect(login.status()).toBe(200);
+    const participantCookie = (await ownerContext.cookies(baseUrl)).find(
+      ({ name }) => name === "stcirt_participant_session",
+    );
+    expect(participantCookie?.value).toBeTruthy();
+    if (!participantCookie) throw new Error("Participant login did not issue a session cookie");
+    await page.context().addCookies([participantCookie]);
+
+    const submissionId = "00000000-0000-4000-8000-000000000098";
+    const answers: SavedBatchAnswer[] = [
+      ...[1, 2, 3, 4].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 0,
+        freeText: null,
+      })),
+      {
+        questionId: 5,
+        answerKind: "freeText",
+        selectedIndex: null,
+        freeText: "保存済み回答",
+      },
+    ];
+    await mockParticipantSession(page, ownerName, { submissionId, revision: 1, answers });
+    await mockQuestions(page);
+    // The UI needs a published result to expose its link. The results-page SSR
+    // still uses the real signed cookie and isolated database seeded above.
+    await page.route("**/api/participants/results**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          state: "visible",
+          rank: 1,
+          participantCount: 1,
+          isAggregationTarget: true,
+          maxScore: 5,
+          score: 0,
+          questions: [1, 2, 3, 4, 5].map((position) => ({
+            position: position - 1,
+            question: `Question ${position}?`,
+            answer: { kind: "unanswered" },
+          })),
+        }),
+      });
+    });
+    await page.route("**/api/answers/batch**", async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.fallback();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ resultsVisible: false }),
+      });
+    });
+
+    let announceNavigationRequest!: () => void;
+    const navigationRequest = new Promise<void>((resolve) => {
+      announceNavigationRequest = resolve;
+    });
+    let releaseNavigationRequest!: () => void;
+    const navigationGate = new Promise<void>((resolve) => {
+      releaseNavigationRequest = resolve;
+    });
+    let navigationReleased = false;
+    releaseHeldNavigationRequest = () => {
+      if (navigationReleased) return;
+      navigationReleased = true;
+      releaseNavigationRequest();
+    };
+    await page.route("**/*", async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.pathname !== "/results" || request.method() !== "GET") {
+        await route.fallback();
+        return;
+      }
+      const headers = request.headers();
+      if (headers["next-router-prefetch"]) {
+        await route.abort();
+        return;
+      }
+      if (headers.rsc !== "1") {
+        await route.fallback();
+        return;
+      }
+      expect(url.searchParams.has("_rsc")).toBe(true);
+      expect(url.searchParams.get("scope")).toBeNull();
+      announceNavigationRequest();
+      await navigationGate;
+      await route.continue();
+    });
+
+    await page.goto("/answer");
+    await expect(page.getByRole("heading", { level: 1, name: "回答済み" })).toBeVisible();
+    const resultsLink = page.getByRole("link", { name: "自分の結果を見る" });
+    await expect(resultsLink).toHaveAttribute("href", "/results");
+    await page.evaluate(() => {
+      type ResultsObserverWindow = Window & {
+        __resultsSpinnerSeen?: boolean;
+        __resultsObserver?: MutationObserver;
+      };
+      const monitoredWindow = window as ResultsObserverWindow;
+      monitoredWindow.__resultsSpinnerSeen = false;
+      monitoredWindow.__resultsObserver = new MutationObserver(() => {
+        if (document.body.textContent?.includes("結果を読み込んでいます。")) {
+          monitoredWindow.__resultsSpinnerSeen = true;
+        }
+      });
+      monitoredWindow.__resultsObserver.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+    });
+
+    const clickPromise = resultsLink.click();
+    await navigationRequest;
+    await expect(page.getByRole("heading", { level: 1, name: "回答済み" })).toBeVisible();
+    await expect(resultsLink).toBeVisible();
+    await expect(page.getByRole("status")).toHaveText("結果ページへ移動しています。");
+
+    releaseHeldNavigationRequest();
+    await clickPromise;
+    await expect(page).toHaveURL(/\/results(?:\?.*)?$/);
+    await expect(page.getByRole("heading", { level: 1, name: "あなたの結果" })).toBeVisible();
+    await expect(page.getByText("結果を読み込んでいます。")).toHaveCount(0);
+    const spinnerWasObserved = await page.evaluate(() => {
+      type ResultsObserverWindow = Window & {
+        __resultsSpinnerSeen?: boolean;
+        __resultsObserver?: MutationObserver;
+      };
+      const monitoredWindow = window as ResultsObserverWindow;
+      monitoredWindow.__resultsObserver?.disconnect();
+      return monitoredWindow.__resultsSpinnerSeen;
+    });
+    expect(spinnerWasObserved).toBe(false);
+  } finally {
+    releaseHeldNavigationRequest?.();
+    if (migrationReady) {
+      await db.delete(schema.presentationEntries);
+      await db.delete(schema.presentationQuestions);
+      await db.delete(schema.presentationSessions);
+      await db.delete(schema.participantResultSettings);
+      if (ownerId !== null) {
+        await db.delete(schema.examParticipants).where(eq(schema.examParticipants.id, ownerId));
+      }
+    }
+    await ownerContext.close();
+    await client.close();
+  }
+});
 
 async function signIn(page: Page, name = "Test Participant", pin = "0123") {
   await page.getByLabel("受験者氏名").fill(name);

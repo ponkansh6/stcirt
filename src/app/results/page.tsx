@@ -1,7 +1,4 @@
-import { Suspense } from "react";
 import { cookies } from "next/headers";
-import Link from "next/link";
-import { Spinner } from "@/components/Spinner";
 import ResultsPanel from "./results-panel";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
 import { getParticipantResult } from "@/lib/db/repository/presentation-repository";
@@ -19,6 +16,12 @@ export default async function ResultsPage({
   searchParams: Promise<{ scope?: string | string[] }>;
 }) {
   let scopeMode: "owner" | "assisted" | null = "owner";
+  let resolvedResult: {
+    participantId: number;
+    participantName: string;
+    scope: "owner" | "assisted";
+    hasAssistedSubmission: boolean;
+  };
   try {
     const params = await searchParams;
     const requestedScope = params.scope;
@@ -57,68 +60,28 @@ export default async function ResultsPage({
           ? Boolean(await getLatestAnswerSubmission(assistedTarget.id))
           : false;
 
-    return (
-      <Suspense fallback={<ResultsShell scope={scopeMode} />}>
-        <ResultsContent
-          participantId={scope.participantId}
-          participantName={resultParticipant.name}
-          scope={scopeMode}
-          hasAssistedSubmission={hasAssistedSubmission}
-        />
-      </Suspense>
-    );
+    resolvedResult = {
+      participantId: scope.participantId,
+      participantName: resultParticipant.name,
+      scope: scopeMode,
+      hasAssistedSubmission,
+    };
   } catch {
     // Fail closed with neutral content when the server cannot verify the session or visibility.
     return <ResultsPanel initial={{ state: "waiting" }} scope={scopeMode} />;
   }
-}
 
-async function ResultsContent({
-  participantId,
-  participantName,
-  scope,
-  hasAssistedSubmission,
-}: {
-  participantId: number;
-  participantName: string;
-  scope: "owner" | "assisted";
-  hasAssistedSubmission: boolean;
-}) {
-  const result = await getParticipantResult(participantId);
+  // Keep the protected lookup outside the fail-closed authorization block. Unexpected
+  // repository or mapping failures must reach the route error boundary.
+  const result = await getParticipantResult(resolvedResult.participantId);
   const initial = mapParticipantResult(result);
 
   return (
     <ResultsPanel
       initial={initial}
-      participantName={participantName}
-      scope={scope}
-      hasAssistedSubmission={hasAssistedSubmission}
+      participantName={resolvedResult.participantName}
+      scope={resolvedResult.scope}
+      hasAssistedSubmission={resolvedResult.hasAssistedSubmission}
     />
-  );
-}
-
-function ResultsShell({ scope }: { scope: "owner" | "assisted" }) {
-  return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-      <section
-        aria-busy="true"
-        className="min-h-[56rem] rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10"
-      >
-        <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
-        <h1 className="text-3xl font-bold tracking-tight">
-          {scope === "assisted" ? "代理回答の結果" : "あなたの結果"}
-        </h1>
-        <p className="mt-8 flex items-center gap-2" role="status" aria-live="polite">
-          <Spinner />
-          結果を読み込んでいます。
-        </p>
-        <p className="mt-4 text-muted">
-          結果が表示されるまで、このページを開いたままお待ちください。
-        </p>
-        <Link className="mt-8 inline-flex font-semibold text-primary underline" href="/answer">
-          回答画面へ戻る
-        </Link>
-      </section>
-    </main>
   );
 }

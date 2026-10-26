@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ResultsPage, { dynamic } from "@/app/results/page";
-import { Suspense, type ReactElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { type ReactElement } from "react";
 import { cookies } from "next/headers";
 import { getParticipantResult } from "@/lib/db/repository/presentation-repository";
 import { findParticipantById } from "@/lib/db/repository/participant-repository";
@@ -39,19 +38,16 @@ beforeEach(() => {
 });
 
 async function renderProtectedResult(element: ReactElement) {
-  const boundary = element as ReactElement<{
-    children: ReactElement<{
-      participantId: number;
-      participantName: string;
-      scope: "owner" | "assisted";
-    }>;
-    fallback: ReactElement;
-  }>;
-  expect(boundary.type).toBe(Suspense);
-  const content = boundary.props.children;
-  const render = content.type as (props: typeof content.props) => Promise<ReactElement>;
-  // The unit renderer cannot exercise Next's React Server Component streaming protocol.
-  return render(content.props);
+  // The page now awaits the protected lookup before returning its client panel.
+  return element;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 describe("/results server entry", () => {
@@ -94,16 +90,7 @@ describe("/results server entry", () => {
     })) as ReactElement;
 
     expect(dynamic).toBe("force-dynamic");
-    expect(getParticipantResult).not.toHaveBeenCalled();
-    const fallback = (element.props as { fallback: ReactElement }).fallback;
-    const markup = renderToStaticMarkup(fallback);
-    expect(markup).toContain("代理回答の結果");
-    expect(markup).toContain('role="status"');
-    expect(markup).toContain('aria-busy="true"');
-    expect(markup).toContain("min-h-[56rem]");
-    expect(markup).not.toContain("Question");
-    expect(markup).not.toContain("Choice");
-    expect(markup).not.toContain("4位");
+    expect(getParticipantResult).toHaveBeenCalledWith(18);
     const panel = (await renderProtectedResult(element)) as ReactElement<{
       initial: unknown;
       participantName: string;
@@ -153,16 +140,12 @@ describe("/results server entry", () => {
     const element = (await ResultsPage({
       searchParams: Promise.resolve({}),
     })) as ReactElement;
-    const fallback = (element.props as { fallback: ReactElement }).fallback;
-    const markup = renderToStaticMarkup(fallback);
     const panel = (await renderProtectedResult(element)) as ReactElement<{
       initial: unknown;
       participantName: string;
       scope: string;
     }>;
 
-    expect(markup).toContain("あなたの結果");
-    expect(markup).not.toContain("代理回答の結果");
     expect(panel.props.scope).toBe("owner");
     expect(panel.props.participantName).toBe("Participant");
     expect(panel.props.initial).toEqual({ state: "waiting" });
@@ -351,19 +334,50 @@ describe("/results server entry", () => {
     expect(waiting.props.initial).toEqual({ state: "waiting" });
 
     vi.mocked(getParticipantResult).mockResolvedValueOnce({ state: "unavailable" });
-    const unavailableBoundary = (await ResultsPage({
+    const unavailablePanel = (await ResultsPage({
       searchParams: Promise.resolve({}),
     })) as ReactElement;
-    const unavailable = (await renderProtectedResult(unavailableBoundary)) as ReactElement<{
+    const unavailable = (await renderProtectedResult(unavailablePanel)) as ReactElement<{
       initial: unknown;
     }>;
     expect(unavailable.props.initial).toEqual({ state: "unavailable" });
 
     vi.mocked(getParticipantResult).mockRejectedValueOnce(new Error("database unavailable"));
-    const errorBoundary = (await ResultsPage({
-      searchParams: Promise.resolve({}),
-    })) as ReactElement;
-    await expect(renderProtectedResult(errorBoundary)).rejects.toThrow("database unavailable");
+    await expect(ResultsPage({ searchParams: Promise.resolve({}) })).rejects.toThrow(
+      "database unavailable",
+    );
     expect(getParticipantResult).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not return the results panel until the authorized lookup settles", async () => {
+    const lookup = deferred<{ state: "waiting" }>();
+    let announceLookupStarted!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      announceLookupStarted = resolve;
+    });
+    vi.mocked(getParticipantResult).mockImplementationOnce(async () => {
+      announceLookupStarted();
+      return lookup.promise;
+    });
+
+    let pageSettled = false;
+    const pagePromise = ResultsPage({ searchParams: Promise.resolve({}) }).then((element) => {
+      pageSettled = true;
+      return element as ReactElement;
+    });
+    const firstEvent = await Promise.race([
+      pagePromise.then(() => "page-settled" as const),
+      lookupStarted.then(() => "lookup-started" as const),
+    ]);
+    expect(firstEvent).toBe("lookup-started");
+    expect(pageSettled).toBe(false);
+    expect(findParticipantById).toHaveBeenCalledWith(12);
+    expect(resolveAnswerScope).toHaveBeenCalledWith(12, null);
+    expect(getParticipantResult).toHaveBeenCalledWith(12);
+
+    lookup.resolve({ state: "waiting" });
+    const panel = (await pagePromise) as ReactElement<{ initial: unknown; scope: string }>;
+    expect(panel.props.initial).toEqual({ state: "waiting" });
+    expect(panel.props.scope).toBe("owner");
   });
 });
