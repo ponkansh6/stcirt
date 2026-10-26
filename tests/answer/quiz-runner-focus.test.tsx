@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { cleanup, render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import type { AccessState } from "@/app/answer/use-quiz-session";
 import QuizRunner from "@/app/answer/quiz-runner";
 import GlobalHeader from "@/app/GlobalHeader";
 
@@ -51,6 +52,8 @@ function session(phase: object, overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+type SessionWithAccess = Omit<ReturnType<typeof session>, "access"> & { access: AccessState };
 
 function RunnerPage() {
   return (
@@ -156,14 +159,17 @@ describe("QuizRunner batch answer sheet", () => {
       vi.fn(() => publicationRequest.promise),
     );
     const saveAnswers = vi.fn();
-    let currentSession = session(
-      { kind: "answering" },
-      {
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
-        saveAnswers,
-      },
-    );
+    let currentSession: SessionWithAccess = {
+      ...session(
+        { kind: "answering" },
+        {
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+          answeredCount: 5,
+          saveAnswers,
+        },
+      ),
+      access: { kind: "ready", participant: { id: 7, name: "参加者" } },
+    };
     mockUseQuizSession.mockImplementation(() => currentSession);
     const { rerender } = render(<RunnerPage />);
     try {
