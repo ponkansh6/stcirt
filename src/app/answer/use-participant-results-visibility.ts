@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseParticipantResult } from "@/lib/participant-results-contract";
+import type { ParticipantResult } from "@/lib/participant-results-contract";
 import type { AccessState, AnswerMode, Phase } from "./use-quiz-session";
+
+type ParticipantResultState = ParticipantResult["state"];
 
 /** Owns the complete-result CTA visibility refresh and its authenticated scope. */
 export function useParticipantResultsVisibility(
@@ -16,6 +19,7 @@ export function useParticipantResultsVisibility(
     epoch: number;
     status: "confirmed" | "reauthentication";
     visible: boolean;
+    state: ParticipantResultState | null;
   } | null>(null);
   const [refreshGeneration, setRefreshGeneration] = useState(0);
   const generationRef = useRef(0);
@@ -87,6 +91,7 @@ export function useParticipantResultsVisibility(
             epoch: targetEpoch,
             status: "reauthentication",
             visible: false,
+            state: null,
           });
           return;
         }
@@ -100,6 +105,7 @@ export function useParticipantResultsVisibility(
             epoch: targetEpoch,
             status: "confirmed",
             visible: result.state === "visible",
+            state: result.state,
           });
         }
       } catch {
@@ -127,6 +133,7 @@ export function useParticipantResultsVisibility(
   return {
     status: currentResult?.status ?? (activeKey === null ? "inactive" : "unknown"),
     visible: currentResult?.status === "confirmed" && currentResult.visible,
+    state: currentResult?.status === "confirmed" ? currentResult.state : null,
     authExpired: currentResult?.status === "reauthentication",
     clearAuthExpired,
   };

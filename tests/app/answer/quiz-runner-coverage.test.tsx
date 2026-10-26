@@ -175,7 +175,7 @@ describe("QuizRunner remaining coverage states", () => {
       }
     }
     expect(screen.queryByRole("button", { name: /公開状況/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "代理回答を行う" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
   });
 
   it("links to the assisted participant's results after a successful status response", async () => {

@@ -361,6 +361,7 @@ export default function QuizRunner() {
   const [reauthenticationSuccessCount, setReauthenticationSuccessCount] = useState(0);
   const {
     status: participantResultsStatus,
+    state: participantResultsState,
     visible: participantResultsVisible,
     authExpired: participantResultsAuthExpired,
     clearAuthExpired: clearParticipantResultsAuthExpired,
@@ -720,6 +721,12 @@ export default function QuizRunner() {
       );
     }
     const answeringForAssisted = answerMode === "assisted";
+    const canCorrectAnswers =
+      participantResultsStatus === "confirmed" &&
+      participantResultsState === "waiting" &&
+      visibilityStatus === "unlocked";
+    const participantResultsPublished =
+      participantResultsState === "visible" || participantResultsState === "unavailable";
     const canAnswerForAssisted =
       answerMode === "owner" &&
       access.kind === "ready" &&
@@ -748,7 +755,7 @@ export default function QuizRunner() {
             assistedName={assistedParticipant?.participant?.name}
             className="mt-3"
           />
-          {visibilityStatus === "unlocked" && (
+          {canCorrectAnswers && (
             <p className="mt-2 text-sm leading-relaxed text-muted">
               回答を見直す場合は、同じ5問の回答を復元して修正できます。
             </p>
@@ -782,57 +789,66 @@ export default function QuizRunner() {
               />
             </section>
           )}
-          {visibilityStatus !== "locked" && (
+          {canCorrectAnswers && (
             <Button
               onClick={editAnswers}
               className="mt-8"
-              disabled={Boolean(restoreError) || visibilityStatus !== "unlocked"}
+              disabled={Boolean(restoreError)}
               variant={ui.primaryAction === "edit-answers" ? "primary" : "outline"}
             >
               回答を修正する
             </Button>
           )}
-          {visibilityStatus === "unknown" && !restoreError && (
-            <p className="mt-3 text-sm leading-relaxed text-muted" role="status" aria-live="polite">
-              回答の公開状態を確認しています。確認できるまで編集はできません。
-            </p>
-          )}
+          {participantResultsState === "waiting" &&
+            visibilityStatus === "unknown" &&
+            !restoreError && (
+              <p
+                className="mt-3 text-sm leading-relaxed text-muted"
+                role="status"
+                aria-live="polite"
+              >
+                回答の公開状態を確認しています。確認できるまで編集はできません。
+              </p>
+            )}
           {answeringForAssisted && (
             <Button variant="outline" className="mt-3" onClick={() => returnToOwner()}>
               自分の回答に戻る
             </Button>
           )}
-          {visibilityStatus !== "locked" && !answeringForAssisted && canAnswerForAssisted && (
-            <div className="mt-4">
-              {assistedError && (
-                <p className="mb-2 text-sm text-error" role="alert">
-                  {assistedError}
-                </p>
-              )}
-              <Button
-                variant="outline"
-                onClick={() => {
-                  if (assistedParticipant?.participant) void resumeAssisted();
-                  else openAssistedLogin();
-                }}
-                disabled={
-                  assistedBusy ||
-                  Boolean(assistedParticipant?.hasSubmission && visibilityStatus !== "unlocked")
-                }
-              >
-                {assistedBusy
-                  ? "回答状態を確認しています…"
-                  : assistedParticipant?.hasSubmission
-                    ? "代理回答を修正する"
-                    : "代理回答を行う"}
-              </Button>
-              {assistedParticipant?.participant && !assistedParticipant.hasSubmission && (
-                <p className="mt-2 text-sm text-muted">
-                  {assistedParticipant.participant.name}さんの回答を再開できます。
-                </p>
-              )}
-            </div>
-          )}
+          {!participantResultsPublished &&
+            visibilityStatus !== "locked" &&
+            !answeringForAssisted &&
+            canAnswerForAssisted && (
+              <div className="mt-4">
+                {assistedError && (
+                  <p className="mb-2 text-sm text-error" role="alert">
+                    {assistedError}
+                  </p>
+                )}
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (assistedParticipant?.participant) void resumeAssisted();
+                    else openAssistedLogin();
+                  }}
+                  disabled={
+                    assistedBusy ||
+                    Boolean(assistedParticipant?.hasSubmission && visibilityStatus !== "unlocked")
+                  }
+                >
+                  {assistedBusy
+                    ? "回答状態を確認しています…"
+                    : assistedParticipant?.hasSubmission
+                      ? "代理回答を修正する"
+                      : "代理回答を行う"}
+                </Button>
+                {assistedParticipant?.participant && !assistedParticipant.hasSubmission && (
+                  <p className="mt-2 text-sm text-muted">
+                    {assistedParticipant.participant.name}さんの回答を再開できます。
+                  </p>
+                )}
+              </div>
+            )}
           {participantResultsVisible && !participantResultsAuthExpired && (
             <div className="mt-3 flex flex-col items-start gap-2">
               <Link

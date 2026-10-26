@@ -125,7 +125,10 @@ describe("QuizRunner batch answer sheet", () => {
       ),
     );
     mockUseQuizSession.mockReturnValue(
-      session({ kind: "complete" }, { editAnswers, openAssistedLogin }),
+      session(
+        { kind: "complete" },
+        { editAnswers, openAssistedLogin, revision: 1, submissionId: "submission-1" },
+      ),
     );
     render(<RunnerPage />);
     expect(
@@ -149,11 +152,317 @@ describe("QuizRunner batch answer sheet", () => {
       screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "回答を修正する" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "回答を修正する" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "代理回答を行う" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "代理回答を行う" }));
     expect(openAssistedLogin).toHaveBeenCalledOnce();
+  });
+
+  it.each(["visible", "unavailable"] as const)(
+    "hides correction on the first completion render for %s results while the batch check is pending",
+    async (state) => {
+      const pendingBatch = deferred<Response>();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL) =>
+          String(input).includes("/api/answers/batch")
+            ? pendingBatch.promise
+            : Promise.resolve({
+                ok: true,
+                status: 200,
+                json: async () => (state === "visible" ? visibleResultsPayload : { state }),
+              }),
+        ),
+      );
+      mockUseQuizSession.mockReturnValue(
+        session({ kind: "complete" }, { revision: 1, submissionId: "submission-1" }),
+      );
+
+      render(<RunnerPage />);
+
+      expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
+      ).not.toBeInTheDocument();
+
+      await act(async () => {
+        pendingBatch.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ resultsVisible: true }),
+        } as Response);
+      });
+      expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("does not restore correction when an unlocked batch response arrives after publication", async () => {
+    const pendingBatch = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes("/api/answers/batch")
+          ? pendingBatch.promise
+          : Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => visibleResultsPayload,
+            }),
+      ),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { revision: 1, submissionId: "submission-1" }),
+    );
+
+    render(<RunnerPage />);
+
+    expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+    await act(async () => {
+      pendingBatch.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ resultsVisible: false }),
+      } as Response);
+    });
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(["visible", "unavailable"] as const)(
+    "does not show correction when the batch check unlocks before %s results arrive",
+    async (state) => {
+      const pendingResult = deferred<Response>();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL) =>
+          String(input).includes("/api/answers/batch")
+            ? Promise.resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({ resultsVisible: false }),
+              })
+            : pendingResult.promise,
+        ),
+      );
+      mockUseQuizSession.mockReturnValue(
+        session({ kind: "complete" }, { revision: 1, submissionId: "submission-1" }),
+      );
+
+      render(<RunnerPage />);
+
+      expect(
+        screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+      await act(async () => {
+        pendingResult.resolve({
+          ok: true,
+          status: 200,
+          json: async () => (state === "visible" ? visibleResultsPayload : { state }),
+        } as Response);
+      });
+
+      expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows correction only after waiting results and an unlocked batch response are confirmed", async () => {
+    const pendingBatch = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes("/api/answers/batch")
+          ? pendingBatch.promise
+          : Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ state: "waiting" }),
+            }),
+      ),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { revision: 1, submissionId: "submission-1" }),
+    );
+
+    render(<RunnerPage />);
+
+    expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      pendingBatch.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ resultsVisible: false }),
+      } as Response);
+    });
+    expect(await screen.findByRole("button", { name: "回答を修正する" })).toBeInTheDocument();
+    expect(
+      screen.getByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps completion visible without correction when the batch visibility request fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes("/api/answers/batch")
+          ? Promise.resolve({ ok: false, status: 503, json: async () => ({}) })
+          : Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ state: "waiting" }),
+            }),
+      ),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { revision: 1, submissionId: "submission-1" }),
+    );
+
+    render(<RunnerPage />);
+
+    expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a new assisted answer available while waiting is confirmed and the batch check is unknown", async () => {
+    const pendingResult = deferred<Response>();
+    const pendingBatch = deferred<Response>();
+    const openAssistedLogin = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes("/api/answers/batch") ? pendingBatch.promise : pendingResult.promise,
+      ),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          revision: 1,
+          submissionId: "submission-1",
+          openAssistedLogin,
+        },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    await act(async () => {
+      pendingResult.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      } as Response);
+    });
+    const assistedButton = await screen.findByRole("button", { name: "代理回答を行う" });
+    expect(assistedButton).toBeInTheDocument();
+    fireEvent.click(assistedButton);
+    expect(openAssistedLogin).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      // A refresh is not part of the completion flow; resolve the deferred batch to leave no request pending.
+      pendingBatch.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ resultsVisible: false }),
+      } as Response);
+    });
+  });
+
+  it.each(["visible", "unavailable"] as const)(
+    "hides the new assisted answer action for %s results",
+    async (state) => {
+      const openAssistedLogin = vi.fn();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL) =>
+          String(input).includes("/api/answers/batch")
+            ? Promise.resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({ resultsVisible: false }),
+              })
+            : Promise.resolve({
+                ok: true,
+                status: 200,
+                json: async () => (state === "visible" ? visibleResultsPayload : { state }),
+              }),
+        ),
+      );
+      mockUseQuizSession.mockReturnValue(
+        session(
+          { kind: "complete" },
+          {
+            revision: 1,
+            submissionId: "submission-1",
+            assistedParticipant: {
+              participant: { id: 18, name: "代理回答者" },
+              hasSubmission: false,
+              eligible: false,
+            },
+            openAssistedLogin,
+          },
+        ),
+      );
+
+      render(<RunnerPage />);
+
+      expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("keeps an existing assisted answer disabled while its batch visibility is unknown", async () => {
+    const pendingBatch = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes("/api/answers/batch")
+          ? pendingBatch.promise
+          : Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ state: "waiting" }),
+            }),
+      ),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          revision: 1,
+          submissionId: "assisted-submission-1",
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+        },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    const assistedButton = await screen.findByRole("button", { name: "代理回答を修正する" });
+    expect(assistedButton).toBeDisabled();
+    await act(async () => {
+      pendingBatch.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ resultsVisible: true }),
+      } as Response);
+    });
+    expect(screen.queryByRole("button", { name: "代理回答を修正する" })).not.toBeInTheDocument();
   });
 
   it("reopens a completed answer set for editing with its saved radio answer and neutral copy", async () => {
@@ -543,10 +852,8 @@ describe("QuizRunner batch answer sheet", () => {
       "回答は自動送信されません",
     );
     const reauthenticate = screen.getByRole("button", { name: "再ログインする" });
-    const correctAnswers = screen.getByRole("button", { name: "回答を修正する" });
     expect(reauthenticate).toHaveClass("bg-primary");
-    expect(correctAnswers).toHaveClass("border-2");
-    expect(correctAnswers).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(editAnswers).not.toHaveBeenCalled();
     expect(saveAnswers).not.toHaveBeenCalled();
 
@@ -684,15 +991,13 @@ describe("QuizRunner batch answer sheet", () => {
       name: "代理回答の結果を見る",
     });
     expect(assistedResultsLink).toHaveAttribute("href", "/results?scope=assisted");
-    const correctAnswers = await screen.findByRole("button", { name: "回答を修正する" });
-    await waitFor(() => expect(correctAnswers).toBeEnabled());
-    fireEvent.click(correctAnswers);
-    expect(editAnswers).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+    expect(editAnswers).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "自分の回答に戻る" }));
     expect(returnToOwner).toHaveBeenCalledOnce();
   });
 
-  it("keeps the assistant action beside published results without a manual status button", async () => {
+  it("hides the assisted answer action for published results without a manual status button", async () => {
     const editAnswers = vi.fn();
     vi.stubGlobal(
       "fetch",
@@ -709,14 +1014,14 @@ describe("QuizRunner batch answer sheet", () => {
     expect(resultLink).toHaveAttribute("href", "/results");
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: /公開状況/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "代理回答を行う" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     document.dispatchEvent(new Event("visibilitychange"));
     expect(fetch).toHaveBeenCalledTimes(1);
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
     document.dispatchEvent(new Event("visibilitychange"));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    expect(screen.getByRole("button", { name: "回答を修正する" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
     expect(resultLink).toBeInTheDocument();
   });
 });

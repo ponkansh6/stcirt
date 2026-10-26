@@ -616,17 +616,27 @@ describe("QuizRunner batch answer sheet", () => {
   it("keeps correction disabled when saved answers could not be restored", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ state: "waiting" }),
-      }),
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes("/api/answers/batch")
+          ? Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ resultsVisible: false }),
+            })
+          : Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ state: "waiting" }),
+            }),
+      ),
     );
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "complete" },
         {
           restoreError: "保存済み回答と現在の設問が一致しないため、回答を復元できません。",
+          revision: 1,
+          submissionId: "restore-error-submission",
         },
       ),
     );
