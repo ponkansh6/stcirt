@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Button } from "@/components/Button";
 import ShareManager from "./share-manager";
 import ParticipantResultDetails from "./participant-result-details";
 import { parseParticipantResult, type ParticipantResult } from "@/lib/participant-results-contract";
@@ -27,7 +26,6 @@ export default function ResultsPanel({
       : (parseParticipantResult(initial) ?? { state: "unavailable" }),
   );
   const [authorized, setAuthorized] = useState(initial.state !== "unauthenticated");
-  const [manuallyRefreshing, setManuallyRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(false);
   const pendingRef = useRef(false);
   const queuedRef = useRef(false);
@@ -40,7 +38,7 @@ export default function ResultsPanel({
   const waitingNoticeIssuedRef = useRef(false);
   const [statusAnnouncement, setStatusAnnouncement] = useState("");
 
-  const refresh = useCallback((activeScope: NonNullable<typeof scope>, manual = false) => {
+  const refresh = useCallback((activeScope: NonNullable<typeof scope>) => {
     const poll = async (): Promise<void> => {
       if (pendingRef.current) {
         queuedRef.current = true;
@@ -48,10 +46,6 @@ export default function ResultsPanel({
         return;
       }
       pendingRef.current = true;
-      if (manual) {
-        setStatusAnnouncement("");
-        setManuallyRefreshing(true);
-      }
       const currentRevision = ++requestRevisionRef.current;
       const requestId = ++requestIdRef.current;
       inFlightRequestRef.current = requestId;
@@ -92,10 +86,6 @@ export default function ResultsPanel({
         }
         setAuthorized(true);
         setResult(parsed);
-        if (manual && parsed.state === "waiting" && !waitingNoticeIssuedRef.current) {
-          waitingNoticeIssuedRef.current = true;
-          pendingStatusAnnouncementRef.current = "集計期間中です。結果は公開後に確認できます。";
-        }
         setRefreshError(false);
       } catch {
         if (currentRevision === requestRevisionRef.current) setRefreshError(true);
@@ -103,7 +93,6 @@ export default function ResultsPanel({
         if (inFlightRequestRef.current === requestId) {
           inFlightRequestRef.current = null;
           pendingRef.current = false;
-          if (manual) setManuallyRefreshing(false);
           if (queuedRef.current) {
             queuedRef.current = false;
             void poll();
@@ -152,11 +141,11 @@ export default function ResultsPanel({
       }
     }
 
-    if (!manuallyRefreshing && pendingStatusAnnouncementRef.current) {
+    if (pendingStatusAnnouncementRef.current) {
       setStatusAnnouncement(pendingStatusAnnouncementRef.current);
       pendingStatusAnnouncementRef.current = null;
     }
-  }, [authorized, currentStatusKey, manuallyRefreshing, result.state]);
+  }, [authorized, currentStatusKey, result.state]);
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
@@ -192,7 +181,7 @@ export default function ResultsPanel({
         )}
         {refreshError ? (
           <p role="alert" className="mt-4 text-sm text-error text-pretty">
-            結果を更新できませんでした。通信状況を確認して、もう一度お試しください。
+            結果を更新できませんでした。通信状況を確認して、ページを再読み込みしてください。
           </p>
         ) : null}
         {scope !== null && authorized && (
@@ -211,27 +200,10 @@ export default function ResultsPanel({
         {scope === "assisted" && authorized && hasAssistedSubmission ? (
           <ShareManager canIssue={result.state === "visible"} />
         ) : null}
-        {scope !== null ? (
-          <Button
-            variant="outline"
-            onClick={() => void refresh(scope, true)}
-            loading={manuallyRefreshing}
-            disabled={manuallyRefreshing}
-            aria-label="結果を再読み込み"
-            className="mt-6 self-start"
-          >
-            {manuallyRefreshing ? "更新中…" : "結果を再読み込み"}
-          </Button>
-        ) : null}
       </section>
       {statusAnnouncement ? (
         <p role="status" aria-live="polite" className="sr-only">
           {statusAnnouncement}
-        </p>
-      ) : null}
-      {manuallyRefreshing ? (
-        <p role="status" aria-live="polite" className="sr-only">
-          更新中…
         </p>
       ) : null}
     </main>

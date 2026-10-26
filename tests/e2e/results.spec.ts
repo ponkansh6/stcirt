@@ -1,6 +1,5 @@
 import { expect, test } from "./fixtures/test";
 import { expectNoAccessibilityViolations } from "./axe";
-import { expectPrimaryTargetGeometry } from "./target-geometry";
 
 test("@chromium unauthenticated results show the safe return state", async ({ page }) => {
   await page.route(/^https?:\/\/[^/]+\/api\/participants\/results(?:\?.*)?$/, async (route) => {
@@ -12,15 +11,11 @@ test("@chromium unauthenticated results show the safe return state", async ({ pa
     page.getByRole("heading", { name: "参加者セッションを確認できません" }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "回答完了画面へ戻る" })).toBeVisible();
-  const refresh = page.getByRole("button", { name: "結果を再読み込み" });
-  for (const width of [375, 1280]) {
-    await page.setViewportSize({ width, height: 900 });
-    await expectPrimaryTargetGeometry(refresh, `results manual refresh at ${width}px`);
-  }
+  await expect(page.getByRole("button", { name: "結果を再読み込み" })).toHaveCount(0);
   await expectNoAccessibilityViolations(page, "unauthenticated results");
 });
 
-test("@chromium refresh can be activated with Space from the safe state and blocks repeats while a 401 is pending", async ({
+test("@chromium automatically refreshes on tab return without showing a manual reload button", async ({
   page,
 }) => {
   let requests = 0;
@@ -48,35 +43,28 @@ test("@chromium refresh can be activated with Space from the safe state and bloc
     page.getByRole("heading", { name: "参加者セッションを確認できません" }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "回答完了画面へ戻る" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "結果を再読み込み" })).toHaveCount(0);
   expect(requests).toBe(0);
 
-  const refresh = page.getByRole("button", { name: "結果を再読み込み" });
-  await refresh.focus();
-  await expect(refresh).toBeFocused();
-  await page.keyboard.press("Space");
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
   await refreshStarted;
 
-  await expect(refresh).toBeDisabled();
-  await expect(refresh).toHaveAccessibleName("結果を再読み込み");
   await expect(page.getByRole("status")).toHaveCount(1);
   await expect(page.getByRole("status")).toHaveText("更新中…");
-  expect(requests).toBe(1);
-
-  const focusBeforeRepeat = await page.evaluate(() => {
-    const active = document.activeElement;
-    return active instanceof HTMLElement
-      ? `${active.tagName}:${active.id}:${active.getAttribute("aria-label")}:${active.textContent}`
-      : null;
-  });
-  await page.keyboard.press("Space");
-  const focusAfterRepeat = await page.evaluate(() => {
-    const active = document.activeElement;
-    return active instanceof HTMLElement
-      ? `${active.tagName}:${active.id}:${active.getAttribute("aria-label")}:${active.textContent}`
-      : null;
-  });
-  expect(focusAfterRepeat).toBe(focusBeforeRepeat);
-  await expect(page.getByRole("status")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "結果を再読み込み" })).toHaveCount(0);
   expect(requests).toBe(1);
 
   releaseUnauthorizedResponse();
