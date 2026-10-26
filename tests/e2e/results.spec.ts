@@ -15,7 +15,7 @@ test("@chromium unauthenticated results show the safe return state", async ({ pa
   await expectNoAccessibilityViolations(page, "unauthenticated results");
 });
 
-test("@chromium automatically refreshes on tab return without showing a manual reload button", async ({
+test("@chromium silently refreshes on tab return without showing a manual reload button", async ({
   page,
 }) => {
   let requests = 0;
@@ -62,8 +62,7 @@ test("@chromium automatically refreshes on tab return without showing a manual r
   });
   await refreshStarted;
 
-  await expect(page.getByRole("status")).toHaveCount(1);
-  await expect(page.getByRole("status")).toHaveText("更新中…");
+  await expect(page.getByRole("status")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "結果を再読み込み" })).toHaveCount(0);
   expect(requests).toBe(1);
 
