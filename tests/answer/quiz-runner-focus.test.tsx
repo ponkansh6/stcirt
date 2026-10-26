@@ -179,7 +179,7 @@ describe("QuizRunner batch answer sheet", () => {
       currentSession = {
         ...currentSession,
         phase: completePhase,
-        access: { kind: "checking" },
+        access: { kind: "checking" as const },
       };
       rerender(<RunnerPage />);
       expect(screen.getByRole("status")).toHaveTextContent("参加状態を確認しています…");
