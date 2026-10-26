@@ -519,7 +519,10 @@ describe("ResultsPanel", () => {
     render(<ResultsPanel initial={{ state: "unauthenticated" }} />);
 
     expect(screen.getByRole("heading", { name: "参加者セッションを確認できません" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "回答画面へ戻る" })).toHaveAttribute("href", "/answer");
+    expect(screen.getByRole("link", { name: "回答完了画面へ戻る" })).toHaveAttribute(
+      "href",
+      "/answer",
+    );
     setVisibility("visible");
 
     await waitFor(() =>
@@ -548,7 +551,10 @@ describe("ResultsPanel", () => {
       ).toBeVisible(),
     );
     expect(screen.queryByText("2位")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "回答画面へ戻る" })).toHaveAttribute("href", "/answer");
+    expect(screen.getByRole("link", { name: "回答完了画面へ戻る" })).toHaveAttribute(
+      "href",
+      "/answer",
+    );
   });
 
   it("does not repeat the waiting announcement after a session expires and recovers", async () => {

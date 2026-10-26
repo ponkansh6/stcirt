@@ -11,7 +11,7 @@ test("@chromium unauthenticated results show the safe return state", async ({ pa
   await expect(
     page.getByRole("heading", { name: "参加者セッションを確認できません" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "回答画面へ戻る" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "回答完了画面へ戻る" })).toBeVisible();
   const refresh = page.getByRole("button", { name: "結果を再読み込み" });
   for (const width of [375, 1280]) {
     await page.setViewportSize({ width, height: 900 });
@@ -47,7 +47,7 @@ test("@chromium refresh can be activated with Space from the safe state and bloc
   await expect(
     page.getByRole("heading", { name: "参加者セッションを確認できません" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "回答画面へ戻る" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "回答完了画面へ戻る" })).toBeVisible();
   expect(requests).toBe(0);
 
   const refresh = page.getByRole("button", { name: "結果を再読み込み" });
@@ -83,6 +83,6 @@ test("@chromium refresh can be activated with Space from the safe state and bloc
   await expect(
     page.getByRole("heading", { name: "参加者セッションを確認できません" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "回答画面へ戻る" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "回答完了画面へ戻る" })).toBeVisible();
   expect(requests).toBe(1);
 });

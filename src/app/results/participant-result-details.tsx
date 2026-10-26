@@ -1,5 +1,8 @@
 import type { ParticipantResult } from "@/lib/participant-results-contract";
 
+const scoreAndRankTextSize =
+  "text-[calc(clamp(1.25rem,6vw,1.625rem)_+_2pt)] sm:text-[calc(2.25rem_+_2pt)]";
+
 export default function ParticipantResultDetails({
   result,
   name,
@@ -24,7 +27,7 @@ export default function ParticipantResultDetails({
             {result.rank === null ? (
               <span className="text-xl font-bold text-muted">集計対象外</span>
             ) : (
-              <span className="text-3xl font-bold sm:text-4xl">{result.rank}位</span>
+              <span className={`${scoreAndRankTextSize} font-bold`}>{result.rank}位</span>
             )}
             <span className="text-sm font-medium text-muted">/ {result.participantCount}人</span>
           </dd>
@@ -32,9 +35,7 @@ export default function ParticipantResultDetails({
         <div className="rounded-xl bg-surface-2 p-1.5 sm:p-5">
           <dt className="text-sm text-muted text-balance">得点</dt>
           <dd className="mt-1 flex min-h-10 flex-nowrap items-baseline gap-1 whitespace-nowrap sm:gap-2">
-            <span className="text-[clamp(1.25rem,6vw,1.625rem)] font-bold sm:text-4xl">
-              {result.score.toFixed(2)}点
-            </span>
+            <span className={`${scoreAndRankTextSize} font-bold`}>{result.score.toFixed(2)}点</span>
             <span className="text-[clamp(0.5625rem,2.8vw,0.875rem)] font-medium text-muted">
               / {result.maxScore}点
             </span>

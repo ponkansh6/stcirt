@@ -169,7 +169,7 @@ export default function ResultsPanel({
             </h1>
             <p className="mt-4 text-muted text-pretty">回答画面からもう一度参加してください。</p>
             <Link className="mt-8 inline-flex font-semibold text-primary underline" href="/answer">
-              回答画面へ戻る
+              回答完了画面へ戻る
             </Link>
           </>
         ) : result.state === "visible" ? (
@@ -179,7 +179,7 @@ export default function ResultsPanel({
             </h1>
             <ParticipantResultDetails result={result} name={participantName} />
             <Link className="mt-8 inline-flex font-semibold text-primary underline" href="/answer">
-              回答画面へ戻る
+              回答完了画面へ戻る
             </Link>
           </>
         ) : result.state === "waiting" ? null : (
