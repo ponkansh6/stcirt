@@ -149,6 +149,68 @@ describe("QuizRunner batch answer sheet", () => {
     }
   });
 
+  it("retains completion focus intent while access and publication are confirmed", async () => {
+    const publicationRequest = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => publicationRequest.promise),
+    );
+    const saveAnswers = vi.fn();
+    let currentSession = session(
+      { kind: "answering" },
+      {
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+        answeredCount: 5,
+        saveAnswers,
+      },
+    );
+    mockUseQuizSession.mockImplementation(() => currentSession);
+    const { rerender } = render(<RunnerPage />);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+      currentSession = { ...currentSession, phase: { kind: "submitting" } };
+      rerender(<RunnerPage />);
+      const finalCheckHeading = screen.getByRole("heading", {
+        name: "回答内容を確認してください",
+      });
+      await waitFor(() => expect(document.activeElement).toBe(finalCheckHeading));
+
+      const completePhase = { kind: "complete" };
+      currentSession = {
+        ...currentSession,
+        phase: completePhase,
+        access: { kind: "checking" },
+      };
+      rerender(<RunnerPage />);
+      expect(screen.getByRole("status")).toHaveTextContent("参加状態を確認しています…");
+      expect(screen.queryByRole("heading", { name: "回答済み" })).not.toBeInTheDocument();
+
+      currentSession = {
+        ...currentSession,
+        access: { kind: "ready", participant: { id: 7, name: "参加者" } },
+      };
+      rerender(<RunnerPage />);
+      expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しています…");
+      expect(screen.queryByRole("heading", { name: "回答済み" })).not.toBeInTheDocument();
+
+      await act(async () => {
+        publicationRequest.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ state: "waiting" }),
+        } as Response);
+      });
+      const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+      await waitFor(() => expect(document.activeElement).toBe(completionHeading));
+    } finally {
+      publicationRequest.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      } as Response);
+    }
+  });
+
   it("keeps completion focus after an owner submission check", async () => {
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
