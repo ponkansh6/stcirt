@@ -360,6 +360,7 @@ export default function QuizRunner() {
   const checkedSubmissionAfterReauthentication = useRef(false);
   const [reauthenticationSuccessCount, setReauthenticationSuccessCount] = useState(0);
   const {
+    status: participantResultsStatus,
     visible: participantResultsVisible,
     authExpired: participantResultsAuthExpired,
     clearAuthExpired: clearParticipantResultsAuthExpired,
@@ -389,10 +390,6 @@ export default function QuizRunner() {
     }
 
     if (previousKind === "submitting" && phase.kind === "complete") {
-      if (shouldFocusCompletion.current && document.activeElement === document.body) {
-        completionHeadingRef.current?.focus({ preventScroll: true });
-      }
-      shouldFocusCompletion.current = false;
       return;
     }
 
@@ -405,10 +402,6 @@ export default function QuizRunner() {
     }
 
     if (phase.kind === "complete" && shouldFocusCompletion.current) {
-      if (document.activeElement === document.body) {
-        completionHeadingRef.current?.focus({ preventScroll: true });
-      }
-      shouldFocusCompletion.current = false;
       return;
     }
 
@@ -470,6 +463,16 @@ export default function QuizRunner() {
     unansweredCount: unanswered.length,
     restoreError,
   });
+  useEffect(() => {
+    if (phase.kind !== "complete" || !shouldFocusCompletion.current) return;
+    if (access.kind === "ready" && participantResultsStatus === "unknown") return;
+    const completionHeading = completionHeadingRef.current;
+    if (!completionHeading) return;
+    if (document.activeElement === document.body) {
+      completionHeading.focus({ preventScroll: true });
+    }
+    shouldFocusCompletion.current = false;
+  }, [access.kind, participantResultsStatus, phase.kind, ui.surface]);
   const ownerName =
     access.kind === "ready" || access.kind === "reauthentication"
       ? access.participant.name || "本人"
@@ -707,6 +710,15 @@ export default function QuizRunner() {
   }
 
   if (ui.surface === "complete") {
+    if (access.kind === "ready" && participantResultsStatus === "unknown") {
+      return (
+        <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
+          <p className="w-full text-center text-muted" role="status" aria-live="polite">
+            結果の公開状況を確認しています…
+          </p>
+        </main>
+      );
+    }
     const answeringForAssisted = answerMode === "assisted";
     const canAnswerForAssisted =
       answerMode === "owner" &&

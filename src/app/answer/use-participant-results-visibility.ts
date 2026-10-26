@@ -10,20 +10,54 @@ export function useParticipantResultsVisibility(
   access: AccessState,
   answerMode: AnswerMode,
 ) {
-  const [visible, setVisible] = useState(false);
-  const [authExpired, setAuthExpired] = useState(false);
+  const [result, setResult] = useState<{
+    key: string;
+    phase: Phase;
+    epoch: number;
+    status: "confirmed" | "reauthentication";
+    visible: boolean;
+  } | null>(null);
+  const [refreshGeneration, setRefreshGeneration] = useState(0);
   const generationRef = useRef(0);
-  const clearAuthExpired = useCallback(() => setAuthExpired(false), []);
   const readyParticipantId = access.kind === "ready" ? access.participant.id : null;
+  const activeKey =
+    phase.kind === "complete" && readyParticipantId !== null
+      ? `${readyParticipantId}:${answerMode}`
+      : null;
+  const isReadyTarget = activeKey !== null && access.kind === "ready";
+  const targetIdentityRef = useRef({
+    key: activeKey,
+    phase,
+    isReady: isReadyTarget,
+    epoch: 0,
+  });
+  const previousTarget = targetIdentityRef.current;
+  if (
+    previousTarget.key !== activeKey ||
+    previousTarget.phase !== phase ||
+    previousTarget.isReady !== isReadyTarget
+  ) {
+    targetIdentityRef.current = {
+      key: activeKey,
+      phase,
+      isReady: isReadyTarget,
+      epoch: previousTarget.epoch + 1,
+    };
+  }
+  const targetEpoch = targetIdentityRef.current.epoch;
+  const currentResult =
+    result?.key === activeKey && result.phase === phase && result.epoch === targetEpoch
+      ? result
+      : null;
+  const clearAuthExpired = useCallback(() => {
+    setResult(null);
+    setRefreshGeneration((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     const generation = ++generationRef.current;
     const isCurrent = () => generation === generationRef.current;
-    if (phase.kind !== "complete" || access.kind !== "ready") {
-      setVisible(false);
-      setAuthExpired(false);
-      return;
-    }
+    if (activeKey === null || access.kind !== "ready") return;
     let active = true;
     let pending = false;
     let refreshQueued = false;
@@ -47,16 +81,26 @@ export function useParticipantResultsVisibility(
         });
         if (!active || !isCurrent() || currentRevision !== requestRevision) return;
         if (response.status === 401) {
-          setVisible(false);
-          setAuthExpired(true);
+          setResult({
+            key: activeKey,
+            phase,
+            epoch: targetEpoch,
+            status: "reauthentication",
+            visible: false,
+          });
           return;
         }
         if (!response.ok) return;
         const result = parseParticipantResult(await response.json());
         if (active && isCurrent() && currentRevision === requestRevision) {
           if (!result) return;
-          setVisible(result.state === "visible");
-          setAuthExpired(false);
+          setResult({
+            key: activeKey,
+            phase,
+            epoch: targetEpoch,
+            status: "confirmed",
+            visible: result.state === "visible",
+          });
         }
       } catch {
         // Keep the last confirmed CTA state when a refresh fails.
@@ -78,7 +122,12 @@ export function useParticipantResultsVisibility(
       generationRef.current += Number(isCurrent());
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [access.kind, answerMode, phase.kind, readyParticipantId]);
+  }, [access.kind, activeKey, phase, refreshGeneration, targetEpoch]);
 
-  return { visible, authExpired, clearAuthExpired };
+  return {
+    status: currentResult?.status ?? (activeKey === null ? "inactive" : "unknown"),
+    visible: currentResult?.status === "confirmed" && currentResult.visible,
+    authExpired: currentResult?.status === "reauthentication",
+    clearAuthExpired,
+  };
 }

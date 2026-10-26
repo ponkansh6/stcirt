@@ -665,7 +665,12 @@ describe("QuizRunner remaining coverage states", () => {
     expect(screen.getByRole("button", { name: "再ログインする" })).toBeInTheDocument();
   });
 
-  it("does not offer another assisted participant when the owner is ineligible", () => {
+  it("does not offer another assisted participant when the owner is ineligible", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ state: "waiting" }),
+    } as Response);
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "complete" },
@@ -676,53 +681,59 @@ describe("QuizRunner remaining coverage states", () => {
     );
     render(<QuizRunner />);
 
+    await screen.findByRole("heading", { name: "回答済み" });
     expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "代理回答を修正する" })).not.toBeInTheDocument();
   });
 
-  it("resumes the one linked participant and changes its completion action after saving", () => {
+  it("resumes the one linked participant and changes its completion action after saving", async () => {
     const resumeAssisted = vi.fn();
     const returnToOwner = vi.fn();
+    const completePhase = { kind: "complete" };
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ state: "waiting" }),
+    } as Response);
     mockUseQuizSession.mockReturnValue(
-      session(
-        { kind: "complete" },
-        {
-          assistedParticipant: {
-            participant: { id: 18, name: "代理回答者" },
-            hasSubmission: false,
-            eligible: false,
-          },
-          resumeAssisted,
-          returnToOwner,
+      session(completePhase, {
+        assistedParticipant: {
+          participant: { id: 18, name: "代理回答者" },
+          hasSubmission: false,
+          eligible: false,
         },
-      ),
+        resumeAssisted,
+        returnToOwner,
+      }),
     );
     const { rerender } = render(<QuizRunner />);
 
-    expect(screen.getByText("代理回答者さんの回答を再開できます。")).toBeInTheDocument();
+    expect(await screen.findByText("代理回答者さんの回答を再開できます。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "代理回答を行う" }));
     expect(resumeAssisted).toHaveBeenCalledOnce();
 
     mockUseQuizSession.mockReturnValue(
-      session(
-        { kind: "complete" },
-        {
-          assistedParticipant: {
-            participant: { id: 18, name: "代理回答者" },
-            hasSubmission: true,
-            eligible: false,
-          },
+      session(completePhase, {
+        assistedParticipant: {
+          participant: { id: 18, name: "代理回答者" },
+          hasSubmission: true,
+          eligible: false,
         },
-      ),
+      }),
     );
     rerender(<QuizRunner />);
     expect(screen.getByRole("button", { name: "代理回答を修正する" })).toBeInTheDocument();
     expect(screen.queryByText("代理回答者さんの回答を再開できます。")).not.toBeInTheDocument();
   });
 
-  it("shows the in-progress assisted status and disables duplicate starts", () => {
+  it("shows the in-progress assisted status and disables duplicate starts", async () => {
     const startAssisted = vi.fn();
     const returnToOwner = vi.fn();
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ state: "waiting" }),
+    } as Response);
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "complete" },
@@ -737,7 +748,7 @@ describe("QuizRunner remaining coverage states", () => {
     );
     render(<QuizRunner />);
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    expect(await screen.findByRole("alert")).toHaveTextContent(
       "代理回答の状態を確認できませんでした。時間をおいて再読み込みしてください。",
     );
     expect(screen.getByRole("button", { name: "回答状態を確認しています…" })).toBeDisabled();
@@ -793,7 +804,12 @@ describe("QuizRunner remaining coverage states", () => {
     expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
   });
 
-  it("uses a generic owner name when the registered name is empty", () => {
+  it("uses a generic owner name when the registered name is empty", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ state: "waiting" }),
+    } as Response);
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "complete" },
@@ -802,6 +818,7 @@ describe("QuizRunner remaining coverage states", () => {
     );
     render(<QuizRunner />);
 
+    await screen.findByRole("heading", { name: "回答済み" });
     const { definition, field: answererField } = getAnswererNameField(screen.getByRole("main"));
     expect(definition).toHaveTextContent("本人");
     expect(within(answererField).queryByText("本人の回答")).not.toBeInTheDocument();
@@ -810,23 +827,31 @@ describe("QuizRunner remaining coverage states", () => {
   it.each([
     ["status missing", null],
     ["participant missing", { participant: null, hasSubmission: false, eligible: false }],
-  ])("uses a generic assisted identity at completion when %s", (_label, assistedParticipant) => {
-    mockUseQuizSession.mockReturnValue(
-      session({ kind: "complete" }, { answerMode: "assisted", assistedParticipant }),
-    );
-    render(<QuizRunner />);
+  ])(
+    "uses a generic assisted identity at completion when %s",
+    async (_label, assistedParticipant) => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      } as Response);
+      mockUseQuizSession.mockReturnValue(
+        session({ kind: "complete" }, { answerMode: "assisted", assistedParticipant }),
+      );
+      render(<QuizRunner />);
 
-    expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
-    const { definition, field: answererField } = getAnswererNameField(screen.getByRole("main"));
-    expect(definition).toHaveTextContent("代理回答者");
-    expect(within(answererField).getByText("代理回答", { exact: true })).toBeInTheDocument();
-    expect(screen.queryByText("参加者")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/participants/results?scope=assisted",
-      expect.anything(),
-    );
-  });
+      expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      const { definition, field: answererField } = getAnswererNameField(screen.getByRole("main"));
+      expect(definition).toHaveTextContent("代理回答者");
+      expect(within(answererField).getByText("代理回答", { exact: true })).toBeInTheDocument();
+      expect(screen.queryByText("参加者")).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/participants/results?scope=assisted",
+        expect.anything(),
+      );
+    },
+  );
 
   it.each([
     ["status missing", null],

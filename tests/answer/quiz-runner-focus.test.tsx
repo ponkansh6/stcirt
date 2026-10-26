@@ -70,7 +70,17 @@ function deferred<T>() {
 }
 
 describe("QuizRunner batch answer sheet", () => {
-  beforeEach(() => mockUseQuizSession.mockReset());
+  beforeEach(() => {
+    mockUseQuizSession.mockReset();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      }),
+    );
+  });
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
@@ -83,6 +93,11 @@ describe("QuizRunner batch answer sheet", () => {
 
   it("moves focus to final confirmation after explicit submit without requiring button focus", async () => {
     const saveRequest = deferred<void>();
+    const publicationRequest = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => publicationRequest.promise),
+    );
     const saveAnswers = vi.fn(() => saveRequest.promise);
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
@@ -104,19 +119,33 @@ describe("QuizRunner batch answer sheet", () => {
       const submittingStatus = screen.getByRole("status");
       expect(submittingStatus).toHaveTextContent("回答を送信しています…");
       expect(submittingStatus).toHaveAttribute("aria-live", "polite");
-      expect(screen.getByRole("heading", { name: "回答内容を確認してください" })).toBeVisible();
-      await waitFor(() =>
-        expect(document.activeElement).toBe(
-          screen.getByRole("heading", { name: "回答内容を確認してください" }),
-        ),
-      );
+      const finalCheckHeading = screen.getByRole("heading", {
+        name: "回答内容を確認してください",
+      });
+      expect(finalCheckHeading).toBeVisible();
+      await waitFor(() => expect(document.activeElement).toBe(finalCheckHeading));
 
       currentPhase = { kind: "complete" };
       rerender(<RunnerPage />);
-      const completionHeading = screen.getByRole("heading", { name: "回答済み" });
+      expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しています…");
+      expect(screen.queryByRole("heading", { name: "回答済み" })).not.toBeInTheDocument();
+
+      await act(async () => {
+        publicationRequest.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ state: "waiting" }),
+        } as Response);
+      });
+      const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
       await waitFor(() => expect(document.activeElement).toBe(completionHeading));
     } finally {
       saveRequest.resolve();
+      publicationRequest.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      } as Response);
     }
   });
 
@@ -144,7 +173,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    const completionHeading = screen.getByRole("heading", { name: "回答済み" });
+    const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
     await waitFor(() => expect(document.activeElement).toBe(completionHeading));
   });
 
@@ -177,20 +206,21 @@ describe("QuizRunner batch answer sheet", () => {
 
       currentPhase = { kind: "complete" };
       rerender(<RunnerPage />);
-      expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
       expect(document.activeElement).toBe(externalControl);
     } finally {
       externalControl.remove();
     }
   });
 
-  it("does not move focus to completion when the initial phase is already complete", () => {
+  it("does not move focus to completion when the initial phase is already complete", async () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
     render(<RunnerPage />);
-    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答済み" }));
+    const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+    expect(document.activeElement).not.toBe(completionHeading);
   });
 
-  it("does not move focus when submission starts while a question navigation link is focused", () => {
+  it("does not move focus when submission starts while a question navigation link is focused", async () => {
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
       session(currentPhase, {
@@ -212,7 +242,8 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答済み" }));
+    const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+    expect(document.activeElement).not.toBe(completionHeading);
   });
 
   it("keeps the completion handoff canceled after focus returns to final confirmation", async () => {
@@ -241,7 +272,8 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答済み" }));
+    const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+    expect(document.activeElement).not.toBe(completionHeading);
   });
 
   it("preserves the focused element while a pending submission check returns to answering", async () => {
@@ -319,7 +351,8 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    expect(document.activeElement).not.toBe(screen.getByRole("heading", { name: "回答済み" }));
+    const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+    expect(document.activeElement).not.toBe(completionHeading);
   });
 
   it("moves focus to a question from the progress and unanswered links", () => {

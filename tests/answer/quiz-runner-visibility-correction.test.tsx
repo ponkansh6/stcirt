@@ -613,7 +613,15 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
   });
 
-  it("keeps correction disabled when saved answers could not be restored", () => {
+  it("keeps correction disabled when saved answers could not be restored", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      }),
+    );
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "complete" },
@@ -623,7 +631,7 @@ describe("QuizRunner batch answer sheet", () => {
       ),
     );
     render(<RunnerPage />);
-    expect(screen.getByRole("alert")).toHaveTextContent("回答を復元できません");
+    expect(await screen.findByRole("alert")).toHaveTextContent("回答を復元できません");
     expect(screen.getByRole("button", { name: "回答を修正する" })).toBeDisabled();
   });
 
