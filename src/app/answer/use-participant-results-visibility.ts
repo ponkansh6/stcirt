@@ -122,7 +122,7 @@ export function useParticipantResultsVisibility(
       generationRef.current += Number(isCurrent());
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [access.kind, activeKey, phase, refreshGeneration, targetEpoch]);
+  }, [access.kind, activeKey, answerMode, phase, refreshGeneration, targetEpoch]);
 
   return {
     status: currentResult?.status ?? (activeKey === null ? "inactive" : "unknown"),
