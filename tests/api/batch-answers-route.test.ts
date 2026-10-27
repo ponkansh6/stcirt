@@ -373,6 +373,29 @@ describe("/api/answers/batch route handlers", () => {
     expect(afterRef.callback).toBeNull();
   });
 
+  it("POST returns a retryable database lock code", async () => {
+    vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(
+      new BatchSubmissionError("Answer save is temporarily unavailable", 503, "DATABASE_LOCKED"),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/answers/batch", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      message: "Answer save is temporarily unavailable",
+      error: "DATABASE_LOCKED",
+    });
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(afterRef.callback).toBeNull();
+  });
+
   it("POST returns a generic 500 when the repository fails unexpectedly", async () => {
     vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(new Error("sensitive repository detail"));
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
