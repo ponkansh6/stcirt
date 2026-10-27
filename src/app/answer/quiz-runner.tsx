@@ -757,7 +757,7 @@ export default function QuizRunner() {
           />
           {canCorrectAnswers && (
             <p className="mt-2 text-sm leading-relaxed text-muted">
-              披露宴までは修正ボタンから回答の変更が可能です。
+              披露宴までは修正ボタンから回答の変更が可能です。ご自分で回答できない方向けに代理回答が一人まで可能です。
             </p>
           )}
           {restoreError && (
