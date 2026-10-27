@@ -757,7 +757,7 @@ export default function QuizRunner() {
           />
           {canCorrectAnswers && (
             <p className="mt-2 text-sm leading-relaxed text-muted">
-              回答を見直す場合は、同じ5問の回答を復元して修正できます。
+              披露宴までは修正ボタンから回答の変更が可能です。
             </p>
           )}
           {restoreError && (

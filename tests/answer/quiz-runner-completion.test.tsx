@@ -184,7 +184,7 @@ describe("QuizRunner batch answer sheet", () => {
       expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
       expect(
-        screen.queryByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
+        screen.queryByText("披露宴までは修正ボタンから回答の変更が可能です。"),
       ).not.toBeInTheDocument();
 
       await act(async () => {
@@ -229,7 +229,7 @@ describe("QuizRunner batch answer sheet", () => {
     });
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(
-      screen.queryByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
+      screen.queryByText("披露宴までは修正ボタンから回答の変更が可能です。"),
     ).not.toBeInTheDocument();
   });
 
@@ -295,7 +295,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(
-      screen.queryByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
+      screen.queryByText("披露宴までは修正ボタンから回答の変更が可能です。"),
     ).not.toBeInTheDocument();
 
     await act(async () => {
@@ -307,7 +307,7 @@ describe("QuizRunner batch answer sheet", () => {
     });
     expect(await screen.findByRole("button", { name: "回答を修正する" })).toBeInTheDocument();
     expect(
-      screen.getByText("回答を見直す場合は、同じ5問の回答を復元して修正できます。"),
+      screen.getByText("披露宴までは修正ボタンから回答の変更が可能です。"),
     ).toBeInTheDocument();
   });
 
