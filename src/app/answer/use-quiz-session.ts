@@ -774,12 +774,17 @@ export function useQuizSession() {
   }, [resolveParticipant]);
 
   const persistAssistedDraft = useCallback(
-    (participantId: number, currentSubmissionId: string, currentQuizzes: LoadedQuiz[]) => {
+    (selections = selectionsRef.current, freeResponses = freeResponsesRef.current) => {
+      if (answerModeRef.current !== "assisted" || quizzesRef.current.length !== EXAM_SIZE) return;
+      const participantId = assistedParticipantIdRef.current;
+      const currentSubmissionId = submissionIdRef.current;
+      /* v8 ignore if -- Five editable assisted questions are reached only after both IDs are initialized. */
+      if (participantId === null || currentSubmissionId === null) return;
       writeAssistedDraft({
         participantId,
-        quizzes: currentQuizzes,
-        selections: copyAnsweredSelections(selectionsRef.current),
-        freeResponses: freeResponsesRef.current,
+        quizzes: quizzesRef.current,
+        selections: copyAnsweredSelections(selections),
+        freeResponses,
         legacyAnswerIds: legacyAnswerIdsRef.current,
         submissionId: currentSubmissionId,
         revision: revisionRef.current,
@@ -1017,66 +1022,42 @@ export function useQuizSession() {
     }
   }, []);
 
-  const select = useCallback((questionId: number, selectedIndex: number) => {
-    const currentPhase = phaseRef.current;
-    if (
-      busyRef.current ||
-      currentPhase.kind !== "answering" ||
-      currentPhase.retryRequired ||
-      currentPhase.refreshRequired
-    )
-      return;
-    const next = { ...selectionsRef.current, [questionId]: selectedIndex };
-    selectionsRef.current = next;
-    setSelections(next);
-    setAnsweredCount(
-      Object.keys(next).length +
-        Object.values(freeResponsesRef.current).filter((value) => value.trim()).length,
-    );
-    if (answerModeRef.current === "assisted" && quizzesRef.current.length === EXAM_SIZE) {
-      const participantId = assistedParticipantIdRef.current;
-      const currentSubmissionId = submissionIdRef.current;
-      /* v8 ignore if -- Five editable assisted questions are reached only after both IDs are initialized. */
-      if (participantId !== null && currentSubmissionId !== null) {
-        writeAssistedDraft({
-          participantId,
-          quizzes: quizzesRef.current,
-          selections: copyAnsweredSelections(next),
-          freeResponses: freeResponsesRef.current,
-          legacyAnswerIds: legacyAnswerIdsRef.current,
-          submissionId: currentSubmissionId,
-          revision: revisionRef.current,
-        });
-      }
-    }
-    setPhase({ kind: "answering" });
-  }, []);
+  const select = useCallback(
+    (questionId: number, selectedIndex: number) => {
+      const currentPhase = phaseRef.current;
+      if (
+        busyRef.current ||
+        currentPhase.kind !== "answering" ||
+        currentPhase.retryRequired ||
+        currentPhase.refreshRequired
+      )
+        return;
+      const next = { ...selectionsRef.current, [questionId]: selectedIndex };
+      selectionsRef.current = next;
+      setSelections(next);
+      setAnsweredCount(
+        Object.keys(next).length +
+          Object.values(freeResponsesRef.current).filter((value) => value.trim()).length,
+      );
+      persistAssistedDraft(next, freeResponsesRef.current);
+      setPhase({ kind: "answering" });
+    },
+    [persistAssistedDraft],
+  );
 
-  const setFreeResponse = useCallback((questionId: number, value: string) => {
-    const next = { ...freeResponsesRef.current, [questionId]: value };
-    freeResponsesRef.current = next;
-    setFreeResponses(next);
-    setAnsweredCount(
-      Object.keys(selectionsRef.current).length +
-        Object.values(next).filter((entry) => entry.trim()).length,
-    );
-    if (answerModeRef.current === "assisted" && quizzesRef.current.length === EXAM_SIZE) {
-      const participantId = assistedParticipantIdRef.current;
-      const currentSubmissionId = submissionIdRef.current;
-      /* v8 ignore if -- Five editable assisted questions are reached only after both IDs are initialized. */
-      if (participantId !== null && currentSubmissionId !== null) {
-        writeAssistedDraft({
-          participantId,
-          quizzes: quizzesRef.current,
-          selections: copyAnsweredSelections(selectionsRef.current),
-          freeResponses: next,
-          legacyAnswerIds: legacyAnswerIdsRef.current,
-          submissionId: currentSubmissionId,
-          revision: revisionRef.current,
-        });
-      }
-    }
-  }, []);
+  const setFreeResponse = useCallback(
+    (questionId: number, value: string) => {
+      const next = { ...freeResponsesRef.current, [questionId]: value };
+      freeResponsesRef.current = next;
+      setFreeResponses(next);
+      setAnsweredCount(
+        Object.keys(selectionsRef.current).length +
+          Object.values(next).filter((entry) => entry.trim()).length,
+      );
+      persistAssistedDraft(selectionsRef.current, next);
+    },
+    [persistAssistedDraft],
+  );
 
   const saveAnswers = useCallback(async () => {
     const currentSubmissionId = submissionIdRef.current;
@@ -1123,7 +1104,7 @@ export function useQuizSession() {
     const scope = answerModeRef.current;
     let returnToOwnerAfterSave = false;
     if (scope === "assisted" && assistedParticipantIdRef.current !== null) {
-      persistAssistedDraft(assistedParticipantIdRef.current, currentSubmissionId, currentQuizzes);
+      persistAssistedDraft();
     }
     busyRef.current = true;
     setPhase({ kind: "submitting" });

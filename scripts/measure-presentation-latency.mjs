@@ -31,9 +31,14 @@ import { createClient } from "@libsql/client";
 import { setTimeout as timerDelay } from "node:timers/promises";
 
 const mode = process.env.PRESENTATION_BENCH_MODE ?? "mock";
+const visualOnly = process.env.PRESENTATION_BENCH_VISUAL_ONLY === "1";
+const burstOnly = process.env.PRESENTATION_BENCH_BURST_ONLY === "1";
 const baseUrl = "http://127.0.0.1:3001";
 const pin = "7316";
-const sampleRepeats = Math.max(30, positiveInteger(process.env.PRESENTATION_BENCH_SAMPLES, 30));
+const sampleRepeats =
+  visualOnly || burstOnly
+    ? 1
+    : Math.max(30, positiveInteger(process.env.PRESENTATION_BENCH_SAMPLES, 30));
 const mockDelayMs = nonNegativeInteger(process.env.PRESENTATION_BENCH_DELAY_MS, 50);
 const host = "127.0.0.1";
 const port = 3001;
@@ -53,6 +58,18 @@ let sourceFingerprint = null;
 
 if (!new Set(["mock", "real"]).has(mode)) {
   process.stderr.write("PRESENTATION_BENCH_MODE must be mock or real\n");
+  process.exit(2);
+}
+if (visualOnly && mode !== "real") {
+  process.stderr.write("PRESENTATION_BENCH_VISUAL_ONLY requires PRESENTATION_BENCH_MODE=real\n");
+  process.exit(2);
+}
+if (burstOnly && mode !== "real") {
+  process.stderr.write("PRESENTATION_BENCH_BURST_ONLY requires PRESENTATION_BENCH_MODE=real\n");
+  process.exit(2);
+}
+if (burstOnly && visualOnly) {
+  process.stderr.write("PRESENTATION_BENCH_BURST_ONLY cannot be combined with VISUAL_ONLY\n");
   process.exit(2);
 }
 if (process.env.BASE_URL) {
@@ -420,6 +437,232 @@ async function performUnmeasuredKeyboardAction(page, key, setActiveOperation) {
   await withTimeout(tracker.firstPost, 10_000, "primary_action_not_started");
   await waitForOperationQuiet(tracker);
   setActiveOperation(null);
+}
+
+async function runRealVisualCompletionProbe(
+  page,
+  setActiveOperation,
+  installBrowserInstrumentation,
+) {
+  if (mode !== "real") {
+    return { status: "not_applicable", reason: "requires_real_local_sqlite_routes" };
+  }
+  const result = {
+    status: "partial",
+    scenario: "final_question_to_second_place_to_first_place_then_next_action",
+    fixture: "last of five questions plus synthetic rank-2 and rank-1 entries",
+  };
+  try {
+    currentStage = "visual_probe_reset_fixture";
+    await resetRealVisualFixtureToLastQuestion(page);
+    currentStage = "visual_probe_instrumentation_setup";
+    await installBrowserInstrumentation();
+    await page.waitForFunction(() => typeof window.__presentationBenchArm === "function", null, {
+      timeout: 5_000,
+    });
+    const expectedStates = ["answer", "podium_preview", "second", "first"];
+    for (let step = 0; step < expectedStates.length; step += 1) {
+      const expectedState = expectedStates[step];
+      currentStage = `visual_probe_dispatch_${expectedState}`;
+      const tracker = createOperationTracker();
+      setActiveOperation(tracker);
+      await page.locator("main").press("ArrowRight");
+      currentStage = `visual_probe_write_${expectedState}`;
+      const post = await withTimeout(
+        tracker.firstPost,
+        10_000,
+        "visual_probe_transition_write_not_started",
+      );
+      const writeDeadline = Date.now() + 10_000;
+      while (post.finishedAt === undefined && Date.now() < writeDeadline) await timerDelay(10);
+      if (post.finishedAt === undefined) throw new Error("visual_probe_transition_write_timeout");
+      if (post.status !== 200 || post.failure !== null)
+        throw new Error("visual_probe_transition_write_failed");
+      setActiveOperation(null);
+      const expectedAnnouncement = {
+        answer: "第5問の解説",
+        podium_preview: "結果発表を開始します",
+        third: "第三位を発表します",
+        second: "第二位を発表します",
+        first: "第一位を発表します",
+      }[expectedState];
+      currentStage = `visual_probe_dom_sync_${expectedState}`;
+      await page
+        .locator('[role="status"][aria-live="polite"]')
+        .filter({ hasText: expectedAnnouncement })
+        .waitFor({ timeout: 10_000 });
+      currentStage = `visual_probe_api_db_sync_${expectedState}`;
+      await assertRealStateSync(page, expectedState, realFixtureQuestionTitle, 4);
+    }
+    currentStage = "visual_probe_wait_first_place_visible";
+    await page
+      .getByRole("region", { name: "第一位の勝者一覧" })
+      .waitFor({ state: "visible", timeout: 10_000 });
+    currentStage = "visual_probe_image_decode";
+    result.motion_preference = await page.evaluate(() => ({
+      reduced_motion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+      context_setting: "Playwright browser-context default; no reduced-motion override",
+    }));
+
+    result.image_decode = await page.evaluate(async () => {
+      const images = [...document.querySelectorAll("main img")];
+      const decodeWaitStartedAt = performance.now();
+      const outcomes = await Promise.all(
+        images.map(async (image) => {
+          const source = new URL(image.currentSrc || image.src, location.href).pathname;
+          try {
+            const decoded = await Promise.race([
+              image.decode().then(() => "decoded"),
+              new Promise((resolve) => setTimeout(() => resolve("timeout"), 5_000)),
+            ]);
+            if (decoded === "timeout") return { source, status: "timeout" };
+            if (image.naturalWidth === 0) return { source, status: "load_failed" };
+            return { source, status: "decoded" };
+          } catch {
+            return { source, status: "decode_failed" };
+          }
+        }),
+      );
+      return {
+        status:
+          images.length > 0 && outcomes.every((entry) => entry.status === "decoded")
+            ? "measured"
+            : "partial",
+        image_count: images.length,
+        decode_wait_after_first_place_visible_ms: performance.now() - decodeWaitStartedAt,
+        outcomes,
+        scope:
+          "Remaining HTMLImageElement.decode() wait after first-place region is visible and the image elements are queried; this is not total asset request/load time.",
+      };
+    });
+
+    currentStage = "visual_probe_finite_animation_wait";
+    result.finite_animation_completion = await page.evaluate(async () => {
+      const animations = document.getAnimations({ subtree: true }).filter((animation) => {
+        const target = animation.effect?.target;
+        if (!(target instanceof Element) || !document.querySelector("main")?.contains(target)) {
+          return false;
+        }
+        const timing = animation.effect?.getComputedTiming();
+        return timing && Number.isFinite(timing.endTime) && timing.endTime > 0;
+      });
+      const remainingWaitStartedAt = performance.now();
+      if (animations.length === 0) {
+        return {
+          status: "no_finite_animations",
+          finite_animation_count: 0,
+          remaining_wait_after_image_decode_ms: 0,
+          scope:
+            "Snapshot of finite Web Animations API effects under main after image decode wait; no eligible effects were present.",
+        };
+      }
+      const outcomes = await Promise.all(
+        animations.map(async (animation) => {
+          let timeoutId;
+          const target = animation.effect?.target;
+          const targetClasses =
+            typeof target?.className === "string"
+              ? target.className
+              : (target?.className?.baseVal ?? "");
+          const detail = {
+            animation_name: animation.id || null,
+            target: `${target?.tagName?.toLowerCase() ?? "unknown"}${target?.id ? `#${target.id}` : ""}${targetClasses ? `.${targetClasses.trim().replace(/\s+/g, ".")}` : ""}`,
+          };
+          try {
+            const outcome = await Promise.race([
+              animation.finished,
+              new Promise((resolve) => {
+                timeoutId = setTimeout(() => resolve("timeout"), 5_000);
+              }),
+            ]);
+            if (outcome === "timeout") return { ...detail, status: "timeout" };
+            return {
+              ...detail,
+              status: animation.playState === "finished" ? "finished" : "still_running",
+            };
+          } catch {
+            return { ...detail, status: "cancelled" };
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        }),
+      );
+      return {
+        status: outcomes.every((entry) => entry.status === "finished") ? "measured" : "partial",
+        finite_animation_count: animations.length,
+        remaining_wait_after_image_decode_ms: performance.now() - remainingWaitStartedAt,
+        outcomes,
+        scope:
+          "Remaining finished-promise wait after image decode, using a one-time snapshot of finite Web Animations API effects under main; this is not total animation duration.",
+        caveat:
+          "Effects created later, pseudo-element targets, canvas drawing, and CSS effects not exposed through this Web Animations API snapshot are excluded.",
+      };
+    });
+
+    currentStage = "visual_probe_next_action_dispatch";
+    const tracker = createOperationTracker();
+    setActiveOperation(tracker);
+    const armedAt = await page.evaluate(() => {
+      window.__presentationBenchArm();
+      return performance.now();
+    });
+    await page.locator("main").press("ArrowRight");
+    await withTimeout(tracker.firstPost, 10_000, "visual_probe_next_action_not_started");
+    currentStage = "visual_probe_next_action_dom";
+    await page.waitForFunction(() => window.__presentationBench?.projectionMs !== null, null, {
+      timeout: 10_000,
+    });
+    currentStage = "visual_probe_next_action_quiet";
+    await waitForOperationQuiet(tracker);
+    const after = await page.evaluate(() => ({
+      inputAt: window.__presentationBench.inputAt,
+      projectionAt: window.__presentationBench.projectionAt,
+      projectionMs: window.__presentationBench.projectionMs,
+      post: window.__presentationBench.posts[0] ?? null,
+    }));
+    setActiveOperation(null);
+    result.next_action_after_visual_completion = {
+      status:
+        after.post?.status === 200 &&
+        Number.isFinite(after.inputAt) &&
+        Number.isFinite(after.projectionAt)
+          ? "measured"
+          : "partial",
+      arm_to_input_ms: after.inputAt - armedAt,
+      input_to_dom_2raf_ms: after.projectionAt - after.inputAt,
+      input_to_post_start_ms: after.post ? after.post.startedAt - after.inputAt : null,
+      post_duration_ms:
+        after.post?.endedAt === null || !after.post
+          ? null
+          : after.post.endedAt - after.post.startedAt,
+      http_status: after.post?.status ?? null,
+      dom_metric: "DOM mutation plus two requestAnimationFrame callbacks (paint proxy)",
+      caveat:
+        "One synthetic local sample; this does not establish a user-facing latency distribution.",
+    };
+    result.status =
+      result.image_decode.status === "measured" &&
+      ["measured", "no_finite_animations"].includes(result.finite_animation_completion.status) &&
+      result.next_action_after_visual_completion.status === "measured"
+        ? "measured"
+        : "partial";
+  } catch (error) {
+    setActiveOperation(null);
+    result.reason = classifyFailure(error);
+    result.stage = currentStage;
+    result.error_name =
+      error instanceof Error && /^[A-Za-z]+$/.test(error.name) ? error.name : "Error";
+    result.error_code =
+      error instanceof Error &&
+      [
+        "visual_probe_transition_write_not_started",
+        "visual_probe_transition_write_timeout",
+        "visual_probe_transition_write_failed",
+      ].includes(error.message)
+        ? error.message
+        : null;
+  }
+  return result;
 }
 
 function makeControls(
@@ -952,6 +1195,37 @@ async function resetRealFixtureToQuestion(page, sampleTag) {
   await assertRealStateSync(page, "question", realFixtureQuestionTitle, 0);
 }
 
+async function resetRealVisualFixtureToLastQuestion(page) {
+  const client = createIsolatedDbClient();
+  realFixtureQuestionTitle = `${question.question} [visual completion fixture]`;
+  try {
+    await client.execute({
+      sql: "UPDATE presentation_questions SET question = ? WHERE session_id = 1 AND position = 4",
+      args: [realFixtureQuestionTitle],
+    });
+    await client.execute(
+      "UPDATE presentation_sessions SET state = 'question', question_index = 4, version = version + 1, snapshot_revision = snapshot_revision + 1, projection_hidden = 0 WHERE id = 1",
+    );
+    await client.execute("DELETE FROM presentation_entries WHERE session_id = 1");
+    for (const entry of [
+      { participantId: 101, displayName: "合成二位", score: 90, rank: 2 },
+      { participantId: 102, displayName: "合成一位", score: 100, rank: 1 },
+    ]) {
+      await client.execute({
+        sql: "INSERT INTO presentation_entries (session_id, participant_id, display_name, score, rank, is_aggregation_target, answers) VALUES (1, ?, ?, ?, ?, 1, '[]')",
+        args: [entry.participantId, entry.displayName, entry.score, entry.rank],
+      });
+    }
+  } finally {
+    await client.close();
+  }
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page
+    .getByRole("heading", { name: realFixtureQuestionTitle, exact: true })
+    .waitFor({ timeout: 10_000 });
+  await assertRealStateSync(page, "question", realFixtureQuestionTitle, 4);
+}
+
 async function resetMockFixtureToQuestion(page, mockFixture, { reload = false } = {}) {
   mockFixture.setState("question");
   if (reload) await page.reload({ waitUntil: "domcontentloaded" });
@@ -980,7 +1254,7 @@ async function resetMockFixtureToQuestion(page, mockFixture, { reload = false } 
 async function assertRealStateSync(
   page,
   expectedState,
-  expectedQuestionTitle = realFixtureQuestionTitle,
+  expectedQuestionTitle,
   expectedQuestionIndex,
 ) {
   const controls = await page.evaluate(async () => {
@@ -1009,6 +1283,9 @@ async function assertRealStateSync(
   } finally {
     await client.close();
   }
+  // When a caller is checking a position reached by rapid input, use the title
+  // stored at the server's current question index instead of assuming question 1.
+  expectedQuestionTitle ??= dbQuestionTitle;
   const projection = await page.evaluate(async () => {
     const response = await fetch("/api/presentation", { cache: "no-store" });
     return { status: response.status, value: await response.json() };
@@ -1017,11 +1294,12 @@ async function assertRealStateSync(
     const response = await fetch("/api/admin/presentation/deck", { cache: "no-store" });
     return { status: response.status, value: await response.json() };
   });
+  const questionOrdinal = (expectedQuestionIndex ?? 0) + 1;
   const expectedAnnouncement = {
     not_started: "",
     opening: "発表を開始しました",
-    question: "第1問",
-    answer: "第1問の解説",
+    question: `第${questionOrdinal}問`,
+    answer: `第${questionOrdinal}問の解説`,
     podium_preview: "結果発表を開始します",
     third: "第三位を発表します",
     second: "第二位を発表します",
@@ -1076,102 +1354,112 @@ async function setRealFixtureState(state) {
   }
 }
 
-async function runSanityScenarios(page, mockFixture, setActiveOperation, installInstrumentation) {
+async function runSanityScenarios(
+  page,
+  mockFixture,
+  setActiveOperation,
+  installInstrumentation,
+  { burstOnly = false } = {},
+) {
   const result = {};
-  const boundaryState = "opening";
-  let boundaryStage = "fixture_setup";
-  let boundaryHttpStatus = null;
-  let boundaryStateUnchanged = null;
-  const expectedBoundaryStatus = 409;
-  try {
-    boundaryStage = mode === "real" ? "set_real_opening_state" : "set_mock_opening_state";
-    if (mode === "real") await setRealFixtureState(boundaryState);
-    else mockFixture.setState(boundaryState);
-    boundaryStage = "verify_opening_state";
-    if (mode === "real") await assertRealStateSync(page, boundaryState);
-    else {
-      await page.waitForFunction(async () => {
-        const response = await fetch("/api/presentation", { cache: "no-store" });
-        return (await response.json()).state === "opening";
-      });
-    }
-    boundaryStage = "dispatch_previous_request";
-    boundaryHttpStatus = await page.evaluate(async () => {
-      const response = await fetch("/api/admin/presentation", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "previous", operationId: crypto.randomUUID() }),
-      });
-      return response.status;
-    });
-    boundaryStage = "verify_unchanged_state";
-    if (mode === "real") {
-      const stateAfter = await page.evaluate(async () => {
-        const [controlsResponse, projectionResponse] = await Promise.all([
-          fetch("/api/admin/presentation?view=controls", { cache: "no-store" }),
-          fetch("/api/presentation", { cache: "no-store" }),
-        ]);
-        return {
-          controlsStatus: controlsResponse.status,
-          controls: (await controlsResponse.json()).state,
-          projectionStatus: projectionResponse.status,
-          projection: (await projectionResponse.json()).state,
-        };
-      });
-      const client = createIsolatedDbClient();
-      let dbState;
-      try {
-        dbState = (await client.execute("SELECT state FROM presentation_sessions WHERE id = 1"))
-          .rows[0]?.state;
-      } finally {
-        await client.close();
+  if (burstOnly) {
+    result.boundary = { status: "not_run", reason: "burst_only_probe" };
+  } else {
+    const boundaryState = "opening";
+    let boundaryStage = "fixture_setup";
+    let boundaryHttpStatus = null;
+    let boundaryStateUnchanged = null;
+    const expectedBoundaryStatus = 409;
+    try {
+      boundaryStage = mode === "real" ? "set_real_opening_state" : "set_mock_opening_state";
+      if (mode === "real") await setRealFixtureState(boundaryState);
+      else mockFixture.setState(boundaryState);
+      boundaryStage = "verify_opening_state";
+      if (mode === "real") await assertRealStateSync(page, boundaryState);
+      else {
+        await page.waitForFunction(async () => {
+          const response = await fetch("/api/presentation", { cache: "no-store" });
+          return (await response.json()).state === "opening";
+        });
       }
-      boundaryStateUnchanged =
-        stateAfter.controlsStatus === 200 &&
-        stateAfter.projectionStatus === 200 &&
-        stateAfter.controls === boundaryState &&
-        stateAfter.projection === boundaryState &&
-        dbState === boundaryState;
-      if (boundaryStateUnchanged) await assertRealStateSync(page, boundaryState);
-    } else {
-      const stateAfter = await page.evaluate(async () => {
-        const [controlsResponse, projectionResponse] = await Promise.all([
-          fetch("/api/admin/presentation?view=controls", { cache: "no-store" }),
-          fetch("/api/presentation", { cache: "no-store" }),
-        ]);
-        return {
-          controlsStatus: controlsResponse.status,
-          controls: (await controlsResponse.json()).state,
-          projectionStatus: projectionResponse.status,
-          projection: (await projectionResponse.json()).state,
-        };
+      boundaryStage = "dispatch_previous_request";
+      boundaryHttpStatus = await page.evaluate(async () => {
+        const response = await fetch("/api/admin/presentation", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "previous", operationId: crypto.randomUUID() }),
+        });
+        return response.status;
       });
-      boundaryStateUnchanged =
-        stateAfter.controlsStatus === 200 &&
-        stateAfter.projectionStatus === 200 &&
-        stateAfter.controls === boundaryState &&
-        stateAfter.projection === boundaryState;
+      boundaryStage = "verify_unchanged_state";
+      if (mode === "real") {
+        const stateAfter = await page.evaluate(async () => {
+          const [controlsResponse, projectionResponse] = await Promise.all([
+            fetch("/api/admin/presentation?view=controls", { cache: "no-store" }),
+            fetch("/api/presentation", { cache: "no-store" }),
+          ]);
+          return {
+            controlsStatus: controlsResponse.status,
+            controls: (await controlsResponse.json()).state,
+            projectionStatus: projectionResponse.status,
+            projection: (await projectionResponse.json()).state,
+          };
+        });
+        const client = createIsolatedDbClient();
+        let dbState;
+        try {
+          dbState = (await client.execute("SELECT state FROM presentation_sessions WHERE id = 1"))
+            .rows[0]?.state;
+        } finally {
+          await client.close();
+        }
+        boundaryStateUnchanged =
+          stateAfter.controlsStatus === 200 &&
+          stateAfter.projectionStatus === 200 &&
+          stateAfter.controls === boundaryState &&
+          stateAfter.projection === boundaryState &&
+          dbState === boundaryState;
+        if (boundaryStateUnchanged) await assertRealStateSync(page, boundaryState);
+      } else {
+        const stateAfter = await page.evaluate(async () => {
+          const [controlsResponse, projectionResponse] = await Promise.all([
+            fetch("/api/admin/presentation?view=controls", { cache: "no-store" }),
+            fetch("/api/presentation", { cache: "no-store" }),
+          ]);
+          return {
+            controlsStatus: controlsResponse.status,
+            controls: (await controlsResponse.json()).state,
+            projectionStatus: projectionResponse.status,
+            projection: (await projectionResponse.json()).state,
+          };
+        });
+        boundaryStateUnchanged =
+          stateAfter.controlsStatus === 200 &&
+          stateAfter.projectionStatus === 200 &&
+          stateAfter.controls === boundaryState &&
+          stateAfter.projection === boundaryState;
+      }
+      if (!boundaryStateUnchanged) throw new Error("boundary_state_changed");
+      boundaryStage = "verify_conflict_status";
+      if (boundaryHttpStatus !== expectedBoundaryStatus)
+        throw new Error("boundary_result_unexpected");
+      result.boundary = {
+        status: "measured",
+        scenario: "previous_from_first_presenter_state",
+        expected_http_status: expectedBoundaryStatus,
+        actual_http_status: boundaryHttpStatus,
+        state_unchanged: boundaryStateUnchanged,
+      };
+    } catch (error) {
+      result.boundary = {
+        status: "failed",
+        reason: classifyFailure(error),
+        stage: boundaryStage,
+        expected_http_status: expectedBoundaryStatus,
+        actual_http_status: boundaryHttpStatus,
+        state_unchanged: boundaryStateUnchanged,
+      };
     }
-    if (!boundaryStateUnchanged) throw new Error("boundary_state_changed");
-    boundaryStage = "verify_conflict_status";
-    if (boundaryHttpStatus !== expectedBoundaryStatus)
-      throw new Error("boundary_result_unexpected");
-    result.boundary = {
-      status: "measured",
-      scenario: "previous_from_first_presenter_state",
-      expected_http_status: expectedBoundaryStatus,
-      actual_http_status: boundaryHttpStatus,
-      state_unchanged: boundaryStateUnchanged,
-    };
-  } catch (error) {
-    result.boundary = {
-      status: "failed",
-      reason: classifyFailure(error),
-      stage: boundaryStage,
-      expected_http_status: expectedBoundaryStatus,
-      actual_http_status: boundaryHttpStatus,
-      state_unchanged: boundaryStateUnchanged,
-    };
   }
 
   let burstStage = "fixture_setup";
@@ -1338,7 +1626,15 @@ async function runSanityScenarios(page, mockFixture, setActiveOperation, install
     }
     const dispatchedInputIds = dispatchOutcome.inputIds;
     await withTimeout(burst.firstPost, 10_000, "burst_primary_not_started");
-    const expectedLatestLocalState = "first";
+    // Five rapid advances from question 1 resolve locally to answer 3:
+    // question 1 → answer 1 → question 2 → answer 2 → question 3 → answer 3.
+    // The mock fixture has one question followed by the podium, so its fifth
+    // advance still resolves to first place.
+    const expectedLatestLocalPosition =
+      mode === "real"
+        ? { state: "answer", questionIndex: 2 }
+        : { state: "first", questionIndex: 0 };
+    const expectedLatestLocalState = expectedLatestLocalPosition.state;
     let localCursorDuringHold = null;
     let noSecondWriteWhileHeld = null;
     if (mode === "mock") {
@@ -1428,20 +1724,127 @@ async function runSanityScenarios(page, mockFixture, setActiveOperation, install
     const coalescedPost = burstPostRecords[1] ?? null;
     const coalescedToNewestInput =
       mode === "mock" ? coalescedPost?.inputId === dispatchedInputIds.at(-1) : null;
+    const latestWriteTargetsLatestInput =
+      burstPostRecords.at(-1)?.inputId === dispatchedInputIds.at(-1);
     let serverConvergedToLatestTarget = null;
+    let realStateSyncDiagnostics = null;
     if (mode === "real") {
       burstStage = "verify_real_state_sync";
       const client = createIsolatedDbClient();
-      let expectedState;
+      let databasePosition;
       try {
-        expectedState = (
-          await client.execute("SELECT state FROM presentation_sessions WHERE id = 1")
-        ).rows[0]?.state;
+        databasePosition = (
+          await client.execute(
+            "SELECT state, question_index, question_count FROM presentation_sessions WHERE id = 1",
+          )
+        ).rows[0];
       } finally {
         await client.close();
       }
-      await assertRealStateSync(page, expectedState);
-      serverConvergedToLatestTarget = expectedState === expectedLatestLocalState;
+      const browserPosition = await page.evaluate(async () => {
+        const [controlsResponse, projectionResponse, deckResponse] = await Promise.all([
+          fetch("/api/admin/presentation?view=controls", { cache: "no-store" }),
+          fetch("/api/presentation", { cache: "no-store" }),
+          fetch("/api/admin/presentation/deck", { cache: "no-store" }),
+        ]);
+        const [controls, projection, deck] = await Promise.all([
+          controlsResponse.json(),
+          projectionResponse.json(),
+          deckResponse.json(),
+        ]);
+        const statusText =
+          document.querySelector('[role="status"][aria-live="polite"]')?.textContent ?? "";
+        const localTargets = [
+          { label: "answer_1", announcement: "第1問の解説", state: "answer", questionIndex: 0 },
+          { label: "answer_2", announcement: "第2問の解説", state: "answer", questionIndex: 1 },
+          { label: "answer_3", announcement: "第3問の解説", state: "answer", questionIndex: 2 },
+          { label: "question_1", announcement: "第1問", state: "question", questionIndex: 0 },
+          { label: "question_2", announcement: "第2問", state: "question", questionIndex: 1 },
+          { label: "question_3", announcement: "第3問", state: "question", questionIndex: 2 },
+        ];
+        const localTarget = localTargets.find(({ announcement }) =>
+          statusText.includes(announcement),
+        );
+        return {
+          controlsStatus: controlsResponse.status,
+          controls: { state: controls.state, questionIndex: controls.questionIndex },
+          projectionStatus: projectionResponse.status,
+          projection: {
+            state: projection.state,
+            questionOrdinal: projection.question?.ordinal ?? null,
+          },
+          deckStatus: deckResponse.status,
+          deck: { state: deck.state, questionIndex: deck.questionIndex },
+          localTarget: localTarget
+            ? {
+                label: localTarget.label,
+                state: localTarget.state,
+                questionIndex: localTarget.questionIndex,
+              }
+            : { label: "unrecognized", state: null, questionIndex: null },
+        };
+      });
+      const databaseState = databasePosition?.state ?? null;
+      const databaseQuestionIndex = Number(databasePosition?.question_index);
+      const expectedQuestionOrdinal = expectedLatestLocalPosition.questionIndex + 1;
+      const expectedAnnouncement =
+        expectedLatestLocalState === "answer"
+          ? `第${expectedQuestionOrdinal}問の解説`
+          : `第${expectedQuestionOrdinal}問`;
+      const localTargetMatchesExpected =
+        browserPosition.localTarget.state === expectedLatestLocalState &&
+        browserPosition.localTarget.questionIndex === expectedLatestLocalPosition.questionIndex;
+      const controlsMatchDatabase =
+        browserPosition.controlsStatus === 200 &&
+        browserPosition.controls.state === databaseState &&
+        browserPosition.controls.questionIndex === databaseQuestionIndex;
+      const projectionMatchesDatabase =
+        browserPosition.projectionStatus === 200 &&
+        browserPosition.projection.state === databaseState &&
+        (databaseState === "question" || databaseState === "answer"
+          ? browserPosition.projection.questionOrdinal === databaseQuestionIndex + 1
+          : true);
+      const deckMatchesDatabase =
+        browserPosition.deckStatus === 200 &&
+        browserPosition.deck.questionIndex === databaseQuestionIndex;
+      let syncAssertionStatus = "passed";
+      try {
+        await assertRealStateSync(page, databaseState, undefined, databaseQuestionIndex);
+      } catch (error) {
+        syncAssertionStatus = error instanceof Error ? error.name : "unknown_error";
+      }
+      realStateSyncDiagnostics = {
+        local_target: browserPosition.localTarget,
+        expected_local_target: {
+          state: expectedLatestLocalState,
+          questionIndex: expectedLatestLocalPosition.questionIndex,
+          announcement: expectedAnnouncement,
+        },
+        local_target_matches_expected: localTargetMatchesExpected,
+        database: {
+          state: databaseState,
+          questionIndex: databaseQuestionIndex,
+          questionCount: Number(databasePosition?.question_count),
+        },
+        controls: browserPosition.controls,
+        controls_status: browserPosition.controlsStatus,
+        projection: browserPosition.projection,
+        projection_status: browserPosition.projectionStatus,
+        deck: browserPosition.deck,
+        deck_status: browserPosition.deckStatus,
+        controls_match_database: controlsMatchDatabase,
+        projection_matches_database: projectionMatchesDatabase,
+        deck_matches_database: deckMatchesDatabase,
+        state_sync_assertion: syncAssertionStatus,
+      };
+      serverConvergedToLatestTarget =
+        databaseState === expectedLatestLocalState &&
+        databaseQuestionIndex === expectedLatestLocalPosition.questionIndex &&
+        localTargetMatchesExpected &&
+        controlsMatchDatabase &&
+        projectionMatchesDatabase &&
+        deckMatchesDatabase &&
+        syncAssertionStatus === "passed";
     } else {
       const finalState = await page.evaluate(async () => {
         const [controlsResponse, projectionResponse] = await Promise.all([
@@ -1456,7 +1859,7 @@ async function runSanityScenarios(page, mockFixture, setActiveOperation, install
       serverConvergedToLatestTarget =
         finalState.controls.state === expectedLatestLocalState &&
         finalState.projection.state === expectedLatestLocalState &&
-        finalState.controls.questionIndex === 0;
+        finalState.controls.questionIndex === expectedLatestLocalPosition.questionIndex;
     }
     const coalescingValid =
       burstInputIds.length === burstInputCount &&
@@ -1466,11 +1869,12 @@ async function runSanityScenarios(page, mockFixture, setActiveOperation, install
       (mode !== "mock" || burstBrowser.posts.length === expectedPostCount) &&
       failedPostCount === 0 &&
       (mode !== "mock" || coalescedToNewestInput) &&
+      latestWriteTargetsLatestInput &&
       serverConvergedToLatestTarget &&
       (mode !== "mock" || (localCursorDuringHold && noSecondWriteWhileHeld));
     result.burst = {
       status: coalescingValid ? "measured" : "partial",
-      scenario: "four_synthetic_position_inputs_while_the_first_write_is_in_flight",
+      scenario: "five_synthetic_position_inputs_while_the_first_write_is_in_flight",
       measurement_scope: "synthetic input burst; mock mode uses a held POST to check coalescing",
       input_count: burstInputCount,
       observed_input_count: burstInputIds.length,
@@ -1484,6 +1888,10 @@ async function runSanityScenarios(page, mockFixture, setActiveOperation, install
       observed_input_ids_match_dispatch_order: dispatchInputIdsMatchObserved,
       post_request_count: burstPostRecords.length,
       failed_post_count: failedPostCount,
+      latest_write_targets_latest_input: latestWriteTargetsLatestInput,
+      ...(realStateSyncDiagnostics === null
+        ? {}
+        : { real_state_sync_diagnostics: realStateSyncDiagnostics }),
       expected_write_count: expectedPostCount,
       local_cursor_during_first_write: {
         status:
@@ -2336,386 +2744,417 @@ async function main() {
   visualArtifacts.before = await captureVisualArtifact(page, "before", visualArtifactQuestionTitle);
 
   currentStage = "measurement";
-  for (let iteration = 0; iteration < sampleRepeats; iteration += 1) {
-    for (const definition of definitions) {
-      let failureDiagnostics = { stage: currentStage };
-      let operation = null;
-      try {
-        currentStage = `warm_sample_${definition.name}`;
-        if (mode === "real") {
-          await resetRealFixtureToQuestion(page, `trial-${iteration}-${definition.name}`);
-          await installBrowserInstrumentation();
-        } else {
-          await resetMockFixtureToQuestion(page, mockFixture, { reload: true });
-          await installBrowserInstrumentation();
-        }
-        if (definition.action === "previous") {
-          currentStage = "warm_sample_setup_answer_state";
-          await performUnmeasuredKeyboardAction(page, "ArrowRight", (tracker) => {
-            activeOperation = tracker;
-          });
-          await page
-            .locator('[role="status"][aria-live="polite"]')
-            .filter({ hasText: /^第1問の解説$/ })
-            .waitFor({ timeout: 10_000 });
+  if (!visualOnly && !burstOnly)
+    for (let iteration = 0; iteration < sampleRepeats; iteration += 1) {
+      for (const definition of definitions) {
+        let failureDiagnostics = { stage: currentStage };
+        let operation = null;
+        try {
           currentStage = `warm_sample_${definition.name}`;
-        }
-        operation = createOperationTracker();
-        activeOperation = operation;
-        await page.evaluate(() => window.__presentationBenchArm());
-        if (definition.input === "keyboard") {
-          await mainRegion.press(definition.action === "advance" ? "ArrowRight" : "ArrowLeft");
-        } else if (definition.input === "click") {
-          await page.mouse.click(
-            bounds.x + bounds.width * (definition.action === "advance" ? 0.8 : 0.2),
-            bounds.y + bounds.height / 2,
-          );
-        } else {
-          const startX = bounds.x + bounds.width * (definition.action === "advance" ? 0.8 : 0.2);
-          const endX = bounds.x + bounds.width * (definition.action === "advance" ? 0.2 : 0.8);
-          const y = bounds.y + bounds.height / 2;
-          await page.mouse.move(startX, y);
-          await page.mouse.down();
-          await page.mouse.move(endX, y, { steps: 5 });
-          await page.mouse.up();
-        }
-
-        await withTimeout(operation.firstPost, 10_000, "primary_action_not_started");
-        const inputStartedAt = await page.evaluate(() => window.__presentationBench.inputAt);
-        const gesture = await page.evaluate(() => ({
-          start: window.__presentationBench.gestureStartAt,
-          release: window.__presentationBench.releaseAt,
-        }));
-        if (!Number.isFinite(inputStartedAt)) {
-          failureDiagnostics = await page.evaluate(() => ({
-            stage: "primary_post_started_input_timestamp_missing",
-            browser_inputs:
-              window.__presentationBench?.inputs?.map(({ id, at, type }) => ({
-                id,
-                at,
-                type,
-              })) ?? [],
-            browser_posts:
-              window.__presentationBench?.posts?.map(
-                ({ inputId, inputAt, startedAt, endedAt, status, failure }) => ({
-                  input_id: inputId,
-                  input_at: inputAt,
-                  started_at: startedAt,
-                  ended_at: endedAt,
-                  status,
-                  failure,
-                }),
-              ) ?? [],
-            instrumentation_error: window.__presentationBench?.instrumentationError ?? null,
-          }));
-          failureDiagnostics.invariant_failures = ["input_timestamp_missing"];
-          throw new Error("measurement_invariant:input_timestamp_missing");
-        }
-        currentStage = `freeze_primary_paint_${definition.name}`;
-        await page.waitForFunction(() => window.__presentationBench?.projectionMs !== null, null, {
-          timeout: 10_000,
-        });
-        const primaryPaint = await page.evaluate(() => ({
-          projectionMs: window.__presentationBench.projectionMs,
-          projectionAt: window.__presentationBench.projectionAt,
-        }));
-        const primaryRequestCount = operation.requests.length;
-        const reverseKey = definition.action === "advance" ? "ArrowLeft" : "ArrowRight";
-        currentStage = `next_save_probe_${definition.name}`;
-        const nextInput = await dispatchSingleInverseInput(page, operation, reverseKey);
-        await withTimeout(
-          Promise.all([
-            operation.secondPost,
-            page.waitForFunction(
-              (inputId) =>
-                window.__presentationBench?.posts?.some((post) => post.inputId === inputId) ??
-                false,
-              nextInput.id,
-              { timeout: 15_000 },
-            ),
-          ]),
-          15_000,
-          "next_save_not_dispatched",
-        );
-        await waitForOperationQuiet(operation);
-        await page.waitForFunction(
-          () => window.__presentationBench.posts.slice(0, 2).every((post) => post.endedAt !== null),
-          null,
-          { timeout: 5_000 },
-        );
-        const browserMetrics = await page.evaluate(() => ({
-          projectionMs: window.__presentationBench.projectionMs,
-          projectionAt: window.__presentationBench.projectionAt,
-          posts: window.__presentationBench.posts,
-          inputs: window.__presentationBench.inputs,
-          instrumentationError: window.__presentationBench.instrumentationError,
-        }));
-        const nextSaveBrowserPost = browserMetrics.posts.find(
-          (post) => post.inputId === nextInput.id,
-        );
-        failureDiagnostics = {
-          stage: currentStage,
-          browser_inputs: browserMetrics.inputs.map(({ id, at, type }) => ({ id, at, type })),
-          browser_posts: browserMetrics.posts.map(
-            ({ inputId, inputAt, startedAt, endedAt, status, failure }) => ({
-              input_id: inputId,
-              input_at: inputAt,
-              started_at: startedAt,
-              ended_at: endedAt,
-              status,
-              failure,
-            }),
-          ),
-          instrumentation_error: browserMetrics.instrumentationError,
-          node_requests: operation.requests.map((request) => ({
-            kind: request.kind,
-            order: request.order,
-            status: request.status,
-            failure: request.failure === null ? null : "request_failed",
-            started_at: request.startedAt,
-            response_at: request.responseAt,
-            finished_at: request.finishedAt,
-          })),
-          probe_input_ids: operation.probeInputIds ?? [],
-          probe_attempt_count: operation.probeAttempts ?? 0,
-          next_input_id: nextInput.id,
-          next_input_at: nextInput.at,
-          input_started_at: inputStartedAt,
-          projection_at: browserMetrics.projectionAt,
-          projection_ms: browserMetrics.projectionMs,
-          swipe_start_at: gesture.start,
-          swipe_release_at: gesture.release,
-        };
-        const projectionMs = primaryPaint.projectionMs;
-        const primaryPost = browserMetrics.posts[0];
-        const acceptedPost = nextSaveBrowserPost;
-        if (mode === "real") {
-          const client = createIsolatedDbClient();
-          let expectedState;
-          try {
-            const result = await client.execute(
-              "SELECT state FROM presentation_sessions WHERE id = 1",
-            );
-            expectedState = result.rows[0]?.state;
-          } finally {
-            await client.close();
+          if (mode === "real") {
+            await resetRealFixtureToQuestion(page, `trial-${iteration}-${definition.name}`);
+            await installBrowserInstrumentation();
+          } else {
+            await resetMockFixtureToQuestion(page, mockFixture, { reload: true });
+            await installBrowserInstrumentation();
           }
-          await assertRealStateSync(page, expectedState);
-        }
-        activeOperation = null;
-        const primaryRequests = operation.requests.slice(0, primaryRequestCount);
-        const invariantFailures = [];
-        if (primaryRequests.filter((record) => record.kind === "post").length !== 1) {
-          invariantFailures.push("primary_post_count");
-        }
-        if (operation.posts.length !== 2 || browserMetrics.posts.length !== 2) {
-          invariantFailures.push("total_post_count");
-        }
-        if (
-          primaryPost?.status !== 200 ||
-          acceptedPost?.status !== 200 ||
-          primaryPost?.failure !== null ||
-          acceptedPost?.failure !== null
-        )
-          invariantFailures.push("response_status_or_failure");
-        if (browserMetrics.instrumentationError !== null) {
-          invariantFailures.push("fetch_instrumentation");
-        }
-        if (
-          browserMetrics.projectionMs !== primaryPaint.projectionMs ||
-          browserMetrics.projectionAt !== primaryPaint.projectionAt
-        ) {
-          invariantFailures.push("primary_paint_changed_after_inverse_input");
-        }
-        const expectedPrimaryInputType =
-          definition.input === "keyboard" ? "keydown" : "pointerdown";
-        if (
-          browserMetrics.inputs.length !== 2 ||
-          primaryPost?.inputId !== browserMetrics.inputs[0]?.id ||
-          browserMetrics.inputs[0]?.type !== expectedPrimaryInputType ||
-          browserMetrics.inputs[1]?.id !== nextInput.id ||
-          browserMetrics.inputs[1]?.type !== "keydown" ||
-          acceptedPost?.inputId !== nextInput.id ||
-          !operation.probeInputIds?.includes(acceptedPost?.inputId)
-        )
-          invariantFailures.push("input_id_pairing");
-        if (
-          ![
-            inputStartedAt,
-            primaryPost?.inputAt,
-            primaryPost?.startedAt,
-            primaryPost?.endedAt,
-            acceptedPost?.inputAt,
-            acceptedPost?.startedAt,
-            projectionMs,
-            primaryPaint.projectionAt,
-          ].every(Number.isFinite)
-        )
-          invariantFailures.push("timestamps");
-        if (
-          definition.input === "swipe" &&
-          (!Number.isFinite(gesture.start) || !Number.isFinite(gesture.release))
-        )
-          invariantFailures.push("swipe_timing");
-        if (definition.input === "click" && browserMetrics.inputs[0]?.type !== "pointerdown")
-          invariantFailures.push("click_pointerdown_missing");
-        if (invariantFailures.length > 0) {
-          failureDiagnostics.invariant_failures = invariantFailures;
-          throw new Error(`measurement_invariant:${invariantFailures.join(",")}`);
-        }
-        recordRequestCountSample(definition.name, primaryRequests);
-        addSample(definition.name, "input_to_dom_2raf_ms", projectionMs);
-        addSample(
-          definition.name,
-          "input_to_post_start_ms",
-          primaryPost.startedAt - primaryPost.inputAt,
-        );
-        addSample(
-          definition.name,
-          "post_start_to_response_ms",
-          primaryPost.endedAt - primaryPost.startedAt,
-        );
-        addSample(
-          definition.name,
-          "next_input_to_next_save_dispatch_ms",
-          acceptedPost.startedAt - nextInput.at,
-        );
-        if (
-          definition.input === "swipe" &&
-          Number.isFinite(gesture.start) &&
-          Number.isFinite(gesture.release)
-        ) {
-          addSample(definition.name, "swipe_start_to_release_ms", gesture.release - gesture.start);
-          addSample(
-            definition.name,
-            "swipe_release_to_dom_2raf_ms",
-            primaryPaint.projectionAt - gesture.release,
+          if (definition.action === "previous") {
+            currentStage = "warm_sample_setup_answer_state";
+            await performUnmeasuredKeyboardAction(page, "ArrowRight", (tracker) => {
+              activeOperation = tracker;
+            });
+            await page
+              .locator('[role="status"][aria-live="polite"]')
+              .filter({ hasText: /^第1問の解説$/ })
+              .waitFor({ timeout: 10_000 });
+            currentStage = `warm_sample_${definition.name}`;
+          }
+          operation = createOperationTracker();
+          activeOperation = operation;
+          await page.evaluate(() => window.__presentationBenchArm());
+          if (definition.input === "keyboard") {
+            await mainRegion.press(definition.action === "advance" ? "ArrowRight" : "ArrowLeft");
+          } else if (definition.input === "click") {
+            await page.mouse.click(
+              bounds.x + bounds.width * (definition.action === "advance" ? 0.8 : 0.2),
+              bounds.y + bounds.height / 2,
+            );
+          } else {
+            const startX = bounds.x + bounds.width * (definition.action === "advance" ? 0.8 : 0.2);
+            const endX = bounds.x + bounds.width * (definition.action === "advance" ? 0.2 : 0.8);
+            const y = bounds.y + bounds.height / 2;
+            await page.mouse.move(startX, y);
+            await page.mouse.down();
+            await page.mouse.move(endX, y, { steps: 5 });
+            await page.mouse.up();
+          }
+
+          await withTimeout(operation.firstPost, 10_000, "primary_action_not_started");
+          const inputStartedAt = await page.evaluate(() => window.__presentationBench.inputAt);
+          const gesture = await page.evaluate(() => ({
+            start: window.__presentationBench.gestureStartAt,
+            release: window.__presentationBench.releaseAt,
+          }));
+          if (!Number.isFinite(inputStartedAt)) {
+            failureDiagnostics = await page.evaluate(() => ({
+              stage: "primary_post_started_input_timestamp_missing",
+              browser_inputs:
+                window.__presentationBench?.inputs?.map(({ id, at, type }) => ({
+                  id,
+                  at,
+                  type,
+                })) ?? [],
+              browser_posts:
+                window.__presentationBench?.posts?.map(
+                  ({ inputId, inputAt, startedAt, endedAt, status, failure }) => ({
+                    input_id: inputId,
+                    input_at: inputAt,
+                    started_at: startedAt,
+                    ended_at: endedAt,
+                    status,
+                    failure,
+                  }),
+                ) ?? [],
+              instrumentation_error: window.__presentationBench?.instrumentationError ?? null,
+            }));
+            failureDiagnostics.invariant_failures = ["input_timestamp_missing"];
+            throw new Error("measurement_invariant:input_timestamp_missing");
+          }
+          currentStage = `freeze_primary_paint_${definition.name}`;
+          await page.waitForFunction(
+            () => window.__presentationBench?.projectionMs !== null,
+            null,
+            {
+              timeout: 10_000,
+            },
           );
-        }
-        addSample(
-          definition.name,
-          "max_window_http_request_duration_ms",
-          Math.max(
-            0,
-            ...primaryRequests.map(
-              (record) =>
-                (record.finishedAt ?? record.responseAt ?? record.startedAt) - record.startedAt,
+          const primaryPaint = await page.evaluate(() => ({
+            projectionMs: window.__presentationBench.projectionMs,
+            projectionAt: window.__presentationBench.projectionAt,
+          }));
+          const primaryRequestCount = operation.requests.length;
+          const reverseKey = definition.action === "advance" ? "ArrowLeft" : "ArrowRight";
+          currentStage = `next_save_probe_${definition.name}`;
+          const nextInput = await dispatchSingleInverseInput(page, operation, reverseKey);
+          await withTimeout(
+            Promise.all([
+              operation.secondPost,
+              page.waitForFunction(
+                (inputId) =>
+                  window.__presentationBench?.posts?.some((post) => post.inputId === inputId) ??
+                  false,
+                nextInput.id,
+                { timeout: 15_000 },
+              ),
+            ]),
+            15_000,
+            "next_save_not_dispatched",
+          );
+          await waitForOperationQuiet(operation);
+          await page.waitForFunction(
+            () =>
+              window.__presentationBench.posts.slice(0, 2).every((post) => post.endedAt !== null),
+            null,
+            { timeout: 5_000 },
+          );
+          const browserMetrics = await page.evaluate(() => ({
+            projectionMs: window.__presentationBench.projectionMs,
+            projectionAt: window.__presentationBench.projectionAt,
+            posts: window.__presentationBench.posts,
+            inputs: window.__presentationBench.inputs,
+            instrumentationError: window.__presentationBench.instrumentationError,
+          }));
+          const nextSaveBrowserPost = browserMetrics.posts.find(
+            (post) => post.inputId === nextInput.id,
+          );
+          failureDiagnostics = {
+            stage: currentStage,
+            browser_inputs: browserMetrics.inputs.map(({ id, at, type }) => ({ id, at, type })),
+            browser_posts: browserMetrics.posts.map(
+              ({ inputId, inputAt, startedAt, endedAt, status, failure }) => ({
+                input_id: inputId,
+                input_at: inputAt,
+                started_at: startedAt,
+                ended_at: endedAt,
+                status,
+                failure,
+              }),
             ),
-          ),
-        );
-        for (const kind of [
-          "post",
-          "window_session_get",
-          "window_controls_get",
-          "window_deck_get",
-        ]) {
-          const matches = primaryRequests.filter((record) => record.kind === kind);
-          addSample(definition.name, `${kind}_count`, matches.length);
+            instrumentation_error: browserMetrics.instrumentationError,
+            node_requests: operation.requests.map((request) => ({
+              kind: request.kind,
+              order: request.order,
+              status: request.status,
+              failure: request.failure === null ? null : "request_failed",
+              started_at: request.startedAt,
+              response_at: request.responseAt,
+              finished_at: request.finishedAt,
+            })),
+            probe_input_ids: operation.probeInputIds ?? [],
+            probe_attempt_count: operation.probeAttempts ?? 0,
+            next_input_id: nextInput.id,
+            next_input_at: nextInput.at,
+            input_started_at: inputStartedAt,
+            projection_at: browserMetrics.projectionAt,
+            projection_ms: browserMetrics.projectionMs,
+            swipe_start_at: gesture.start,
+            swipe_release_at: gesture.release,
+          };
+          const projectionMs = primaryPaint.projectionMs;
+          const primaryPost = browserMetrics.posts[0];
+          const acceptedPost = nextSaveBrowserPost;
+          if (mode === "real") {
+            const client = createIsolatedDbClient();
+            let expectedState;
+            try {
+              const result = await client.execute(
+                "SELECT state FROM presentation_sessions WHERE id = 1",
+              );
+              expectedState = result.rows[0]?.state;
+            } finally {
+              await client.close();
+            }
+            await assertRealStateSync(page, expectedState);
+          }
+          activeOperation = null;
+          const primaryRequests = operation.requests.slice(0, primaryRequestCount);
+          const invariantFailures = [];
+          if (primaryRequests.filter((record) => record.kind === "post").length !== 1) {
+            invariantFailures.push("primary_post_count");
+          }
+          if (operation.posts.length !== 2 || browserMetrics.posts.length !== 2) {
+            invariantFailures.push("total_post_count");
+          }
+          if (
+            primaryPost?.status !== 200 ||
+            acceptedPost?.status !== 200 ||
+            primaryPost?.failure !== null ||
+            acceptedPost?.failure !== null
+          )
+            invariantFailures.push("response_status_or_failure");
+          if (browserMetrics.instrumentationError !== null) {
+            invariantFailures.push("fetch_instrumentation");
+          }
+          if (
+            browserMetrics.projectionMs !== primaryPaint.projectionMs ||
+            browserMetrics.projectionAt !== primaryPaint.projectionAt
+          ) {
+            invariantFailures.push("primary_paint_changed_after_inverse_input");
+          }
+          const expectedPrimaryInputType =
+            definition.input === "keyboard" ? "keydown" : "pointerdown";
+          if (
+            browserMetrics.inputs.length !== 2 ||
+            primaryPost?.inputId !== browserMetrics.inputs[0]?.id ||
+            browserMetrics.inputs[0]?.type !== expectedPrimaryInputType ||
+            browserMetrics.inputs[1]?.id !== nextInput.id ||
+            browserMetrics.inputs[1]?.type !== "keydown" ||
+            acceptedPost?.inputId !== nextInput.id ||
+            !operation.probeInputIds?.includes(acceptedPost?.inputId)
+          )
+            invariantFailures.push("input_id_pairing");
+          if (
+            ![
+              inputStartedAt,
+              primaryPost?.inputAt,
+              primaryPost?.startedAt,
+              primaryPost?.endedAt,
+              acceptedPost?.inputAt,
+              acceptedPost?.startedAt,
+              projectionMs,
+              primaryPaint.projectionAt,
+            ].every(Number.isFinite)
+          )
+            invariantFailures.push("timestamps");
+          if (
+            definition.input === "swipe" &&
+            (!Number.isFinite(gesture.start) || !Number.isFinite(gesture.release))
+          )
+            invariantFailures.push("swipe_timing");
+          if (definition.input === "click" && browserMetrics.inputs[0]?.type !== "pointerdown")
+            invariantFailures.push("click_pointerdown_missing");
+          if (invariantFailures.length > 0) {
+            failureDiagnostics.invariant_failures = invariantFailures;
+            throw new Error(`measurement_invariant:${invariantFailures.join(",")}`);
+          }
+          recordRequestCountSample(definition.name, primaryRequests);
+          addSample(definition.name, "input_to_dom_2raf_ms", projectionMs);
           addSample(
             definition.name,
-            `${kind}_wait_ms`,
-            matches.reduce(
-              (sum, record) =>
-                sum +
-                ((record.responseAt ?? record.finishedAt ?? record.startedAt) - record.startedAt),
+            "input_to_post_start_ms",
+            primaryPost.startedAt - primaryPost.inputAt,
+          );
+          addSample(
+            definition.name,
+            "post_start_to_response_ms",
+            primaryPost.endedAt - primaryPost.startedAt,
+          );
+          addSample(
+            definition.name,
+            "next_input_to_next_save_dispatch_ms",
+            acceptedPost.startedAt - nextInput.at,
+          );
+          if (
+            definition.input === "swipe" &&
+            Number.isFinite(gesture.start) &&
+            Number.isFinite(gesture.release)
+          ) {
+            addSample(
+              definition.name,
+              "swipe_start_to_release_ms",
+              gesture.release - gesture.start,
+            );
+            addSample(
+              definition.name,
+              "swipe_release_to_dom_2raf_ms",
+              primaryPaint.projectionAt - gesture.release,
+            );
+          }
+          addSample(
+            definition.name,
+            "max_window_http_request_duration_ms",
+            Math.max(
               0,
+              ...primaryRequests.map(
+                (record) =>
+                  (record.finishedAt ?? record.responseAt ?? record.startedAt) - record.startedAt,
+              ),
             ),
           );
+          for (const kind of [
+            "post",
+            "window_session_get",
+            "window_controls_get",
+            "window_deck_get",
+          ]) {
+            const matches = primaryRequests.filter((record) => record.kind === kind);
+            addSample(definition.name, `${kind}_count`, matches.length);
+            addSample(
+              definition.name,
+              `${kind}_wait_ms`,
+              matches.reduce(
+                (sum, record) =>
+                  sum +
+                  ((record.responseAt ?? record.finishedAt ?? record.startedAt) - record.startedAt),
+                0,
+              ),
+            );
+          }
+        } catch (error) {
+          activeOperation = null;
+          const reason = classifyFailure(error);
+          const browserState = await page
+            .evaluate(() => {
+              const bench = window.__presentationBench;
+              return bench
+                ? {
+                    inputs: bench.inputs.map(({ id, at, type }) => ({ id, at, type })),
+                    posts: bench.posts.map(
+                      ({ inputId, inputAt, startedAt, endedAt, status, failure }) => ({
+                        input_id: inputId,
+                        input_at: inputAt,
+                        started_at: startedAt,
+                        ended_at: endedAt,
+                        status,
+                        failure,
+                      }),
+                    ),
+                    instrumentation_error: bench.instrumentationError,
+                    projection_at: bench.projectionAt,
+                    projection_ms: bench.projectionMs,
+                  }
+                : null;
+            })
+            .catch(() => null);
+          failureDiagnostics = {
+            ...failureDiagnostics,
+            stage: currentStage,
+            browser: browserState,
+            node_requests: (operation?.requests ?? []).map((request) => ({
+              kind: request.kind,
+              order: request.order,
+              status: request.status,
+              failure: request.failure === null ? null : "request_failed",
+              started_at: request.startedAt,
+              response_at: request.responseAt,
+              finished_at: request.finishedAt,
+            })),
+            probe_input_ids: operation?.probeInputIds ?? [],
+            probe_attempt_count: operation?.probeAttempts ?? 0,
+          };
+          operationFailures.get(definition.name).push(reason);
+          process.stderr.write(
+            `presentation sample failed operation=${definition.name} stage=${currentStage} reason=${reason}\n`,
+          );
+          operationFailureDetails.get(definition.name).push({
+            reason,
+            stage: currentStage,
+            ...(failureDiagnostics.invariant_failures
+              ? { invariant_failures: failureDiagnostics.invariant_failures }
+              : {}),
+            diagnostics: failureDiagnostics,
+          });
         }
-      } catch (error) {
-        activeOperation = null;
-        const reason = classifyFailure(error);
-        const browserState = await page
-          .evaluate(() => {
-            const bench = window.__presentationBench;
-            return bench
-              ? {
-                  inputs: bench.inputs.map(({ id, at, type }) => ({ id, at, type })),
-                  posts: bench.posts.map(
-                    ({ inputId, inputAt, startedAt, endedAt, status, failure }) => ({
-                      input_id: inputId,
-                      input_at: inputAt,
-                      started_at: startedAt,
-                      ended_at: endedAt,
-                      status,
-                      failure,
-                    }),
-                  ),
-                  instrumentation_error: bench.instrumentationError,
-                  projection_at: bench.projectionAt,
-                  projection_ms: bench.projectionMs,
-                }
-              : null;
-          })
-          .catch(() => null);
-        failureDiagnostics = {
-          ...failureDiagnostics,
-          stage: currentStage,
-          browser: browserState,
-          node_requests: (operation?.requests ?? []).map((request) => ({
-            kind: request.kind,
-            order: request.order,
-            status: request.status,
-            failure: request.failure === null ? null : "request_failed",
-            started_at: request.startedAt,
-            response_at: request.responseAt,
-            finished_at: request.finishedAt,
-          })),
-          probe_input_ids: operation?.probeInputIds ?? [],
-          probe_attempt_count: operation?.probeAttempts ?? 0,
-        };
-        operationFailures.get(definition.name).push(reason);
-        process.stderr.write(
-          `presentation sample failed operation=${definition.name} stage=${currentStage} reason=${reason}\n`,
-        );
-        operationFailureDetails.get(definition.name).push({
-          reason,
-          stage: currentStage,
-          ...(failureDiagnostics.invariant_failures
-            ? { invariant_failures: failureDiagnostics.invariant_failures }
-            : {}),
-          diagnostics: failureDiagnostics,
-        });
       }
     }
-  }
 
-  const sanityScenarios = await runSanityScenarios(
-    page,
-    mockFixture,
-    (value) => {
-      activeOperation = value;
-    },
-    installBrowserInstrumentation,
-  );
-  const mockCoverageScenarios =
-    mode === "mock"
-      ? await runMockCoverageScenarios(
-          page,
-          mockFixture,
-          (value) => {
-            activeOperation = value;
-          },
-          installBrowserInstrumentation,
-        )
-      : {
-          start_boundary: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
-          end_boundary: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
-          rank_boundaries: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
-          empty_deck: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
-          large_deck_long_text: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
-          controlled_slow_poll_overlap: {
-            status: "not_applicable",
-            reason: "synthetic_mock_fixture_only",
-          },
-          controlled_failure: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
-        };
+  const sanityScenarios = visualOnly
+    ? { status: "not_run", reason: "visual_only_probe" }
+    : await runSanityScenarios(
+        page,
+        mockFixture,
+        (value) => {
+          activeOperation = value;
+        },
+        installBrowserInstrumentation,
+        { burstOnly },
+      );
+  const mockCoverageScenarios = visualOnly
+    ? { status: "not_run", reason: "visual_only_probe" }
+    : burstOnly
+      ? { status: "not_run", reason: "burst_only_probe" }
+      : mode === "mock"
+        ? await runMockCoverageScenarios(
+            page,
+            mockFixture,
+            (value) => {
+              activeOperation = value;
+            },
+            installBrowserInstrumentation,
+          )
+        : {
+            start_boundary: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
+            end_boundary: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
+            rank_boundaries: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
+            empty_deck: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
+            large_deck_long_text: {
+              status: "not_applicable",
+              reason: "synthetic_mock_fixture_only",
+            },
+            controlled_slow_poll_overlap: {
+              status: "not_applicable",
+              reason: "synthetic_mock_fixture_only",
+            },
+            controlled_failure: { status: "not_applicable", reason: "synthetic_mock_fixture_only" },
+          };
   currentStage = "visual_artifact_core_operation";
   visualArtifacts.after = await captureCoreOperationAfterArtifact(page, mockFixture);
+  currentStage = "visual_completion_probe";
+  const visualCompletionProbe = visualOnly
+    ? await runRealVisualCompletionProbe(
+        page,
+        (value) => {
+          activeOperation = value;
+        },
+        installBrowserInstrumentation,
+      )
+    : { status: "not_run", reason: "set_PRESENTATION_BENCH_VISUAL_ONLY_1_to_enable" };
   currentStage = "summary_output";
   const output = {};
   output.run = {
     mode,
+    visual_only: visualOnly,
+    burst_only: burstOnly,
     source_fingerprint_sha256: sourceFingerprint,
     sample_repeats: sampleRepeats,
     primary_samples_per_operation: sampleRepeats,
@@ -2767,6 +3206,7 @@ async function main() {
     old_output_format_changed: true,
   };
   output.sanity_scenarios = sanityScenarios;
+  output.presentation_visual_completion_probe = visualCompletionProbe;
   output.synthetic_mock_coverage_scenarios = mockCoverageScenarios;
   for (const [name, metrics] of samples) {
     const isPrimaryOperation = operationFailures.has(name);
