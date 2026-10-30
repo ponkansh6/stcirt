@@ -1569,7 +1569,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
   }
 });
 
-test("first-prize position is shared with the public projection and survives reload", async ({
+test("@chromium first-prize position is shared with the public projection and survives reload", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 800, height: 450 });
@@ -1634,7 +1634,7 @@ test("first-prize position is shared with the public projection and survives rel
   await publicPage.close();
 });
 
-test("rank reveal can advance into first prize while its automatic animation is active", async ({
+test("@chromium rank reveal can advance into first prize while its automatic animation is active", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -1689,7 +1689,7 @@ test("rank reveal can advance into first prize while its automatic animation is 
   await mutation;
 });
 
-test("finished skips the first-prize position when there is no first-place winner", async ({
+test("@chromium finished skips the first-prize position when there is no first-place winner", async ({
   page,
 }) => {
   const mock = await installAdminApiMock(page, { skipEmptyRanks: true });
