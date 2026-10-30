@@ -80,6 +80,12 @@
     transition: none !important;
     animation: none !important;
   }
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
 }
 
 @media (prefers-reduced-transparency: reduce) {

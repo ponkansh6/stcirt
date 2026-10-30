@@ -39,6 +39,7 @@ function session(phase: object, overrides: Record<string, unknown> = {}) {
     savedSelections: {},
     answeredCount: 0,
     restoreError: null,
+    saveConfirmed: (phase as { kind?: string }).kind === "complete",
     select: vi.fn(),
     setFreeResponse: vi.fn(),
     saveAnswers: vi.fn(),
@@ -131,7 +132,9 @@ describe("QuizRunner batch answer sheet", () => {
       currentPhase = { kind: "complete" };
       rerender(<RunnerPage />);
       expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しています…");
-      expect(screen.queryByRole("heading", { name: "回答済み" })).not.toBeInTheDocument();
+      const pendingCompletionHeading = screen.getByRole("heading", { name: "回答済み" });
+      expect(pendingCompletionHeading).toBeInTheDocument();
+      expect(document.activeElement).not.toBe(pendingCompletionHeading);
 
       await act(async () => {
         publicationRequest.resolve({
@@ -140,7 +143,12 @@ describe("QuizRunner batch answer sheet", () => {
           json: async () => ({ state: "waiting" }),
         } as Response);
       });
-      const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+      await waitFor(() =>
+        expect(
+          screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+        ).not.toBeInTheDocument(),
+      );
+      const completionHeading = screen.getByRole("heading", { name: "回答済み" });
       await waitFor(() => expect(document.activeElement).toBe(completionHeading));
     } finally {
       saveRequest.resolve();
@@ -186,6 +194,7 @@ describe("QuizRunner batch answer sheet", () => {
         ...currentSession,
         phase: completePhase,
         access: { kind: "checking" as const },
+        saveConfirmed: true,
       };
       rerender(<RunnerPage />);
       expect(screen.getByRole("status")).toHaveTextContent("参加状態を確認しています…");
@@ -197,7 +206,7 @@ describe("QuizRunner batch answer sheet", () => {
       };
       rerender(<RunnerPage />);
       expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しています…");
-      expect(screen.queryByRole("heading", { name: "回答済み" })).not.toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
 
       await act(async () => {
         publicationRequest.resolve({
@@ -206,7 +215,12 @@ describe("QuizRunner batch answer sheet", () => {
           json: async () => ({ state: "waiting" }),
         } as Response);
       });
-      const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+      await waitFor(() =>
+        expect(
+          screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+        ).not.toBeInTheDocument(),
+      );
+      const completionHeading = screen.getByRole("heading", { name: "回答済み" });
       await waitFor(() => expect(document.activeElement).toBe(completionHeading));
     } finally {
       publicationRequest.resolve({
@@ -241,42 +255,67 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+    await waitFor(() =>
+      expect(
+        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      ).not.toBeInTheDocument(),
+    );
+    const completionHeading = screen.getByRole("heading", { name: "回答済み" });
     await waitFor(() => expect(document.activeElement).toBe(completionHeading));
   });
 
   it("preserves focus moved elsewhere while the owner submission status is checked", async () => {
+    const saveRequest = deferred<void>();
+    const saveAnswers = vi.fn(() => saveRequest.promise);
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
       session(currentPhase, {
         selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
         answeredCount: 5,
+        saveAnswers,
       }),
     );
     const { rerender } = render(<RunnerPage />);
-    fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
-
-    currentPhase = { kind: "submitting" };
-    rerender(<RunnerPage />);
-    await waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByRole("heading", { name: "回答内容を確認してください" }),
-      ),
-    );
-
-    currentPhase = { kind: "checking-submission" };
-    rerender(<RunnerPage />);
     const externalControl = document.createElement("button");
     externalControl.textContent = "ページ内の別操作";
     document.body.append(externalControl);
     try {
+      fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+      expect(saveAnswers).toHaveBeenCalledOnce();
+
+      currentPhase = { kind: "submitting" };
+      rerender(<RunnerPage />);
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          screen.getByRole("heading", { name: "回答内容を確認してください" }),
+        ),
+      );
+
+      currentPhase = { kind: "checking-submission" };
+      rerender(<RunnerPage />);
       externalControl.focus();
+      expect(document.activeElement).toBe(externalControl);
+
+      await act(async () => {
+        saveRequest.resolve();
+        await saveRequest.promise;
+      });
 
       currentPhase = { kind: "complete" };
       rerender(<RunnerPage />);
-      expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      await waitFor(() =>
+        expect(
+          screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+        ).not.toBeInTheDocument(),
+      );
+      const completionHeading = screen.getByRole("heading", { name: "回答済み" });
+      expect(completionHeading).toBeInTheDocument();
       expect(document.activeElement).toBe(externalControl);
     } finally {
+      saveRequest.resolve();
+      await act(async () => {
+        await saveRequest.promise;
+      });
       externalControl.remove();
     }
   });
@@ -284,7 +323,12 @@ describe("QuizRunner batch answer sheet", () => {
   it("does not move focus to completion when the initial phase is already complete", async () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
     render(<RunnerPage />);
-    const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+    await waitFor(() =>
+      expect(
+        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      ).not.toBeInTheDocument(),
+    );
+    const completionHeading = screen.getByRole("heading", { name: "回答済み" });
     expect(document.activeElement).not.toBe(completionHeading);
   });
 
@@ -310,7 +354,12 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+    await waitFor(() =>
+      expect(
+        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      ).not.toBeInTheDocument(),
+    );
+    const completionHeading = screen.getByRole("heading", { name: "回答済み" });
     expect(document.activeElement).not.toBe(completionHeading);
   });
 
@@ -340,7 +389,12 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "complete" };
     rerender(<RunnerPage />);
-    const completionHeading = await screen.findByRole("heading", { name: "回答済み" });
+    await waitFor(() =>
+      expect(
+        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      ).not.toBeInTheDocument(),
+    );
+    const completionHeading = screen.getByRole("heading", { name: "回答済み" });
     expect(document.activeElement).not.toBe(completionHeading);
   });
 

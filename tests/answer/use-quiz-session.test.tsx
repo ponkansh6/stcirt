@@ -128,6 +128,7 @@ describe("useQuizSession hook", () => {
     await answerAll(result);
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase).toEqual({ kind: "complete" });
+    expect(result.current.saveConfirmed).toBe(true);
     expect(result.current.answeredCount).toBe(5);
     const posts = fetchMock.mock.calls.filter(
       ([url, init]) => url === "/api/answers/batch" && init?.method === "POST",
@@ -351,6 +352,7 @@ describe("useQuizSession hook", () => {
 
     expect(result.current.phase).toEqual({ kind: "complete" });
     expect(result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(result.current.saveConfirmed).toBe(false);
     expect(result.current.revision).toBe(1);
     act(() => result.current.editAnswers());
     expect(result.current.phase).toEqual({ kind: "complete" });
@@ -1199,7 +1201,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.phase.kind).toBe("complete");
   });
 
-  it("keeps completion locked when conflict recovery returns a different submission", async () => {
+  it("keeps completion unconfirmed when conflict recovery returns invalid saved answers", async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
@@ -1212,14 +1214,9 @@ describe("useQuizSession hook", () => {
         return {
           ok: true,
           json: async () => ({
-            submissionId: "00000000-0000-4000-8000-000000000002",
+            submissionId,
             revision: 2,
-            answers: [1, 2, 3, 4, 5].map((questionId) => ({
-              questionId,
-              answerKind: "selected",
-              selectedIndex: 0,
-              freeText: null,
-            })),
+            answers: [],
           }),
         };
       throw new Error(`Unexpected request: ${url}`);
@@ -1229,7 +1226,8 @@ describe("useQuizSession hook", () => {
     await answerAll(result);
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase).toEqual({ kind: "complete" });
-    expect(result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(result.current.restoreError).toBeTruthy();
+    expect(result.current.saveConfirmed).toBe(false);
     expect(result.current.answeredCount).toBe(5);
     act(() => result.current.editAnswers());
     expect(result.current.phase).toEqual({ kind: "complete" });
@@ -1401,6 +1399,7 @@ describe("useQuizSession hook", () => {
     );
     expect(result.current.freeResponses[5]).toBe("回答を保存しました。");
     expect(result.current.restoreError).toBeNull();
+    expect(result.current.saveConfirmed).toBe(true);
 
     act(() => result.current.editAnswers());
     expect(result.current.phase.kind).toBe("answering");
@@ -1418,6 +1417,7 @@ describe("useQuizSession hook", () => {
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
     expect(result.current.restoreError).toMatch(/復元できません/);
     expect(result.current.submissionId).toBe(submissionId);
+    expect(result.current.saveConfirmed).toBe(false);
   });
 
   it("does not start an attempt after a latest-submission failure and retries the lookup", async () => {

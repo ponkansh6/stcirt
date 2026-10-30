@@ -39,6 +39,34 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function publicationFetchMock(responses: Array<unknown>) {
+  return vi.fn((input: RequestInfo | URL) => {
+    if (String(input).startsWith("/api/answers/batch")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ resultsVisible: false }),
+      });
+    }
+    return Promise.resolve(responses.shift() ?? { ok: false, status: 503, json: async () => ({}) });
+  });
+}
+
+async function getSettledCompletionHeading() {
+  await waitFor(() =>
+    expect(
+      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+    ).not.toBeInTheDocument(),
+  );
+  return screen.getByRole("heading", { name: "回答済み" });
+}
+
+function publicationRequestCount(fetchMock: ReturnType<typeof publicationFetchMock>) {
+  return fetchMock.mock.calls.filter(([input]) =>
+    String(input).startsWith("/api/participants/results"),
+  ).length;
+}
+
 function session(phase: object, overrides: Record<string, unknown> = {}) {
   return {
     access: { kind: "ready", participant: { id: 7, name: "参加者" } },
@@ -53,8 +81,11 @@ function session(phase: object, overrides: Record<string, unknown> = {}) {
     freeResponses: {},
     legacyAnswerIds: [],
     savedSelections: {},
+    revision: 0,
+    submissionId: null,
     answeredCount: 0,
     restoreError: null,
+    saveConfirmed: (phase as { kind?: string }).kind === "complete",
     select: vi.fn(),
     setFreeResponse: vi.fn(),
     saveAnswers: vi.fn(),
@@ -82,6 +113,7 @@ describe("QuizRunner batch answer sheet", () => {
   beforeEach(() => mockUseQuizSession.mockReset());
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     if (visibilityStateDescriptor) {
       Object.defineProperty(document, "visibilityState", visibilityStateDescriptor);
@@ -108,7 +140,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(saveAnswers).toHaveBeenCalledOnce();
   });
 
-  it("shows only publication loading until the first valid result response", async () => {
+  it("separates confirmed answer saving from publication loading until a valid result response", async () => {
     const editAnswers = vi.fn();
     const openAssistedLogin = vi.fn();
     const pendingResult = deferred<Response>();
@@ -134,7 +166,10 @@ describe("QuizRunner batch answer sheet", () => {
     expect(
       screen.getByText("結果の公開状況を確認しています…", { exact: true }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "回答済み" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText("回答は保存されています。結果の公開状況を確認しています。"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
@@ -159,6 +194,228 @@ describe("QuizRunner batch answer sheet", () => {
     expect(openAssistedLogin).toHaveBeenCalledOnce();
   });
 
+  it("offers a GET-only manual retry after an initial publication lookup failure", async () => {
+    const saveAnswers = vi.fn();
+    const pendingRetry = deferred<Response>();
+    let resultRequest = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/answers/batch")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ resultsVisible: false }),
+        });
+      }
+      resultRequest += 1;
+      return resultRequest === 1
+        ? Promise.resolve({ ok: false, status: 503, json: async () => ({}) })
+        : pendingRetry.promise;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { saveAnswers, revision: 1, submissionId: "submission-1" }),
+    );
+
+    render(<RunnerPage />);
+    const retry = await screen.findByRole("button", { name: "もう一度確認する" });
+    expect(screen.getByText(/回答は再送せず/)).toBeInTheDocument();
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    fireEvent(document, new Event("visibilitychange"));
+    expect(publicationRequestCount(fetchMock)).toBe(1);
+    retry.focus();
+    fireEvent.click(retry);
+    await waitFor(() => expect(publicationRequestCount(fetchMock)).toBe(2));
+    expect(screen.getByRole("button", { name: "確認しています…" })).toBeDisabled();
+    fireEvent(document, new Event("visibilitychange"));
+    expect(publicationRequestCount(fetchMock)).toBe(2);
+    fireEvent.click(screen.getByRole("button", { name: "確認しています…" }));
+    expect(publicationRequestCount(fetchMock)).toBe(2);
+
+    await act(async () => {
+      pendingRetry.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      } as Response);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "回答を修正する" })).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しました。");
+    expect(screen.getByRole("heading", { name: "回答済み" })).toHaveFocus();
+    expect(publicationRequestCount(fetchMock)).toBe(2);
+    expect(saveAnswers).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a repeated HTTP failure", { ok: false, status: 503, json: async () => ({}) }],
+    ["a malformed payload", { ok: true, status: 200, json: async () => ({ state: "unknown" }) }],
+  ])("keeps unknown with retry guidance after retry returns %s", async (_label, retryResponse) => {
+    const fetchMock = publicationFetchMock([
+      { ok: false, status: 503, json: async () => ({}) },
+      retryResponse,
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { revision: 1, submissionId: "submission-1" }),
+    );
+    render(<RunnerPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "もう一度確認する" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "もう一度確認する" })).toBeInTheDocument();
+      expect(publicationRequestCount(fetchMock)).toBe(2);
+    });
+    expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(
+      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+  });
+
+  it("preserves the user's new focus if it moves away while publication retry is pending", async () => {
+    const pendingRetry = deferred<Response>();
+    let resultRequest = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/answers/batch")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ resultsVisible: false }),
+        });
+      }
+      resultRequest += 1;
+      return resultRequest === 1
+        ? Promise.resolve({ ok: false, status: 503, json: async () => ({}) })
+        : pendingRetry.promise;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { revision: 1, submissionId: "submission-1" }),
+    );
+    render(
+      <>
+        <button type="button">別の操作</button>
+        <RunnerPage />
+      </>,
+    );
+
+    const retry = await screen.findByRole("button", { name: "もう一度確認する" });
+    retry.focus();
+    fireEvent.click(retry);
+    await waitFor(() => expect(publicationRequestCount(fetchMock)).toBe(2));
+    const busyRetry = screen.getByRole("button", { name: "確認しています…" });
+    expect(busyRetry).toHaveFocus();
+    fireEvent.focusIn(busyRetry);
+    screen.getByRole("button", { name: "別の操作" }).focus();
+
+    await act(async () => {
+      pendingRetry.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      } as Response);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "回答を修正する" })).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "別の操作" })).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しました。");
+  });
+
+  it("prioritizes reauthentication after a manual publication retry returns 401", async () => {
+    const saveAnswers = vi.fn();
+    const fetchMock = publicationFetchMock([
+      { ok: false, status: 503, json: async () => ({}) },
+      { ok: false, status: 401, json: async () => ({}) },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { saveAnswers, revision: 1, submissionId: "submission-1" }),
+    );
+    render(<RunnerPage />);
+
+    const retry = await screen.findByRole("button", { name: "もう一度確認する" });
+    retry.focus();
+    fireEvent.click(retry);
+
+    const reauthentication = await screen.findByRole("region", {
+      name: "参加状態の確認が必要です",
+    });
+    expect(
+      within(reauthentication).getByRole("heading", { name: "参加状態の確認が必要です" }),
+    ).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "もう一度確認する" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/結果の公開状況を再確認しています/)).not.toBeInTheDocument();
+    expect(publicationRequestCount(fetchMock)).toBe(2);
+    expect(saveAnswers).not.toHaveBeenCalled();
+  });
+
+  it("ignores a late participant-results response after unmount and participant scope change", async () => {
+    const oldResult = deferred<Response>();
+    const newResult = deferred<Response>();
+    let resultRequest = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/answers/batch")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ resultsVisible: false }),
+        });
+      }
+      resultRequest += 1;
+      return resultRequest === 1 ? oldResult.promise : newResult.promise;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const saveAnswers = vi.fn();
+    let currentSession = session({ kind: "complete" }, { saveAnswers });
+    mockUseQuizSession.mockImplementation(() => currentSession);
+    const firstPage = render(<RunnerPage />);
+    firstPage.unmount();
+
+    currentSession = session(
+      { kind: "complete" },
+      {
+        access: { kind: "ready", participant: { id: 8, name: "別の参加者" } },
+        saveAnswers,
+      },
+    );
+    render(<RunnerPage />);
+    expect(resultRequest).toBe(2);
+
+    await act(async () => {
+      oldResult.resolve({
+        ok: true,
+        status: 200,
+        json: async () => visibleResultsPayload,
+      } as Response);
+    });
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      newResult.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      } as Response);
+    });
+    expect(
+      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+    expect(saveAnswers).not.toHaveBeenCalled();
+  });
+
   it.each(["visible", "unavailable"] as const)(
     "hides correction on the first completion render for %s results while the batch check is pending",
     async (state) => {
@@ -181,7 +438,7 @@ describe("QuizRunner batch answer sheet", () => {
 
       render(<RunnerPage />);
 
-      expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      expect(await getSettledCompletionHeading()).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
       expect(
         screen.queryByText(
@@ -220,7 +477,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     render(<RunnerPage />);
 
-    expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(await getSettledCompletionHeading()).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     await act(async () => {
       pendingBatch.resolve({
@@ -271,7 +528,7 @@ describe("QuizRunner batch answer sheet", () => {
         } as Response);
       });
 
-      expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      expect(await getSettledCompletionHeading()).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     },
   );
@@ -296,7 +553,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     render(<RunnerPage />);
 
-    expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(await getSettledCompletionHeading()).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(
       screen.queryByText(
@@ -338,7 +595,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     render(<RunnerPage />);
 
-    expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(await getSettledCompletionHeading()).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
   });
 
@@ -425,7 +682,7 @@ describe("QuizRunner batch answer sheet", () => {
 
       render(<RunnerPage />);
 
-      expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      expect(await getSettledCompletionHeading()).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
     },
   );
@@ -503,7 +760,7 @@ describe("QuizRunner batch answer sheet", () => {
     mockUseQuizSession.mockImplementation(() => currentSession);
     const { rerender } = render(<RunnerPage />);
 
-    expect(await screen.findByRole("heading", { name: "回答済み" })).toBeVisible();
+    expect(await getSettledCompletionHeading()).toBeVisible();
     expect(screen.queryByText(/正解|不正解|合格|得点|正答率/)).not.toBeInTheDocument();
     const editButton = await screen.findByRole("button", { name: "回答を修正する" });
     await waitFor(() => expect(editButton).toBeEnabled());
@@ -561,20 +818,22 @@ describe("QuizRunner batch answer sheet", () => {
         screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
       ).not.toBeInTheDocument();
     } else if (_label === "unknown results") {
+      expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "もう一度確認する" })).toBeInTheDocument();
       expect(
-        screen.getByText("結果の公開状況を確認しています…", { exact: true }),
-      ).toBeInTheDocument();
-      expect(screen.queryByRole("heading", { name: "回答済み" })).not.toBeInTheDocument();
+        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      ).not.toBeInTheDocument();
     } else if (_label === "expired authentication") {
       expect(screen.getByRole("region", { name: "参加状態の確認が必要です" })).toBeInTheDocument();
       expect(
         screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
       ).not.toBeInTheDocument();
     } else {
+      expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "もう一度確認する" })).toBeInTheDocument();
       expect(
-        screen.getByText("結果の公開状況を確認しています…", { exact: true }),
-      ).toBeInTheDocument();
-      expect(screen.queryByRole("heading", { name: "回答済み" })).not.toBeInTheDocument();
+        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      ).not.toBeInTheDocument();
     }
   });
 
@@ -640,10 +899,20 @@ describe("QuizRunner batch answer sheet", () => {
 
   it("does not reuse a confirmed CTA after ready reauthentication and return to ready", async () => {
     const pendingAfterReauthentication = deferred<Response>();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => visibleResultsPayload })
-      .mockImplementationOnce(() => pendingAfterReauthentication.promise);
+    let resultRequest = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/answers/batch")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ resultsVisible: false }),
+        });
+      }
+      resultRequest += 1;
+      return resultRequest === 1
+        ? Promise.resolve({ ok: true, status: 200, json: async () => visibleResultsPayload })
+        : pendingAfterReauthentication.promise;
+    });
     vi.stubGlobal("fetch", fetchMock);
     const completePhase = { kind: "complete" };
     let currentSession = session(completePhase);
@@ -687,10 +956,20 @@ describe("QuizRunner batch answer sheet", () => {
 
   it("retries publication lookup after form authentication recovers a results API 401", async () => {
     const pendingAfterLogin = deferred<Response>();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
-      .mockImplementationOnce(() => pendingAfterLogin.promise);
+    let resultRequest = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/answers/batch")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ resultsVisible: false }),
+        });
+      }
+      resultRequest += 1;
+      return resultRequest === 1
+        ? Promise.resolve({ ok: false, status: 401, json: async () => ({}) })
+        : pendingAfterLogin.promise;
+    });
     vi.stubGlobal("fetch", fetchMock);
     const login = vi.fn(async () => 7);
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }, { login }));
@@ -708,7 +987,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(
       screen.getByText("結果の公開状況を確認しています…", { exact: true }),
     ).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(publicationRequestCount(fetchMock)).toBe(2));
     expect(
       screen.queryByRole("region", { name: "参加状態の確認が必要です" }),
     ).not.toBeInTheDocument();
@@ -783,18 +1062,18 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
   });
 
-  it("keeps the initial completion surface in loading after a network failure", async () => {
+  it("offers manual recovery after an initial network failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
 
     render(<RunnerPage />);
 
-    await waitFor(() => {
-      expect(
-        screen.getByText("結果の公開状況を確認しています…", { exact: true }),
-      ).toBeInTheDocument();
-    });
-    expect(screen.queryByRole("heading", { name: "回答済み" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "もう一度確認する" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(screen.getByText(/確認できませんでした/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
   });
@@ -983,7 +1262,7 @@ describe("QuizRunner batch answer sheet", () => {
     );
     render(<RunnerPage />);
 
-    expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(await getSettledCompletionHeading()).toBeInTheDocument();
     expect(screen.queryByText(/回答は完了しています。結果/)).not.toBeInTheDocument();
     const nameTerm = screen.getByRole("term");
     expect(nameTerm).toHaveTextContent("氏名");
@@ -1007,28 +1286,26 @@ describe("QuizRunner batch answer sheet", () => {
 
   it("hides the assisted answer action for published results without a manual status button", async () => {
     const editAnswers = vi.fn();
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce({ ok: true, json: async () => visibleResultsPayload })
-        .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) }),
-    );
+    const fetchMock = publicationFetchMock([
+      { ok: true, status: 200, json: async () => visibleResultsPayload },
+      { ok: false, status: 503, json: async () => ({}) },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }, { editAnswers }));
 
     render(<RunnerPage />);
 
     const resultLink = await screen.findByRole("link", { name: "自分の結果を見る" });
     expect(resultLink).toHaveAttribute("href", "/results");
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(publicationRequestCount(fetchMock)).toBe(1);
     expect(screen.queryByRole("button", { name: /公開状況/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
     document.dispatchEvent(new Event("visibilitychange"));
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(publicationRequestCount(fetchMock)).toBe(1);
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
     document.dispatchEvent(new Event("visibilitychange"));
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(publicationRequestCount(fetchMock)).toBe(2));
     expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
     expect(resultLink).toBeInTheDocument();
   });

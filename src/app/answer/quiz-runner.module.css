@@ -17,3 +17,20 @@
     min-height: 6lh;
   }
 }
+
+.loadingSkeleton {
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  animation: answer-loading-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes answer-loading-pulse {
+  50% {
+    opacity: 0.48;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loadingSkeleton {
+    animation: none;
+  }
+}

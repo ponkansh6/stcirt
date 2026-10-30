@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  ViewTransition,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import Image from "next/image";
 import Link, { useLinkStatus } from "next/link";
 import { useQuizSession } from "./use-quiz-session";
@@ -331,6 +339,7 @@ export default function QuizRunner() {
     access,
     phase,
     restoreError,
+    saveConfirmed,
     quizzes,
     selections,
     freeResponses,
@@ -351,8 +360,11 @@ export default function QuizRunner() {
   } = useQuizSession();
   const questionRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const publicationRetryButtonRef = useRef<HTMLButtonElement | null>(null);
+  const shouldRestorePublicationRetryFocus = useRef(false);
   const finalCheckHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const completionHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const completionReauthenticationHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const previousPhaseKind = useRef(phase.kind);
   const shouldFocusSubmissionRef = useRef(false);
   const shouldFocusCompletion = useRef(false);
@@ -363,6 +375,8 @@ export default function QuizRunner() {
     status: participantResultsStatus,
     state: participantResultsState,
     visible: participantResultsVisible,
+    lookupStatus: participantResultsLookupStatus,
+    retry: retryParticipantResults,
     authExpired: participantResultsAuthExpired,
     clearAuthExpired: clearParticipantResultsAuthExpired,
   } = useParticipantResultsVisibility(phase, access, answerMode);
@@ -474,6 +488,44 @@ export default function QuizRunner() {
     }
     shouldFocusCompletion.current = false;
   }, [access.kind, participantResultsStatus, phase.kind, ui.surface]);
+  useLayoutEffect(() => {
+    if (
+      participantResultsLookupStatus !== "retrying" ||
+      !shouldRestorePublicationRetryFocus.current
+    ) {
+      return;
+    }
+    const retryButton = publicationRetryButtonRef.current;
+    const leaveRetryFocusFlow = (target: EventTarget | null) => {
+      if (
+        target instanceof HTMLElement &&
+        target !== retryButton &&
+        target !== document.body &&
+        !retryButton?.contains(target)
+      ) {
+        shouldRestorePublicationRetryFocus.current = false;
+      }
+    };
+    const onFocusIn = (event: FocusEvent) => leaveRetryFocusFlow(event.target);
+    const onFocusOut = (event: FocusEvent) => leaveRetryFocusFlow(event.relatedTarget);
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, [participantResultsLookupStatus]);
+  useEffect(() => {
+    if (!shouldRestorePublicationRetryFocus.current) return;
+    if (participantResultsStatus === "reauthentication") {
+      shouldRestorePublicationRetryFocus.current = false;
+      completionReauthenticationHeadingRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    if (participantResultsStatus !== "confirmed") return;
+    shouldRestorePublicationRetryFocus.current = false;
+    completionHeadingRef.current?.focus({ preventScroll: true });
+  }, [participantResultsLookupStatus, participantResultsStatus]);
   const ownerName =
     access.kind === "ready" || access.kind === "reauthentication"
       ? access.participant.name || "本人"
@@ -666,9 +718,33 @@ export default function QuizRunner() {
   if (ui.surface === "loading") {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
-        <p className="w-full text-center text-muted" role="status" aria-live="polite">
-          {ui.status}
-        </p>
+        <div className="w-full">
+          <p className="mb-6 text-center text-muted" role="status" aria-live="polite">
+            {ui.status}
+          </p>
+          <div aria-busy="true">
+            <div aria-hidden="true" className="space-y-5">
+              {[0, 1, 2, 3, 4].map((question) => (
+                <section
+                  key={question}
+                  className="space-y-5 rounded-2xl border border-border-subtle p-6"
+                >
+                  <div className={`${styles.loadingSkeleton} h-6 w-2/3 rounded`} />
+                  <div className="space-y-3">
+                    {[0, 1, 2, 3].map((choice) => (
+                      <div key={choice} className={`${styles.loadingSkeleton} h-12 rounded-xl`} />
+                    ))}
+                  </div>
+                </section>
+              ))}
+              <section className="space-y-4 rounded-2xl border border-border-subtle p-6">
+                <div className={`${styles.loadingSkeleton} h-6 w-1/2 rounded`} />
+                <div className={`${styles.loadingSkeleton} h-4 w-2/3 rounded`} />
+                <div className={`${styles.loadingSkeleton} h-12 w-52 rounded-xl`} />
+              </section>
+            </div>
+          </div>
+        </div>
       </main>
     );
   }
@@ -714,14 +790,59 @@ export default function QuizRunner() {
     if (access.kind === "ready" && participantResultsStatus === "unknown") {
       return (
         <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
-          <p className="w-full text-center text-muted" role="status" aria-live="polite">
-            結果の公開状況を確認しています…
-          </p>
+          <ParticipantCard>
+            <h1
+              ref={completionHeadingRef}
+              tabIndex={-1}
+              className="text-2xl font-bold focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4"
+            >
+              {saveConfirmed && !restoreError ? "回答済み" : "回答状態の確認が必要です"}
+            </h1>
+            {restoreError && (
+              <p className="mt-3 text-error" role="alert">
+                {restoreError}
+              </p>
+            )}
+            {saveConfirmed && !restoreError && (
+              <p className="mt-3 text-sm leading-relaxed text-muted">
+                回答は保存されています。結果の公開状況を確認しています。
+              </p>
+            )}
+            {participantResultsLookupStatus === "error" ||
+            participantResultsLookupStatus === "retrying" ? (
+              <>
+                <p className="mt-4 text-muted" role="status" aria-live="polite">
+                  {participantResultsLookupStatus === "retrying"
+                    ? "結果の公開状況を再確認しています…"
+                    : "結果の公開状況を確認できませんでした。回答は再送せず、公開状況だけをもう一度確認できます。"}
+                </p>
+                <Button
+                  ref={publicationRetryButtonRef}
+                  className="mt-6"
+                  onClick={() => {
+                    shouldRestorePublicationRetryFocus.current =
+                      document.activeElement === publicationRetryButtonRef.current;
+                    retryParticipantResults();
+                  }}
+                  disabled={participantResultsLookupStatus === "retrying"}
+                >
+                  {participantResultsLookupStatus === "retrying"
+                    ? "確認しています…"
+                    : "もう一度確認する"}
+                </Button>
+              </>
+            ) : (
+              <p className="mt-4 text-muted" role="status" aria-live="polite">
+                結果の公開状況を確認しています…
+              </p>
+            )}
+          </ParticipantCard>
         </main>
       );
     }
     const answeringForAssisted = answerMode === "assisted";
     const canCorrectAnswers =
+      !restoreError &&
       participantResultsStatus === "confirmed" &&
       participantResultsState === "waiting" &&
       visibilityStatus === "unlocked";
@@ -737,13 +858,24 @@ export default function QuizRunner() {
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
           <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
-          <h1
-            ref={completionHeadingRef}
-            tabIndex={-1}
-            className="text-3xl font-bold tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4"
+          <ViewTransition
+            key={saveConfirmed && !restoreError ? "saved" : "unconfirmed"}
+            name="answer-confirmation"
+            default="auto"
           >
-            {ui.status}
-          </h1>
+            <h1
+              ref={completionHeadingRef}
+              tabIndex={-1}
+              className="text-3xl font-bold tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4"
+            >
+              {saveConfirmed && !restoreError ? ui.status : "回答状態の確認が必要です"}
+            </h1>
+          </ViewTransition>
+          {participantResultsLookupStatus === "retry-success" && (
+            <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+              結果の公開状況を確認しました。
+            </p>
+          )}
           {ui.message && (
             <p className="mt-4 text-muted" role={ui.statusRole} aria-live="polite">
               {ui.message}
@@ -770,7 +902,12 @@ export default function QuizRunner() {
               className="mt-6 rounded-xl border border-border-subtle bg-surface-2 p-5"
               aria-labelledby="complete-reauth-title"
             >
-              <h2 id="complete-reauth-title" className="text-lg font-bold">
+              <h2
+                ref={completionReauthenticationHeadingRef}
+                id="complete-reauth-title"
+                tabIndex={-1}
+                className="text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4"
+              >
                 参加状態の確認が必要です
               </h2>
               {ui.message && (
@@ -794,7 +931,7 @@ export default function QuizRunner() {
               onClick={editAnswers}
               className="mt-8"
               disabled={Boolean(restoreError)}
-              variant={ui.primaryAction === "edit-answers" ? "primary" : "outline"}
+              variant="primary"
             >
               回答を修正する
             </Button>
@@ -804,8 +941,10 @@ export default function QuizRunner() {
             !restoreError && (
               <p
                 className="mt-3 text-sm leading-relaxed text-muted"
-                role="status"
-                aria-live="polite"
+                role={participantResultsLookupStatus === "retry-success" ? undefined : "status"}
+                aria-live={
+                  participantResultsLookupStatus === "retry-success" ? undefined : "polite"
+                }
               >
                 回答の公開状態を確認しています。確認できるまで編集はできません。
               </p>

@@ -613,7 +613,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
   });
 
-  it("keeps correction disabled when saved answers could not be restored", async () => {
+  it("hides correction when saved answers could not be restored", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) =>
@@ -641,8 +641,14 @@ describe("QuizRunner batch answer sheet", () => {
       ),
     );
     render(<RunnerPage />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("回答を復元できません");
-    expect(screen.getByRole("button", { name: "回答を修正する" })).toBeDisabled();
+    await waitFor(() =>
+      expect(
+        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("heading", { name: "回答状態の確認が必要です" })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("回答を復元できません");
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
   });
 
   it("preserves the draft and provides explicit controls after save conflict or saved-answer refresh failure", () => {

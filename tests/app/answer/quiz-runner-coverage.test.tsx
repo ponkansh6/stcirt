@@ -79,6 +79,7 @@ function session(phase: object, overrides: Record<string, unknown> = {}) {
     legacyAnswerIds: [],
     savedSelections: {},
     answeredCount: 0,
+    saveConfirmed: (phase as { kind?: string }).kind === "complete",
     select: vi.fn(),
     setFreeResponse: vi.fn(),
     saveAnswers: vi.fn(),
@@ -688,11 +689,19 @@ describe("QuizRunner remaining coverage states", () => {
     const resumeAssisted = vi.fn();
     const returnToOwner = vi.fn();
     const completePhase = { kind: "complete" };
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({ state: "waiting" }),
-    } as Response);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () =>
+            String(input).startsWith("/api/answers/batch")
+              ? { resultsVisible: false }
+              : { state: "waiting" },
+        }),
+      ),
+    );
     mockUseQuizSession.mockReturnValue(
       session(completePhase, {
         assistedParticipant: {
@@ -717,6 +726,8 @@ describe("QuizRunner remaining coverage states", () => {
           hasSubmission: true,
           eligible: false,
         },
+        revision: 1,
+        submissionId: "assisted-submission-1",
       }),
     );
     rerender(<QuizRunner />);
@@ -828,17 +839,30 @@ describe("QuizRunner remaining coverage states", () => {
   ])(
     "uses a generic assisted identity at completion when %s",
     async (_label, assistedParticipant) => {
-      vi.mocked(fetch).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ state: "waiting" }),
-      } as Response);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL) =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () =>
+              String(input).startsWith("/api/answers/batch")
+                ? { resultsVisible: false }
+                : { state: "waiting" },
+          }),
+        ),
+      );
       mockUseQuizSession.mockReturnValue(
         session({ kind: "complete" }, { answerMode: "assisted", assistedParticipant }),
       );
       render(<QuizRunner />);
 
-      expect(await screen.findByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+      await waitFor(() =>
+        expect(
+          screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+        ).not.toBeInTheDocument(),
+      );
+      expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
       const { definition, field: answererField } = getAnswererNameField(screen.getByRole("main"));
       expect(definition).toHaveTextContent("代理回答者");
       expect(within(answererField).getByText("代理回答", { exact: true })).toBeInTheDocument();
@@ -966,7 +990,7 @@ describe("QuizRunner remaining coverage states", () => {
     );
   });
 
-  it("ignores an older results payload when visibility queues a newer request", async () => {
+  it("coalesces resume events during the initial lookup and ignores its stale response", async () => {
     const stalePayload = deferred<{ state: string }>();
     const currentPayload = deferred<{ state: string }>();
     vi.mocked(fetch)
@@ -986,6 +1010,9 @@ describe("QuizRunner remaining coverage states", () => {
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
     try {
       document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(fetch).toHaveBeenCalledOnce();
       stalePayload.resolve(visibleResultsPayload);
       await stalePayload.promise;
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));

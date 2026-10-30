@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import type {
   AnswerScope,
   AnswerSubmission,
@@ -346,6 +346,7 @@ export function useQuizSession() {
   const [submissionId, setSubmissionId] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [saveConfirmed, setSaveConfirmed] = useState(false);
   const mountedRef = useRef(false);
   const sessionEpochRef = useRef(0);
   const busyRef = useRef(false);
@@ -411,6 +412,7 @@ export function useQuizSession() {
         reloadedAssistedRef.current = initialMode === "assisted";
         answerModeRef.current = initialMode;
         setAnswerMode(initialMode);
+        setSaveConfirmed(false);
         setAssistedScreen(initialMode === "assisted" ? "active" : "closed");
         setAssistedParticipant(assisted);
         if (initialMode === "owner") window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
@@ -660,6 +662,7 @@ export function useQuizSession() {
           setRestoreError(
             "保存済み回答を復元するための設問を読み込めませんでした。時間をおいて再読み込みしてください。",
           );
+          setSaveConfirmed(false);
           setPhase({ kind: "complete" });
           return;
         }
@@ -676,6 +679,7 @@ export function useQuizSession() {
             return;
           }
           setRestoreError("保存済み回答と現在の設問が一致しないため、回答を復元できません。");
+          setSaveConfirmed(false);
           setPhase({ kind: "complete" });
           return;
         }
@@ -690,6 +694,7 @@ export function useQuizSession() {
             Object.values(restored.freeResponses).filter((value) => value.trim()).length,
         );
         setRestoreError(null);
+        startTransition(() => setSaveConfirmed(true));
         if (scope === "owner") ownerReturnAfterAssistedSaveRef.current = false;
         if (scope === "assisted" && editAssistedSubmission) {
           setPhase({ kind: "answering" });
@@ -812,6 +817,7 @@ export function useQuizSession() {
       preserveDraftOnSavedRefreshRef.current = false;
       answerModeRef.current = "assisted";
       setAnswerMode("assisted");
+      setSaveConfirmed(false);
       setAssistedScreen("active");
       setAssistedParticipant({ participant, hasSubmission, eligible });
       assistedParticipantIdRef.current = participant.id;
@@ -899,6 +905,7 @@ export function useQuizSession() {
       sessionEpochRef.current += 1;
       answerModeRef.current = "owner";
       setAnswerMode("owner");
+      setSaveConfirmed(false);
       setAssistedScreen("closed");
       window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
       quizzesRef.current = [];
@@ -940,6 +947,7 @@ export function useQuizSession() {
             setAssistedScreen("closed");
             answerModeRef.current = "owner";
             setAnswerMode("owner");
+            setSaveConfirmed(false);
           }
           if (ownerReturnAfterAssistedSaveRef.current && !sameParticipant) {
             ownerReturnAfterAssistedSaveRef.current = false;
@@ -995,6 +1003,7 @@ export function useQuizSession() {
       assistedParticipantIdRef.current = null;
       answerModeRef.current = "owner";
       setAnswerMode("owner");
+      setSaveConfirmed(false);
       setAssistedScreen("closed");
       sessionEpochRef.current += 1;
       quizzesRef.current = [];
@@ -1107,6 +1116,7 @@ export function useQuizSession() {
       persistAssistedDraft();
     }
     busyRef.current = true;
+    setSaveConfirmed(false);
     setPhase({ kind: "submitting" });
     try {
       const result = await submitAnswerBatch(
@@ -1121,6 +1131,7 @@ export function useQuizSession() {
       if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
       if (result.submissionId !== currentSubmissionId) {
         setRestoreError("保存済み回答と現在の設問が一致しないため、回答を復元できません。");
+        setSaveConfirmed(false);
         failedAttemptRef.current = null;
         setPhase({ kind: "complete" });
         return;
@@ -1134,6 +1145,7 @@ export function useQuizSession() {
       setRevision(result.revision);
       revisionRef.current = result.revision;
       failedAttemptRef.current = null;
+      startTransition(() => setSaveConfirmed(true));
       setPhase({ kind: "complete" });
       setRestoreError(null);
       if (scope === "assisted") {
@@ -1185,6 +1197,7 @@ export function useQuizSession() {
             if (mountedRef.current && sessionEpoch === sessionEpochRef.current) {
               if (refreshError instanceof InvalidSavedSubmissionError) {
                 setRestoreError(refreshError.message);
+                setSaveConfirmed(false);
                 setPhase({ kind: "complete" });
                 return;
               }
@@ -1272,6 +1285,7 @@ export function useQuizSession() {
         if (error instanceof InvalidSavedSubmissionError) {
           preserveDraftOnSavedRefreshRef.current = false;
           setRestoreError(error.message);
+          setSaveConfirmed(false);
           setPhase({ kind: "complete" });
           return;
         }
@@ -1295,6 +1309,7 @@ export function useQuizSession() {
   const editAnswers = useCallback(() => {
     if (phaseRef.current.kind !== "complete" || restoreError) return;
     const restored = copySelections(savedSelections);
+    setSaveConfirmed(false);
     selectionsRef.current = restored;
     setSelections(restored);
     setAnsweredCount(
@@ -1336,6 +1351,7 @@ export function useQuizSession() {
     submissionId,
     revision,
     restoreError,
+    saveConfirmed,
     select,
     setFreeResponse,
     saveAnswers,
