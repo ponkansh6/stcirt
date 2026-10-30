@@ -1236,6 +1236,7 @@ describe("presentation repository", () => {
       ["podium_preview", 1],
       ["third", 1],
       ["first", 1],
+      ["first_prize", 1],
       ["finished", 1],
     ]);
     expect(deck.slides[1]?.projection).toMatchObject({
@@ -1283,6 +1284,9 @@ describe("presentation repository", () => {
         { displayName: "First", questionResults: [{ position: 0 }, { position: 1 }] },
         { displayName: "Tied", questionResults: [{ position: 0 }, { position: 1 }] },
       ],
+    });
+    expect(deck.slides.find(({ state }) => state === "first_prize")?.projection).toEqual({
+      state: "first_prize",
     });
   });
 
@@ -1651,7 +1655,7 @@ describe("presentation repository", () => {
     await expect(getPublicPresentation()).resolves.toMatchObject({ state: "question" });
   });
 
-  it("moves backward across skipped podium ranks and returns from finished to the last existing rank", async () => {
+  it("moves through the first-prize slide symmetrically and returns from finished to it", async () => {
     await addQuestions();
     const first = await addParticipant("Winner");
     const second = await addParticipant("Runner up");
@@ -1663,10 +1667,16 @@ describe("presentation repository", () => {
     await op("advance", "advance-to-second");
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "second" });
     await op("advance", "advance-to-first");
+    await expect(getAdminPresentation()).resolves.toMatchObject({ state: "first" });
+    await op("advance", "advance-to-prize");
+    await expect(getAdminPresentation()).resolves.toMatchObject({ state: "first_prize" });
+    await expect(getPublicPresentation()).resolves.toEqual({ state: "first_prize" });
     await op("advance", "advance-to-finished");
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "finished" });
 
     await op("previous", "back-to-last-rank");
+    await expect(getAdminPresentation()).resolves.toMatchObject({ state: "first_prize" });
+    await op("previous", "back-to-first");
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "first" });
     await op("previous", "back-to-runner-up");
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "second" });
@@ -2061,6 +2071,24 @@ describe("presentation repository", () => {
     await expect(
       setPresentationPosition("position-validation-missing-rank", "third", 1, 1, 3),
     ).rejects.toMatchObject({ status: 409, message: "Invalid presentation position" });
+    await expect(
+      setPresentationPosition("position-validation-missing-prize", "first_prize", 1, 1, 3),
+    ).rejects.toMatchObject({ status: 409, message: "Invalid presentation position" });
+  });
+
+  it("accepts a direct first-prize position only when first place exists", async () => {
+    await addRankFixture();
+    await startWithAggregate("first-prize-position-start");
+
+    const positioned = await setPresentationPosition(
+      "first-prize-position-valid",
+      "first_prize",
+      1,
+      1,
+      3,
+    );
+    expect(positioned).toMatchObject({ state: "first_prize", questionIndex: 1 });
+    await expect(getPublicPresentation()).resolves.toEqual({ state: "first_prize" });
   });
 
   it("rejects unknown presentation states and non-integer question indices", async () => {
@@ -2110,13 +2138,14 @@ describe("presentation repository", () => {
     await startWithAggregate("terminal-deck-cursor");
     const deck = await getAdminPresentationDeck();
     const terminalSlides = deck.slides.filter(({ state }) =>
-      ["podium_preview", "third", "first", "finished"].includes(state),
+      ["podium_preview", "third", "first", "first_prize", "finished"].includes(state),
     );
     expect(deck.questionIndex).toBe(0);
     expect(terminalSlides.map(({ state, questionIndex }) => [state, questionIndex])).toEqual([
       ["podium_preview", 1],
       ["third", 1],
       ["first", 1],
+      ["first_prize", 1],
       ["finished", 1],
     ]);
 
@@ -2141,6 +2170,10 @@ describe("presentation repository", () => {
       setPresentationPosition("terminal-deck-jump-finished", "finished", 1, 1, third.version),
     ).resolves.toMatchObject({ state: "finished", questionIndex: 1 });
     await expect(op("previous", "terminal-deck-finished-back")).resolves.toMatchObject({
+      state: "first_prize",
+      questionIndex: 1,
+    });
+    await expect(op("previous", "terminal-deck-prize-back")).resolves.toMatchObject({
       state: "first",
       questionIndex: 1,
     });
@@ -3445,6 +3478,51 @@ describe("presentation repository", () => {
     await expect(operatePresentation("empty-finished-back", "previous")).resolves.toMatchObject({
       state: "podium_preview",
     });
+  });
+
+  it("returns from finished to second place when rank one and its prize slide are absent", async () => {
+    await addQuestions();
+    const runnerUp = await addParticipant("Second place only");
+    await addSubmission(runnerUp, [0, 0]);
+    await startWithAggregate("no-first-finished-start");
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ rank: 2 })
+      .where(eq(schema.presentationEntries.participantId, runnerUp));
+
+    const deck = await getAdminPresentationDeck();
+    expect(deck.slides.map(({ state }) => state)).not.toContain("first_prize");
+
+    for (let index = 0; index < 4; index += 1) {
+      await operatePresentation(`no-first-finished-to-preview-${index}`, "advance");
+    }
+    await expect(
+      operatePresentation("no-first-finished-to-second", "advance"),
+    ).resolves.toMatchObject({ state: "second" });
+    await expect(
+      operatePresentation("no-first-finished-to-finished", "advance"),
+    ).resolves.toMatchObject({ state: "finished" });
+    await expect(operatePresentation("no-first-finished-back", "previous")).resolves.toMatchObject({
+      state: "second",
+    });
+  });
+
+  it("skips the prize slide when first-place entries disappear after the first-place announcement", async () => {
+    await addRankFixture();
+    await startWithAggregate("first-prize-disappeared-start");
+    for (let index = 0; index < 6; index += 1) {
+      await operatePresentation(`first-prize-disappeared-to-first-${index}`, "advance");
+    }
+    await expect(getAdminPresentation()).resolves.toMatchObject({ state: "first" });
+
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ rank: 2 })
+      .where(eq(schema.presentationEntries.rank, 1));
+
+    await expect(
+      operatePresentation("first-prize-disappeared-skip", "advance"),
+    ).resolves.toMatchObject({ state: "finished" });
   });
 
   it("rejects a start when its compare-and-swap update returns no rows", async () => {

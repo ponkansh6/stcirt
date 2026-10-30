@@ -678,6 +678,64 @@
   font-size: clamp(2rem, 5.2cqw, 5.5rem);
 }
 
+.firstPrize {
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  min-height: clamp(360px, 70cqh, 760px);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(18px, 3cqh, 36px);
+  padding: clamp(16px, 3cqh, 32px) clamp(12px, 3cqw, 48px);
+  text-align: center;
+}
+
+.firstPrizeHeader p {
+  margin: 0 0 clamp(6px, 1cqh, 12px);
+  color: #71603d;
+  font-size: clamp(var(--presentation-min-readable-size), 1.8cqw, 1.9rem);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.firstPrizeHeader h1 {
+  margin: 0;
+  color: #173e27;
+  font-family: Meiryo, メイリオ, sans-serif;
+  font-size: clamp(2rem, 4.2cqw, 4.4rem);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+}
+
+.firstPrizeImages {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(20px, 5cqw, 76px);
+}
+
+.firstPrizeBeef {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(58cqw, 640px);
+  max-height: 42cqh;
+  object-fit: contain;
+}
+
+.firstPrizeCatalog {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(250px, 25cqw);
+  max-height: 42cqh;
+  object-fit: contain;
+}
+
 .winners {
   --rank-header-duration: 640ms;
   --rank-plate-duration: 380ms;

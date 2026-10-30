@@ -103,6 +103,7 @@ const supportedPresentationStates = new Set<PresentationState>([
   "third",
   "second",
   "first",
+  "first_prize",
   "finished",
 ]);
 
@@ -503,15 +504,15 @@ async function nextNonemptyRank(
 }
 
 async function lastAnnouncedRank(tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) {
-  // Awards are announced in 3rd, 2nd, 1st order. The last existing step is
-  // therefore the best (lowest-numbered) rank that has at least one winner.
+  // Awards are announced in 3rd, 2nd, 1st order. First place is followed by
+  // its prize slide, making that the last existing step when it has winners.
   for (const rank of [1, 2, 3]) {
     const [winner] = await tx
       .select({ participantId: presentationEntries.participantId })
       .from(presentationEntries)
       .where(and(eq(presentationEntries.sessionId, 1), eq(presentationEntries.rank, rank)))
       .limit(1);
-    if (winner) return stageForRank(rank);
+    if (winner) return rank === 1 ? ("first_prize" as const) : stageForRank(rank);
   }
   return null;
 }
@@ -535,6 +536,15 @@ async function advanceState(
     return { state: "podium_preview" as const, questionIndex };
   }
   if (state === "podium_preview") return { state: await nextNonemptyRank(tx, 4), questionIndex };
+  if (state === "first") {
+    const [winner] = await tx
+      .select({ participantId: presentationEntries.participantId })
+      .from(presentationEntries)
+      .where(and(eq(presentationEntries.sessionId, 1), eq(presentationEntries.rank, 1)))
+      .limit(1);
+    return { state: winner ? ("first_prize" as const) : "finished", questionIndex };
+  }
+  if (state === "first_prize") return { state: "finished" as const, questionIndex };
   const currentRank = rankForStage(state);
   if (currentRank !== null) {
     return { state: await nextNonemptyRank(tx, currentRank), questionIndex };
@@ -576,6 +586,8 @@ async function previousState(
       }
       return { state: "podium_preview", questionIndex };
     }
+    case "first_prize":
+      return { state: "first", questionIndex };
     case "finished":
       return {
         state: (await lastAnnouncedRank(tx)) ?? "podium_preview",
@@ -598,6 +610,7 @@ async function isValidPresentationPosition(
     "third",
     "second",
     "first",
+    "first_prize",
     "finished",
   ];
   if (!knownStates.includes(state) || !Number.isInteger(questionIndex)) return false;
@@ -606,6 +619,14 @@ async function isValidPresentationPosition(
     return questionIndex >= 0 && questionIndex < session.questionCount;
   }
   if (questionIndex !== Math.max(session.questionCount - 1, 0)) return false;
+  if (state === "first_prize") {
+    const [winner] = await tx
+      .select({ participantId: presentationEntries.participantId })
+      .from(presentationEntries)
+      .where(and(eq(presentationEntries.sessionId, 1), eq(presentationEntries.rank, 1)))
+      .limit(1);
+    return Boolean(winner);
+  }
   const rank = rankForStage(state);
   if (rank === null) return true;
   const [winner] = await tx

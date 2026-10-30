@@ -36,6 +36,7 @@ type AdminState = Extract<
   | "third"
   | "second"
   | "first"
+  | "first_prize"
   | "finished"
 >;
 type AdminControls = {
@@ -55,6 +56,7 @@ const adminStates: AdminState[] = [
   "third",
   "second",
   "first",
+  "first_prize",
   "finished",
 ];
 
@@ -1226,6 +1228,7 @@ export default function PresentationScreen({
     if (data.state === "answer") return `第${data.question.ordinal}問の解説`;
     if (data.state === "third" || data.state === "second" || data.state === "first")
       return `${rankTitle[data.state]}を発表します`;
+    if (data.state === "first_prize") return "1位の景品、和牛カタログを紹介します";
     if (data.state === "standby") return "休憩中";
     if (data.state === "opening") return "発表を開始しました";
     if (data.state === "podium_preview") return "結果発表を開始します";
@@ -1338,6 +1341,7 @@ export default function PresentationScreen({
       state === "third" ||
       state === "second" ||
       state === "first" ||
+      state === "first_prize" ||
       state === "finished"
     ) {
       return { key: `stage:${state}` };
@@ -1524,6 +1528,40 @@ export default function PresentationScreen({
                             <p className={styles.subtitle}>
                               これから入賞者を発表します。どうぞお楽しみに
                             </p>
+                          </section>
+                        )}
+
+                        {state === "first_prize" && (
+                          <section
+                            className={styles.firstPrize}
+                            aria-labelledby="first-prize-title"
+                          >
+                            <header className={styles.firstPrizeHeader}>
+                              <p>1位の景品</p>
+                              <h1 id="first-prize-title">和牛カタログ</h1>
+                            </header>
+                            <div className={styles.firstPrizeImages}>
+                              <Image
+                                className={styles.firstPrizeBeef}
+                                src="/和牛.png"
+                                width={640}
+                                height={322}
+                                alt="和牛の写真"
+                                sizes="(max-width: 640px) 80vw, 48vw"
+                                loading="eager"
+                                draggable={false}
+                              />
+                              <Image
+                                className={styles.firstPrizeCatalog}
+                                src="/和牛カタログ.jpg"
+                                width={250}
+                                height={275}
+                                alt="和牛カタログの表紙"
+                                sizes="250px"
+                                loading="eager"
+                                draggable={false}
+                              />
+                            </div>
                           </section>
                         )}
 

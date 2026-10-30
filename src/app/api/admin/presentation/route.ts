@@ -92,6 +92,7 @@ export async function POST(request: Request) {
           "third",
           "second",
           "first",
+          "first_prize",
           "finished",
         ].includes(value.state) ||
         typeof value.questionIndex !== "number" ||

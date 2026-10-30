@@ -27,7 +27,7 @@ type DeckProjectionFixture =
   | { state: "question" | "answer"; question?: unknown }
   | { state: "third" | "second" | "first"; winners: WinnerFixture[] }
   | {
-      state: "standby" | "not_started" | "opening" | "podium_preview" | "finished";
+      state: "standby" | "not_started" | "opening" | "podium_preview" | "first_prize" | "finished";
       winners?: WinnerFixture[];
     };
 type DeckSlideFixture = {
@@ -800,6 +800,7 @@ describe("presentation projection and presenter progression", () => {
       { state: "first", winners: [{ displayName: "悠", score: 10, rank: 1 }] },
       ["第一位", "10.00 ポイント", "悠"],
     ],
+    ["first_prize", { state: "first_prize" }, ["1位の景品", "和牛カタログ"]],
     ["finished", { state: "finished" }, ["ご参加", "ありがとうございました"]],
   ] as const)(
     "preserves the meaning and labels of the %s slide",
@@ -809,6 +810,22 @@ describe("presentation projection and presenter progression", () => {
 
       const slide = await screen.findByRole("region", { name: "現在のスライド" });
       for (const content of contents) expect(slide).toHaveTextContent(content);
+      if (projection.state === "first_prize") {
+        const beef = within(slide).getByRole("img", { name: "和牛の写真" });
+        const catalog = within(slide).getByRole("img", { name: "和牛カタログの表紙" });
+        expect(decodeURIComponent(beef.getAttribute("src") ?? "")).toContain("/和牛.png");
+        expect(decodeURIComponent(catalog.getAttribute("src") ?? "")).toContain(
+          "/和牛カタログ.jpg",
+        );
+        expect(slide.querySelectorAll("img")).toHaveLength(2);
+        const stylesheet = readFileSync(
+          join(process.cwd(), "src/app/presentation/presentation-screen.module.css"),
+          "utf8",
+        );
+        expect(stylesheet).toMatch(/\.firstPrizeBeef\s*\{[^}]*object-fit:\s*contain/s);
+        expect(stylesheet).toMatch(/\.firstPrizeCatalog\s*\{[^}]*object-fit:\s*contain/s);
+        expect(stylesheet).toMatch(/\.canvas\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9/s);
+      }
       if (projection.state === "answer") {
         const correctChoice = screen.getByText("正解").closest("li");
         expect(correctChoice).toHaveTextContent("B作品B");

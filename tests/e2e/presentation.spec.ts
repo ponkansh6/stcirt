@@ -63,6 +63,7 @@ type PresentationState =
   | "third"
   | "second"
   | "first"
+  | "first_prize"
   | "finished";
 
 type E2EWinnerQuestionResult = {
@@ -119,6 +120,7 @@ async function installAdminApiMock(
     fullscreenSupported?: boolean;
     questionCount?: number;
     question?: PresentationQuestionFixture;
+    skipEmptyRanks?: boolean;
   } = {},
 ) {
   const questionCount = options.questionCount ?? questions.length;
@@ -159,16 +161,24 @@ async function installAdminApiMock(
   const participantResultsMutations: boolean[] = [];
   const participantResultsStageSnapshots: PresentationState[] = [];
   const presentationRouteEvents: string[] = [];
-  const stages: PresentationState[] = [
-    "not_started",
-    "opening",
-    ...(questionCount === 0 ? [] : (["question", "answer"] as const)),
-    "podium_preview",
-    "third",
-    "second",
-    "first",
-    "finished",
-  ];
+  const stages = () =>
+    [
+      "not_started",
+      "opening",
+      ...(questionCount === 0 ? [] : (["question", "answer"] as const)),
+      "podium_preview",
+      ...(options.skipEmptyRanks && !winnerEntries.some((entry) => entry.rank === 3)
+        ? []
+        : (["third"] as const)),
+      ...(options.skipEmptyRanks && !winnerEntries.some((entry) => entry.rank === 2)
+        ? []
+        : (["second"] as const)),
+      ...(options.skipEmptyRanks && !winnerEntries.some((entry) => entry.rank === 1)
+        ? []
+        : (["first"] as const)),
+      ...(winnerEntries.some((entry) => entry.rank === 1) ? (["first_prize"] as const) : []),
+      "finished",
+    ] as PresentationState[];
 
   const payload = () => ({
     state,
@@ -192,65 +202,57 @@ async function installAdminApiMock(
   });
   const deck = () => ({
     snapshotRevision,
-    slides: (
-      [
-        "opening",
-        ...(questionCount === 0 ? [] : (["question", "answer"] as const)),
-        "podium_preview",
-        "third",
-        "second",
-        "first",
-        "finished",
-      ] as const
-    ).map((slideState) => {
-      let projection: Record<string, unknown>;
-      if (slideState === "question" || slideState === "answer") {
-        projection = {
-          state: slideState,
-          question: {
-            id: 11,
-            ordinal: 1,
-            total: 1,
-            question: presentationQuestion.question,
-            choices: presentationQuestion.choices,
-            ...(slideState === "answer"
-              ? {
-                  correctAnswer: presentationQuestion.correctAnswer,
-                  correctIndex: presentationQuestion.choices.indexOf(
-                    presentationQuestion.correctAnswer,
-                  ),
-                  explanation: presentationQuestion.explanation,
-                  ...(presentationQuestion.answerType
-                    ? { answerType: presentationQuestion.answerType }
-                    : {}),
-                  ...(presentationQuestion.expectedAnswer !== undefined
-                    ? { expectedAnswer: presentationQuestion.expectedAnswer }
-                    : {}),
-                  ...(presentationQuestion.responses !== undefined
-                    ? { responses: presentationQuestion.responses }
-                    : {}),
-                }
-              : {}),
-          },
-        };
-      } else if (slideState === "third" || slideState === "second" || slideState === "first") {
-        const rank = slideState === "third" ? 3 : slideState === "second" ? 2 : 1;
-        projection = {
-          state: slideState,
-          winners: winnerEntries
-            .filter((entry) => entry.rank === rank)
-            .map(({ displayName, score, rank: winnerRank, questionResults }) => ({
-              displayName,
-              score,
-              rank: winnerRank,
-              ...(questionResults ? { questionResults } : {}),
-            })),
-        };
-      } else {
-        projection = { state: slideState };
-      }
-      return { state: slideState, questionIndex: 0, projection };
-    }),
+    slides: stages()
+      .filter((slideState) => slideState !== "not_started")
+      .map((slideState) => {
+        let projection: Record<string, unknown>;
+        if (slideState === "question" || slideState === "answer") {
+          projection = {
+            state: slideState,
+            question: {
+              id: 11,
+              ordinal: 1,
+              total: 1,
+              question: presentationQuestion.question,
+              choices: presentationQuestion.choices,
+              ...(slideState === "answer"
+                ? {
+                    correctAnswer: presentationQuestion.correctAnswer,
+                    correctIndex: presentationQuestion.choices.indexOf(
+                      presentationQuestion.correctAnswer,
+                    ),
+                    explanation: presentationQuestion.explanation,
+                    ...(presentationQuestion.answerType
+                      ? { answerType: presentationQuestion.answerType }
+                      : {}),
+                    ...(presentationQuestion.expectedAnswer !== undefined
+                      ? { expectedAnswer: presentationQuestion.expectedAnswer }
+                      : {}),
+                    ...(presentationQuestion.responses !== undefined
+                      ? { responses: presentationQuestion.responses }
+                      : {}),
+                  }
+                : {}),
+            },
+          };
+        } else if (slideState === "third" || slideState === "second" || slideState === "first") {
+          const rank = slideState === "third" ? 3 : slideState === "second" ? 2 : 1;
+          projection = {
+            state: slideState,
+            winners: winnerEntries
+              .filter((entry) => entry.rank === rank)
+              .map(({ displayName, score, rank: winnerRank, questionResults }) => ({
+                displayName,
+                score,
+                rank: winnerRank,
+                ...(questionResults ? { questionResults } : {}),
+              })),
+          };
+        } else {
+          projection = { state: slideState };
+        }
+        return { state: slideState, questionIndex: 0, projection };
+      }),
   });
 
   const context = page.context();
@@ -344,15 +346,19 @@ async function installAdminApiMock(
             snapshotRevision += 1;
           } else if (body.action === "reset" && state !== "not_started") {
             stageCursor = 1;
-            state = stages[stageCursor];
+            state = stages()[stageCursor];
           } else if (body.action === "start" && state === "not_started" && snapshotExists) {
             stageCursor = 1;
-            state = stages[stageCursor];
+            state = stages()[stageCursor];
           } else if (body.action === "position") {
-            if (body.state && Number.isInteger(body.questionIndex) && stages.includes(body.state)) {
+            if (
+              body.state &&
+              Number.isInteger(body.questionIndex) &&
+              stages().includes(body.state)
+            ) {
               state = body.state;
               questionIndex = body.questionIndex as number;
-              stageCursor = stages.indexOf(state);
+              stageCursor = stages().indexOf(state);
               positionLog.push({ state, questionIndex });
             }
           } else if (body.action === "hide") projectionHidden = true;
@@ -478,7 +484,7 @@ async function installAdminApiMock(
       setPresentationPosition: (nextState: PresentationState) => {
         state = nextState;
         questionIndex = 0;
-        stageCursor = stages.indexOf(nextState);
+        stageCursor = stages().indexOf(nextState);
         version += 1;
       },
       getPresentationState: () => ({ state, questionIndex, version, projectionHidden }),
@@ -645,6 +651,8 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
       return page.getByRole("region", { name: "第二位の勝者一覧" });
     case "first":
       return page.getByRole("region", { name: "第一位の勝者一覧" });
+    case "first_prize":
+      return page.getByRole("heading", { name: "和牛カタログ" });
     case "finished":
       return page.getByRole("heading", { name: /ご参加.*ありがとうございました/ });
     default:
@@ -781,6 +789,7 @@ async function advanceTo(page: import("@playwright/test").Page, target: Presenta
     "third",
     "second",
     "first",
+    "first_prize",
     "finished",
   ];
   const targetIndex = stages.indexOf(target);
@@ -1082,7 +1091,11 @@ test("@chromium generic slide entrances honor their stage", async ({ page }) => 
             ? "answer"
             : state === "podium_preview"
               ? "third"
-              : "finished";
+              : state === "first"
+                ? "first_prize"
+                : state === "first_prize"
+                  ? "finished"
+                  : "finished";
       await advancePresenterTo(page, nextState);
       if (nextState === "answer") {
         const answerReveal = page.locator("[class*='answerReveal']");
@@ -1108,6 +1121,7 @@ test("@chromium generic slide entrances honor their stage", async ({ page }) => 
           true,
         );
         await expect(naturalLayer.locator(":scope > div > div")).toHaveCSS("opacity", "1");
+        await advancePresenterTo(page, "first_prize");
         await advancePresenterTo(page, "finished");
       }
     }
@@ -1509,15 +1523,32 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
     { state: "third", text: ["該当する受賞者はいません", "第三位"] },
     { state: "second", text: ["太郎", "0.00 ポイント", "第二位"] },
     { state: "first", text: ["花子", "1.00 ポイント", "第一位"] },
+    { state: "first_prize", text: ["1位の景品", "和牛カタログ"] },
     { state: "finished", text: ["ご参加", "ありがとうございました"] },
   ];
 
   for (let index = 0; index < stages.length; index += 1) {
     const stage = stages[index]!;
     await expect(slideFor(page, stage.state)).toBeVisible();
-    if (stage.state === "question") await waitForCurrentPresentationEntryAnimations(page);
+    if (
+      stage.state === "question" ||
+      stage.state === "podium_preview" ||
+      stage.state === "finished"
+    ) {
+      await waitForCurrentPresentationEntryAnimations(page);
+    }
     const inspection = await inspectSlide();
     for (const text of stage.text) expect(inspection.text).toContain(text);
+    if (stage.state === "first_prize") {
+      const beef = page.getByRole("img", { name: "和牛の写真" });
+      const catalog = page.getByRole("img", { name: "和牛カタログの表紙" });
+      await expect(beef).toBeVisible();
+      await expect(catalog).toBeVisible();
+      await expect(beef).toHaveCSS("object-fit", "contain");
+      await expect(catalog).toHaveCSS("object-fit", "contain");
+      expect(inspection.outOfBounds).toBe(0);
+      expect(inspection.pageCanScroll).toBe(false);
+    }
     if (stage.state === "question" || stage.state === "answer") {
       if (stage.state === "answer") {
         await expect
@@ -1536,6 +1567,143 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
     await expect(slideFor(page, nextStage.state)).toBeVisible();
     await adminRefresh;
   }
+});
+
+test("first-prize position is shared with the public projection and survives reload", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 800, height: 450 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  mock.setPresentationPosition("first");
+  await openPresenter(page);
+
+  let mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "first_prize")).toBeVisible();
+  await mutation;
+  await expect(page.getByRole("img", { name: "和牛の写真" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "和牛カタログの表紙" })).toBeVisible();
+
+  const publicPage = await page.context().newPage();
+  await publicPage.setViewportSize({ width: 640, height: 360 });
+  await publicPage.goto("/presentation");
+  await expect(publicPage.getByRole("heading", { name: "和牛カタログ" })).toBeVisible();
+  await expect(publicPage.getByRole("img", { name: "和牛の写真" })).toBeVisible();
+  await expect(publicPage.getByRole("img", { name: "和牛カタログの表紙" })).toBeVisible();
+  const canvas = publicPage.getByTestId("presentation-canvas");
+  const bounds = await canvas.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.width / bounds!.height).toBeCloseTo(16 / 9, 2);
+
+  await page.reload();
+  await expect(slideFor(page, "first_prize")).toBeVisible();
+  await expect(page.getByRole("img", { name: "和牛カタログの表紙" })).toBeVisible();
+
+  mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "first")).toBeVisible();
+  await mutation;
+  await expect(publicPage.getByRole("region", { name: "第一位の勝者一覧" })).toBeVisible();
+  mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "first_prize")).toBeVisible();
+  await mutation;
+  mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "finished")).toBeVisible();
+  await mutation;
+  await expect(
+    publicPage.getByRole("heading", { name: /ご参加.*ありがとうございました/ }),
+  ).toBeVisible();
+
+  mock.setPresentationPosition("first_prize");
+  await expect(slideFor(page, "first_prize")).toBeVisible();
+  const adminPage = await page.context().newPage();
+  await adminPage.goto("/admin/presentation");
+  const reset = adminPage.getByRole("button", { name: "最初に戻る" });
+  await expect(reset).toBeVisible();
+  const resetMutation = nextAdminMutation(adminPage);
+  await reset.click();
+  await resetMutation;
+  await expect(slideFor(page, "opening")).toBeVisible();
+  await expect(slideFor(publicPage, "opening")).toBeVisible();
+  expect(mock.getPresentationState().state).toBe("opening");
+  await adminPage.close();
+  await publicPage.close();
+});
+
+test("rank reveal can advance into first prize while its automatic animation is active", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await installAdminApiMock(page);
+  await signIn(page);
+  const mockPosition = nextAdminMutation(page);
+  await page.evaluate(async () => {
+    const controlsResponse = await fetch("/api/admin/presentation?view=controls");
+    const controls = (await controlsResponse.json()) as {
+      version: number;
+      snapshotRevision: number;
+    };
+    const response = await fetch("/api/admin/presentation", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        operationId: crypto.randomUUID(),
+        action: "position",
+        state: "second",
+        questionIndex: 0,
+        expectedSnapshotRevision: controls.snapshotRevision,
+        expectedSessionVersion: controls.version,
+      }),
+    });
+    if (!response.ok) throw new Error(`Position request failed: ${response.status}`);
+  });
+  await mockPosition;
+  await openPresenter(page);
+
+  let mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "first")).toBeVisible();
+  await mutation;
+  const winnerContent = rankRegionFor(page, "first").locator("[class*='winnerContent']");
+  await expect
+    .poll(() =>
+      winnerContent.evaluate((element) => {
+        const animation = element
+          .getAnimations()
+          .find((candidate) =>
+            (candidate as CSSAnimation).animationName.endsWith("rankWinnerReveal"),
+          );
+        const progress = animation?.effect?.getComputedTiming().progress;
+        return progress !== null && progress !== undefined && progress > 0 && progress < 1;
+      }),
+    )
+    .toBe(true);
+
+  mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "first_prize")).toBeVisible();
+  await mutation;
+});
+
+test("finished skips the first-prize position when there is no first-place winner", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page, { skipEmptyRanks: true });
+  mock.setWinnerEntries([{ displayName: "凛", score: 9, rank: 2 }]);
+  mock.setPresentationPosition("finished");
+  await signIn(page);
+  await openPresenter(page);
+
+  const mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowLeft");
+  await expect(slideFor(page, "second")).toBeVisible();
+  await mutation;
+  expect(mock.getPresentationState().state).toBe("second");
+  await expect(page.getByRole("heading", { name: "和牛カタログ" })).toHaveCount(0);
 });
 
 test("@chromium long answer content remains complete and fits without an internal scroll region", async ({

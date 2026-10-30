@@ -14,7 +14,7 @@ type DeckProjectionFixture =
   | { state: "question" | "answer"; question?: unknown }
   | { state: "third" | "second" | "first"; winners: WinnerFixture[] }
   | {
-      state: "standby" | "not_started" | "opening" | "podium_preview" | "finished";
+      state: "standby" | "not_started" | "opening" | "podium_preview" | "first_prize" | "finished";
       winners?: WinnerFixture[];
     };
 type DeckSlideFixture = {
@@ -103,6 +103,7 @@ function installApi(
     deckSlide("third", Number(admin.questionIndex ?? 0), { state: "third", winners: [] }),
     deckSlide("second", Number(admin.questionIndex ?? 0), { state: "second", winners: [] }),
     deckSlide("first", Number(admin.questionIndex ?? 0), { state: "first", winners: [] }),
+    deckSlide("first_prize", Number(admin.questionIndex ?? 0), { state: "first_prize" }),
     deckSlide("finished", Number(admin.questionIndex ?? 0), { state: "finished" }),
   ];
   const slideIndex = deckSlides.findIndex(
@@ -2958,7 +2959,7 @@ describe("PresentationScreen", () => {
     expect(api.actions).toHaveLength(0);
   });
 
-  it("moves backward from finished to the last existing rank slide", async () => {
+  it("moves backward from finished to the first-prize slide when first place exists", async () => {
     const api = installApi({
       projection: { state: "finished" },
       admin: controls({ state: "finished", questionCount: 0 }),
@@ -2984,9 +2985,106 @@ describe("PresentationScreen", () => {
     await flush();
 
     expect(api.actions).toHaveLength(1);
-    expect(api.actions[0]).toMatchObject({ action: "position", state: "first", questionIndex: 0 });
+    expect(api.actions[0]).toMatchObject({
+      action: "position",
+      state: "first_prize",
+      questionIndex: 0,
+    });
+    expect(await screen.findByRole("img", { name: "和牛カタログの表紙" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "和牛の写真" })).toBeInTheDocument();
+  });
+
+  it("shares the first-prize slide between presenter navigation and the public projection", async () => {
+    const api = installApi({
+      projection: {
+        state: "first",
+        winners: [{ displayName: "悠", score: 10, rank: 1 }],
+      },
+      admin: controls({ state: "first", questionCount: 0 }),
+      deckSlides: [deckSlide("first_prize", 0, { state: "first_prize" })],
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    const main = screen.getByRole("main");
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+
+    expect(api.actions.at(-1)).toMatchObject({
+      action: "position",
+      state: "first_prize",
+      questionIndex: 0,
+    });
+    const prizeSlide = await screen.findByRole("region", { name: "現在のスライド" });
+    expect(prizeSlide).toHaveTextContent("和牛カタログ");
+    expect(
+      decodeURIComponent(screen.getByRole("img", { name: "和牛の写真" }).getAttribute("src") ?? ""),
+    ).toContain("/和牛.png");
+    expect(
+      decodeURIComponent(
+        screen.getByRole("img", { name: "和牛カタログの表紙" }).getAttribute("src") ?? "",
+      ),
+    ).toContain("/和牛カタログ.jpg");
+
+    fireEvent.keyDown(main, { key: "ArrowLeft" });
+    await flush();
+    expect(api.actions.at(-1)).toMatchObject({
+      action: "position",
+      state: "first",
+      questionIndex: 0,
+    });
     expect(await screen.findByText("第一位")).toBeInTheDocument();
-    expect(screen.getByText("悠", { exact: false })).toBeInTheDocument();
+
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions.at(-1)).toMatchObject({
+      action: "position",
+      state: "first_prize",
+      questionIndex: 0,
+    });
+    expect(await screen.findByRole("img", { name: "和牛カタログの表紙" })).toBeInTheDocument();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await flush();
+    expect(api.actions.at(-1)).toMatchObject({
+      action: "position",
+      state: "finished",
+      questionIndex: 0,
+    });
+    expect(await screen.findByRole("heading", { name: /ご参加/ })).toBeInTheDocument();
+  });
+
+  it("recalculates the fitted prize slide after its images load and the viewport changes", async () => {
+    installApi({ projection: { state: "first_prize" } });
+    fitLayout.setViewport(800, 450);
+    fitLayout.setNaturalSize(800, 700);
+    let animationFrame: FrameRequestCallback | undefined;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      animationFrame = callback;
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    render(<PresentationScreen />);
+    await flush();
+
+    const fitLayer = screen.getByTestId("presentation-fit-layer");
+    const naturalLayer = screen.getByTestId("presentation-natural-layer");
+    expect(naturalLayer).toHaveAttribute("data-fit-ready", "true");
+    const initialScale = Number(fitLayer.style.getPropertyValue("--presentation-fit-scale"));
+    expect(initialScale).toBeGreaterThan(0);
+    const images = screen.getAllByRole("img");
+    expect(images).toHaveLength(2);
+
+    act(() => {
+      images.forEach((image) => fireEvent.load(image));
+      fitLayout.setViewport(600, 338);
+      fitLayout.notifyResize();
+      animationFrame?.(16);
+    });
+    await flush();
+
+    expect(Number(fitLayer.style.getPropertyValue("--presentation-fit-scale"))).toBeLessThan(
+      initialScale,
+    );
   });
 
   it("moves from an empty opening to podium preview and reverses to opening", async () => {

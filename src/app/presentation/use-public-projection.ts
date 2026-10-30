@@ -12,6 +12,7 @@ export type State =
   | "third"
   | "second"
   | "first"
+  | "first_prize"
   | "finished";
 
 export type PublicQuestion = {
@@ -112,6 +113,7 @@ export function isProjectionData(payload: unknown): payload is ProjectionData {
       "third",
       "second",
       "first",
+      "first_prize",
       "finished",
     ].includes(value.state)
   )

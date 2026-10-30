@@ -17,6 +17,7 @@ export type PresentationState =
   | "third"
   | "second"
   | "first"
+  | "first_prize"
   | "finished";
 export type PresentationAction =
   | "start"
@@ -627,6 +628,18 @@ export async function getAdminPresentationDeck() {
           projection: buildPublicProjection(admin, state, terminalQuestionIndex, sourceQuestions),
         });
       }
+    }
+    if (admin.entries.some((entry) => entry.rank === 1)) {
+      slides.push({
+        state: "first_prize",
+        questionIndex: terminalQuestionIndex,
+        projection: buildPublicProjection(
+          admin,
+          "first_prize",
+          terminalQuestionIndex,
+          sourceQuestions,
+        ),
+      });
     }
     slides.push({
       state: "finished",
