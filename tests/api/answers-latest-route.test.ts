@@ -50,7 +50,14 @@ describe("GET /api/answers/latest", () => {
   });
 
   it("returns the latest participant-owned submission", async () => {
-    const submission = { submissionId: "submission", revision: 2, answers: [] };
+    const submission = {
+      submissionId: "submission",
+      revision: 2,
+      answers: [],
+      restoreIntegrity: {
+        status: "invalid" as const,
+      },
+    };
     vi.mocked(getLatestAnswerSubmission).mockResolvedValueOnce(submission);
     const response = await GET(
       new Request("http://localhost/api/answers/latest", {
@@ -62,7 +69,14 @@ describe("GET /api/answers/latest", () => {
   });
 
   it("resolves assisted scope from the owner session and rejects unknown scopes", async () => {
-    const submission = { submissionId: "assisted-submission", revision: 1, answers: [] };
+    const submission = {
+      submissionId: "assisted-submission",
+      revision: 1,
+      answers: [],
+      restoreIntegrity: {
+        status: "invalid" as const,
+      },
+    };
     vi.mocked(getLatestAnswerSubmission).mockResolvedValueOnce(submission);
     const assisted = await GET(
       new Request("http://localhost/api/answers/latest?scope=assisted", {

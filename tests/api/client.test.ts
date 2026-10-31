@@ -101,6 +101,31 @@ describe("api client", () => {
     );
   });
 
+  it("normalizes a malformed restore-integrity manifest to an invalid guarantee", async () => {
+    const submissionId = "00000000-0000-4000-8000-000000000011";
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          submission: {
+            submissionId,
+            revision: 2,
+            answers: [],
+            restoreIntegrity: {
+              status: "complete",
+              questions: [{ id: 1, answerType: "selected" }],
+            },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(fetchLatestAnswerSubmission()).resolves.toMatchObject({
+      submissionId,
+      restoreIntegrity: { status: "invalid" },
+    });
+  });
+
   it("uses the current batch route and fallback message for a non-JSON error response", async () => {
     const fetchSpy = vi
       .spyOn(global, "fetch")

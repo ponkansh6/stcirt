@@ -19,6 +19,7 @@ vi.mock("@/lib/db", async (importOriginal) => {
 import {
   BatchSubmissionError,
   getAnswerSubmission,
+  getAnswerSubmissionVisibility,
   getLatestAnswerSubmission,
   saveAnswerSubmission,
 } from "@/lib/db/repository/answer-repository";
@@ -211,6 +212,7 @@ describe("saveAnswerSubmission", () => {
     questionId: index + 1,
     selectedIndex: index % 4,
   }));
+  const observedQueries: string[] = [];
 
   async function expectInvalidSubmission(
     input: Parameters<typeof saveAnswerSubmission>[0],
@@ -230,7 +232,8 @@ describe("saveAnswerSubmission", () => {
   }
 
   beforeEach(async () => {
-    testDb = await createTestDb();
+    observedQueries.length = 0;
+    testDb = await createTestDb({ logger: { logQuery: (query) => observedQueries.push(query) } });
     dbRef.db = testDb.db;
     await testDb.db.delete(schema.examSubmissionOperations);
     await testDb.db.delete(schema.examSubmissionAnswers);
@@ -254,6 +257,50 @@ describe("saveAnswerSubmission", () => {
   });
 
   afterEach(() => testDb.cleanup());
+
+  it("reads only submission ownership and publication visibility for the edit lock", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId,
+      answers,
+    });
+    observedQueries.length = 0;
+
+    await expect(getAnswerSubmissionVisibility(submissionId, participantId)).resolves.toEqual({
+      resultsVisible: false,
+    });
+    const selectStatements = observedQueries.filter((query) => /^\s*select\b/i.test(query));
+    expect(selectStatements).toHaveLength(2);
+    expect(selectStatements.join("\n")).toContain("exam_answer_submissions");
+    expect(selectStatements.join("\n")).toContain("participant_result_settings");
+    expect(selectStatements.join("\n")).not.toContain("exam_submission_answers");
+  });
+
+  it("returns no visibility for an absent or non-owned submission", async () => {
+    observedQueries.length = 0;
+    await expect(getAnswerSubmissionVisibility(submissionId, participantId)).resolves.toBeNull();
+    expect(observedQueries.join("\n")).not.toContain("exam_submission_answers");
+
+    await saveAnswerSubmission({
+      submissionId,
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId,
+      answers,
+    });
+    observedQueries.length = 0;
+
+    await expect(
+      getAnswerSubmissionVisibility(submissionId, participantId + 1),
+    ).resolves.toBeNull();
+    const selectStatements = observedQueries.filter((query) => /^\s*select\b/i.test(query));
+    expect(selectStatements).toHaveLength(1);
+    expect(selectStatements.join("\n")).toContain("exam_answer_submissions");
+    expect(selectStatements.join("\n")).not.toContain("participant_result_settings");
+    expect(selectStatements.join("\n")).not.toContain("exam_submission_answers");
+  });
 
   it.each([
     {

@@ -179,7 +179,7 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/answers/batch?submissionId=submission-1",
+      "/api/answers/visibility?submissionId=submission-1",
       expect.objectContaining({ cache: "no-store", credentials: "same-origin" }),
     );
     expect(
@@ -287,6 +287,84 @@ describe("QuizRunner batch answer sheet", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("revokes a previously captured edit guard as soon as publication is confirmed", async () => {
+    let visibilityReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () => {
+          if (url.includes("/api/answers/visibility")) {
+            visibilityReads += 1;
+            return { resultsVisible: visibilityReads > 1 };
+          }
+          return { state: "waiting" };
+        },
+      })),
+    );
+    let editGuard: (() => boolean) | undefined;
+    const editAnswers = vi.fn((guard: () => boolean) => {
+      editGuard = guard;
+    });
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { revision: 4, submissionId: "guarded-edit", editAnswers }),
+    );
+
+    render(<RunnerPage />);
+    await screen.findByRole("button", { name: "回答を修正する" });
+    fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
+    expect(editGuard?.()).toBe(true);
+
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: "visible",
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(visibilityReads).toBe(2));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument(),
+    );
+    expect(editGuard?.()).toBe(false);
+  });
+
+  it("invalidates a captured edit guard as soon as its submission revision changes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          url.includes("/api/answers/visibility")
+            ? { resultsVisible: false }
+            : { state: "waiting" },
+      })),
+    );
+    let editGuard: (() => boolean) | undefined;
+    const editAnswers = vi.fn((guard: () => boolean) => {
+      editGuard = guard;
+    });
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { revision: 4, submissionId: "guarded-revision", editAnswers }),
+    );
+    const { rerender } = render(<RunnerPage />);
+
+    await screen.findByRole("button", { name: "回答を修正する" });
+    fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
+    expect(editGuard?.()).toBe(true);
+
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { revision: 5, submissionId: "guarded-revision", editAnswers }),
+    );
+    rerender(<RunnerPage />);
+
+    expect(editGuard?.()).toBe(false);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument(),
+    );
+  });
+
   it("skips interval refreshes while a visibility request is pending", async () => {
     const pending = deferred<{ ok: boolean; json: () => Promise<unknown> }>();
     const fetchMock = vi.fn().mockReturnValue(pending.promise);
@@ -326,6 +404,9 @@ describe("QuizRunner batch answer sheet", () => {
       ),
     );
     const { rerender } = render(<RunnerPage />);
+    expect(
+      screen.getAllByRole("radio").every((radio) => (radio as HTMLInputElement).disabled),
+    ).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     mockUseQuizSession.mockReturnValue(
@@ -514,7 +595,7 @@ describe("QuizRunner batch answer sheet", () => {
     const { rerender } = render(<RunnerPage />);
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/answers/batch?submissionId=scope-submission",
+      "/api/answers/visibility?submissionId=scope-submission",
       expect.anything(),
     );
 
@@ -538,7 +619,7 @@ describe("QuizRunner batch answer sheet", () => {
     rerender(<RunnerPage />);
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "/api/answers/batch?submissionId=scope-submission&scope=assisted",
+      "/api/answers/visibility?submissionId=scope-submission&scope=assisted",
       expect.anything(),
     );
 
@@ -570,11 +651,55 @@ describe("QuizRunner batch answer sheet", () => {
     );
     const view = render(<RunnerPage />);
 
-    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30_000);
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 60_000);
     view.unmount();
 
     expect(clearIntervalSpy).toHaveBeenCalled();
     expect(removeListenerSpy).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+  });
+
+  it("invalidates a visibility response when the submission revision changes", async () => {
+    const firstResponse = deferred<{ ok: boolean; json: () => Promise<unknown> }>();
+    const secondResponse = deferred<{ ok: boolean; json: () => Promise<unknown> }>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(firstResponse.promise)
+      .mockReturnValueOnce(secondResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const initialSession = session(
+      { kind: "answering" },
+      { revision: 1, submissionId: "revision-submission" },
+    );
+    mockUseQuizSession.mockReturnValue(initialSession);
+    const { rerender } = render(<RunnerPage />);
+    expect(
+      screen.getAllByRole("radio").every((radio) => (radio as HTMLInputElement).disabled),
+    ).toBe(true);
+
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "answering" }, { revision: 2, submissionId: "revision-submission" }),
+    );
+    rerender(<RunnerPage />);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      firstResponse.resolve({ ok: true, json: async () => ({ resultsVisible: false }) });
+      await firstResponse.promise;
+    });
+    expect(
+      screen.getAllByRole("radio").every((radio) => (radio as HTMLInputElement).disabled),
+    ).toBe(true);
+    expect(screen.getByText(/公開状態を確認できません/)).toBeVisible();
+
+    await act(async () => {
+      secondResponse.resolve({ ok: true, json: async () => ({ resultsVisible: false }) });
+      await secondResponse.promise;
+    });
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).disabled),
+      ).toBe(true),
+    );
   });
 
   it("queues one tab-return refresh and ignores the stale in-flight completion response", async () => {
@@ -617,7 +742,7 @@ describe("QuizRunner batch answer sheet", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) =>
-        String(input).includes("/api/answers/batch")
+        String(input).includes("/api/answers/visibility")
           ? Promise.resolve({
               ok: true,
               status: 200,

@@ -80,15 +80,31 @@ const apiError = (status: number, message: string) =>
   new ApiErrorClass({ status, message, code: null, retryAt: null });
 
 function makeSubmission(overrides: Partial<AnswerSubmission> = {}): AnswerSubmission {
-  return {
-    submissionId,
-    revision: 1,
-    answers: [1, 2, 3, 4, 5].map((questionId) => ({
+  const answers =
+    overrides.answers ??
+    [1, 2, 3, 4, 5].map((questionId) => ({
       questionId,
       answerKind: "selected" as const,
       selectedIndex: 0,
       freeText: null,
-    })),
+    }));
+  const questionTypes = new Map(
+    answers
+      .filter((answer) => answer.questionId === 5 && answer.answerKind !== "selected")
+      .map(({ questionId }) => [questionId, "freeText" as const]),
+  );
+  return {
+    submissionId,
+    revision: 1,
+    restoreIntegrity: {
+      status: "complete",
+      questions: [1, 2, 3, 4, 5].map((id) => ({
+        id,
+        answerType: (questionTypes.get(id) ?? "selected") as "selected" | "freeText",
+        choiceCount: questionTypes.has(id) ? 0 : 4,
+      })),
+    },
+    answers,
     ...overrides,
   };
 }
@@ -336,10 +352,30 @@ describe("useQuizSession state transitions", () => {
     const hook = await enterAnswering({ latest: makeSubmission() }, "complete");
     expect(hook.result.current.phase.kind).toBe("complete");
     expect(hook.result.current.revision).toBe(1);
-    expect(hook.result.current.answeredCount).toBe(5);
-    act(() => hook.result.current.editAnswers());
+    expect(hook.result.current.answeredCount).toBe(0);
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    await act(async () => hook.result.current.editAnswers(() => true));
+    expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
     expect(hook.result.current.phase.kind).toBe("answering");
     expect(Object.keys(hook.result.current.selections)).toHaveLength(5);
+  });
+
+  it("does not load an edit while participant switching is in progress", async () => {
+    const hook = await enterAnswering({ latest: makeSubmission() }, "complete");
+    const deletion = deferred<void>();
+    api.deleteParticipantSession.mockReturnValueOnce(deletion.promise);
+    let switching!: Promise<void>;
+    act(() => {
+      switching = hook.result.current.switchParticipant();
+    });
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("switching"));
+
+    await act(async () => hook.result.current.editAnswers(() => true));
+
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    expect(hook.result.current.isPreparingEdit).toBe(false);
+    deletion.resolve();
+    await act(async () => switching);
   });
 
   it("restores free-text and legacy answers without counting legacy text as answered", async () => {
@@ -363,6 +399,8 @@ describe("useQuizSession state transitions", () => {
       "complete",
     );
 
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    await act(async () => hook.result.current.editAnswers(() => true));
     expect(hook.result.current.legacyAnswerIds).toEqual([5]);
     expect(hook.result.current.freeResponses).toEqual({});
     expect(hook.result.current.answeredCount).toBe(4);
@@ -389,6 +427,8 @@ describe("useQuizSession state transitions", () => {
       "complete",
     );
 
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    await act(async () => hook.result.current.editAnswers(() => true));
     expect(hook.result.current.freeResponses).toEqual({ 5: "保存済みの記述回答" });
     expect(hook.result.current.answeredCount).toBe(5);
   });
@@ -436,13 +476,191 @@ describe("useQuizSession state transitions", () => {
     },
   );
 
+  it.each([
+    { label: "partial", questions: [question(1), question(2), question(3), question(4)] },
+    {
+      label: "duplicate",
+      questions: [question(1), question(2), question(2), question(4), question(5)],
+    },
+    {
+      label: "out of order",
+      questions: [question(2), question(1), question(3), question(4), question(5)],
+    },
+  ])(
+    "keeps a saved attempt locked when edit receives an invalid $label exam batch",
+    async ({ questions }) => {
+      api.fetchParticipantSession.mockResolvedValueOnce(participant);
+      api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+      api.fetchExamQuestions
+        .mockResolvedValueOnce(questions)
+        .mockResolvedValueOnce([1, 2, 3, 4, 5].map((id) => question(id)));
+      const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+
+      await act(async () => hook.result.current.editAnswers(() => true));
+
+      expect(hook.result.current.phase.kind).toBe("complete");
+      expect(hook.result.current.editLoadError).toContain("設問を読み込めませんでした");
+      expect(hook.result.current.saveConfirmed).toBe(true);
+      expect(hook.result.current.selections).toEqual({});
+
+      await act(async () => hook.result.current.retryEdit(() => true));
+
+      expect(hook.result.current.phase.kind).toBe("answering");
+      expect(hook.result.current.editLoadError).toBeNull();
+      expect(Object.keys(hook.result.current.selections)).toHaveLength(5);
+      expect(api.fetchExamQuestions).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("marks a saved submission unrestorable when its questions are unavailable", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(
+      makeSubmission({ restoreIntegrity: { status: "invalid" } }),
+    );
     api.fetchExamQuestions.mockResolvedValueOnce([]);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
-    expect(hook.result.current.restoreError).toContain("設問を読み込めませんでした");
+    expect(hook.result.current.restoreError).toContain("整合性を確認できません");
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+  });
+
+  it("does not restore or edit a saved answer set whose current question manifest changed", async () => {
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchExamQuestions.mockResolvedValueOnce([11, 12, 13, 14, 15].map((id) => question(id)));
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+
+    await act(async () => hook.result.current.editAnswers(() => true));
+
+    expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
+    expect(hook.result.current.phase.kind).toBe("complete");
+    expect(hook.result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(hook.result.current.saveConfirmed).toBe(false);
+  });
+
+  it("does not fetch questions unless the current visibility gate is unlocked", async () => {
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+
+    await act(async () => hook.result.current.editAnswers(() => false));
+
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    expect(hook.result.current.phase.kind).toBe("complete");
+    expect(hook.result.current.saveConfirmed).toBe(true);
+  });
+
+  it("rechecks the live visibility gate before applying a loaded correction", async () => {
+    const pendingQuestions = deferred<ReturnType<typeof question>[]>();
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchExamQuestions.mockReturnValueOnce(pendingQuestions.promise);
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    let canEdit = true;
+    let edit!: Promise<void>;
+    act(() => {
+      edit = hook.result.current.editAnswers(() => canEdit);
+    });
+    await waitFor(() => expect(hook.result.current.isPreparingEdit).toBe(true));
+    canEdit = false;
+    pendingQuestions.resolve([1, 2, 3, 4, 5].map((id) => question(id)));
+    await act(async () => edit);
+
+    expect(hook.result.current.phase.kind).toBe("complete");
+    expect(hook.result.current.selections).toEqual({});
+    expect(hook.result.current.saveConfirmed).toBe(true);
+    expect(hook.result.current.isPreparingEdit).toBe(false);
+  });
+
+  it("loads saved correction questions once when edit is requested more than once", async () => {
+    const pendingQuestions = deferred<ReturnType<typeof question>[]>();
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchExamQuestions.mockReturnValueOnce(pendingQuestions.promise);
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    let firstEdit!: Promise<void>;
+    let secondEdit!: Promise<void>;
+    act(() => {
+      firstEdit = hook.result.current.editAnswers(() => true);
+      secondEdit = hook.result.current.editAnswers(() => true);
+    });
+    await waitFor(() => expect(hook.result.current.isPreparingEdit).toBe(true));
+    expect(hook.result.current.phase.kind).toBe("complete");
+    expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
+    pendingQuestions.resolve([1, 2, 3, 4, 5].map((id) => question(id)));
+    await act(async () => {
+      await firstEdit;
+      await secondEdit;
+    });
+    expect(hook.result.current.phase.kind).toBe("answering");
+    expect(hook.result.current.isPreparingEdit).toBe(false);
+  });
+
+  it("lets the participant retry a failed deferred question load", async () => {
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchExamQuestions
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce([1, 2, 3, 4, 5].map((id) => question(id)));
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+
+    await act(async () => hook.result.current.editAnswers(() => true));
+    expect(hook.result.current.phase.kind).toBe("complete");
+    expect(hook.result.current.editLoadError).toBeTruthy();
+    expect(hook.result.current.saveConfirmed).toBe(true);
+
+    await act(async () => hook.result.current.retryEdit(() => true));
+
+    expect(api.fetchExamQuestions).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.phase.kind).toBe("answering");
+    expect(hook.result.current.editLoadError).toBeNull();
+  });
+
+  it("ignores edit retries when no correction load has failed", async () => {
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+
+    act(() => hook.result.current.retryEdit(() => true));
+
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    expect(hook.result.current.phase.kind).toBe("complete");
+    expect(hook.result.current.saveConfirmed).toBe(true);
+  });
+
+  it("discards a deferred edit failure after switching away from its participant", async () => {
+    const pendingQuestions = deferred<ReturnType<typeof question>[]>();
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchExamQuestions.mockReturnValueOnce(pendingQuestions.promise);
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+
+    let oldEdit!: Promise<void>;
+    act(() => {
+      oldEdit = hook.result.current.editAnswers(() => true);
+    });
+    await waitFor(() => expect(hook.result.current.isPreparingEdit).toBe(true));
+    await act(async () => hook.result.current.switchParticipant());
+    expect(hook.result.current.access.kind).toBe("login");
+    expect(hook.result.current.phase.kind).toBe("ready");
+
+    pendingQuestions.reject(new Error("late response"));
+    await act(async () => oldEdit);
+
+    expect(hook.result.current.access.kind).toBe("login");
+    expect(hook.result.current.phase.kind).toBe("ready");
+    expect(hook.result.current.quizzes).toEqual([]);
+    expect(hook.result.current.editLoadError).toBeNull();
+    expect(hook.result.current.isPreparingEdit).toBe(false);
   });
 
   it("retries a failed load from the already loaded questions", async () => {
@@ -568,6 +786,41 @@ describe("useQuizSession state transitions", () => {
     expect(hook.result.current.freeResponses).toEqual(draft.freeResponses);
   });
 
+  it("retains the assisted draft for recovery while rejecting invalid saved integrity", async () => {
+    const draft = makeCurrentAssistedDraft();
+    const invalidSaved = makeSubmission({
+      submissionId: draft.submissionId,
+      revision: draft.revision,
+      restoreIntegrity: { status: "invalid" },
+    });
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(invalidSaved);
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+
+    expect(hook.result.current.restoreError).toContain("整合性を確認できません");
+    expect(hook.result.current.autoEditAssisted).toBe(false);
+    expect(hook.result.current.saveConfirmed).toBe(false);
+    expect(hook.result.current.selections).toEqual({});
+    expect(hook.result.current.quizzes).toEqual([]);
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBe(
+      JSON.stringify(draft),
+    );
+    await act(async () => hook.result.current.editAnswers(() => true));
+    expect(hook.result.current.phase.kind).toBe("complete");
+    expect(hook.result.current.selections).toEqual({});
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+  });
+
   it("ignores repeated submission-check retries while the lookup is pending", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
     api.fetchLatestAnswerSubmission.mockRejectedValueOnce(new Error("offline"));
@@ -688,11 +941,18 @@ describe("useQuizSession state transitions", () => {
     api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
     api.fetchExamQuestions.mockReturnValueOnce(pendingQuestion.promise);
     const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    let editPromise!: Promise<void>;
+    act(() => {
+      editPromise = hook.result.current.editAnswers(() => true);
+    });
     await waitFor(() => expect(api.fetchExamQuestions).toHaveBeenCalledOnce());
     hook.unmount();
     pendingQuestion.resolve([1, 2, 3, 4, 5].map((id) => question(id)));
     await act(async () => {
       await pendingQuestion.promise;
+      await editPromise;
       await Promise.resolve();
     });
   });
@@ -1193,7 +1453,8 @@ describe("useQuizSession state transitions", () => {
       ),
     });
     const hook = await enterAnswering({ latest: malformed }, "complete");
-    expect(hook.result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(hook.result.current.restoreError).toContain("保存済み回答の整合性を確認できません");
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
   });
 
   it("marks a saved answer whose question is outside the loaded set as unrestorable", async () => {
@@ -1201,7 +1462,8 @@ describe("useQuizSession state transitions", () => {
       index === 4 ? { ...answer, questionId: 99 } : answer,
     );
     const hook = await enterAnswering({ latest: makeSubmission({ answers }) }, "complete");
-    expect(hook.result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(hook.result.current.restoreError).toContain("保存済み回答の整合性を確認できません");
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
   });
 
   it("marks an out-of-range saved choice as unrestorable", async () => {
@@ -1209,7 +1471,8 @@ describe("useQuizSession state transitions", () => {
       index === 0 ? { ...answer, selectedIndex: 99 } : answer,
     );
     const hook = await enterAnswering({ latest: makeSubmission({ answers }) }, "complete");
-    expect(hook.result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(hook.result.current.restoreError).toContain("保存済み回答の整合性を確認できません");
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
   });
 
   it("sets a restore error when refreshed saved answers are malformed", async () => {
@@ -1219,6 +1482,87 @@ describe("useQuizSession state transitions", () => {
     expect(hook.result.current.phase.kind).toBe("complete");
     expect(hook.result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
   });
+
+  it("rejects a refreshed selected answer that cannot map to a displayed choice", async () => {
+    const hook = await enterRefreshRequired();
+    const answers = makeSubmission().answers.map((answer, index) =>
+      index === 0 ? { ...answer, selectedIndex: 99 } : answer,
+    );
+    api.fetchAnswerSubmission.mockResolvedValueOnce(makeSubmission({ answers }));
+
+    await act(async () => hook.result.current.refreshSavedAnswers());
+
+    expect(hook.result.current.phase.kind).toBe("complete");
+    expect(hook.result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(hook.result.current.saveConfirmed).toBe(false);
+    expect(hook.result.current.savedSelections).toEqual({});
+  });
+
+  it.each([
+    {
+      label: "question set mismatch",
+      makeSubmission: () => {
+        const answers = makeSubmission().answers.map((answer, index) =>
+          index === 4 ? { ...answer, questionId: 99 } : answer,
+        );
+        return makeSubmission({ answers });
+      },
+      freeTextFifth: false,
+    },
+    {
+      label: "invalid legacy answer",
+      makeSubmission: () => {
+        const answers = makeSubmission().answers.map((answer, index) =>
+          index === 4
+            ? { questionId: 5, answerKind: "legacy" as const, selectedIndex: null, freeText: null }
+            : answer,
+        );
+        return makeSubmission({ answers });
+      },
+      freeTextFifth: true,
+    },
+    {
+      label: "invalid free-text answer",
+      makeSubmission: () => {
+        const answers = makeSubmission().answers.map((answer, index) =>
+          index === 4
+            ? { questionId: 5, answerKind: "freeText" as const, selectedIndex: null, freeText: " " }
+            : answer,
+        );
+        return makeSubmission({ answers });
+      },
+      freeTextFifth: true,
+    },
+    {
+      label: "invalid selected answer",
+      makeSubmission: () => {
+        const answers = makeSubmission().answers.map((answer, index) =>
+          index === 0
+            ? {
+                questionId: 1,
+                answerKind: "freeText" as const,
+                selectedIndex: null,
+                freeText: "invalid",
+              }
+            : answer,
+        );
+        return makeSubmission({ answers });
+      },
+      freeTextFifth: false,
+    },
+  ])(
+    "rejects a refreshed submission with $label",
+    async ({ makeSubmission: malformed, freeTextFifth }) => {
+      const hook = await enterRefreshRequired(freeTextFifth);
+      api.fetchAnswerSubmission.mockResolvedValueOnce(malformed());
+
+      await act(async () => hook.result.current.refreshSavedAnswers());
+
+      expect(hook.result.current.phase.kind).toBe("complete");
+      expect(hook.result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+      expect(hook.result.current.saveConfirmed).toBe(false);
+    },
+  );
 
   it("switches participant and clears the current exam", async () => {
     const hook = await enterAnswering();
@@ -1439,7 +1783,14 @@ describe("useQuizSession state transitions", () => {
     );
     api.fetchLatestAnswerSubmission.mockResolvedValueOnce(saved);
     await act(async () => hook.result.current.resumeAssisted());
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    expect(hook.result.current.autoEditAssisted).toBe(true);
+    act(() => hook.result.current.clearAutoEditAssisted());
+    expect(hook.result.current.autoEditAssisted).toBe(false);
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    await act(async () => hook.result.current.editAnswers(() => true));
+    expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
+    expect(hook.result.current.phase.kind).toBe("answering");
     expect(hook.result.current.answerMode).toBe("assisted");
     expect(hook.result.current.submissionId).toBe("00000000-0000-4000-8000-000000000018");
     expect(hook.result.current.revision).toBe(4);
@@ -1485,7 +1836,10 @@ describe("useQuizSession state transitions", () => {
     api.fetchLatestAnswerSubmission.mockResolvedValueOnce(saved);
 
     await act(async () => hook.result.current.resumeAssisted());
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    await act(async () => hook.result.current.editAnswers(() => true));
+    expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
+    expect(hook.result.current.phase.kind).toBe("answering");
 
     expect(hook.result.current.freeResponses).toEqual({ 5: "保存済みの代理回答" });
     expect(hook.result.current.answeredCount).toBe(5);
@@ -1530,11 +1884,14 @@ describe("useQuizSession state transitions", () => {
   });
 
   it.each([
-    ["question-load failure", "自分の回答を復元できませんでした"],
-    ["invalid saved answers", "自分の保存済み回答を復元できませんでした"],
+    ["missing restore integrity", makeSubmission({ restoreIntegrity: { status: "invalid" } })],
+    [
+      "invalid saved answers",
+      makeSubmission({ answers: [], restoreIntegrity: { status: "invalid" } }),
+    ],
   ] as const)(
-    "keeps the successful assisted save visible when owner restoration hits a %s",
-    async (failure, errorMessage) => {
+    "keeps the successful assisted save visible when owner restoration hits %s",
+    async (_failure, invalidSubmission) => {
       api.fetchAssistedParticipant.mockResolvedValue({
         participant: assistedParticipant,
         hasSubmission: false,
@@ -1549,20 +1906,18 @@ describe("useQuizSession state transitions", () => {
         act(() => hook.result.current.select(quiz.question.id, 0));
       }
 
-      if (failure === "question-load failure") {
-        api.fetchExamQuestions.mockRejectedValueOnce(new Error("questions unavailable"));
-        api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
-      } else {
-        api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission({ answers: [] }));
-      }
+      api.fetchLatestAnswerSubmission.mockResolvedValueOnce(invalidSubmission);
 
       await act(async () => hook.result.current.saveAnswers());
       await waitFor(() => expect(hook.result.current.phase.kind).toBe("owner-return-error"));
       expect(hook.result.current.answerMode).toBe("owner");
       expect(hook.result.current.phase).toMatchObject({
         kind: "owner-return-error",
-        message: expect.stringContaining(`代理回答は保存されましたが、${errorMessage}`),
+        message: expect.stringContaining(
+          "代理回答は保存されましたが、自分の保存済み回答を確認できませんでした",
+        ),
       });
+      expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
       expect(api.submitAnswerBatch).toHaveBeenCalledWith(expect.any(Object), "assisted");
     },
   );
@@ -1679,7 +2034,7 @@ describe("useQuizSession state transitions", () => {
     expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).not.toBeNull();
 
-    act(() => hook.result.current.editAnswers());
+    await act(async () => hook.result.current.editAnswers(() => true));
     await act(async () => hook.result.current.saveAnswers());
     expect(hook.result.current.phase.kind).toBe("complete");
     expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledTimes(1);

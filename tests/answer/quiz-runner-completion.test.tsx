@@ -41,7 +41,7 @@ function deferred<T>() {
 
 function publicationFetchMock(responses: Array<unknown>) {
   return vi.fn((input: RequestInfo | URL) => {
-    if (String(input).startsWith("/api/answers/batch")) {
+    if (String(input).startsWith("/api/answers/visibility")) {
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -147,7 +147,7 @@ describe("QuizRunner batch answer sheet", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) =>
-        String(input).includes("/api/answers/batch")
+        String(input).includes("/api/answers/visibility")
           ? Promise.resolve({
               ok: true,
               status: 200,
@@ -199,7 +199,7 @@ describe("QuizRunner batch answer sheet", () => {
     const pendingRetry = deferred<Response>();
     let resultRequest = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (String(input).startsWith("/api/answers/batch")) {
+      if (String(input).startsWith("/api/answers/visibility")) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -283,7 +283,7 @@ describe("QuizRunner batch answer sheet", () => {
     const pendingRetry = deferred<Response>();
     let resultRequest = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (String(input).startsWith("/api/answers/batch")) {
+      if (String(input).startsWith("/api/answers/visibility")) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -363,7 +363,7 @@ describe("QuizRunner batch answer sheet", () => {
     const newResult = deferred<Response>();
     let resultRequest = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (String(input).startsWith("/api/answers/batch")) {
+      if (String(input).startsWith("/api/answers/visibility")) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -423,7 +423,7 @@ describe("QuizRunner batch answer sheet", () => {
       vi.stubGlobal(
         "fetch",
         vi.fn((input: RequestInfo | URL) =>
-          String(input).includes("/api/answers/batch")
+          String(input).includes("/api/answers/visibility")
             ? pendingBatch.promise
             : Promise.resolve({
                 ok: true,
@@ -462,7 +462,7 @@ describe("QuizRunner batch answer sheet", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) =>
-        String(input).includes("/api/answers/batch")
+        String(input).includes("/api/answers/visibility")
           ? pendingBatch.promise
           : Promise.resolve({
               ok: true,
@@ -501,7 +501,7 @@ describe("QuizRunner batch answer sheet", () => {
       vi.stubGlobal(
         "fetch",
         vi.fn((input: RequestInfo | URL) =>
-          String(input).includes("/api/answers/batch")
+          String(input).includes("/api/answers/visibility")
             ? Promise.resolve({
                 ok: true,
                 status: 200,
@@ -538,7 +538,7 @@ describe("QuizRunner batch answer sheet", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) =>
-        String(input).includes("/api/answers/batch")
+        String(input).includes("/api/answers/visibility")
           ? pendingBatch.promise
           : Promise.resolve({
               ok: true,
@@ -580,7 +580,7 @@ describe("QuizRunner batch answer sheet", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) =>
-        String(input).includes("/api/answers/batch")
+        String(input).includes("/api/answers/visibility")
           ? Promise.resolve({ ok: false, status: 503, json: async () => ({}) })
           : Promise.resolve({
               ok: true,
@@ -606,7 +606,9 @@ describe("QuizRunner batch answer sheet", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) =>
-        String(input).includes("/api/answers/batch") ? pendingBatch.promise : pendingResult.promise,
+        String(input).includes("/api/answers/visibility")
+          ? pendingBatch.promise
+          : pendingResult.promise,
       ),
     );
     mockUseQuizSession.mockReturnValue(
@@ -651,7 +653,7 @@ describe("QuizRunner batch answer sheet", () => {
       vi.stubGlobal(
         "fetch",
         vi.fn((input: RequestInfo | URL) =>
-          String(input).includes("/api/answers/batch")
+          String(input).includes("/api/answers/visibility")
             ? Promise.resolve({
                 ok: true,
                 status: 200,
@@ -692,7 +694,7 @@ describe("QuizRunner batch answer sheet", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) =>
-        String(input).includes("/api/answers/batch")
+        String(input).includes("/api/answers/visibility")
           ? pendingBatch.promise
           : Promise.resolve({
               ok: true,
@@ -741,7 +743,7 @@ describe("QuizRunner batch answer sheet", () => {
           ok: true,
           status: 200,
           json: async () =>
-            String(input).includes("/api/answers/batch")
+            String(input).includes("/api/answers/visibility")
               ? { resultsVisible: false }
               : { state: "waiting" },
         }),
@@ -812,6 +814,7 @@ describe("QuizRunner batch answer sheet", () => {
       expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
       expect(screen.queryByRole("link", { name: "代理回答の結果を見る" })).not.toBeInTheDocument();
     });
+    if (_label === "private results") await getSettledCompletionHeading();
     if (_label === "private results" || _label === "unavailable results") {
       expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
       expect(
@@ -844,7 +847,7 @@ describe("QuizRunner batch answer sheet", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
-        if (String(input).includes("/api/answers/batch")) {
+        if (String(input).includes("/api/answers/visibility")) {
           return Promise.resolve({
             ok: true,
             status: 200,
@@ -901,7 +904,7 @@ describe("QuizRunner batch answer sheet", () => {
     const pendingAfterReauthentication = deferred<Response>();
     let resultRequest = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (String(input).startsWith("/api/answers/batch")) {
+      if (String(input).startsWith("/api/answers/visibility")) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -958,7 +961,7 @@ describe("QuizRunner batch answer sheet", () => {
     const pendingAfterLogin = deferred<Response>();
     let resultRequest = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (String(input).startsWith("/api/answers/batch")) {
+      if (String(input).startsWith("/api/answers/visibility")) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -1108,7 +1111,7 @@ describe("QuizRunner batch answer sheet", () => {
           ok: true,
           status: 200,
           json: async () =>
-            String(input).includes("/api/answers/batch")
+            String(input).includes("/api/answers/visibility")
               ? { resultsVisible: false }
               : { state: "waiting" },
         }),
@@ -1237,7 +1240,7 @@ describe("QuizRunner batch answer sheet", () => {
           ok: true,
           status: 200,
           json: async () =>
-            String(input).includes("/api/answers/batch")
+            String(input).includes("/api/answers/visibility")
               ? { resultsVisible: false }
               : visibleResultsPayload,
         }),

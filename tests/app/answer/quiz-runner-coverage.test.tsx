@@ -80,6 +80,11 @@ function session(phase: object, overrides: Record<string, unknown> = {}) {
     savedSelections: {},
     answeredCount: 0,
     saveConfirmed: (phase as { kind?: string }).kind === "complete",
+    isPreparingEdit: false,
+    editLoadError: null,
+    autoEditAssisted: false,
+    clearAutoEditAssisted: vi.fn(),
+    retryEdit: vi.fn(),
     select: vi.fn(),
     setFreeResponse: vi.fn(),
     saveAnswers: vi.fn(),
@@ -696,7 +701,7 @@ describe("QuizRunner remaining coverage states", () => {
           ok: true,
           status: 200,
           json: async () =>
-            String(input).startsWith("/api/answers/batch")
+            String(input).startsWith("/api/answers/visibility")
               ? { resultsVisible: false }
               : { state: "waiting" },
         }),
@@ -846,7 +851,7 @@ describe("QuizRunner remaining coverage states", () => {
             ok: true,
             status: 200,
             json: async () =>
-              String(input).startsWith("/api/answers/batch")
+              String(input).startsWith("/api/answers/visibility")
                 ? { resultsVisible: false }
                 : { state: "waiting" },
           }),
@@ -967,6 +972,146 @@ describe("QuizRunner remaining coverage states", () => {
     expect(startAssisted).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "自分の回答に戻る" }));
     expect(returnToOwner).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an incomplete phase", { kind: "answering" }, "assisted"],
+    ["owner scope", { kind: "complete" }, "owner"],
+  ])("clears assisted auto-edit when opened from %s", (_label, phase, answerMode) => {
+    const clearAutoEditAssisted = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(phase, {
+        answerMode,
+        autoEditAssisted: true,
+        clearAutoEditAssisted,
+      }),
+    );
+
+    render(<QuizRunner />);
+
+    expect(clearAutoEditAssisted).toHaveBeenCalledOnce();
+  });
+
+  it("keeps assisted auto-edit closed when the target publication is locked", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          url.includes("/api/answers/visibility") ? { resultsVisible: true } : { state: "waiting" },
+      })),
+    );
+    const editAnswers = vi.fn();
+    const clearAutoEditAssisted = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          answerMode: "assisted",
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+          revision: 1,
+          submissionId: "assisted-submission",
+          autoEditAssisted: true,
+          clearAutoEditAssisted,
+          editAnswers,
+        },
+      ),
+    );
+
+    render(<QuizRunner />);
+
+    await waitFor(() => expect(clearAutoEditAssisted).toHaveBeenCalledOnce());
+    expect(editAnswers).not.toHaveBeenCalled();
+  });
+
+  it("starts assisted auto-edit only after the matching visibility check unlocks", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          url.includes("/api/answers/visibility")
+            ? { resultsVisible: false }
+            : { state: "waiting" },
+      })),
+    );
+    let canEdit: (() => boolean) | undefined;
+    const editAnswers = vi.fn((guard: () => boolean) => {
+      canEdit = guard;
+    });
+    const clearAutoEditAssisted = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          answerMode: "assisted",
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+          revision: 3,
+          submissionId: "assisted-submission",
+          autoEditAssisted: true,
+          clearAutoEditAssisted,
+          editAnswers,
+        },
+      ),
+    );
+
+    render(<QuizRunner />);
+
+    await waitFor(() => expect(editAnswers).toHaveBeenCalledOnce());
+    expect(clearAutoEditAssisted).toHaveBeenCalledOnce();
+    expect(canEdit?.()).toBe(true);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/answers/visibility?submissionId=assisted-submission&scope=assisted",
+      expect.objectContaining({ cache: "no-store", credentials: "same-origin" }),
+    );
+  });
+
+  it("keeps correction busy and retries the lazy question load through the visibility guard", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          url.includes("/api/answers/visibility")
+            ? { resultsVisible: false }
+            : { state: "waiting" },
+      })),
+    );
+    const retryEdit = vi.fn();
+    const editAnswers = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          revision: 1,
+          submissionId: "saved-submission",
+          isPreparingEdit: true,
+          editLoadError: "設問を読み込めませんでした。もう一度お試しください。",
+          retryEdit,
+          editAnswers,
+        },
+      ),
+    );
+
+    render(<QuizRunner />);
+
+    const editButton = await screen.findByRole("button", { name: "設問を読み込んでいます…" });
+    expect(editButton).toBeDisabled();
+    const retryButton = screen.getByRole("button", { name: "もう一度読み込む" });
+    fireEvent.click(retryButton);
+    expect(retryEdit).toHaveBeenCalledOnce();
+    const retryGuard = vi.mocked(retryEdit).mock.calls[0]![0] as () => boolean;
+    expect(retryGuard()).toBe(true);
+    expect(editAnswers).not.toHaveBeenCalled();
+    expect(retryButton).toBeEnabled();
   });
 
   it("shows a name-only form error when starting an assisted response fails", async () => {

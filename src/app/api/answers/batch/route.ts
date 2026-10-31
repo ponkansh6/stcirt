@@ -1,40 +1,28 @@
 import { after, NextResponse } from "next/server";
 import { fail, ok, withErrorHandling } from "@/lib/api/response";
 import { submitAnswerBatchSchema } from "@/lib/api/schemas";
-import { findParticipantById } from "@/lib/db/repository/participant-repository";
 import {
   BatchSubmissionError,
   getAnswerSubmission,
   processDueAssessments,
   saveAnswerSubmission,
 } from "@/lib/db/repository/answer-repository";
+import { findParticipantById } from "@/lib/db/repository/participant-repository";
 import {
   getParticipantCookie,
   requestHasValidOrigin,
   verifyParticipantSession,
 } from "@/lib/participants/security";
-import { z } from "zod";
 import { resolveAnswerScope } from "@/lib/participants/answer-scope";
+import { resolveAnswerSubmissionAccess } from "@/lib/participants/answer-submission-access";
 
 export const maxDuration = 60;
 
 export const GET = withErrorHandling(async function (request: Request) {
-  const session = verifyParticipantSession(getParticipantCookie(request));
-  if (!session || !(await findParticipantById(session.id))) {
-    return fail("Participant session required", 401);
-  }
+  const access = await resolveAnswerSubmissionAccess(request);
+  if ("error" in access) return fail(access.error, access.status);
 
-  const scope = await resolveAnswerScope(
-    session.id,
-    new URL(request.url).searchParams.get("scope"),
-  );
-  if ("error" in scope) return fail(scope.error, scope.status);
-
-  const submissionId = new URL(request.url).searchParams.get("submissionId");
-  const parsedId = z.uuid().safeParse(submissionId);
-  if (!parsedId.success) return fail("Invalid submission ID", 400);
-
-  const submission = await getAnswerSubmission(parsedId.data, scope.participantId);
+  const submission = await getAnswerSubmission(access.submissionId, access.participantId);
   if (!submission) return fail("Submission not found", 404);
   return ok(submission);
 }, "GET /api/answers/batch");

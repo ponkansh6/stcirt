@@ -23,6 +23,14 @@ describe("useQuizSession hook", () => {
         : question(id),
     );
   const submissionId = "00000000-0000-4000-8000-000000000001";
+  const restoreIntegrity = (freeTextFifth = false) => ({
+    status: "complete" as const,
+    questions: [1, 2, 3, 4, 5].map((id) => ({
+      id,
+      answerType: id === 5 && freeTextFifth ? ("freeText" as const) : ("selected" as const),
+      choiceCount: id === 5 && freeTextFifth ? 0 : 4,
+    })),
+  });
 
   beforeEach(() => {
     vi.mocked(fetchLatestAnswerSubmission).mockClear();
@@ -224,7 +232,7 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase.kind).toBe("complete");
 
-    act(() => result.current.editAnswers());
+    await act(async () => result.current.editAnswers(() => true));
     expect(result.current.answeredCount).toBe(5);
     expect(result.current.selections[1]).toBe(2);
     act(() => result.current.select(1, firstChoice));
@@ -289,6 +297,7 @@ describe("useQuizSession hook", () => {
     vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue({
       submissionId,
       revision: 4,
+      restoreIntegrity: restoreIntegrity(true),
       answers: [
         ...[1, 2, 3, 4].map((questionId) => ({
           questionId,
@@ -313,10 +322,10 @@ describe("useQuizSession hook", () => {
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
     expect(result.current.submissionId).toBe(submissionId);
     expect(result.current.revision).toBe(4);
-    expect(result.current.legacyAnswerIds).toEqual([5]);
     expect(result.current.freeResponses[5]).toBeUndefined();
 
-    act(() => result.current.editAnswers());
+    await act(async () => result.current.editAnswers(() => true));
+    expect(result.current.legacyAnswerIds).toEqual([5]);
     expect(result.current.phase.kind).toBe("answering");
     act(() => result.current.setFreeResponse(5, "新しい自由記載回答"));
     await act(async () => result.current.saveAnswers());
@@ -346,7 +355,7 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase).toEqual({ kind: "complete" });
 
-    act(() => result.current.editAnswers());
+    await act(async () => result.current.editAnswers(() => true));
     act(() => result.current.select(1, 0));
     await act(async () => result.current.saveAnswers());
 
@@ -354,7 +363,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
     expect(result.current.saveConfirmed).toBe(false);
     expect(result.current.revision).toBe(1);
-    act(() => result.current.editAnswers());
+    await act(async () => result.current.editAnswers(() => true));
     expect(result.current.phase).toEqual({ kind: "complete" });
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/answers/batch")).toHaveLength(2);
   });
@@ -363,6 +372,7 @@ describe("useQuizSession hook", () => {
     vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue({
       submissionId,
       revision: 1,
+      restoreIntegrity: restoreIntegrity(),
       answers: [1, 2, 3, 4, 5].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
@@ -387,7 +397,7 @@ describe("useQuizSession hook", () => {
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
 
-    act(() => result.current.editAnswers());
+    await act(async () => result.current.editAnswers(() => true));
     act(() => result.current.select(1, 3));
     const draft = { ...result.current.selections };
     await act(async () => result.current.saveAnswers());
@@ -405,6 +415,7 @@ describe("useQuizSession hook", () => {
     vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue({
       submissionId,
       revision: 1,
+      restoreIntegrity: restoreIntegrity(),
       answers: [1, 2, 3, 4, 5].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
@@ -429,7 +440,7 @@ describe("useQuizSession hook", () => {
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
 
-    act(() => result.current.editAnswers());
+    await act(async () => result.current.editAnswers(() => true));
     act(() => result.current.select(1, 3));
     const draft = { ...result.current.selections };
     await act(async () => result.current.saveAnswers());
@@ -598,11 +609,14 @@ describe("useQuizSession hook", () => {
       freeText: string | null;
     }[] = [];
     const canonicalRevision = 7;
-    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce(null).mockResolvedValueOnce({
-      submissionId,
-      revision: canonicalRevision,
-      answers: [],
-    });
+    vi.mocked(fetchLatestAnswerSubmission)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        submissionId,
+        revision: canonicalRevision,
+        restoreIntegrity: restoreIntegrity(true),
+        answers: [],
+      });
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session" && init?.method === "POST")
         return {
@@ -714,8 +728,18 @@ describe("useQuizSession hook", () => {
           },
     );
     vi.mocked(fetchLatestAnswerSubmission)
-      .mockResolvedValueOnce({ submissionId, revision: 2, answers: canonicalAnswers })
-      .mockResolvedValueOnce({ submissionId, revision: 4, answers: canonicalAnswers });
+      .mockResolvedValueOnce({
+        submissionId,
+        revision: 2,
+        answers: canonicalAnswers,
+        restoreIntegrity: restoreIntegrity(true),
+      })
+      .mockResolvedValueOnce({
+        submissionId,
+        revision: 4,
+        answers: canonicalAnswers,
+        restoreIntegrity: restoreIntegrity(true),
+      });
     const posts: Record<string, unknown>[] = [];
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session" && init?.method === "POST")
@@ -745,7 +769,7 @@ describe("useQuizSession hook", () => {
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
     expect(result.current.revision).toBe(2);
-    act(() => result.current.editAnswers());
+    await act(async () => result.current.editAnswers(() => true));
     act(() => result.current.select(1, 3));
     const localFreeResponse = "  修正した自由記述  ";
     act(() => result.current.setFreeResponse(5, localFreeResponse));
@@ -873,6 +897,7 @@ describe("useQuizSession hook", () => {
       submissionId: changedSubmissionId,
       revision: 3,
       answers: canonicalAnswers,
+      restoreIntegrity: restoreIntegrity(true),
     };
     for (const quiz of result.current.quizzes.filter(
       ({ question: item }) => item.answerType === "selected",
@@ -889,9 +914,10 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.login("参加者", "1234"));
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
     expect(result.current.submissionId).toBe(changedSubmissionId);
-    expect(result.current.freeResponses[5]).toBe("回答を保存しました");
+    expect(result.current.freeResponses[5]).toBeUndefined();
 
-    act(() => result.current.editAnswers());
+    await act(async () => result.current.editAnswers(() => true));
+    expect(result.current.freeResponses[5]).toBe("回答を保存しました");
     act(() => result.current.setFreeResponse(5, "別の未保存案"));
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase).toMatchObject({ refreshRequired: true });
@@ -1161,7 +1187,7 @@ describe("useQuizSession hook", () => {
       result.current.select(1, 0);
       void result.current.saveAnswers();
       void result.current.refreshSavedAnswers();
-      result.current.editAnswers();
+      void result.current.editAnswers(() => true);
       result.current.retryLoad();
       void result.current.switchParticipant();
     });
@@ -1176,7 +1202,7 @@ describe("useQuizSession hook", () => {
     act(() => {
       void result.current.saveAnswers();
       void result.current.refreshSavedAnswers();
-      result.current.editAnswers();
+      void result.current.editAnswers(() => true);
       result.current.retryLoad();
     });
     expect(result.current.phase).toEqual(initialPhase);
@@ -1229,7 +1255,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.restoreError).toBeTruthy();
     expect(result.current.saveConfirmed).toBe(false);
     expect(result.current.answeredCount).toBe(5);
-    act(() => result.current.editAnswers());
+    await act(async () => result.current.editAnswers(() => true));
     expect(result.current.phase).toEqual({ kind: "complete" });
   });
 
@@ -1358,7 +1384,7 @@ describe("useQuizSession hook", () => {
       freeText: "承認済みの環境を上司に確認します。",
     });
 
-    act(() => result.current.editAnswers());
+    await act(async () => result.current.editAnswers(() => true));
     expect(result.current.freeResponses[5]).toBe("  承認済みの環境を上司に確認します。  ");
   });
 
@@ -1366,6 +1392,7 @@ describe("useQuizSession hook", () => {
     vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce({
       submissionId,
       revision: 3,
+      restoreIntegrity: restoreIntegrity(true),
       answers: [
         ...[1, 2, 3, 4].map((questionId) => ({
           questionId,
@@ -1381,12 +1408,18 @@ describe("useQuizSession hook", () => {
         },
       ],
     });
-    setupFetch({ freeTextFifth: true });
+    const fetchMock = setupFetch({ freeTextFifth: true });
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
 
     expect(result.current.submissionId).toBe(submissionId);
     expect(result.current.revision).toBe(3);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(0);
+    expect(result.current.selections).toEqual({});
+    expect(result.current.freeResponses).toEqual({});
+    expect(result.current.saveConfirmed).toBe(true);
+
+    await act(async () => result.current.editAnswers(() => true));
     expect(result.current.selections).toEqual(
       Object.fromEntries(
         result.current.quizzes
@@ -1399,9 +1432,9 @@ describe("useQuizSession hook", () => {
     );
     expect(result.current.freeResponses[5]).toBe("回答を保存しました。");
     expect(result.current.restoreError).toBeNull();
-    expect(result.current.saveConfirmed).toBe(true);
+    expect(result.current.saveConfirmed).toBe(false);
 
-    act(() => result.current.editAnswers());
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(1);
     expect(result.current.phase.kind).toBe("answering");
     expect(result.current.selections).toEqual(result.current.savedSelections);
   });
@@ -1411,13 +1444,35 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 1,
       answers: [],
+      restoreIntegrity: { status: "invalid" },
     });
     setupFetch();
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
-    expect(result.current.restoreError).toMatch(/復元できません/);
+    expect(result.current.restoreError).toMatch(/整合性を確認できません/);
     expect(result.current.submissionId).toBe(submissionId);
     expect(result.current.saveConfirmed).toBe(false);
+  });
+
+  it("does not treat a saved submission without an integrity guarantee as completed", async () => {
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce({
+      submissionId,
+      revision: 2,
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    });
+    const fetchMock = setupFetch();
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.submissionId).toBe(submissionId);
+    expect(result.current.saveConfirmed).toBe(false);
+    expect(result.current.restoreError).toContain("整合性を確認できません");
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
   });
 
   it("does not start an attempt after a latest-submission failure and retries the lookup", async () => {
@@ -1443,6 +1498,7 @@ describe("useQuizSession hook", () => {
       .mockResolvedValueOnce({
         submissionId,
         revision: 2,
+        restoreIntegrity: restoreIntegrity(),
         answers: [1, 2, 3, 4, 5].map((questionId) => ({
           questionId,
           answerKind: "selected" as const,
@@ -1458,6 +1514,8 @@ describe("useQuizSession hook", () => {
 
     expect(result.current.submissionId).toBe(submissionId);
     expect(result.current.revision).toBe(2);
+    expect(result.current.answeredCount).toBe(0);
+    await act(async () => result.current.editAnswers(() => true));
     expect(result.current.answeredCount).toBe(5);
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(1);
   });

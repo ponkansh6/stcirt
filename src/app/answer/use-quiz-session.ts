@@ -21,6 +21,7 @@ import {
 } from "@/lib/api/client";
 import type { QuizQuestion } from "@/types/quiz";
 import { shuffleChoices, type ShuffledChoices } from "@/lib/shuffle";
+import { QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
 
 const EXAM_SIZE = 5;
 
@@ -81,6 +82,63 @@ type SelectedAnswer = AnswerSubmission["answers"][number] & {
   answerKind: "selected";
   selectedIndex: number;
 };
+
+function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
+  const integrity = submission.restoreIntegrity;
+  if (
+    integrity?.status !== "complete" ||
+    integrity.questions.length !== EXAM_SIZE ||
+    submission.answers.length !== EXAM_SIZE
+  ) {
+    return false;
+  }
+  const questions = integrity.questions;
+  const questionIds = questions.map(({ id }) => id);
+  const answerIds = submission.answers.map(({ questionId }) => questionId);
+  if (
+    new Set(questionIds).size !== EXAM_SIZE ||
+    new Set(answerIds).size !== EXAM_SIZE ||
+    questions.some(({ id }, index) => index > 0 && id <= questions[index - 1]!.id) ||
+    questions.some(({ answerType, choiceCount }) =>
+      answerType === "freeText"
+        ? choiceCount !== 0
+        : choiceCount < 2 || choiceCount > QUIZ_CHOICES_PER_QUESTION,
+    ) ||
+    answerIds.some((id) => !questionIds.includes(id))
+  ) {
+    return false;
+  }
+
+  // Both five-item ID sets are unique, equal in size, and answerIds is a
+  // subset of questionIds, so every question has exactly one matching answer.
+  return questions.every(({ id, answerType }, index) => {
+    const answer = submission.answers.find(({ questionId }) => questionId === id)!;
+    if (answerType === "selected") {
+      return (
+        answer.answerKind === "selected" &&
+        Number.isInteger(answer.selectedIndex) &&
+        answer.selectedIndex! >= 0 &&
+        answer.selectedIndex! < questions[index]!.choiceCount &&
+        answer.freeText === null
+      );
+    }
+    if (answer.answerKind === "legacy") {
+      return (
+        index === EXAM_SIZE - 1 &&
+        Number.isInteger(answer.selectedIndex) &&
+        answer.selectedIndex! >= 0 &&
+        answer.selectedIndex! < QUIZ_CHOICES_PER_QUESTION &&
+        answer.freeText === null
+      );
+    }
+    return (
+      answer.answerKind === "freeText" &&
+      answer.selectedIndex === null &&
+      Boolean(answer.freeText?.trim()) &&
+      answer.freeText!.trim().length <= 1000
+    );
+  });
+}
 
 class InvalidSavedSubmissionError extends Error {
   constructor() {
@@ -347,6 +405,12 @@ export function useQuizSession() {
   const [revision, setRevision] = useState(0);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saveConfirmed, setSaveConfirmed] = useState(false);
+  const [isPreparingEdit, setIsPreparingEdit] = useState(false);
+  const [editLoadError, setEditLoadError] = useState<string | null>(null);
+  const [autoEditAssisted, setAutoEditAssisted] = useState(false);
+  const savedSubmissionRef = useRef<AnswerSubmission | null>(null);
+  const editingRef = useRef(false);
+  const editGenerationRef = useRef(0);
   const mountedRef = useRef(false);
   const sessionEpochRef = useRef(0);
   const busyRef = useRef(false);
@@ -445,7 +509,6 @@ export function useQuizSession() {
     if (busyRef.current) return null;
     const sessionEpoch = sessionEpochRef.current;
     busyRef.current = true;
-    const initial = restart ? [] : quizzesRef.current;
     if (restart) {
       preserveDraftOnSavedRefreshRef.current = false;
       quizzesRef.current = [];
@@ -467,10 +530,6 @@ export function useQuizSession() {
     }
     setPhase({ kind: "loading" });
     try {
-      if (initial.length === EXAM_SIZE) {
-        setPhase({ kind: "answering" });
-        return initial;
-      }
       const questions = await fetchExamQuestions();
       if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return null;
       if (
@@ -524,6 +583,8 @@ export function useQuizSession() {
         const latest = await fetchLatestAnswerSubmission(scope);
         if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
         if (!latest) {
+          savedSubmissionRef.current = null;
+          setAutoEditAssisted(false);
           preserveDraftOnSavedRefreshRef.current = false;
           if (scope === "owner" && ownerReturnAfterAssistedSaveRef.current) {
             setPhase({
@@ -604,6 +665,8 @@ export function useQuizSession() {
         }
         if (resumingDraft) preserveDraftOnSavedRefreshRef.current = false;
 
+        savedSubmissionRef.current = latest;
+
         if (scope === "assisted") {
           const draft =
             scope === "assisted" && draftParticipantId
@@ -614,6 +677,23 @@ export function useQuizSession() {
             draft.submissionId === latest.submissionId &&
             draft.revision === latest.revision
           ) {
+            if (!hasCompleteRestoreIntegrity(latest)) {
+              setRestoreError(
+                "保存済み回答の整合性を確認できません。確認のため再読み込みしてください。",
+              );
+              setSaveConfirmed(false);
+              setSavedSelections({});
+              selectionsRef.current = {};
+              freeResponsesRef.current = {};
+              legacyAnswerIdsRef.current = [];
+              setSelections({});
+              setFreeResponses({});
+              setLegacyAnswerIds([]);
+              setAnsweredCount(0);
+              setAutoEditAssisted(false);
+              setPhase({ kind: "complete" });
+              return;
+            }
             reloadedAssistedRef.current = false;
             quizzesRef.current = draft.quizzes;
             setQuizzes(draft.quizzes);
@@ -649,58 +729,48 @@ export function useQuizSession() {
         revisionRef.current = latest.revision;
         setRevision(latest.revision);
         failedAttemptRef.current = null;
-        const loaded = await loadQuestions();
-        if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
-        if (!loaded) {
+
+        if (!hasCompleteRestoreIntegrity(latest)) {
           if (scope === "owner" && ownerReturnAfterAssistedSaveRef.current) {
             setPhase({
               kind: "owner-return-error",
-              message: "代理回答は保存されましたが、自分の回答を復元できませんでした。",
+              message: "代理回答は保存されましたが、自分の保存済み回答を確認できませんでした。",
             });
             return;
           }
           setRestoreError(
-            "保存済み回答を復元するための設問を読み込めませんでした。時間をおいて再読み込みしてください。",
+            "保存済み回答の整合性を確認できません。確認のため再読み込みしてください。",
           );
           setSaveConfirmed(false);
+          setSavedSelections({});
+          selectionsRef.current = {};
+          freeResponsesRef.current = {};
+          legacyAnswerIdsRef.current = [];
+          setSelections({});
+          setFreeResponses({});
+          setLegacyAnswerIds([]);
+          setAnsweredCount(0);
+          setAutoEditAssisted(false);
           setPhase({ kind: "complete" });
           return;
         }
 
-        let restored: ReturnType<typeof restoreSavedAnswers>;
-        try {
-          restored = restoreSavedAnswers(latest, loaded, latest.submissionId);
-        } catch {
-          if (scope === "owner" && ownerReturnAfterAssistedSaveRef.current) {
-            setPhase({
-              kind: "owner-return-error",
-              message: "代理回答は保存されましたが、自分の保存済み回答を復元できませんでした。",
-            });
-            return;
-          }
-          setRestoreError("保存済み回答と現在の設問が一致しないため、回答を復元できません。");
-          setSaveConfirmed(false);
-          setPhase({ kind: "complete" });
-          return;
-        }
-        selectionsRef.current = restored.selections;
-        freeResponsesRef.current = restored.freeResponses;
-        setSelections(restored.selections);
-        setSavedSelections(restored.selections);
-        setFreeResponses(restored.freeResponses);
-        setLegacyAnswerIds(restored.legacyAnswerIds);
-        setAnsweredCount(
-          Object.keys(restored.selections).length +
-            Object.values(restored.freeResponses).filter((value) => value.trim()).length,
-        );
         setRestoreError(null);
-        startTransition(() => setSaveConfirmed(true));
-        if (scope === "owner") ownerReturnAfterAssistedSaveRef.current = false;
+        setSavedSelections({});
+        selectionsRef.current = {};
+        freeResponsesRef.current = {};
+        legacyAnswerIdsRef.current = [];
+        setSelections({});
+        setFreeResponses({});
+        setLegacyAnswerIds([]);
+        setAnsweredCount(0);
+        setSaveConfirmed(true);
         if (scope === "assisted" && editAssistedSubmission) {
-          setPhase({ kind: "answering" });
-        } else {
-          setPhase({ kind: "complete" });
+          setAutoEditAssisted(true);
         }
+        if (scope === "owner") ownerReturnAfterAssistedSaveRef.current = false;
+        setPhase({ kind: "complete" });
+        return;
       } catch (error) {
         if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return;
         if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
@@ -814,6 +884,11 @@ export function useQuizSession() {
       const current = accessRef.current;
       if (current.kind !== "ready" || busyRef.current || checkingSubmissionRef.current) return;
       sessionEpochRef.current += 1;
+      editGenerationRef.current += 1;
+      editingRef.current = false;
+      setIsPreparingEdit(false);
+      setEditLoadError(null);
+      savedSubmissionRef.current = null;
       preserveDraftOnSavedRefreshRef.current = false;
       answerModeRef.current = "assisted";
       setAnswerMode("assisted");
@@ -903,6 +978,12 @@ export function useQuizSession() {
       if (current.kind !== "ready") return;
       ownerReturnAfterAssistedSaveRef.current = afterSave;
       sessionEpochRef.current += 1;
+      editGenerationRef.current += 1;
+      editingRef.current = false;
+      setIsPreparingEdit(false);
+      setEditLoadError(null);
+      savedSubmissionRef.current = null;
+      setAutoEditAssisted(false);
       answerModeRef.current = "owner";
       setAnswerMode("owner");
       setSaveConfirmed(false);
@@ -940,6 +1021,12 @@ export function useQuizSession() {
           const sameParticipant = participant.id === currentAccess.participant.id;
           resumeAfterAuthRef.current = sameParticipant;
           if (!sameParticipant) {
+            editGenerationRef.current += 1;
+            editingRef.current = false;
+            setIsPreparingEdit(false);
+            setEditLoadError(null);
+            savedSubmissionRef.current = null;
+            setAutoEditAssisted(false);
             window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
             clearAssistedDraft();
             assistedParticipantIdRef.current = null;
@@ -1001,11 +1088,17 @@ export function useQuizSession() {
       window.sessionStorage.removeItem(ASSISTED_MODE_KEY);
       clearAssistedDraft();
       assistedParticipantIdRef.current = null;
+      savedSubmissionRef.current = null;
+      setAutoEditAssisted(false);
       answerModeRef.current = "owner";
       setAnswerMode("owner");
       setSaveConfirmed(false);
       setAssistedScreen("closed");
       sessionEpochRef.current += 1;
+      editGenerationRef.current += 1;
+      editingRef.current = false;
+      setIsPreparingEdit(false);
+      setEditLoadError(null);
       quizzesRef.current = [];
       setQuizzes([]);
       setSelections({});
@@ -1137,6 +1230,34 @@ export function useQuizSession() {
         return;
       }
       const confirmedSelections = { ...attempt.selectedByQuestion };
+      const savedAnswers = attempt.answers.map((answer) =>
+        "freeText" in answer
+          ? {
+              questionId: answer.questionId,
+              answerKind: "freeText" as const,
+              selectedIndex: null,
+              freeText: attempt.freeResponses[answer.questionId]!,
+            }
+          : {
+              questionId: answer.questionId,
+              answerKind: "selected" as const,
+              selectedIndex: answer.selectedIndex,
+              freeText: null,
+            },
+      );
+      savedSubmissionRef.current = {
+        submissionId: result.submissionId,
+        revision: result.revision,
+        answers: savedAnswers,
+        restoreIntegrity: {
+          status: "complete",
+          questions: currentQuizzes.map(({ question }) => ({
+            id: question.id,
+            answerType: question.answerType,
+            choiceCount: question.choices.length,
+          })),
+        },
+      };
       setSavedSelections(confirmedSelections);
       setSelections(confirmedSelections);
       setFreeResponses({ ...attempt.freeResponses });
@@ -1306,18 +1427,116 @@ export function useQuizSession() {
     }
   }, []);
 
-  const editAnswers = useCallback(() => {
-    if (phaseRef.current.kind !== "complete" || restoreError) return;
-    const restored = copySelections(savedSelections);
-    setSaveConfirmed(false);
-    selectionsRef.current = restored;
-    setSelections(restored);
-    setAnsweredCount(
-      Object.keys(restored).length +
-        Object.values(freeResponsesRef.current).filter((value) => value.trim()).length,
-    );
-    setPhase({ kind: "answering" });
-  }, [restoreError, savedSelections]);
+  const editAnswers = useCallback(
+    async (canEdit: () => boolean) => {
+      const currentAccess = accessRef.current;
+      if (currentAccess.kind !== "ready") return;
+      if (phaseRef.current.kind !== "complete" || restoreError || editingRef.current) return;
+      const saved = savedSubmissionRef.current;
+      const integrity = saved?.restoreIntegrity;
+      if (
+        !saved ||
+        integrity?.status !== "complete" ||
+        !hasCompleteRestoreIntegrity(saved) ||
+        !canEdit()
+      )
+        return;
+      const snapshot = {
+        sessionEpoch: sessionEpochRef.current,
+        scope: answerModeRef.current,
+        assistedParticipantId: assistedParticipantIdRef.current,
+        submissionId: saved.submissionId,
+        revision: revisionRef.current,
+        participantId: currentAccess.participant.id,
+      };
+      editingRef.current = true;
+      const editGeneration = ++editGenerationRef.current;
+      const snapshotIsCurrent = () => {
+        const currentAccess = accessRef.current;
+        return (
+          mountedRef.current &&
+          editGenerationRef.current === editGeneration &&
+          snapshot.sessionEpoch === sessionEpochRef.current &&
+          snapshot.scope === answerModeRef.current &&
+          snapshot.assistedParticipantId === assistedParticipantIdRef.current &&
+          snapshot.submissionId === submissionIdRef.current &&
+          snapshot.revision === revisionRef.current &&
+          currentAccess.kind === "ready" &&
+          currentAccess.participant.id === snapshot.participantId
+        );
+      };
+      setIsPreparingEdit(true);
+      setEditLoadError(null);
+      try {
+        let loaded = quizzesRef.current;
+        const questionsMatchManifest = (items: LoadedQuiz[]) =>
+          items.length === EXAM_SIZE &&
+          items.every(({ question }, index) => {
+            const expected = integrity.questions[index]!;
+            return (
+              expected.id === question.id &&
+              expected.answerType === question.answerType &&
+              expected.choiceCount === question.choices.length
+            );
+          });
+        if (!questionsMatchManifest(loaded)) {
+          const questions = await fetchExamQuestions();
+          if (
+            questions.length !== EXAM_SIZE ||
+            new Set(questions.map(({ id }) => id)).size !== EXAM_SIZE ||
+            questions.some(({ id }, index) => index > 0 && id <= questions[index - 1]!.id)
+          ) {
+            throw new Error("設問データを確認できませんでした。");
+          }
+          loaded = questions.map((question) => ({
+            question,
+            shuffled: shuffleChoices(question.choices),
+          }));
+        }
+        if (!snapshotIsCurrent()) return;
+        if (!questionsMatchManifest(loaded)) {
+          setRestoreError("保存済み回答と現在の設問が一致しないため、回答を復元できません。");
+          setSaveConfirmed(false);
+          setPhase({ kind: "complete" });
+          return;
+        }
+        if (!canEdit()) return;
+
+        // The saved manifest validates answer shape and indices, and the loaded
+        // questions are matched to it above before restoring display positions.
+        const restored = restoreSavedAnswers(saved, loaded, snapshot.submissionId);
+        quizzesRef.current = loaded;
+        setQuizzes(loaded);
+        setRestoreError(null);
+        setSaveConfirmed(false);
+        selectionsRef.current = restored.selections;
+        freeResponsesRef.current = restored.freeResponses;
+        setSelections(restored.selections);
+        setSavedSelections(restored.selections);
+        setFreeResponses(restored.freeResponses);
+        setLegacyAnswerIds(restored.legacyAnswerIds);
+        setAnsweredCount(
+          Object.keys(restored.selections).length +
+            Object.values(restored.freeResponses).filter((value) => value.trim()).length,
+        );
+        setPhase({ kind: "answering" });
+      } catch {
+        if (snapshotIsCurrent()) {
+          setEditLoadError(
+            "設問を読み込めませんでした。回答は確認済みです。もう一度お試しください。",
+          );
+        }
+      } finally {
+        if (editGenerationRef.current === editGeneration) {
+          editingRef.current = false;
+          setIsPreparingEdit(false);
+        }
+      }
+    },
+    [restoreError],
+  );
+
+  const clearAutoEditAssisted = useCallback(() => setAutoEditAssisted(false), []);
 
   const clearPublishedLock = useCallback(() => {
     const currentPhase = phaseRef.current;
@@ -1329,6 +1548,13 @@ export function useQuizSession() {
   const retryLoad = useCallback(() => {
     if (phaseRef.current.kind === "load-error") void loadQuestions();
   }, [loadQuestions]);
+
+  const retryEdit = useCallback(
+    (canEdit: () => boolean) => {
+      if (phaseRef.current.kind === "complete" && editLoadError) void editAnswers(canEdit);
+    },
+    [editAnswers, editLoadError],
+  );
 
   return {
     answerMode,
@@ -1352,6 +1578,10 @@ export function useQuizSession() {
     revision,
     restoreError,
     saveConfirmed,
+    isPreparingEdit,
+    editLoadError,
+    autoEditAssisted,
+    clearAutoEditAssisted,
     select,
     setFreeResponse,
     saveAnswers,
@@ -1359,6 +1589,7 @@ export function useQuizSession() {
     editAnswers,
     clearPublishedLock,
     retryLoad,
+    retryEdit,
     retrySubmissionCheck,
     login,
     switchParticipant,

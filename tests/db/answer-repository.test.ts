@@ -83,6 +83,51 @@ async function insertSubmission(input: {
   });
 }
 
+async function getLatestWithRawAnswers(
+  submissionId: string,
+  questionIds: number[],
+  storedAnswers: Array<{
+    questionId: number;
+    selectedIndex: number | null;
+    freeText: string | null;
+    answerKind: string;
+  }>,
+  freeTextQuestionId = questionIds[4],
+) {
+  const originalDb = dbRef.db;
+  const submission = { id: submissionId, participantId: 99, questionIds, revision: 1 };
+  const currentQuestions = questionIds.map((id) => ({
+    id,
+    key: id === freeTextQuestionId ? "it-literacy-005" : `test-${id}`,
+    choiceCount: id === freeTextQuestionId ? 0 : 4,
+  }));
+  const fakeDb = {
+    transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        select: () => ({
+          from: (table: unknown) => {
+            if (table === schema.examAnswerSubmissions) {
+              return {
+                where: () => ({ orderBy: () => ({ limit: async () => [submission] }) }),
+              };
+            }
+            if (table === schema.examSubmissionAnswers) {
+              return { where: async () => storedAnswers };
+            }
+            return { orderBy: () => ({ limit: async () => currentQuestions }) };
+          },
+        }),
+      }),
+  };
+  dbRef.db = fakeDb as unknown as TestDb["db"];
+
+  try {
+    return await getLatestAnswerSubmission(99);
+  } finally {
+    dbRef.db = originalDb;
+  }
+}
+
 describe("answer-repository", () => {
   let testDb: TestDb;
 
@@ -221,42 +266,515 @@ describe("answer-repository", () => {
     });
 
     it("restores free-text answers without a selected choice", async () => {
-      const questionId = await insertQuestion();
+      const questionIds = await insertFiveQuestions();
+      const questionId = questionIds[4]!;
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({ key: "it-literacy-005", choices: [] })
+        .where(eq(schema.examQuestions.id, questionId));
       const participantId = await insertParticipant();
-      await insertSubmission({ id: "free-text-latest", participantId, questionIds: [questionId] });
-      await dbRef.db!.insert(schema.examSubmissionAnswers).values({
-        submissionId: "free-text-latest",
-        questionId,
-        selectedIndex: null,
-        freeText: "  explanation  ",
-        answerKind: "freeText",
-      });
+      await insertSubmission({ id: "free-text-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((id) => ({
+          submissionId: "free-text-latest",
+          questionId: id,
+          selectedIndex: id === questionId ? null : 0,
+          freeText: id === questionId ? "  explanation  " : null,
+          answerKind: id === questionId ? ("freeText" as const) : ("selected" as const),
+        })),
+      );
 
       await expect(getLatestAnswerSubmission(participantId)).resolves.toMatchObject({
         submissionId: "free-text-latest",
-        answers: [
+        restoreIntegrity: { status: "complete" },
+        answers: expect.arrayContaining([
           { questionId, answerKind: "freeText", selectedIndex: null, freeText: "  explanation  " },
-        ],
+        ]),
       });
     });
 
     it("restores selected answers with a null free-text value", async () => {
-      const questionId = await insertQuestion();
+      const questionIds = await insertFiveQuestions();
+      const questionId = questionIds[2]!;
       const participantId = await insertParticipant();
-      await insertSubmission({ id: "selected-latest", participantId, questionIds: [questionId] });
-      await dbRef.db!.insert(schema.examSubmissionAnswers).values({
-        submissionId: "selected-latest",
-        questionId,
-        selectedIndex: 2,
-        freeText: null,
-        answerKind: "selected",
-      });
+      await insertSubmission({ id: "selected-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((id) => ({
+          submissionId: "selected-latest",
+          questionId: id,
+          selectedIndex: id === questionId ? 2 : 0,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
 
       await expect(getLatestAnswerSubmission(participantId)).resolves.toMatchObject({
         submissionId: "selected-latest",
-        answers: [{ questionId, answerKind: "selected", selectedIndex: 2, freeText: null }],
+        restoreIntegrity: { status: "complete" },
+        answers: expect.arrayContaining([
+          { questionId, answerKind: "selected", selectedIndex: 2, freeText: null },
+        ]),
       });
     });
+
+    it.each([
+      {
+        label: "with a negative selected index",
+        selectedIndex: -1,
+        answerKind: "selected" as const,
+        freeText: null,
+      },
+      {
+        label: "with the wrong answer kind",
+        selectedIndex: null,
+        answerKind: "freeText" as const,
+        freeText: "answer",
+      },
+    ])("rejects selected answers $label", async ({ selectedIndex, answerKind, freeText }) => {
+      const questionIds = await insertFiveQuestions();
+      const invalidQuestionId = questionIds[1]!;
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "invalid-selected-shape-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((questionId) => ({
+          submissionId: "invalid-selected-shape-latest",
+          questionId,
+          selectedIndex: questionId === invalidQuestionId ? selectedIndex : 0,
+          freeText: questionId === invalidQuestionId ? freeText : null,
+          answerKind: questionId === invalidQuestionId ? answerKind : ("selected" as const),
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+      expect(latest?.answers).toEqual([]);
+    });
+
+    it.each([
+      {
+        label: "a selected row without an index",
+        questionId: 2,
+        answer: { selectedIndex: null, freeText: null, answerKind: "selected" },
+      },
+      {
+        label: "a selected row with both selected and text values",
+        questionId: 2,
+        answer: { selectedIndex: 0, freeText: "answer", answerKind: "selected" },
+      },
+    ])("rejects boundary raw rows containing $label", async ({ questionId, answer }) => {
+      const questionIds = [1, 2, 3, 4, 5];
+      const rows = questionIds.map((id) => ({
+        questionId: id,
+        selectedIndex: id === questionId ? answer.selectedIndex : 0,
+        freeText: id === questionId ? answer.freeText : null,
+        answerKind: id === questionId ? answer.answerKind : "selected",
+      }));
+
+      await expect(
+        getLatestWithRawAnswers("invalid-selected-shape-latest", questionIds, rows),
+      ).resolves.toMatchObject({
+        answers: [],
+        restoreIntegrity: { status: "invalid" },
+      });
+    });
+
+    it("confirms a complete five-question restore without selecting question text", async () => {
+      const questionIds = await insertFiveQuestions();
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "complete-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((questionId) => ({
+          submissionId: "complete-latest",
+          questionId,
+          selectedIndex: 2,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toEqual({
+        status: "complete",
+        questions: questionIds.map((id) => ({ id, answerType: "selected", choiceCount: 4 })),
+      });
+      expect(latest?.answers).toHaveLength(5);
+    });
+
+    it("rejects duplicate raw rows returned by the repository transaction", async () => {
+      const questionIds = [1, 2, 3, 4, 5];
+      const duplicateRows = [1, 1, 2, 3, 4].map((questionId) => ({
+        questionId,
+        selectedIndex: 0,
+        freeText: null,
+        answerKind: "selected",
+      }));
+      await expect(
+        getLatestWithRawAnswers("duplicate-raw-latest", questionIds, duplicateRows),
+      ).resolves.toMatchObject({
+        submissionId: "duplicate-raw-latest",
+        answers: [],
+        restoreIntegrity: { status: "invalid" },
+      });
+    });
+
+    it.each([
+      {
+        label: "duplicate saved question IDs",
+        questionIds: [1, 2, 3, 4, 4],
+        answerCount: 5,
+        selectedIndex: 2,
+      },
+      {
+        label: "missing raw answer rows",
+        questionIds: [1, 2, 3, 4, 5],
+        answerCount: 4,
+        selectedIndex: 2,
+      },
+      {
+        label: "an out-of-range saved selection",
+        questionIds: [1, 2, 3, 4, 5],
+        answerCount: 5,
+        selectedIndex: 99,
+      },
+    ])(
+      "rejects $label in the server restore guarantee",
+      async ({ questionIds, answerCount, selectedIndex }) => {
+        const currentQuestionIds = await insertFiveQuestions();
+        const participantId = await insertParticipant();
+        await insertSubmission({ id: "invalid-latest", participantId, questionIds });
+        await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+          currentQuestionIds.slice(0, answerCount).map((questionId) => ({
+            submissionId: "invalid-latest",
+            questionId,
+            selectedIndex,
+            freeText: null,
+            answerKind: "selected" as const,
+          })),
+        );
+
+        const latest = await getLatestAnswerSubmission(participantId);
+
+        expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+        expect(latest?.answers).toEqual([]);
+      },
+    );
+
+    it("rejects saved answer kinds that do not match the current question type", async () => {
+      const questionIds = await insertFiveQuestions();
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({ key: "it-literacy-005", choices: [] })
+        .where(eq(schema.examQuestions.id, 5));
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "wrong-kind-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((questionId) => ({
+          submissionId: "wrong-kind-latest",
+          questionId,
+          selectedIndex: 2,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+      expect(latest?.answers).toEqual([]);
+    });
+
+    it("rejects a non-array saved question ID payload", async () => {
+      const questionIds = await insertFiveQuestions();
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "non-array-latest", participantId, questionIds });
+      await dbRef
+        .db!.update(schema.examAnswerSubmissions)
+        .set({ questionIds: "broken" as unknown as number[] })
+        .where(eq(schema.examAnswerSubmissions.id, "non-array-latest"));
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((questionId) => ({
+          submissionId: "non-array-latest",
+          questionId,
+          selectedIndex: 0,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+      expect(latest?.answers).toEqual([]);
+    });
+
+    it("rejects an answer row that does not belong to the current five-question projection", async () => {
+      const questionIds = await insertFiveQuestions();
+      await dbRef.db!.insert(schema.examQuestions).values({
+        id: 6,
+        key: "test-6",
+        question: "Q6?",
+        choices: ["A", "B", "C", "D"],
+        correctIndex: 0,
+        explanation: null,
+      });
+      const participantId = await insertParticipant();
+      const savedQuestionIds = [...questionIds.slice(0, 4), 6];
+      await insertSubmission({
+        id: "outside-projection-latest",
+        participantId,
+        questionIds: savedQuestionIds,
+      });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        savedQuestionIds.map((questionId) => ({
+          submissionId: "outside-projection-latest",
+          questionId,
+          selectedIndex: 0,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+      expect(latest?.answers).toEqual([]);
+    });
+
+    it("rejects a unique stored answer ID outside the saved question set", async () => {
+      const questionIds = await insertFiveQuestions();
+      await dbRef.db!.insert(schema.examQuestions).values({
+        id: 6,
+        key: "test-6",
+        question: "Q6?",
+        choices: ["A", "B", "C", "D"],
+        correctIndex: 0,
+        explanation: null,
+      });
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "foreign-answer-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        [...questionIds.slice(0, 4), 6].map((questionId) => ({
+          submissionId: "foreign-answer-latest",
+          questionId,
+          selectedIndex: 0,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+      expect(latest?.answers).toEqual([]);
+    });
+
+    it("rejects a duplicate-free saved question set in the wrong order", async () => {
+      await insertFiveQuestions();
+      const questionIds = [2, 1, 3, 4, 5];
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "reordered-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((questionId) => ({
+          submissionId: "reordered-latest",
+          questionId,
+          selectedIndex: 0,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+      expect(latest?.answers).toEqual([]);
+    });
+
+    it.each([
+      { label: "too few choices", choices: ["A"] },
+      { label: "too many choices", choices: ["A", "B", "C", "D", "E"] },
+    ])("rejects selected questions with $label", async ({ choices }) => {
+      const questionIds = await insertFiveQuestions();
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({ choices })
+        .where(eq(schema.examQuestions.id, questionIds[0]!));
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "invalid-choice-count-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((questionId) => ({
+          submissionId: "invalid-choice-count-latest",
+          questionId,
+          selectedIndex: 0,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+      expect(latest?.answers).toEqual([]);
+    });
+
+    it.each([
+      { label: "blank text", freeText: "   " },
+      { label: "text over the limit", freeText: "x".repeat(1001) },
+    ])("rejects free-text answers with $label", async ({ freeText }) => {
+      const questionIds = await insertFiveQuestions();
+      const questionId = questionIds[4]!;
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({ key: "it-literacy-005", choices: [] })
+        .where(eq(schema.examQuestions.id, questionId));
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "invalid-free-text-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((id) => ({
+          submissionId: "invalid-free-text-latest",
+          questionId: id,
+          selectedIndex: id === questionId ? null : 0,
+          freeText: id === questionId ? freeText : null,
+          answerKind: id === questionId ? ("freeText" as const) : ("selected" as const),
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+      expect(latest?.answers).toEqual([]);
+    });
+
+    it("rejects a free-text raw row with a missing body", async () => {
+      const questionIds = [1, 2, 3, 4, 5];
+      const rows = questionIds.map((questionId) => ({
+        questionId,
+        selectedIndex: questionId === 5 ? null : 0,
+        freeText: null,
+        answerKind: questionId === 5 ? "freeText" : "selected",
+      }));
+
+      await expect(
+        getLatestWithRawAnswers("missing-free-text-latest", questionIds, rows),
+      ).resolves.toMatchObject({ answers: [], restoreIntegrity: { status: "invalid" } });
+    });
+
+    it("restores a supported legacy answer only for the current final free-text question", async () => {
+      const questionIds = await insertFiveQuestions();
+      const questionId = questionIds[4]!;
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({ key: "it-literacy-005", choices: [] })
+        .where(eq(schema.examQuestions.id, questionId));
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "legacy-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((id) => ({
+          submissionId: "legacy-latest",
+          questionId: id,
+          selectedIndex: id === questionId ? 2 : 0,
+          freeText: null,
+          answerKind: id === questionId ? ("legacy" as const) : ("selected" as const),
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toEqual({
+        status: "complete",
+        questions: [
+          { id: 1, answerType: "selected", choiceCount: 4 },
+          { id: 2, answerType: "selected", choiceCount: 4 },
+          { id: 3, answerType: "selected", choiceCount: 4 },
+          { id: 4, answerType: "selected", choiceCount: 4 },
+          { id: questionId, answerType: "freeText", choiceCount: 0 },
+        ],
+      });
+      expect(latest?.answers).toContainEqual({
+        questionId,
+        answerKind: "legacy",
+        selectedIndex: 2,
+        freeText: null,
+      });
+    });
+
+    it.each([
+      {
+        label: "for a question other than the current final question",
+        freeTextQuestionId: 4,
+        legacyQuestionId: 4,
+        selectedIndex: 2,
+      },
+      {
+        label: "without an integer selected index",
+        freeTextQuestionId: 5,
+        legacyQuestionId: 5,
+        selectedIndex: null,
+        freeTextValue: null,
+      },
+      {
+        label: "with a fractional selected index",
+        freeTextQuestionId: 5,
+        legacyQuestionId: 5,
+        selectedIndex: 1.5,
+        freeTextValue: null,
+      },
+      {
+        label: "with a negative selected index",
+        freeTextQuestionId: 5,
+        legacyQuestionId: 5,
+        selectedIndex: -1,
+        freeTextValue: null,
+      },
+      {
+        label: "with an out-of-range selected index",
+        freeTextQuestionId: 5,
+        legacyQuestionId: 5,
+        selectedIndex: 4,
+        freeTextValue: null,
+      },
+      {
+        label: "with a free-text value in addition to the selected index",
+        freeTextQuestionId: 5,
+        legacyQuestionId: 5,
+        selectedIndex: 2,
+        freeTextValue: "unexpected text",
+      },
+    ])(
+      "rejects legacy answers $label",
+      async ({ freeTextQuestionId, legacyQuestionId, selectedIndex, freeTextValue }) => {
+        const questionIds = [1, 2, 3, 4, 5];
+        const rows = questionIds.map((questionId) => {
+          if (questionId === legacyQuestionId) {
+            return {
+              questionId,
+              selectedIndex,
+              freeText: freeTextValue ?? null,
+              answerKind: "legacy",
+            };
+          }
+          if (questionId === freeTextQuestionId) {
+            return {
+              questionId,
+              selectedIndex: null,
+              freeText: "valid response",
+              answerKind: "freeText",
+            };
+          }
+          return { questionId, selectedIndex: 0, freeText: null, answerKind: "selected" };
+        });
+        const latest = await getLatestWithRawAnswers(
+          "invalid-legacy-latest",
+          questionIds,
+          rows,
+          freeTextQuestionId,
+        );
+
+        expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+        expect(latest?.answers).toEqual([]);
+      },
+    );
   });
 
   describe("getAnswerSubmission", () => {
@@ -307,6 +825,7 @@ describe("answer-repository", () => {
           freeText: "response",
         },
       ]);
+
       expect(restored?.answers.some((answer) => answer.questionId === missingQuestionId!.id)).toBe(
         false,
       );

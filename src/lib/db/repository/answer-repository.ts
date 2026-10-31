@@ -14,6 +14,7 @@ import { gradeFreeResponse, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION } from "@/l
 import { scoreQ5 } from "@/lib/jev/scoring";
 import { randomUUID } from "node:crypto";
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
+import { QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
 
 export type BatchAnswer =
   | { questionId: number; selectedIndex: number }
@@ -128,6 +129,28 @@ export async function getAnswerSubmission(submissionId: string, participantId: n
   });
 }
 
+/** Return only the publication flag needed to decide whether corrections stay open. */
+export async function getAnswerSubmissionVisibility(submissionId: string, participantId: number) {
+  return db.transaction(async (tx) => {
+    const [submission] = await tx
+      .select({ id: examAnswerSubmissions.id })
+      .from(examAnswerSubmissions)
+      .where(
+        and(
+          eq(examAnswerSubmissions.id, submissionId),
+          eq(examAnswerSubmissions.participantId, participantId),
+        ),
+      );
+    if (!submission) return null;
+
+    const [settings] = await tx
+      .select({ visible: participantResultSettings.visible })
+      .from(participantResultSettings)
+      .where(eq(participantResultSettings.id, 1));
+    return { resultsVisible: settings?.visible ?? false };
+  });
+}
+
 /** Return the participant's deterministically latest saved answer set. */
 export async function getLatestAnswerSubmission(participantId: number) {
   return db.transaction(async (tx) => {
@@ -153,8 +176,72 @@ export async function getLatestAnswerSubmission(participantId: number) {
       })
       .from(examSubmissionAnswers)
       .where(eq(examSubmissionAnswers.submissionId, submission.id));
-    const answers = restoreSubmissionAnswers(submission.questionIds, storedAnswers);
-    return { submissionId: submission.id, revision: submission.revision, answers };
+    const currentQuestions = await tx
+      .select({
+        id: examQuestions.id,
+        key: examQuestions.key,
+        choiceCount: sql<number>`json_array_length(${examQuestions.choices})`,
+      })
+      .from(examQuestions)
+      .orderBy(asc(examQuestions.id))
+      .limit(5);
+    const restoreQuestions = currentQuestions.map(({ id, key, choiceCount }) => ({
+      id,
+      answerType: key === "it-literacy-005" ? ("freeText" as const) : ("selected" as const),
+      choiceCount,
+    }));
+    const questionIds = Array.isArray(submission.questionIds) ? submission.questionIds : [];
+    const storedIds = storedAnswers.map(({ questionId }) => questionId);
+    const currentIds = restoreQuestions.map(({ id }) => id);
+    const rawAnswersMatch = storedAnswers.every((answer) => {
+      const currentQuestion = restoreQuestions.find(({ id }) => id === answer.questionId);
+      if (!currentQuestion) return false;
+      if (currentQuestion.answerType === "freeText") {
+        return (
+          (answer.answerKind === "freeText" &&
+            answer.selectedIndex === null &&
+            typeof answer.freeText === "string" &&
+            Boolean(answer.freeText.trim()) &&
+            answer.freeText.trim().length <= 1000) ||
+          (answer.answerKind === "legacy" &&
+            answer.questionId === currentIds[4] &&
+            Number.isInteger(answer.selectedIndex) &&
+            answer.selectedIndex! >= 0 &&
+            answer.selectedIndex! < QUIZ_CHOICES_PER_QUESTION &&
+            answer.freeText === null)
+        );
+      }
+      return (
+        answer.answerKind === "selected" &&
+        Number.isInteger(answer.selectedIndex) &&
+        answer.selectedIndex! >= 0 &&
+        answer.selectedIndex! < currentQuestion.choiceCount &&
+        answer.freeText === null
+      );
+    });
+    const integrityComplete =
+      questionIds.length === 5 &&
+      new Set(questionIds).size === 5 &&
+      storedAnswers.length === 5 &&
+      new Set(storedIds).size === 5 &&
+      restoreQuestions.length === 5 &&
+      restoreQuestions.every(({ answerType, choiceCount }) =>
+        answerType === "freeText"
+          ? choiceCount === 0
+          : choiceCount >= 2 && choiceCount <= QUIZ_CHOICES_PER_QUESTION,
+      ) &&
+      questionIds.every((id, index) => id === currentIds[index]) &&
+      storedIds.every((id) => questionIds.includes(id)) &&
+      rawAnswersMatch;
+    const answers = integrityComplete ? restoreSubmissionAnswers(questionIds, storedAnswers) : [];
+    return {
+      submissionId: submission.id,
+      revision: submission.revision,
+      answers,
+      restoreIntegrity: integrityComplete
+        ? { status: "complete" as const, questions: restoreQuestions }
+        : { status: "invalid" as const },
+    };
   });
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -22,7 +23,11 @@ import { HeaderPortal } from "./header-portal";
 import { resolveAnswererDisplay } from "./answerer-display";
 import { runIfSubmissionAllowed } from "./submission-gate";
 import { useParticipantResultsVisibility } from "./use-participant-results-visibility";
-import { useSubmissionVisibility } from "./use-submission-visibility";
+import {
+  makeSubmissionVisibilityKey,
+  useSubmissionVisibility,
+  type SubmissionVisibilitySnapshot,
+} from "./use-submission-visibility";
 import type { AccessState, AnswerMode, Phase } from "./use-quiz-session";
 
 type AnswerUiSurface =
@@ -340,6 +345,10 @@ export default function QuizRunner() {
     phase,
     restoreError,
     saveConfirmed,
+    isPreparingEdit,
+    editLoadError,
+    autoEditAssisted,
+    clearAutoEditAssisted,
     quizzes,
     selections,
     freeResponses,
@@ -355,12 +364,14 @@ export default function QuizRunner() {
     editAnswers,
     clearPublishedLock,
     retryLoad,
+    retryEdit,
     retrySubmissionCheck,
     login,
   } = useQuizSession();
   const questionRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
   const publicationRetryButtonRef = useRef<HTMLButtonElement | null>(null);
+  const liveVisibilityRef = useRef<SubmissionVisibilitySnapshot | null>(null);
   const shouldRestorePublicationRetryFocus = useRef(false);
   const finalCheckHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const completionHeadingRef = useRef<HTMLHeadingElement | null>(null);
@@ -380,15 +391,56 @@ export default function QuizRunner() {
     authExpired: participantResultsAuthExpired,
     clearAuthExpired: clearParticipantResultsAuthExpired,
   } = useParticipantResultsVisibility(phase, access, answerMode);
-  const visibilityStatus = useSubmissionVisibility({
-    access,
+  const visibilityStatus = useSubmissionVisibility(
+    {
+      access,
+      answerMode,
+      assistedParticipantId: assistedParticipant?.participant?.id,
+      submissionId,
+      revision,
+      phase,
+      clearPublishedLock,
+    },
+    liveVisibilityRef,
+  );
+  const currentVisibilityKey = makeSubmissionVisibilityKey({
+    participantId: access.kind === "ready" ? access.participant.id : null,
     answerMode,
     assistedParticipantId: assistedParticipant?.participant?.id,
     submissionId,
     revision,
-    phase,
-    clearPublishedLock,
   });
+  const getLiveVisibilityStatus = useCallback(() => {
+    const snapshot = liveVisibilityRef.current;
+    return snapshot?.key === currentVisibilityKey ? snapshot.status : "unknown";
+  }, [currentVisibilityKey]);
+  const beginCorrection = useCallback(
+    () => editAnswers(() => getLiveVisibilityStatus() === "unlocked"),
+    [editAnswers, getLiveVisibilityStatus],
+  );
+  useEffect(() => {
+    if (!autoEditAssisted) return;
+    if (phase.kind !== "complete" || answerMode !== "assisted") {
+      clearAutoEditAssisted();
+      return;
+    }
+    if (visibilityStatus === "locked") {
+      clearAutoEditAssisted();
+      return;
+    }
+    if (visibilityStatus === "unlocked") {
+      clearAutoEditAssisted();
+      void editAnswers(() => getLiveVisibilityStatus() === "unlocked");
+    }
+  }, [
+    answerMode,
+    autoEditAssisted,
+    clearAutoEditAssisted,
+    editAnswers,
+    getLiveVisibilityStatus,
+    phase.kind,
+    visibilityStatus,
+  ]);
   const retryRequired = phase.kind === "answering" && phase.retryRequired;
   useEffect(() => {
     const previousKind = previousPhaseKind.current;
@@ -777,7 +829,7 @@ export default function QuizRunner() {
             </p>
           )}
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <Button onClick={retryLoad} variant="primary">
+            <Button onClick={() => retryLoad()} variant="primary">
               {hasLoadedQuestions ? "不足分を再読み込み" : "もう一度読み込む"}
             </Button>
           </div>
@@ -897,6 +949,18 @@ export default function QuizRunner() {
               {restoreError}
             </p>
           )}
+          {editLoadError && (
+            <div className="mt-3 text-sm font-medium text-error" role="alert">
+              <p>{editLoadError}</p>
+              <button
+                className="mt-2 underline"
+                onClick={() => retryEdit(() => getLiveVisibilityStatus() === "unlocked")}
+                type="button"
+              >
+                もう一度読み込む
+              </button>
+            </div>
+          )}
           {(access.kind === "reauthentication" || participantResultsAuthExpired) && (
             <section
               className="mt-6 rounded-xl border border-border-subtle bg-surface-2 p-5"
@@ -928,12 +992,12 @@ export default function QuizRunner() {
           )}
           {canCorrectAnswers && (
             <Button
-              onClick={editAnswers}
+              onClick={beginCorrection}
               className="mt-8"
-              disabled={Boolean(restoreError)}
+              disabled={Boolean(restoreError) || isPreparingEdit}
               variant="primary"
             >
-              回答を修正する
+              {isPreparingEdit ? "設問を読み込んでいます…" : "回答を修正する"}
             </Button>
           )}
           {participantResultsState === "waiting" &&

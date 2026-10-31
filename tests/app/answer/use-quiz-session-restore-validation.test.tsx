@@ -36,7 +36,19 @@ describe("useQuizSession saved answer validation", () => {
   });
 
   async function loadSavedSubmission(answers: unknown[], freeTextFifth = false) {
-    mockLatest.mockResolvedValue({ submissionId, revision: 2, answers });
+    mockLatest.mockResolvedValue({
+      submissionId,
+      revision: 2,
+      answers,
+      restoreIntegrity: {
+        status: "complete",
+        questions: [1, 2, 3, 4, 5].map((id) => ({
+          id,
+          answerType: freeTextFifth && id === 5 ? "freeText" : "selected",
+          choiceCount: freeTextFifth && id === 5 ? 0 : 4,
+        })),
+      },
+    });
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
@@ -115,11 +127,12 @@ describe("useQuizSession saved answer validation", () => {
       freeTextFifth as boolean,
     );
     expect(result.current.phase.kind).toBe("complete");
-    expect(result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(result.current.restoreError).toContain("整合性を確認できません");
     expect(result.current.submissionId).toBe(submissionId);
     expect(result.current.revision).toBe(2);
-    result.current.editAnswers();
+    await result.current.editAnswers(() => true);
     await result.current.saveAnswers();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/questions/batch", expect.anything());
     expect(result.current.phase.kind).toBe("complete");
     expect(result.current.submissionId).toBe(submissionId);
     expect(result.current.revision).toBe(2);

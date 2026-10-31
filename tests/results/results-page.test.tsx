@@ -58,6 +58,7 @@ describe("/results server entry", () => {
       submissionId: "00000000-0000-4000-8000-000000000018",
       revision: 1,
       answers: [],
+      restoreIntegrity: { status: "invalid" },
     });
     vi.mocked(getParticipantResult).mockResolvedValueOnce(
       Object.assign(
@@ -159,6 +160,7 @@ describe("/results server entry", () => {
       submissionId: "00000000-0000-4000-8000-000000000018",
       revision: 1,
       answers: [],
+      restoreIntegrity: { status: "invalid" },
     });
     vi.mocked(getParticipantResult).mockResolvedValueOnce({ state: "waiting" });
 

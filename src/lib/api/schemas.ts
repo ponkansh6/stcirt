@@ -49,6 +49,28 @@ export const answerSubmissionSchema = answerBatchResultSchema.extend({
       freeText: z.string().nullable(),
     }),
   ),
+  restoreIntegrity: z
+    .discriminatedUnion("status", [
+      z
+        .object({
+          status: z.literal("complete"),
+          questions: z
+            .array(
+              z
+                .object({
+                  id: z.number().int().positive(),
+                  answerType: z.enum(["selected", "freeText"]),
+                  choiceCount: z.number().int().nonnegative(),
+                })
+                .strict(),
+            )
+            .length(5),
+        })
+        .strict(),
+      z.object({ status: z.literal("invalid") }).strict(),
+    ])
+    .optional()
+    .catch({ status: "invalid" as const }),
 });
 
 export const latestAnswerSubmissionSchema = z.object({

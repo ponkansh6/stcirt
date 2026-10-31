@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { after } from "next/server";
 import { GET, POST } from "@/app/api/answers/batch/route";
+import { GET as getVisibility } from "@/app/api/answers/visibility/route";
 
 const afterRef = vi.hoisted(() => ({ callback: null as null | (() => Promise<void>) }));
 
@@ -30,6 +31,7 @@ vi.mock("@/lib/db/repository/answer-repository", () => ({
     }
   },
   getAnswerSubmission: vi.fn(),
+  getAnswerSubmissionVisibility: vi.fn(),
   processDueAssessments: vi.fn(),
   saveAnswerSubmission: vi.fn(),
 }));
@@ -56,6 +58,7 @@ vi.mock("@/lib/participants/answer-scope", () => ({
 import {
   BatchSubmissionError,
   getAnswerSubmission,
+  getAnswerSubmissionVisibility,
   processDueAssessments,
   saveAnswerSubmission,
 } from "@/lib/db/repository/answer-repository";
@@ -206,6 +209,96 @@ describe("/api/answers/batch route handlers", () => {
     expect(response.headers.get("set-cookie")).toBeNull();
     expect(findParticipantById).toHaveBeenCalledWith(42);
     expect(getAnswerSubmission).not.toHaveBeenCalled();
+  });
+
+  it("visibility GET requires authentication and validates the submission ID", async () => {
+    const unauthenticated = await getVisibility(
+      new Request(`http://localhost/api/answers/visibility?submissionId=${submissionId}`),
+    );
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers.get("Cache-Control")).toBe("private, no-store");
+
+    const invalidId = await getVisibility(
+      new Request("http://localhost/api/answers/visibility?submissionId=invalid", {
+        headers: { Cookie: headers.Cookie },
+      }),
+    );
+    expect(invalidId.status).toBe(400);
+    expect(invalidId.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(getAnswerSubmissionVisibility).not.toHaveBeenCalled();
+  });
+
+  it("visibility GET hides missing or non-owned submissions", async () => {
+    vi.mocked(getAnswerSubmissionVisibility).mockResolvedValueOnce(null);
+    const response = await getVisibility(
+      new Request(`http://localhost/api/answers/visibility?submissionId=${submissionId}`, {
+        headers: { Cookie: headers.Cookie },
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(getAnswerSubmissionVisibility).toHaveBeenCalledWith(submissionId, 42);
+  });
+
+  it("visibility GET preserves unknown and unlinked assisted scope errors", async () => {
+    const unknown = await getVisibility(
+      new Request(
+        `http://localhost/api/answers/visibility?scope=other&submissionId=${submissionId}`,
+        { headers: { Cookie: headers.Cookie } },
+      ),
+    );
+    expect(unknown.status).toBe(400);
+    expect(unknown.headers.get("Cache-Control")).toBe("private, no-store");
+
+    vi.mocked(resolveAnswerScope).mockResolvedValueOnce({
+      error: "Assisted participant not found",
+      status: 404,
+    });
+    const unlinked = await getVisibility(
+      new Request(
+        `http://localhost/api/answers/visibility?scope=assisted&submissionId=${submissionId}`,
+        { headers: { Cookie: headers.Cookie } },
+      ),
+    );
+    expect(unlinked.status).toBe(404);
+    expect(unlinked.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(getAnswerSubmissionVisibility).not.toHaveBeenCalled();
+  });
+
+  it("visibility GET marks unexpected errors private and non-cacheable", async () => {
+    vi.mocked(getAnswerSubmissionVisibility).mockRejectedValueOnce(
+      new Error("database unavailable"),
+    );
+    const logError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const response = await getVisibility(
+        new Request(`http://localhost/api/answers/visibility?submissionId=${submissionId}`, {
+          headers: { Cookie: headers.Cookie },
+        }),
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    } finally {
+      logError.mockRestore();
+    }
+  });
+
+  it("visibility GET resolves assisted scope and returns only the projection", async () => {
+    vi.mocked(getAnswerSubmissionVisibility).mockResolvedValueOnce({ resultsVisible: true });
+    const response = await getVisibility(
+      new Request(
+        `http://localhost/api/answers/visibility?scope=assisted&submissionId=${submissionId}`,
+        { headers: { Cookie: headers.Cookie } },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await response.json()).toEqual({ resultsVisible: true });
+    expect(getAnswerSubmissionVisibility).toHaveBeenCalledWith(submissionId, 99);
   });
 
   it("POST rejects an invalid Origin", async () => {

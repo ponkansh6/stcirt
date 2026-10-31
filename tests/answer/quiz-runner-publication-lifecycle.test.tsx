@@ -34,7 +34,7 @@ function deferred<T>() {
 
 function publicationFetchMock(responses: Array<unknown>) {
   return vi.fn((input: RequestInfo | URL) => {
-    if (String(input).startsWith("/api/answers/batch")) {
+    if (String(input).startsWith("/api/answers/visibility")) {
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -253,7 +253,7 @@ describe("QuizRunner publication lookup lifecycle", () => {
     const saveAnswers = vi.fn();
     let resultRequest = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (String(input).startsWith("/api/answers/batch")) {
+      if (String(input).startsWith("/api/answers/visibility")) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -289,7 +289,7 @@ describe("QuizRunner publication lookup lifecycle", () => {
     const pendingRefresh = deferred<Response>();
     let resultRequest = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (String(input).startsWith("/api/answers/batch")) {
+      if (String(input).startsWith("/api/answers/visibility")) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -331,7 +331,7 @@ describe("QuizRunner publication lookup lifecycle", () => {
     const pendingRefresh = deferred<Response>();
     let resultRequest = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (String(input).startsWith("/api/answers/batch")) {
+      if (String(input).startsWith("/api/answers/visibility")) {
         return Promise.resolve({
           ok: true,
           status: 200,

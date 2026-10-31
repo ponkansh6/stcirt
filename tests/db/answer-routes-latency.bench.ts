@@ -25,7 +25,13 @@ type SqlLogger = Logger & { reset(): void; count(): number };
 type RouteHandler = (request: Request) => Promise<Response>;
 type Scenario = {
   name: string;
-  handler: "assistedStatus" | "answersLatest" | "answersBatch" | "participantResults";
+  handler:
+    | "assistedStatus"
+    | "answersLatest"
+    | "answersBatch"
+    | "participantResults"
+    | "questionsBatch"
+    | "answersVisibility";
   url: string;
   visible?: boolean;
 };
@@ -74,6 +80,24 @@ function assertScenarioResponse(scenario: Scenario, response: Response, body: un
         freeText: index === 4 ? `Response ${assisted ? ASSISTED_ID : OWNER_ID}` : null,
       })),
     );
+    return;
+  }
+
+  if (scenario.name === "questions-batch/participant") {
+    assert.deepEqual(
+      data.questions,
+      QUESTION_IDS.map((id, index) => ({
+        id,
+        question: `Benchmark question ${index + 1}`,
+        choices: index === 4 ? [] : ["A", "B", "C", "D"],
+        answerType: index === 4 ? "freeText" : "selected",
+      })),
+    );
+    return;
+  }
+
+  if (scenario.name.startsWith("answers-visibility/")) {
+    assert.deepEqual(data, { resultsVisible: false });
     return;
   }
 
@@ -175,17 +199,21 @@ describe("answer route local SQLite latency benchmark", () => {
       const token = createParticipantSession(OWNER_ID, 60 * 60);
       assert.ok(token, "Participant cookie must be created for the local route benchmark");
       cookieHeader = `stcirt_participant_session=${token.value}`;
-      const [assisted, latest, batch, results] = await Promise.all([
+      const [assisted, latest, batch, results, questions, visibility] = await Promise.all([
         import("@/app/api/participants/assisted/route"),
         import("@/app/api/answers/latest/route"),
         import("@/app/api/answers/batch/route"),
         import("@/app/api/participants/results/route"),
+        import("@/app/api/questions/batch/route"),
+        import("@/app/api/answers/visibility/route"),
       ]);
       handlers = {
         assistedStatus: assisted.GET,
         answersLatest: latest.GET,
         answersBatch: batch.GET,
         participantResults: results.GET,
+        questionsBatch: questions.GET,
+        answersVisibility: visibility.GET,
       };
       process.once("exit", cleanup);
       activeLogger.reset();
@@ -198,6 +226,10 @@ describe("answer route local SQLite latency benchmark", () => {
 
   async function seedFixture() {
     assert.ok(testDb, "File-backed benchmark database must be initialized");
+    // Migrations seed the production questions at IDs 1–5; remove them before
+    // inserting this benchmark's answer set so it is the only participant set.
+    await testDb.db.delete(schema.examAnswerLogs);
+    await testDb.db.delete(schema.examQuestions);
     await testDb.db.insert(schema.examParticipants).values([
       { id: OWNER_ID, normalizedName: "bench-owner", displayName: "Bench owner" },
       { id: ASSISTED_ID, normalizedName: "bench-assisted", displayName: "Bench assisted" },
@@ -209,7 +241,7 @@ describe("answer route local SQLite latency benchmark", () => {
     await testDb.db.insert(schema.examQuestions).values(
       QUESTION_IDS.map((id, index) => ({
         id,
-        key: `answer-route-bench-${id}`,
+        key: index === 4 ? "it-literacy-005" : `answer-route-bench-${id}`,
         questionVersion: QUESTION_VERSIONS[index]!,
         question: `Benchmark question ${index + 1}`,
         choices: index === 4 ? [] : ["A", "B", "C", "D"],
@@ -339,6 +371,21 @@ describe("answer route local SQLite latency benchmark", () => {
       name: "answers-batch-get/assisted",
       handler: "answersBatch",
       url: `http://localhost/api/answers/batch?scope=assisted&submissionId=${ASSISTED_SUBMISSION_ID}`,
+    },
+    {
+      name: "questions-batch/participant",
+      handler: "questionsBatch",
+      url: "http://localhost/api/questions/batch",
+    },
+    {
+      name: "answers-visibility/owner",
+      handler: "answersVisibility",
+      url: `http://localhost/api/answers/visibility?submissionId=${OWNER_SUBMISSION_ID}`,
+    },
+    {
+      name: "answers-visibility/assisted",
+      handler: "answersVisibility",
+      url: `http://localhost/api/answers/visibility?scope=assisted&submissionId=${ASSISTED_SUBMISSION_ID}`,
     },
     {
       name: "participant-results/owner-private",

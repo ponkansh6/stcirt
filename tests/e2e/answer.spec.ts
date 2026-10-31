@@ -103,7 +103,30 @@ type BatchAnswer =
   | { questionId: number; freeText: string };
 type SavedBatchAnswer =
   | { questionId: number; answerKind: "selected"; selectedIndex: number; freeText: null }
-  | { questionId: number; answerKind: "freeText"; selectedIndex: null; freeText: string };
+  | {
+      questionId: number;
+      answerKind: "freeText" | "legacy";
+      selectedIndex: number | null;
+      freeText: string | null;
+    };
+type RestoreIntegrity = {
+  status: "complete";
+  questions: { id: number; answerType: "selected" | "freeText"; choiceCount: number }[];
+};
+
+function restoreIntegrity(answers: SavedBatchAnswer[]): RestoreIntegrity {
+  const freeTextFifth = answers.some(
+    (answer) => answer.questionId === 5 && answer.answerKind !== "selected",
+  );
+  return {
+    status: "complete",
+    questions: [1, 2, 3, 4, 5].map((id) => ({
+      id,
+      answerType: id === 5 && freeTextFifth ? "freeText" : "selected",
+      choiceCount: id === 5 && freeTextFifth ? 0 : 4,
+    })),
+  };
+}
 type BatchPayload = {
   submissionId: string;
   operationId: string;
@@ -153,11 +176,26 @@ async function mockParticipantSession(
   let logoutRequests = 0;
   let nextParticipantId = 18;
 
+  await page.route("**/api/answers/visibility**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ resultsVisible: false }),
+    });
+  });
+
   await page.route("**/api/answers/latest", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ submission: activeLatestSubmission }),
+      body: JSON.stringify({
+        submission: activeLatestSubmission
+          ? {
+              ...activeLatestSubmission,
+              restoreIntegrity: restoreIntegrity(activeLatestSubmission.answers),
+            }
+          : null,
+      }),
     });
   });
 
@@ -596,6 +634,39 @@ test("@chromium participant login follows native Tab/Enter and session request o
   expect(questions).toBeGreaterThan(latest);
 });
 
+test("@chromium saved revisit defers one question batch until correction starts", async ({
+  page,
+}) => {
+  const questionRequests: string[] = [];
+  await mockParticipantSession(page, "Aki", {
+    submissionId: "00000000-0000-4000-8000-000000000087",
+    revision: 2,
+    answers: [
+      ...[1, 2, 3, 4].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+      {
+        questionId: 5,
+        answerKind: "freeText",
+        selectedIndex: null,
+        freeText: "保存済みの自由記述",
+      },
+    ],
+  });
+  await mockQuestions(page, questionRequests);
+  await page.goto("/answer");
+
+  await expect(page.getByRole("heading", { level: 1, name: "回答済み" })).toBeVisible();
+  expect(questionRequests).toEqual([]);
+
+  await page.getByRole("button", { name: "回答を修正する", exact: true }).click();
+  await expect(page.locator('section[aria-labelledby="question-title-1"]')).toBeVisible();
+  expect(questionRequests).toEqual(["/api/questions/batch"]);
+});
+
 test("@chromium root-to-answer flow keeps choices local, blocks an incomplete batch, then confirms all five with the participant cookie", async ({
   page,
 }) => {
@@ -946,6 +1017,7 @@ test("@chromium returns to owner completion after an assisted save and opens tar
     submissionId: string;
     revision: number;
     answers: SavedBatchAnswer[];
+    restoreIntegrity: RestoreIntegrity;
   } | null = null;
   const assistedLatestRequests: string[] = [];
   const assistedSaves: BatchPayload[] = [];
@@ -958,7 +1030,14 @@ test("@chromium returns to owner completion after an assisted save and opens tar
       body: JSON.stringify({ participant: { id: 17, name: "本人" } }),
     });
   });
-  await page.route("**/api/participants/results", async (route) => {
+  await page.route("**/api/answers/visibility**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ resultsVisible: false }),
+    });
+  });
+  await page.route("**/api/participants/results**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -1002,6 +1081,7 @@ test("@chromium returns to owner completion after an assisted save and opens tar
       submissionId: "00000000-0000-4000-8000-000000000041",
       revision: 1,
       answers: questions,
+      restoreIntegrity: restoreIntegrity(questions),
     };
     if (!assisted) {
       ownerSubmissions.push({
@@ -1048,6 +1128,23 @@ test("@chromium returns to owner completion after an assisted save and opens tar
               selectedIndex: answer.selectedIndex,
               freeText: null,
             },
+      ),
+      restoreIntegrity: restoreIntegrity(
+        body.answers.map((answer) =>
+          "freeText" in answer
+            ? {
+                questionId: answer.questionId,
+                answerKind: "freeText",
+                selectedIndex: null,
+                freeText: answer.freeText,
+              }
+            : {
+                questionId: answer.questionId,
+                answerKind: "selected",
+                selectedIndex: answer.selectedIndex,
+                freeText: null,
+              },
+        ),
       ),
     };
     await route.fulfill({
@@ -1205,7 +1302,6 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
   };
   const handleBatchRoute = async (route: Route) => {
     if (route.request().method() === "GET") {
-      visibilityReads += 1;
       if (conflictReturned && canonicalReads.length === 0) {
         canonicalReads.push({ revision: canonical.revision, answers: canonical.answers });
       }
@@ -1247,6 +1343,16 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
       body: JSON.stringify({ message: "Revision conflict" }),
     });
   };
+  const handleVisibilityRoute = async (route: Route) => {
+    visibilityReads += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ resultsVisible: false }),
+    });
+  };
+  await page.route("**/api/answers/visibility**", handleVisibilityRoute);
+  await secondTab.route("**/api/answers/visibility**", handleVisibilityRoute);
   await page.route("**/api/answers/batch**", handleBatchRoute);
   await secondTab.route("**/api/answers/batch**", handleBatchRoute);
 
