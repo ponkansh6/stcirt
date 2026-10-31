@@ -694,7 +694,7 @@
 .firstPrizeHeader p {
   margin: 0 0 clamp(4px, 0.8cqh, 10px);
   color: #71603d;
-  font-size: clamp(1.5rem, 2.7cqw, 2.5rem);
+  font-size: clamp(1.5rem, 3.2cqw, 3.5rem);
   font-weight: 700;
   letter-spacing: 0.14em;
 }
@@ -703,7 +703,7 @@
   margin: 0;
   color: #173e27;
   font-family: Meiryo, メイリオ, sans-serif;
-  font-size: clamp(3rem, 5.6cqw, 6rem);
+  font-size: clamp(3rem, 6.6cqw, 7rem);
   font-weight: 700;
   letter-spacing: 0.08em;
   line-height: 1.1;
@@ -720,7 +720,7 @@
 
 .firstPrizeBeef {
   display: block;
-  width: min(60cqw, 1000px);
+  width: min(60cqw, 1200px);
   height: auto;
   max-width: 100%;
   object-fit: contain;
@@ -728,7 +728,7 @@
 
 .firstPrizeCatalog {
   display: block;
-  width: min(28cqw, 500px);
+  width: min(28cqw, 600px);
   height: auto;
   max-width: 100%;
   object-fit: contain;
