@@ -1547,7 +1547,7 @@ export default function PresentationScreen({
                                 width={640}
                                 height={322}
                                 alt="和牛の写真"
-                                sizes="(max-width: 640px) 80vw, 48vw"
+                                sizes="(max-width: 1666px) 60vw, 1000px"
                                 loading="eager"
                                 draggable={false}
                               />
@@ -1557,7 +1557,7 @@ export default function PresentationScreen({
                                 width={250}
                                 height={275}
                                 alt="和牛カタログの表紙"
-                                sizes="250px"
+                                sizes="(max-width: 1785px) 28vw, 500px"
                                 loading="eager"
                                 draggable={false}
                               />

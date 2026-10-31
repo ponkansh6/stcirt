@@ -682,31 +682,31 @@
   box-sizing: border-box;
   display: flex;
   width: 100%;
-  min-height: clamp(360px, 70cqh, 760px);
+  min-height: clamp(480px, 84cqh, 900px);
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: clamp(18px, 3cqh, 36px);
-  padding: clamp(16px, 3cqh, 32px) clamp(12px, 3cqw, 48px);
+  gap: clamp(12px, 1.8cqh, 22px);
+  padding: clamp(10px, 1.6cqh, 20px) clamp(12px, 1.4cqw, 24px);
   text-align: center;
 }
 
 .firstPrizeHeader p {
-  margin: 0 0 clamp(6px, 1cqh, 12px);
+  margin: 0 0 clamp(4px, 0.8cqh, 10px);
   color: #71603d;
-  font-size: clamp(var(--presentation-min-readable-size), 1.8cqw, 1.9rem);
+  font-size: clamp(1.5rem, 2.7cqw, 2.5rem);
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
 }
 
 .firstPrizeHeader h1 {
   margin: 0;
   color: #173e27;
   font-family: Meiryo, メイリオ, sans-serif;
-  font-size: clamp(2rem, 4.2cqw, 4.4rem);
+  font-size: clamp(3rem, 5.6cqw, 6rem);
   font-weight: 700;
-  letter-spacing: 0.12em;
-  line-height: 1.2;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
 }
 
 .firstPrizeImages {
@@ -715,24 +715,22 @@
   min-width: 0;
   align-items: center;
   justify-content: center;
-  gap: clamp(20px, 5cqw, 76px);
+  gap: clamp(12px, 2.5cqw, 32px);
 }
 
 .firstPrizeBeef {
   display: block;
-  width: auto;
+  width: min(60cqw, 1000px);
   height: auto;
-  max-width: min(58cqw, 640px);
-  max-height: 42cqh;
+  max-width: 100%;
   object-fit: contain;
 }
 
 .firstPrizeCatalog {
   display: block;
-  width: auto;
+  width: min(28cqw, 500px);
   height: auto;
-  max-width: min(250px, 25cqw);
-  max-height: 42cqh;
+  max-width: 100%;
   object-fit: contain;
 }
 
