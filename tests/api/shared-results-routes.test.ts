@@ -114,7 +114,7 @@ describe("shared result routes", () => {
       share: {
         targetId: 77,
         issuedAt: new Date("2026-10-01T00:00:00Z"),
-        expiresAt: new Date("2026-10-31T00:00:00Z"),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       },
     });
     const response = await getShareState(
