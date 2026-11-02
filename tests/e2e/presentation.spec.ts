@@ -1528,7 +1528,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
       text: [
         "1位の景品",
         "信州牛専門店　すき亭",
-        "りんごで育った信州牛が食べられる昭和47年創業のすき亭のお肉が選べるカタログギフトを贈呈します",
+        "りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
       ],
     },
     { state: "finished", text: ["ご参加", "ありがとうございました"] },
@@ -1592,9 +1592,7 @@ test("@chromium first-prize position is shared with the public projection and su
   await mutation;
   await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭" })).toBeVisible();
   await expect(
-    page.getByText(
-      "りんごで育った信州牛が食べられる昭和47年創業のすき亭のお肉が選べるカタログギフトを贈呈します",
-    ),
+    page.getByText("りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します"),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭" })).toHaveCSS(
     "animation-name",
@@ -1617,9 +1615,7 @@ test("@chromium first-prize position is shared with the public projection and su
   await publicPage.goto("/presentation");
   await expect(publicPage.getByRole("heading", { name: "信州牛専門店　すき亭" })).toBeVisible();
   await expect(
-    publicPage.getByText(
-      "りんごで育った信州牛が食べられる昭和47年創業のすき亭のお肉が選べるカタログギフトを贈呈します",
-    ),
+    publicPage.getByText("りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します"),
   ).toBeVisible();
   await expect(publicPage.getByRole("img", { name: "和牛の写真" })).toBeVisible();
   await expect(publicPage.getByRole("img", { name: "和牛カタログの表紙" })).toBeVisible();
@@ -1676,7 +1672,7 @@ test("@chromium first-prize content fits a small slide and reduced motion keeps 
 
   const title = page.getByRole("heading", { name: "信州牛専門店　すき亭" });
   const description = page.getByText(
-    "りんごで育った信州牛が食べられる昭和47年創業のすき亭のお肉が選べるカタログギフトを贈呈します",
+    "りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
   );
   const beef = page.getByRole("img", { name: "和牛の写真" });
   const catalog = page.getByRole("img", { name: "和牛カタログの表紙" });
@@ -1820,9 +1816,7 @@ test("@chromium first-prize entrance survives same-stage polling and replays on 
   const title = page.getByRole("heading", { name: "信州牛専門店　すき亭" });
   await expect(title).toBeVisible();
   await expect(
-    page.getByText(
-      "りんごで育った信州牛が食べられる昭和47年創業のすき亭のお肉が選べるカタログギフトを贈呈します",
-    ),
+    page.getByText("りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します"),
   ).toBeVisible();
 
   const entranceTiming = await page.evaluate(() => {
