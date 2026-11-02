@@ -1804,18 +1804,20 @@ test("@chromium first-prize entrance survives same-stage polling and replays on 
         ?.getAnimations()
         .find((candidate) => (candidate as CSSAnimation).animationName.endsWith(name));
       const timing = animation?.effect?.getComputedTiming();
-      if (
-        !timing ||
-        typeof timing.delay !== "number" ||
-        typeof timing.duration !== "number" ||
-        typeof timing.endTime !== "number"
-      ) {
-        throw new Error(`Missing first-prize timing for ${selector}`);
-      }
+      if (!timing) throw new Error(`Missing first-prize timing for ${selector}`);
+      const delay = timing.delay;
+      const duration = timing.duration;
+      const endTime = timing.endTime;
+      if (typeof delay !== "number")
+        throw new Error(`First-prize delay is not numeric for ${selector}`);
+      if (typeof duration !== "number")
+        throw new Error(`First-prize duration is not numeric for ${selector}`);
+      if (typeof endTime !== "number")
+        throw new Error(`First-prize end time is not numeric for ${selector}`);
       return {
-        delay: timing.delay,
-        duration: timing.duration,
-        endTime: timing.endTime,
+        delay,
+        duration,
+        endTime,
         iterations: timing.iterations,
       };
     });
