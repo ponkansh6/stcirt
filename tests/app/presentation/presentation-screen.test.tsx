@@ -800,7 +800,7 @@ describe("presentation projection and presenter progression", () => {
       { state: "first", winners: [{ displayName: "悠", score: 10, rank: 1 }] },
       ["第一位", "10.00 ポイント", "悠"],
     ],
-    ["first_prize", { state: "first_prize" }, ["1位の景品", "和牛カタログ"]],
+    ["first_prize", { state: "first_prize" }, ["1位の景品"]],
     ["finished", { state: "finished" }, ["ご参加", "ありがとうございました"]],
   ] as const)(
     "preserves the meaning and labels of the %s slide",
@@ -811,6 +811,7 @@ describe("presentation projection and presenter progression", () => {
       const slide = await screen.findByRole("region", { name: "現在のスライド" });
       for (const content of contents) expect(slide).toHaveTextContent(content);
       if (projection.state === "first_prize") {
+        expect(slide.querySelector("#first-prize-title")?.textContent).toBe("信州牛専門店　すき亭");
         const beef = within(slide).getByRole("img", { name: "和牛の写真" });
         const catalog = within(slide).getByRole("img", { name: "和牛カタログの表紙" });
         expect(decodeURIComponent(beef.getAttribute("src") ?? "")).toContain("/和牛.png");

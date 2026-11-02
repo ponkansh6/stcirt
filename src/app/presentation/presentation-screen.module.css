@@ -679,6 +679,15 @@
 }
 
 .firstPrize {
+  --first-prize-title-delay: 0ms;
+  --first-prize-title-duration: 640ms;
+  --first-prize-description-delay: 180ms;
+  --first-prize-description-duration: 500ms;
+  --first-prize-beef-delay: 360ms;
+  --first-prize-beef-duration: 540ms;
+  --first-prize-catalog-delay: 460ms;
+  --first-prize-catalog-duration: 540ms;
+  --first-prize-ease: cubic-bezier(0.2, 0.75, 0.25, 1);
   box-sizing: border-box;
   display: flex;
   width: 100%;
@@ -691,7 +700,7 @@
   text-align: center;
 }
 
-.firstPrizeHeader p {
+.firstPrizeHeader > p:not(.firstPrizeDescription) {
   margin: 0 0 clamp(4px, 0.8cqh, 10px);
   color: #71603d;
   font-size: clamp(1.5rem, 3.2cqw, 3.5rem);
@@ -703,10 +712,27 @@
   margin: 0;
   color: #173e27;
   font-family: Meiryo, メイリオ, sans-serif;
-  font-size: clamp(3rem, 6.6cqw, 7rem);
+  font-size: clamp(2rem, 6.2cqw, 7rem);
   font-weight: 700;
   letter-spacing: 0.08em;
   line-height: 1.1;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  animation: firstPrizeTitle var(--first-prize-title-duration) var(--first-prize-ease)
+    var(--first-prize-title-delay) both;
+}
+
+.firstPrizeHeader .firstPrizeDescription {
+  max-width: 70ch;
+  margin: clamp(8px, 1.1cqh, 14px) auto 0;
+  color: #37424c;
+  font-size: clamp(0.875rem, 2.1cqw, 1.625rem);
+  font-weight: 600;
+  letter-spacing: normal;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  animation: firstPrizeReveal var(--first-prize-description-duration) var(--first-prize-ease)
+    var(--first-prize-description-delay) both;
 }
 
 .firstPrizeImages {
@@ -724,6 +750,8 @@
   height: auto;
   max-width: 100%;
   object-fit: contain;
+  animation: firstPrizeReveal var(--first-prize-beef-duration) var(--first-prize-ease)
+    var(--first-prize-beef-delay) both;
 }
 
 .firstPrizeCatalog {
@@ -732,6 +760,42 @@
   height: auto;
   max-width: 100%;
   object-fit: contain;
+  animation: firstPrizeReveal var(--first-prize-catalog-duration) var(--first-prize-ease)
+    var(--first-prize-catalog-delay) both;
+}
+
+@keyframes firstPrizeTitle {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes firstPrizeReveal {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .firstPrizeHeader h1,
+  .firstPrizeDescription,
+  .firstPrizeBeef,
+  .firstPrizeCatalog {
+    animation: none !important;
+    opacity: 1 !important;
+  }
 }
 
 .winners {

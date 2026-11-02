@@ -652,7 +652,7 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
     case "first":
       return page.getByRole("region", { name: "第一位の勝者一覧" });
     case "first_prize":
-      return page.getByRole("heading", { name: "和牛カタログ" });
+      return page.getByRole("heading", { name: "信州牛専門店　すき亭" });
     case "finished":
       return page.getByRole("heading", { name: /ご参加.*ありがとうございました/ });
     default:
@@ -1523,7 +1523,14 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
     { state: "third", text: ["該当する受賞者はいません", "第三位"] },
     { state: "second", text: ["太郎", "0.00 ポイント", "第二位"] },
     { state: "first", text: ["花子", "1.00 ポイント", "第一位"] },
-    { state: "first_prize", text: ["1位の景品", "和牛カタログ"] },
+    {
+      state: "first_prize",
+      text: [
+        "1位の景品",
+        "信州牛専門店　すき亭",
+        "りんごで育った信州牛が食べられる昭和47年創業のすき亭のお肉が選べるカタログギフトを贈呈します",
+      ],
+    },
     { state: "finished", text: ["ご参加", "ありがとうございました"] },
   ];
 
@@ -1583,13 +1590,37 @@ test("@chromium first-prize position is shared with the public projection and su
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "first_prize")).toBeVisible();
   await mutation;
+  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭" })).toBeVisible();
+  await expect(
+    page.getByText(
+      "りんごで育った信州牛が食べられる昭和47年創業のすき亭のお肉が選べるカタログギフトを贈呈します",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭" })).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+  await expect(page.locator("[class*='firstPrizeDescription']")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
   await expect(page.getByRole("img", { name: "和牛の写真" })).toBeVisible();
   await expect(page.getByRole("img", { name: "和牛カタログの表紙" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "和牛の写真" })).toHaveCSS("animation-name", "none");
+  await expect(page.getByRole("img", { name: "和牛カタログの表紙" })).toHaveCSS(
+    "animation-name",
+    "none",
+  );
 
   const publicPage = await page.context().newPage();
   await publicPage.setViewportSize({ width: 640, height: 360 });
   await publicPage.goto("/presentation");
-  await expect(publicPage.getByRole("heading", { name: "和牛カタログ" })).toBeVisible();
+  await expect(publicPage.getByRole("heading", { name: "信州牛専門店　すき亭" })).toBeVisible();
+  await expect(
+    publicPage.getByText(
+      "りんごで育った信州牛が食べられる昭和47年創業のすき亭のお肉が選べるカタログギフトを贈呈します",
+    ),
+  ).toBeVisible();
   await expect(publicPage.getByRole("img", { name: "和牛の写真" })).toBeVisible();
   await expect(publicPage.getByRole("img", { name: "和牛カタログの表紙" })).toBeVisible();
   const canvas = publicPage.getByTestId("presentation-canvas");
@@ -1632,6 +1663,247 @@ test("@chromium first-prize position is shared with the public projection and su
   expect(mock.getPresentationState().state).toBe("opening");
   await adminPage.close();
   await publicPage.close();
+});
+
+test("@chromium first-prize content fits a small slide and reduced motion keeps image placement", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  mock.setPresentationPosition("first_prize");
+  await page.setViewportSize({ width: 640, height: 360 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/presentation");
+
+  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭" });
+  const description = page.getByText(
+    "りんごで育った信州牛が食べられる昭和47年創業のすき亭のお肉が選べるカタログギフトを贈呈します",
+  );
+  const beef = page.getByRole("img", { name: "和牛の写真" });
+  const catalog = page.getByRole("img", { name: "和牛カタログの表紙" });
+  await expect(title).toBeVisible();
+  await expect(description).toBeVisible();
+  await expect(beef).toBeVisible();
+  await expect(catalog).toBeVisible();
+
+  const readBounds = async () => {
+    await waitForRenderFrames(page);
+    return page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
+      const viewportBounds = viewport.getBoundingClientRect();
+      const targets = [
+        { name: "title", selector: "[class*='firstPrizeHeader'] h1" },
+        { name: "description", selector: "[class*='firstPrizeDescription']" },
+        { name: "beef", selector: "img[class*='firstPrizeBeef']" },
+        { name: "catalog", selector: "img[class*='firstPrizeCatalog']" },
+      ];
+      return {
+        elements: targets.map(({ name, selector }) => {
+          const element = viewport.querySelector<HTMLElement>(selector);
+          if (!element) throw new Error(`Missing first-prize ${name}`);
+          const bounds = element.getBoundingClientRect();
+          return {
+            name,
+            left: bounds.left - viewportBounds.left,
+            top: bounds.top - viewportBounds.top,
+            right: bounds.right - viewportBounds.left,
+            bottom: bounds.bottom - viewportBounds.top,
+            width: bounds.width,
+            height: bounds.height,
+          };
+        }),
+      };
+    });
+  };
+
+  const reducedBounds = await readBounds();
+  const viewportBounds = await page.getByTestId("presentation-fit-viewport").boundingBox();
+  expect(viewportBounds).not.toBeNull();
+  for (const element of reducedBounds.elements) {
+    expect(element.left, `${element.name} fits the left edge`).toBeGreaterThanOrEqual(-1);
+    expect(element.top, `${element.name} fits the top edge`).toBeGreaterThanOrEqual(-1);
+    expect(element.right, `${element.name} fits the right edge`).toBeLessThanOrEqual(
+      viewportBounds!.width + 1,
+    );
+    expect(element.bottom, `${element.name} fits the bottom edge`).toBeLessThanOrEqual(
+      viewportBounds!.height + 1,
+    );
+  }
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const exitPoll = page.waitForResponse((response) => response.url().includes("/api/presentation"));
+  mock.setPresentationPosition("first");
+  await exitPoll;
+  await expect(page.getByRole("region", { name: "第一位の勝者一覧" })).toBeVisible();
+  const reentryPoll = page.waitForResponse((response) =>
+    response.url().includes("/api/presentation"),
+  );
+  mock.setPresentationPosition("first_prize");
+  await reentryPoll;
+  await expect(title).toBeVisible();
+  await page.evaluate(async () => {
+    const entrances = document
+      .querySelector("[data-testid='presentation-canvas']")
+      ?.querySelectorAll<HTMLElement>(
+        "[class*='firstPrizeHeader'] h1, [class*='firstPrizeDescription'], img[class*='firstPrizeBeef'], img[class*='firstPrizeCatalog']",
+      );
+    if (!entrances) throw new Error("First-prize content was not rendered");
+    const animations = Array.from(entrances).flatMap((element) =>
+      element
+        .getAnimations()
+        .filter((animation) =>
+          ["firstPrizeTitle", "firstPrizeReveal"].some((name) =>
+            (animation as CSSAnimation).animationName.endsWith(name),
+          ),
+        ),
+    );
+    if (animations.length !== 4) {
+      throw new Error(`Expected four first-prize entrance animations, got ${animations.length}`);
+    }
+    await Promise.all(animations.map((animation) => animation.finished));
+  });
+  const normalBounds = await readBounds();
+
+  expect(normalBounds.elements.map(({ name }) => name)).toEqual(
+    reducedBounds.elements.map(({ name }) => name),
+  );
+  for (const reduced of reducedBounds.elements) {
+    const normal = normalBounds.elements.find(({ name }) => name === reduced.name)!;
+    for (const property of ["left", "top", "right", "bottom", "width", "height"] as const) {
+      expect(
+        Math.abs(reduced[property] - normal[property]),
+        `${reduced.name} ${property} is stable with reduced motion`,
+      ).toBeLessThanOrEqual(1);
+    }
+  }
+});
+
+test("@chromium first-prize entrance survives same-stage polling and replays on re-entry", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const mock = await installAdminApiMock(page);
+  mock.setPresentationPosition("first_prize");
+  await page.goto("/presentation");
+  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭" });
+  await expect(title).toBeVisible();
+  await expect(
+    page.getByText(
+      "りんごで育った信州牛が食べられる昭和47年創業のすき亭のお肉が選べるカタログギフトを贈呈します",
+    ),
+  ).toBeVisible();
+
+  const entranceTiming = await page.evaluate(() => {
+    const targets = [
+      { selector: "[class*='firstPrizeHeader'] h1", name: "firstPrizeTitle" },
+      { selector: "[class*='firstPrizeDescription']", name: "firstPrizeReveal" },
+      { selector: "img[class*='firstPrizeBeef']", name: "firstPrizeReveal" },
+      { selector: "img[class*='firstPrizeCatalog']", name: "firstPrizeReveal" },
+    ];
+    return targets.map(({ selector, name }) => {
+      const element = document.querySelector<HTMLElement>(selector);
+      const animation = element
+        ?.getAnimations()
+        .find((candidate) => (candidate as CSSAnimation).animationName.endsWith(name));
+      const timing = animation?.effect?.getComputedTiming();
+      if (
+        !timing ||
+        typeof timing.delay !== "number" ||
+        typeof timing.duration !== "number" ||
+        typeof timing.endTime !== "number"
+      ) {
+        throw new Error(`Missing first-prize timing for ${selector}`);
+      }
+      return {
+        delay: timing.delay,
+        duration: timing.duration,
+        endTime: timing.endTime,
+        iterations: timing.iterations,
+      };
+    });
+  });
+  const entranceDelays = entranceTiming.map(({ delay }) => delay);
+  expect(entranceDelays[0]).toBeLessThan(entranceDelays[1]!);
+  expect(entranceDelays[1]).toBeLessThan(entranceDelays[2]!);
+  expect(entranceDelays[2]).toBeLessThan(entranceDelays[3]!);
+  expect(entranceTiming.every(({ duration }) => duration > 0)).toBe(true);
+  expect(entranceTiming.map(({ iterations }) => iterations)).toEqual([1, 1, 1, 1]);
+  const entranceEndTime = Math.max(...entranceTiming.map(({ endTime }) => endTime));
+  expect(entranceEndTime).toBeGreaterThanOrEqual(700);
+  expect(entranceEndTime).toBeLessThanOrEqual(1500);
+
+  const initialStartTime = await title.evaluate((element) => {
+    const entrance = element
+      .getAnimations()
+      .find((animation) => (animation as CSSAnimation).animationName.endsWith("firstPrizeTitle"));
+    if (!entrance) throw new Error("First-prize title entrance animation was not found");
+    (
+      window as typeof window & { __firstPrizeTitleEntrance?: Animation }
+    ).__firstPrizeTitleEntrance = entrance;
+    return entrance.startTime;
+  });
+  expect(initialStartTime).not.toBeNull();
+
+  const sameStagePoll = page.waitForResponse((response) =>
+    response.url().includes("/api/presentation"),
+  );
+  await sameStagePoll;
+  const retained = await title.evaluate((element) =>
+    element
+      .getAnimations()
+      .includes(
+        (window as typeof window & { __firstPrizeTitleEntrance?: Animation })
+          .__firstPrizeTitleEntrance!,
+      ),
+  );
+  expect(retained).toBe(true);
+
+  const exitPoll = page.waitForResponse((response) => response.url().includes("/api/presentation"));
+  mock.setPresentationPosition("first");
+  await exitPoll;
+  await expect(page.getByRole("region", { name: "第一位の勝者一覧" })).toBeVisible();
+
+  const reentryPoll = page.waitForResponse((response) =>
+    response.url().includes("/api/presentation"),
+  );
+  mock.setPresentationPosition("first_prize");
+  await reentryPoll;
+  await expect(title).toBeVisible();
+  const replayedStartTime = await title.evaluate((element) => {
+    const entrance = element
+      .getAnimations()
+      .find((animation) => (animation as CSSAnimation).animationName.endsWith("firstPrizeTitle"));
+    if (!entrance) throw new Error("First-prize title entrance did not replay");
+    return entrance.startTime;
+  });
+  expect(replayedStartTime).not.toBeNull();
+  expect(replayedStartTime!).toBeGreaterThan(initialStartTime!);
+});
+
+test("@chromium first-prize entrance keeps click progression available", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const mock = await installAdminApiMock(page);
+  await signIn(page);
+  mock.setPresentationPosition("first_prize");
+  await openPresenter(page);
+
+  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭" });
+  await expect(title).toBeVisible();
+  const entranceIsActive = await title.evaluate((element) => {
+    const entrance = element
+      .getAnimations()
+      .find((animation) => (animation as CSSAnimation).animationName.endsWith("firstPrizeTitle"));
+    return entrance?.playState === "running";
+  });
+  expect(entranceIsActive).toBe(true);
+
+  const titleBounds = await title.boundingBox();
+  expect(titleBounds).not.toBeNull();
+  const mutation = nextAdminMutation(page);
+  await page.mouse.click(
+    titleBounds!.x + titleBounds!.width / 2,
+    titleBounds!.y + titleBounds!.height / 2,
+  );
+  await expect(slideFor(page, "finished")).toBeVisible();
+  await mutation;
 });
 
 test("@chromium rank reveal can advance into first prize while its automatic animation is active", async ({
@@ -1687,6 +1959,20 @@ test("@chromium rank reveal can advance into first prize while its automatic ani
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "first_prize")).toBeVisible();
   await mutation;
+
+  const prizeTitle = page.getByRole("heading", { name: "信州牛専門店　すき亭" });
+  const prizeEntranceIsActive = await prizeTitle.evaluate((element) => {
+    const entrance = element
+      .getAnimations()
+      .find((animation) => (animation as CSSAnimation).animationName.endsWith("firstPrizeTitle"));
+    return entrance?.playState === "running";
+  });
+  expect(prizeEntranceIsActive).toBe(true);
+
+  mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "finished")).toBeVisible();
+  await mutation;
 });
 
 test("@chromium finished skips the first-prize position when there is no first-place winner", async ({
@@ -1703,7 +1989,7 @@ test("@chromium finished skips the first-prize position when there is no first-p
   await expect(slideFor(page, "second")).toBeVisible();
   await mutation;
   expect(mock.getPresentationState().state).toBe("second");
-  await expect(page.getByRole("heading", { name: "和牛カタログ" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭" })).toHaveCount(0);
 });
 
 test("@chromium long answer content remains complete and fits without an internal scroll region", async ({
