@@ -18,6 +18,27 @@ const questionFor = (id: number) =>
     answerType: id === 5 ? "freeText" : "selected",
   });
 
+function completionSnapshotFor(
+  mode: "owner" | "assisted",
+  owner: { id: number },
+  participant: { id: number },
+  submission: { submissionId: string; revision: number } | null,
+) {
+  if (submission === null) return null;
+  return {
+    status: "ready" as const,
+    identity: {
+      scope: mode,
+      ownerParticipantId: owner.id,
+      participantId: participant.id,
+      submissionId: submission.submissionId,
+      revision: submission.revision,
+    },
+    resultsState: "waiting" as const,
+    resultsVisible: false,
+  };
+}
+
 const longJapaneseQuestion = "長文の設問です。".repeat(20);
 const longJapaneseChoice = "長文の選択肢です。".repeat(20);
 const noSpaceChoice = "BoundaryWithoutSpaces1234567890".repeat(8);
@@ -229,6 +250,12 @@ async function mockParticipantSession(
         owner: activeParticipant,
         participant: activeParticipant,
         submission,
+        completionSnapshot: completionSnapshotFor(
+          "owner",
+          activeParticipant,
+          activeParticipant,
+          submission,
+        ),
         ...(submission === null ? { questions: [1, 2, 3, 4, 5].map(questionFor) } : {}),
       }),
     });
@@ -779,6 +806,7 @@ test("@chromium direct assisted-new startup uses bootstrap with its public quest
         owner,
         participant: assisted,
         submission: null,
+        completionSnapshot: null,
         questions: [1, 2, 3, 4, 5].map(questionFor),
       }),
     });
@@ -1005,6 +1033,7 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
         owner,
         participant: owner,
         submission: null,
+        completionSnapshot: null,
         questions: [1, 2, 3, 4, 5].map((id) =>
           makeQuestion({
             id,
@@ -1191,7 +1220,13 @@ test("@chromium returns to owner completion after an assisted save and opens tar
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ mode, owner, participant: owner, submission: ownerSubmission }),
+        body: JSON.stringify({
+          mode,
+          owner,
+          participant: owner,
+          submission: ownerSubmission,
+          completionSnapshot: completionSnapshotFor(mode, owner, owner, ownerSubmission),
+        }),
       });
       return;
     }
@@ -1204,6 +1239,12 @@ test("@chromium returns to owner completion after an assisted save and opens tar
         owner,
         participant,
         submission: assistedSubmission,
+        completionSnapshot: completionSnapshotFor(
+          "assisted",
+          owner,
+          participant,
+          assistedSubmission,
+        ),
         ...(assistedSubmission === null ? { questions: [1, 2, 3, 4, 5].map(questionFor) } : {}),
       }),
     });
