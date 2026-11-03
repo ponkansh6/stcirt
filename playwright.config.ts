@@ -7,6 +7,8 @@ import {
   e2eParticipantSessionSecret,
 } from "./tests/e2e/fixtures/admin-auth";
 
+const devBundlerFlag = process.env.NEXT_FONT_GOOGLE_MOCKED_RESPONSES ? "--webpack" : "--turbopack";
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
@@ -33,7 +35,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: "pnpm exec next dev --turbopack --hostname 127.0.0.1 --port 3001",
+    command: `pnpm exec next dev ${devBundlerFlag} --hostname 127.0.0.1 --port 3001`,
     url: "http://127.0.0.1:3001",
     reuseExistingServer: false,
     env: {
