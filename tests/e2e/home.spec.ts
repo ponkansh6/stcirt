@@ -1,6 +1,19 @@
 import { test, expect } from "./fixtures/test";
 
 test("@chromium root is a compatibility redirect to participant entry", async ({ page }) => {
+  await page.route("**/api/answers/bootstrap**", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+
+    await route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Participant session required" }),
+    });
+  });
+
   await page.route("**/api/participants/session", async (route) => {
     if (route.request().method() !== "GET") {
       await route.fallback();

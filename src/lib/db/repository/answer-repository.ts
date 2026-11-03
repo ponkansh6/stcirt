@@ -60,8 +60,8 @@ function restoreSubmissionAnswers(
 export class BatchSubmissionError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 404 | 409 | 503,
-    readonly code?: "DATABASE_LOCKED",
+    readonly status: 400 | 404 | 409 | 423 | 503,
+    readonly code?: "DATABASE_LOCKED" | "SUBMISSION_LOCKED",
   ) {
     super(message);
     this.name = "BatchSubmissionError";
@@ -148,6 +148,31 @@ export async function getAnswerSubmissionVisibility(submissionId: string, partic
       .from(participantResultSettings)
       .where(eq(participantResultSettings.id, 1));
     return { resultsVisible: settings?.visible ?? false };
+  });
+}
+
+/** Read the current submission revision and publication flag for completion seeding. */
+export async function getAnswerSubmissionCompletionVisibility(
+  submissionId: string,
+  participantId: number,
+) {
+  return db.transaction(async (tx) => {
+    const [submission] = await tx
+      .select({ revision: examAnswerSubmissions.revision })
+      .from(examAnswerSubmissions)
+      .where(
+        and(
+          eq(examAnswerSubmissions.id, submissionId),
+          eq(examAnswerSubmissions.participantId, participantId),
+        ),
+      );
+    if (!submission) return null;
+
+    const [settings] = await tx
+      .select({ visible: participantResultSettings.visible })
+      .from(participantResultSettings)
+      .where(eq(participantResultSettings.id, 1));
+    return { revision: submission.revision, resultsVisible: settings?.visible ?? false };
   });
 }
 
@@ -252,6 +277,7 @@ export function saveAnswerSubmission(
     operationId: string;
     expectedRevision: number;
     participantId: number;
+    scope?: "owner" | "assisted";
     answers: BatchAnswer[];
   },
   retryRuntime: AnswerSaveRetryRuntime = defaultAnswerSaveRetryRuntime,
@@ -288,6 +314,7 @@ async function saveAnswerSubmissionOnce(
     operationId: string;
     expectedRevision: number;
     participantId: number;
+    scope?: "owner" | "assisted";
     answers: BatchAnswer[];
   },
   retryRuntime: AnswerSaveRetryRuntime,
@@ -409,6 +436,20 @@ async function saveAnswerSubmissionOnce(
               if (replay) return replay;
               throw new BatchSubmissionError("Operation ID was already used", 409);
             }
+            // The reservation is already the transaction's first write. Read
+            // publication state now so a concurrent show/hide must serialize
+            // before or after this correction, and rollback the reservation if locked.
+            const [resultSettings] = await tx
+              .select({ visible: participantResultSettings.visible })
+              .from(participantResultSettings)
+              .where(eq(participantResultSettings.id, 1));
+            if (resultSettings?.visible) {
+              throw new BatchSubmissionError(
+                "Answer corrections are locked while results are visible",
+                423,
+                "SUBMISSION_LOCKED",
+              );
+            }
             const updated = await tx
               .update(examAnswerSubmissions)
               .set({ revision, updatedAt: new Date(), questionVersions })
@@ -458,6 +499,23 @@ async function saveAnswerSubmissionOnce(
                 throw new BatchSubmissionError("Submission not found", 404);
               }
               throw new BatchSubmissionError("Submission revision conflict", 409);
+            }
+            if (input.scope === "assisted") {
+              // The submission insert is this transaction's first write. Read
+              // publication state only after acquiring the writer so this first
+              // assisted answer serializes with publication changes as well as
+              // corrections. Throwing rolls back the just-inserted row.
+              const [resultSettings] = await tx
+                .select({ visible: participantResultSettings.visible })
+                .from(participantResultSettings)
+                .where(eq(participantResultSettings.id, 1));
+              if (resultSettings?.visible) {
+                throw new BatchSubmissionError(
+                  "Assisted answers are locked while results are visible",
+                  423,
+                  "SUBMISSION_LOCKED",
+                );
+              }
             }
           }
 

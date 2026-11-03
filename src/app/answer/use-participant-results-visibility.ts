@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { AnswerCompletionSnapshot } from "@/lib/api/client";
 import { parseParticipantResult } from "@/lib/participant-results-contract";
 import type { ParticipantResult } from "@/lib/participant-results-contract";
 import type { AccessState, AnswerMode, Phase } from "./use-quiz-session";
@@ -15,6 +16,15 @@ export function useParticipantResultsVisibility(
   phase: Phase,
   access: AccessState,
   answerMode: AnswerMode,
+  {
+    submissionId = null,
+    revision = 0,
+    assistedParticipantId,
+  }: {
+    submissionId?: string | null;
+    revision?: number;
+    assistedParticipantId?: number;
+  } = {},
 ) {
   const [result, setResult] = useState<{
     key: string;
@@ -42,9 +52,29 @@ export function useParticipantResultsVisibility(
   const controllerRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
   const readyParticipantId = access.kind === "ready" ? access.participant.id : null;
+  const answerParticipantId =
+    answerMode === "assisted" ? (assistedParticipantId ?? null) : readyParticipantId;
+  const completionSnapshot: AnswerCompletionSnapshot | undefined =
+    phase.kind === "complete" ? phase.completionSnapshot : undefined;
+  const snapshotMatches =
+    completionSnapshot?.status === "ready" &&
+    readyParticipantId !== null &&
+    answerParticipantId !== null &&
+    completionSnapshot.identity.scope === answerMode &&
+    completionSnapshot.identity.ownerParticipantId === readyParticipantId &&
+    completionSnapshot.identity.participantId === answerParticipantId &&
+    completionSnapshot.identity.submissionId === submissionId &&
+    completionSnapshot.identity.revision === revision &&
+    (completionSnapshot.resultsState === "waiting") === !completionSnapshot.resultsVisible;
   const activeKey =
     phase.kind === "complete" && readyParticipantId !== null
-      ? `${readyParticipantId}:${answerMode}`
+      ? [
+          readyParticipantId,
+          answerMode,
+          answerParticipantId ?? "missing-target",
+          submissionId ?? "missing-submission",
+          revision,
+        ].join(":")
       : null;
   const isReadyTarget = activeKey !== null && access.kind === "ready";
   const targetIdentityRef = useRef({
@@ -67,16 +97,33 @@ export function useParticipantResultsVisibility(
     };
   }
   const targetEpoch = targetIdentityRef.current.epoch;
+  const seedResult = (() => {
+    if (!snapshotMatches || completionSnapshot?.status !== "ready" || activeKey === null) {
+      return null;
+    }
+    return {
+      key: activeKey,
+      phaseKey,
+      epoch: targetEpoch,
+      status: "confirmed" as const,
+      visible: completionSnapshot.resultsState === "visible",
+      state: completionSnapshot.resultsState,
+    };
+  })();
+  const seedResultForEffectRef = useRef(seedResult);
+  seedResultForEffectRef.current = seedResult;
   const currentResult =
     result?.key === activeKey && result.phaseKey === phaseKey && result.epoch === targetEpoch
       ? result
-      : null;
+      : seedResult;
   const currentLookup =
     lookup.key === activeKey && lookup.phaseKey === phaseKey && lookup.epoch === targetEpoch
       ? lookup.status
       : activeKey === null
         ? "inactive"
-        : "pending";
+        : seedResult !== null
+          ? "settled"
+          : "pending";
   const currentResultRef = useRef(currentResult);
   currentResultRef.current = currentResult;
   const retry = useCallback(() => {
@@ -89,6 +136,7 @@ export function useParticipantResultsVisibility(
   }, []);
 
   useEffect(() => {
+    const effectSeedResult = seedResultForEffectRef.current;
     const generation = ++generationRef.current;
     const isCurrent = () => generation === generationRef.current;
     if (activeKey === null || access.kind !== "ready") return;
@@ -102,8 +150,15 @@ export function useParticipantResultsVisibility(
     let deadline = 0;
     let timeoutRevision = 0;
     let hasConfirmedResult = currentResultRef.current !== null;
-    lookupRef.current = "pending";
-    setLookup({ key: activeKey, phaseKey, epoch: targetEpoch, status: "pending" });
+    let confirmedResultState = effectSeedResult?.state ?? currentResultRef.current?.state ?? null;
+    const hasInitialSeed = effectSeedResult !== null;
+    lookupRef.current = hasInitialSeed ? "settled" : "pending";
+    if (hasInitialSeed) {
+      setResult(effectSeedResult);
+      setLookup({ key: activeKey, phaseKey, epoch: targetEpoch, status: "settled" });
+    } else {
+      setLookup({ key: activeKey, phaseKey, epoch: targetEpoch, status: "pending" });
+    }
     const clearTimeoutTimer = () => {
       if (timeoutId !== null) clearTimeout(timeoutId);
       timeoutId = null;
@@ -175,6 +230,7 @@ export function useParticipantResultsVisibility(
         if (expireIfNeeded("response")) return;
         if (!active || !isCurrent() || currentRevision !== requestRevision) return;
         if (response.status === 401) {
+          confirmedResultState = null;
           lookupRef.current = "settled";
           setLookup({ key: activeKey, phaseKey, epoch: targetEpoch, status: "settled" });
           setResult({
@@ -207,6 +263,7 @@ export function useParticipantResultsVisibility(
             state: result.state,
           });
           hasConfirmedResult = true;
+          confirmedResultState = result.state;
           const nextStatus = source === "manual" ? "retry-success" : "settled";
           lookupRef.current = nextStatus;
           setLookup({ key: activeKey, phaseKey, epoch: targetEpoch, status: nextStatus });
@@ -227,7 +284,17 @@ export function useParticipantResultsVisibility(
       }
     };
     retryRequestRef.current = () => void refresh("manual");
-    void refresh("initial");
+    if (!hasInitialSeed) void refresh("initial");
+    const pollInterval = window.setInterval(() => {
+      if (
+        !active ||
+        document.visibilityState !== "visible" ||
+        (confirmedResultState !== "waiting" && confirmedResultState !== "unavailable")
+      ) {
+        return;
+      }
+      void refresh("visibility");
+    }, 60_000);
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         const expired = expireIfNeeded("resume");
@@ -248,6 +315,7 @@ export function useParticipantResultsVisibility(
     return () => {
       active = false;
       clearTimeoutTimer();
+      window.clearInterval(pollInterval);
       controller?.abort();
       if (controller && controllerRef.current === controller) controllerRef.current = null;
       retryRequestRef.current = null;
@@ -255,7 +323,16 @@ export function useParticipantResultsVisibility(
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("pageshow", onPageShow);
     };
-  }, [access.kind, activeKey, answerMode, phaseKey, refreshGeneration, targetEpoch]);
+  }, [
+    access.kind,
+    activeKey,
+    answerMode,
+    phaseKey,
+    refreshGeneration,
+    seedResult?.key,
+    seedResult?.state,
+    targetEpoch,
+  ]);
 
   return {
     status: currentResult?.status ?? (activeKey === null ? "inactive" : "unknown"),

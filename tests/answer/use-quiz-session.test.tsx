@@ -1,15 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { useEffect } from "react";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useQuizSession } from "@/app/answer/use-quiz-session";
 
 vi.mock("@/lib/api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/client")>();
-  return { ...actual, fetchLatestAnswerSubmission: vi.fn(async () => null) };
+  return {
+    ...actual,
+    fetchLatestAnswerSubmission: vi.fn(async () => null),
+    fetchAnswerBootstrap: vi.fn(),
+  };
 });
-import { fetchLatestAnswerSubmission } from "@/lib/api/client";
+import { ApiError, fetchAnswerBootstrap, fetchLatestAnswerSubmission } from "@/lib/api/client";
 
 describe("useQuizSession hook", () => {
   const participant = { id: 7, name: "参加者" };
+  const assistedParticipant = { id: 8, name: "代理参加者" };
   const question = (id: number) => ({
     id,
     question: `Question ${id}?`,
@@ -31,10 +37,52 @@ describe("useQuizSession hook", () => {
       choiceCount: id === 5 && freeTextFifth ? 0 : 4,
     })),
   });
+  const failedCompletionSnapshot = (id: string, revision: number) => ({
+    status: "failed" as const,
+    identity: {
+      scope: "owner" as const,
+      ownerParticipantId: participant.id,
+      participantId: participant.id,
+      submissionId: id,
+      revision,
+    },
+    resultsState: null,
+    resultsVisible: null,
+  });
+  const makeBootstrap = (
+    mode: "owner" | "assisted" = "owner",
+    submission: NonNullable<Awaited<ReturnType<typeof fetchLatestAnswerSubmission>>> | null = null,
+    freeTextFifth = false,
+  ) =>
+    ({
+      mode,
+      owner: participant,
+      participant: mode === "assisted" ? assistedParticipant : participant,
+      submission,
+      completionSnapshot:
+        submission === null
+          ? null
+          : {
+              status: "failed",
+              identity: {
+                scope: mode,
+                ownerParticipantId: participant.id,
+                participantId: mode === "assisted" ? assistedParticipant.id : participant.id,
+                submissionId: submission.submissionId,
+                revision: submission.revision,
+              },
+              resultsState: null,
+              resultsVisible: null,
+            },
+      ...(submission === null ? { questions: batchQuestions(freeTextFifth) } : {}),
+    }) as Awaited<ReturnType<typeof fetchAnswerBootstrap>>;
 
   beforeEach(() => {
     vi.mocked(fetchLatestAnswerSubmission).mockClear();
     vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue(null);
+    vi.mocked(fetchAnswerBootstrap).mockReset();
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap());
+    window.sessionStorage.clear();
     let uuidSequence = 0;
     vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(
       () => `00000000-0000-4000-8000-${String(++uuidSequence).padStart(12, "0")}`,
@@ -52,6 +100,16 @@ describe("useQuizSession hook", () => {
       if (url === "/api/participants/session") {
         return { ok: true, json: async () => ({ participant }) };
       }
+      if (url === "/api/participants/assisted" && !init?.method) {
+        return {
+          ok: true,
+          json: async () => ({
+            participant: assistedParticipant,
+            hasSubmission: false,
+            eligible: false,
+          }),
+        };
+      }
       if (url === "/api/questions/batch") {
         return {
           ok: true,
@@ -64,8 +122,33 @@ describe("useQuizSession hook", () => {
       }
       if (url === "/api/answers/batch" && init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-        const result = await overrides.batch?.(body);
-        return { ok: true, json: async () => result ?? { submissionId, revision: 1 } };
+        const rawResult = await overrides.batch?.(body);
+        const result =
+          rawResult && typeof rawResult === "object"
+            ? (rawResult as Record<string, unknown>)
+            : { submissionId, revision: 1 };
+        const resultSubmissionId =
+          typeof result.submissionId === "string" ? result.submissionId : submissionId;
+        const resultRevision = typeof result.revision === "number" ? result.revision : 1;
+        const scope = url.includes("scope=assisted") ? "assisted" : "owner";
+        return {
+          ok: true,
+          json: async () => ({
+            ...result,
+            completionSnapshot: result.completionSnapshot ?? {
+              status: "failed",
+              identity: {
+                scope,
+                ownerParticipantId: participant.id,
+                participantId: scope === "assisted" ? assistedParticipant.id : participant.id,
+                submissionId: resultSubmissionId,
+                revision: resultRevision,
+              },
+              resultsState: null,
+              resultsVisible: null,
+            },
+          }),
+        };
       }
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -80,6 +163,133 @@ describe("useQuizSession hook", () => {
     return hook;
   }
 
+  async function startWithExpiredOwnerSession() {
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(
+      new ApiError({ status: 401, message: "Expired", code: null, retryAt: null }),
+    );
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && init?.method === "POST") {
+        return {
+          ok: true,
+          json: async () => ({ participant, expiresAt: "2030-01-01T00:00:00.000Z" }),
+        };
+      }
+      if (url === "/api/participants/session") {
+        return { ok: true, json: async () => ({ participant }) };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
+    return { ...hook, fetchMock };
+  }
+
+  async function createAssistedDraft() {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("assisted"));
+    const hook = await start();
+    act(() => hook.result.current.select(1, 0));
+    const raw = window.sessionStorage.getItem("stcirt-assisted-answer-draft");
+    expect(raw).not.toBeNull();
+    hook.unmount();
+    return JSON.parse(raw!) as Record<string, unknown>;
+  }
+
+  async function startAssistedReauthWithMismatchedDraft(
+    options: {
+      bootstrap?: Awaited<ReturnType<typeof fetchAnswerBootstrap>>;
+      preserveLocalSubmissionIdentity?: boolean;
+    } = {},
+  ) {
+    const draft = await createAssistedDraft();
+    const originalSubmission = {
+      submissionId: draft.submissionId as string,
+      revision: draft.revision as number,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 0,
+        freeText: null,
+      })),
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(
+      makeBootstrap("assisted", originalSubmission),
+    );
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && init?.method === "POST") {
+        return {
+          ok: true,
+          json: async () => ({ participant, expiresAt: "2030-01-01T00:00:00.000Z" }),
+        };
+      }
+      if (url === "/api/participants/session") {
+        return { ok: true, json: async () => ({ participant }) };
+      }
+      if (url.startsWith("/api/answers/batch") && init?.method === "POST") {
+        return { ok: false, status: 401, json: async () => ({ message: "Expired" }) };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    for (const quiz of hook.result.current.quizzes) {
+      act(() => hook.result.current.select(quiz.question.id, 1));
+    }
+    await act(async () => hook.result.current.saveAnswers());
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
+
+    const persistedDraft = JSON.parse(
+      window.sessionStorage.getItem("stcirt-assisted-answer-draft")!,
+    ) as Record<string, unknown>;
+    const canonicalSubmissionId = options.preserveLocalSubmissionIdentity
+      ? (draft.submissionId as string)
+      : "00000000-0000-4000-8000-000000000099";
+    const canonicalRevision = options.preserveLocalSubmissionIdentity
+      ? (draft.revision as number)
+      : 3;
+    if (!options.preserveLocalSubmissionIdentity) {
+      window.sessionStorage.setItem(
+        "stcirt-assisted-answer-draft",
+        JSON.stringify({
+          ...persistedDraft,
+          submissionId: canonicalSubmissionId,
+          revision: canonicalRevision,
+        }),
+      );
+    }
+    const canonicalSubmission = {
+      submissionId: canonicalSubmissionId,
+      revision: canonicalRevision,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    };
+    const bootstrapCallsBeforeLogin = vi.mocked(fetchAnswerBootstrap).mock.calls.length;
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(
+      options.bootstrap ?? makeBootstrap("assisted", canonicalSubmission),
+    );
+    return { ...hook, draft, fetchMock, bootstrapCallsBeforeLogin };
+  }
+
+  async function startAssistedReauthWithStoredDraft() {
+    const draft = await createAssistedDraft();
+    const hook = await startWithExpiredOwnerSession();
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    return {
+      ...hook,
+      draft,
+      bootstrapCallsBeforeLogin: vi.mocked(fetchAnswerBootstrap).mock.calls.length,
+    };
+  }
+
   async function answerAll(result: { current: ReturnType<typeof useQuizSession> }) {
     for (const quiz of result.current.quizzes) {
       act(() => result.current.select(quiz.question.id, 2));
@@ -87,45 +297,128 @@ describe("useQuizSession hook", () => {
   }
 
   afterEach(() => {
+    window.sessionStorage.clear();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it("retries a failed all-question batch with one request per attempt", async () => {
-    let failed = false;
+  it("retries a failed saved-answer edit without rechecking status", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", {
+        submissionId,
+        revision: 2,
+        restoreIntegrity: restoreIntegrity(),
+        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 1,
+          freeText: null,
+        })),
+      }),
+    );
+    let attempts = 0;
     const requested: string[] = [];
     const fetchMock = vi.fn(async (url: string) => {
-      if (url === "/api/participants/session")
-        return { ok: true, json: async () => ({ participant }) };
-      requested.push(url);
-      if (!failed) {
-        failed = true;
+      if (url === "/api/questions/batch") {
+        attempts += 1;
+        requested.push(url);
+      }
+      if (url === "/api/questions/batch" && attempts === 1) {
         return { ok: false, status: 500, json: async () => ({ message: "temporary failure" }) };
       }
+      if (url !== "/api/questions/batch") throw new Error(`Unexpected request: ${url}`);
       return { ok: true, json: async () => ({ questions: batchQuestions() }) };
     });
     vi.stubGlobal("fetch", fetchMock);
 
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(hook.result.current.access.kind).toBe("ready"));
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
-    act(() => hook.result.current.retryLoad());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    await act(async () => hook.result.current.editAnswers(() => true));
+    await waitFor(() => expect(hook.result.current.editLoadError).not.toBeNull());
+    const bootstrapCallsBeforeRetry = vi.mocked(fetchAnswerBootstrap).mock.calls.length;
+    const latestCallsBeforeRetry = vi.mocked(fetchLatestAnswerSubmission).mock.calls.length;
+    const questionCallsBeforeRetry = fetchMock.mock.calls.filter(
+      ([url]) => url === "/api/questions/batch",
+    ).length;
+    act(() => hook.result.current.retryEdit(() => true));
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
 
     expect(requested).toEqual(["/api/questions/batch", "/api/questions/batch"]);
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(bootstrapCallsBeforeRetry);
+    expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(latestCallsBeforeRetry);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(
+      questionCallsBeforeRetry + 1,
+    );
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(1);
+    expect(fetchAnswerBootstrap).toHaveBeenCalledWith("owner");
+    expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(latestCallsBeforeRetry);
     expect(hook.result.current.quizzes.map(({ question: item }) => item.id)).toEqual([
       1, 2, 3, 4, 5,
     ]);
   });
 
+  it("retries questions only after a submission check finds no saved answer", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(new Error("temporary bootstrap failure"));
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce(null);
+    let questionAttempts = 0;
+    const fetchMock = setupFetch();
+    const originalFetch = fetchMock.getMockImplementation();
+    if (!originalFetch) throw new Error("Expected fetch mock implementation");
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/questions/batch") {
+        questionAttempts += 1;
+        if (questionAttempts === 1) {
+          return {
+            ok: false,
+            status: 500,
+            json: async () => ({ message: "temporary question failure" }),
+          };
+        }
+      }
+      return originalFetch(url, init);
+    });
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("submission-error"));
+
+    act(() => result.current.retrySubmissionCheck());
+    await waitFor(() => expect(result.current.phase.kind).toBe("load-error"));
+    const bootstrapCallsBeforeRetry = vi.mocked(fetchAnswerBootstrap).mock.calls.length;
+    const latestCallsBeforeRetry = vi.mocked(fetchLatestAnswerSubmission).mock.calls.length;
+    const questionCallsBeforeRetry = fetchMock.mock.calls.filter(
+      ([url]) => url === "/api/questions/batch",
+    ).length;
+
+    act(() => result.current.retryLoad());
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(bootstrapCallsBeforeRetry);
+    expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(latestCallsBeforeRetry);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(
+      questionCallsBeforeRetry + 1,
+    );
+    expect(fetchLatestAnswerSubmission).toHaveBeenCalledWith("owner");
+    expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
   it("loads five questions, keeps selections local, blocks incomplete submit, then posts one batch", async () => {
     const fetchMock = setupFetch();
-    const { result } = await start();
+    const observedStates: Array<{
+      phase: ReturnType<typeof useQuizSession>["phase"];
+      saveConfirmed: boolean;
+    }> = [];
+    const { result } = renderHook(() => {
+      const session = useQuizSession();
+      useEffect(() => {
+        observedStates.push({ phase: session.phase, saveConfirmed: session.saveConfirmed });
+      }, [session.phase, session.saveConfirmed]);
+      return session;
+    });
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
     expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([1, 2, 3, 4, 5]);
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "/api/participants/session",
-      "/api/questions/batch",
-    ]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(1);
+    expect(fetchAnswerBootstrap).toHaveBeenCalledWith("owner");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
 
     act(() => result.current.select(1, 2));
     act(() => void result.current.saveAnswers());
@@ -137,6 +430,11 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase).toEqual({ kind: "complete" });
     expect(result.current.saveConfirmed).toBe(true);
+    expect(
+      observedStates.some(
+        ({ phase, saveConfirmed }) => phase.kind === "complete" && !saveConfirmed,
+      ),
+    ).toBe(false);
     expect(result.current.answeredCount).toBe(5);
     const posts = fetchMock.mock.calls.filter(
       ([url, init]) => url === "/api/answers/batch" && init?.method === "POST",
@@ -152,6 +450,334 @@ describe("useQuizSession hook", () => {
     expect(body.answers.map((answer: { selectedIndex: number }) => answer.selectedIndex)).toEqual(
       result.current.quizzes.map(({ shuffled }) => shuffled.choiceIndices[2]),
     );
+  });
+
+  it("stores a POST completion snapshot atomically with the complete phase", async () => {
+    const completionSnapshot = {
+      status: "ready" as const,
+      identity: {
+        scope: "owner" as const,
+        ownerParticipantId: participant.id,
+        participantId: participant.id,
+        submissionId,
+        revision: 1,
+      },
+      resultsState: "waiting" as const,
+      resultsVisible: false,
+    };
+    setupFetch({ batch: () => ({ submissionId, revision: 1, completionSnapshot }) });
+    const { result } = await start();
+    await answerAll(result);
+    await act(async () => result.current.saveAnswers());
+
+    expect(result.current.phase).toEqual({ kind: "complete", completionSnapshot });
+  });
+
+  it("seeds only an integrity-checked saved bootstrap phase with its exact snapshot", async () => {
+    const savedSubmission = {
+      submissionId,
+      revision: 3,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    };
+    const completionSnapshot = {
+      status: "ready" as const,
+      identity: {
+        scope: "owner" as const,
+        ownerParticipantId: participant.id,
+        participantId: participant.id,
+        submissionId,
+        revision: 3,
+      },
+      resultsState: "unavailable" as const,
+      resultsVisible: true,
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue({
+      ...makeBootstrap("owner", savedSubmission),
+      completionSnapshot,
+    });
+    const { result } = renderHook(() => useQuizSession());
+
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    expect(result.current.phase).toEqual({ kind: "complete", completionSnapshot });
+  });
+
+  it("does not seed a saved bootstrap whose restore integrity is invalid", async () => {
+    const savedSubmission = {
+      submissionId,
+      revision: 3,
+      restoreIntegrity: { status: "invalid" as const },
+      answers: [],
+    };
+    const completionSnapshot = {
+      status: "ready" as const,
+      identity: {
+        scope: "owner" as const,
+        ownerParticipantId: participant.id,
+        participantId: participant.id,
+        submissionId,
+        revision: 3,
+      },
+      resultsState: "waiting" as const,
+      resultsVisible: false,
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue({
+      ...makeBootstrap("owner", savedSubmission as never),
+      completionSnapshot,
+    });
+    const { result } = renderHook(() => useQuizSession());
+
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    expect(result.current.restoreError).toBeTruthy();
+    expect(result.current.phase).toEqual({ kind: "complete" });
+  });
+
+  it("uses one assisted bootstrap for a direct assisted-mode startup", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("assisted"));
+    const { result } = renderHook(() => useQuizSession());
+
+    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(1);
+    expect(fetchAnswerBootstrap).toHaveBeenCalledWith("assisted");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(result.current.answerMode).toBe("assisted");
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(result.current.assistedParticipant?.participant).toEqual(assistedParticipant);
+    expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("uses scoped bootstraps for assisted activation and return to owner", async () => {
+    const savedOwnerSubmission = {
+      submissionId,
+      revision: 1,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    };
+    vi.mocked(fetchAnswerBootstrap)
+      .mockResolvedValueOnce(makeBootstrap("owner", savedOwnerSubmission))
+      .mockResolvedValueOnce(makeBootstrap("assisted"))
+      .mockResolvedValueOnce(makeBootstrap("owner", savedOwnerSubmission));
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/participants/assisted" && init?.method === "POST")
+        return {
+          ok: true,
+          json: async () => ({ participant: assistedParticipant, hasSubmission: false }),
+        };
+      if (url === "/api/participants/assisted")
+        return {
+          ok: true,
+          json: async () => ({ participant: assistedParticipant, hasSubmission: false }),
+        };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    await act(async () => result.current.startAssisted("代理参加者"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    expect(result.current.answerMode).toBe("assisted");
+    expect(result.current.quizzes).toHaveLength(5);
+
+    act(() => result.current.returnToOwner());
+    await waitFor(() =>
+      expect(result.current).toMatchObject({ answerMode: "owner", phase: { kind: "complete" } }),
+    );
+    expect(vi.mocked(fetchAnswerBootstrap).mock.calls.map(([mode]) => mode)).toEqual([
+      "owner",
+      "assisted",
+      "owner",
+    ]);
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("ignores the stale bootstrap response from StrictMode's first mount", async () => {
+    let releaseStale!: (value: Awaited<ReturnType<typeof fetchAnswerBootstrap>>) => void;
+    const staleResponse = new Promise<Awaited<ReturnType<typeof fetchAnswerBootstrap>>>(
+      (resolve) => {
+        releaseStale = resolve;
+      },
+    );
+    vi.mocked(fetchAnswerBootstrap)
+      .mockImplementationOnce(() => staleResponse)
+      .mockResolvedValueOnce(makeBootstrap());
+
+    const { result } = renderHook(() => useQuizSession(), { reactStrictMode: true });
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(2);
+
+    await act(async () =>
+      releaseStale({
+        ...makeBootstrap(),
+        owner: { id: 99, name: "古い参加者" },
+        participant: { id: 99, name: "古い参加者" },
+      }),
+    );
+
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(result.current.submissionId).not.toBeNull();
+  });
+
+  it("preserves the assisted draft and mode after a bootstrap 403", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("assisted"));
+    const firstVisit = await start();
+    act(() => firstVisit.result.current.select(1, 0));
+    const savedDraft = window.sessionStorage.getItem("stcirt-assisted-answer-draft");
+    expect(savedDraft).not.toBeNull();
+    firstVisit.unmount();
+
+    vi.mocked(fetchAnswerBootstrap).mockClear();
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(
+      new ApiError({ status: 403, message: "Scope denied", code: null, retryAt: null }),
+    );
+    const fetchMock = setupFetch();
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("submission-error"));
+
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(1);
+    expect(fetchAnswerBootstrap).toHaveBeenCalledWith("assisted");
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(result.current.answerMode).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBe(savedDraft);
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toContain("/api/participants/session");
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) => url === "/api/questions/batch" && (!init?.method || init.method === "GET"),
+      ),
+    ).toBe(false);
+  });
+
+  it("discards an expired assisted draft before starting a fresh attempt", async () => {
+    const draft = await createAssistedDraft();
+    draft.expiresAt = 0;
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("assisted"));
+    const { result } = renderHook(() => useQuizSession());
+
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    expect(result.current.answerMode).toBe("assisted");
+    expect(result.current.selections).toEqual({});
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(fetchAnswerBootstrap).toHaveBeenLastCalledWith("assisted");
+  });
+
+  it("discards an assisted draft owned by a different target", async () => {
+    const draft = await createAssistedDraft();
+    draft.participantId = assistedParticipant.id + 1;
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("assisted"));
+    const { result } = renderHook(() => useQuizSession());
+
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    expect(result.current.answerMode).toBe("assisted");
+    expect(result.current.selections).toEqual({});
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+  });
+
+  it.each(["submissionId", "revision"] as const)(
+    "returns to owner through bootstrap and discards an assisted draft when its %s is stale",
+    async (mismatch) => {
+      const draft = await createAssistedDraft();
+      const savedSubmissionId =
+        mismatch === "submissionId"
+          ? `${String(draft.submissionId)}-changed`
+          : String(draft.submissionId);
+      const savedRevision =
+        mismatch === "revision" ? Number(draft.revision) + 1 : Number(draft.revision);
+      const submission = {
+        submissionId: savedSubmissionId,
+        revision: savedRevision,
+        restoreIntegrity: restoreIntegrity(),
+        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 1,
+          freeText: null,
+        })),
+      };
+      const requestOrder: string[] = [];
+      vi.mocked(fetchAnswerBootstrap)
+        .mockClear()
+        .mockImplementation(async (mode) => {
+          requestOrder.push(`bootstrap:${mode}`);
+          return makeBootstrap(mode, mode === "assisted" ? submission : null);
+        });
+      vi.mocked(fetchLatestAnswerSubmission).mockClear();
+      const fetchMock = setupFetch();
+      const originalFetch = fetchMock.getMockImplementation();
+      if (!originalFetch) throw new Error("Expected fetch mock implementation");
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === "/api/questions/batch") requestOrder.push("questions");
+        return originalFetch(url, init);
+      });
+      const { result } = renderHook(() => useQuizSession());
+
+      await waitFor(() =>
+        expect(result.current).toMatchObject({ answerMode: "owner", phase: { kind: "answering" } }),
+      );
+
+      expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+      expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+      expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(2);
+      expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(1, "assisted");
+      expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(2, "owner");
+      expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+      expect(requestOrder).toEqual(["bootstrap:assisted", "bootstrap:owner"]);
+      expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(
+        0,
+      );
+      expect(result.current.quizzes.map(({ question: item }) => item.question)).toEqual([
+        "Question 1?",
+        "Question 2?",
+        "Question 3?",
+        "Question 4?",
+        "Question 5?",
+      ]);
+    },
+  );
+
+  it("uses reauthentication after a bootstrap 401 when the participant session still exists", async () => {
+    const draft = await createAssistedDraft();
+    expect(draft).toMatchObject({ participantId: assistedParticipant.id });
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).not.toBeNull();
+    vi.mocked(fetchAnswerBootstrap).mockClear();
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(
+      new ApiError({ status: 401, message: "Expired", code: null, retryAt: null }),
+    );
+    const fetchMock = setupFetch();
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access.kind).toBe("reauthentication"));
+
+    expect(result.current.access).toEqual({ kind: "reauthentication", participant });
+    expect(result.current.answerMode).toBe("assisted");
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(1);
+    expect(fetchAnswerBootstrap).toHaveBeenCalledWith("assisted");
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toContain("/api/participants/session");
+    expect(fetchMock.mock.calls.map(([url]) => url)).toContain("/api/participants/assisted");
   });
 
   it("locks duplicate submits while a batch request is pending", async () => {
@@ -192,7 +818,14 @@ describe("useQuizSession hook", () => {
           shouldFail = false;
           throw new Error("network failure");
         }
-        return { ok: true, json: async () => ({ submissionId, revision: 1 }) };
+        return {
+          ok: true,
+          json: async () => ({
+            submissionId,
+            revision: 1,
+            completionSnapshot: failedCompletionSnapshot(submissionId, 1),
+          }),
+        };
       }
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -294,25 +927,27 @@ describe("useQuizSession hook", () => {
   });
 
   it("replaces a legacy Q5 answer with new free text when revising a saved submission", async () => {
-    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue({
-      submissionId,
-      revision: 4,
-      restoreIntegrity: restoreIntegrity(true),
-      answers: [
-        ...[1, 2, 3, 4].map((questionId) => ({
-          questionId,
-          answerKind: "selected" as const,
-          selectedIndex: 1,
-          freeText: null,
-        })),
-        {
-          questionId: 5,
-          answerKind: "legacy" as const,
-          selectedIndex: 2,
-          freeText: null,
-        },
-      ],
-    });
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", {
+        submissionId,
+        revision: 4,
+        restoreIntegrity: restoreIntegrity(true),
+        answers: [
+          ...[1, 2, 3, 4].map((questionId) => ({
+            questionId,
+            answerKind: "selected" as const,
+            selectedIndex: 1,
+            freeText: null,
+          })),
+          {
+            questionId: 5,
+            answerKind: "legacy" as const,
+            selectedIndex: 2,
+            freeText: null,
+          },
+        ],
+      }),
+    );
     const fetchMock = setupFetch({
       freeTextFifth: true,
       batch: () => ({ submissionId, revision: 5 }),
@@ -369,18 +1004,29 @@ describe("useQuizSession hook", () => {
   });
 
   it("preserves the correction draft and avoids conflict refresh when the server reports SUBMISSION_LOCKED", async () => {
-    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue({
-      submissionId,
-      revision: 1,
-      restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
-        questionId,
-        answerKind: "selected" as const,
-        selectedIndex: 1,
-        freeText: null,
-      })),
-    });
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", {
+        submissionId,
+        revision: 1,
+        restoreIntegrity: restoreIntegrity(),
+        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 1,
+          freeText: null,
+        })),
+      }),
+    );
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/assisted")
+        return {
+          ok: true,
+          json: async () => ({
+            participant: assistedParticipant,
+            hasSubmission: false,
+            eligible: false,
+          }),
+        };
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
       if (url === "/api/questions/batch")
@@ -408,22 +1054,33 @@ describe("useQuizSession hook", () => {
     expect(
       fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/answers/batch?")),
     ).toHaveLength(0);
-    expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(1);
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
   });
 
   it("clears the answering-phase published lock after visibility is confirmed hidden", async () => {
-    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValue({
-      submissionId,
-      revision: 1,
-      restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
-        questionId,
-        answerKind: "selected" as const,
-        selectedIndex: 1,
-        freeText: null,
-      })),
-    });
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", {
+        submissionId,
+        revision: 1,
+        restoreIntegrity: restoreIntegrity(),
+        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 1,
+          freeText: null,
+        })),
+      }),
+    );
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/assisted")
+        return {
+          ok: true,
+          json: async () => ({
+            participant: assistedParticipant,
+            hasSubmission: false,
+            eligible: false,
+          }),
+        };
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
       if (url === "/api/questions/batch")
@@ -463,6 +1120,9 @@ describe("useQuizSession hook", () => {
   });
 
   it("shows login after session lookup failure and keeps login errors visible", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(
+      new ApiError({ status: 401, message: "Session unavailable", code: null, retryAt: null }),
+    );
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       if (init?.method === "POST")
         return {
@@ -476,7 +1136,7 @@ describe("useQuizSession hook", () => {
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.access.kind).toBe("login"));
     expect(result.current.access).toMatchObject({
-      message: "参加状態を確認できませんでした。お名前とPINを入力してください。",
+      message: "参加状態を確認できませんでした。通信状態を確認してから再読み込みしてください。",
     });
     await act(async () => {
       await expect(result.current.login("参加者", "0000")).rejects.toThrow(
@@ -489,17 +1149,16 @@ describe("useQuizSession hook", () => {
     });
   });
 
-  it("keeps an incomplete batch out of the exam and exposes a retryable error", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url === "/api/participants/session")
-        return { ok: true, json: async () => ({ participant }) };
-      return { ok: true, json: async () => ({ questions: [question(1)] }) };
-    });
-    vi.stubGlobal("fetch", fetchMock);
+  it("does not turn a failed bootstrap into a new attempt", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(new Error("invalid bootstrap"));
+    const fetchMock = setupFetch();
     const { result } = renderHook(() => useQuizSession());
-    await waitFor(() => expect(result.current.access.kind).toBe("ready"));
-    await waitFor(() => expect(result.current.phase.kind).toBe("load-error"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("submission-error"));
+    expect(result.current.access).toEqual({ kind: "ready", participant });
     expect(result.current.quizzes).toEqual([]);
+    expect(result.current.submissionId).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(1);
   });
 
   it("keeps an explicitly rejected draft editable and gives changed answers a new retry operation", async () => {
@@ -521,7 +1180,14 @@ describe("useQuizSession hook", () => {
             json: async () => ({ message: "回答を確認してください" }),
           };
         }
-        return { ok: true, json: async () => ({ submissionId, revision: 1 }) };
+        return {
+          ok: true,
+          json: async () => ({
+            submissionId,
+            revision: 1,
+            completionSnapshot: failedCompletionSnapshot(submissionId, 1),
+          }),
+        };
       }
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -544,6 +1210,7 @@ describe("useQuizSession hook", () => {
 
   it("retains Q5 free text and resends the same operation after same-participant reauthentication", async () => {
     const attempts: Record<string, unknown>[] = [];
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("owner", null, true));
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session" && init?.method === "POST")
         return {
@@ -558,7 +1225,14 @@ describe("useQuizSession hook", () => {
       if (url === "/api/answers/batch" && init?.method === "POST") {
         attempts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
         if (attempts.length > 1)
-          return { ok: true, json: async () => ({ submissionId, revision: 1 }) };
+          return {
+            ok: true,
+            json: async () => ({
+              submissionId,
+              revision: 1,
+              completionSnapshot: failedCompletionSnapshot(submissionId, 1),
+            }),
+          };
         return {
           ok: false,
           status: 401,
@@ -581,12 +1255,13 @@ describe("useQuizSession hook", () => {
     expect(result.current.answeredCount).toBe(5);
     expect(result.current.freeResponses[5]).toBe("  監査済みの端末を利用します。  ");
 
+    const latestCallsBeforeLogin = vi.mocked(fetchLatestAnswerSubmission).mock.calls.length;
     await act(async () => result.current.login("参加者", "1234"));
     expect(result.current.access).toEqual({ kind: "ready", participant });
     expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
     expect(result.current.answeredCount).toBe(5);
     expect(result.current.freeResponses[5]).toBe("  監査済みの端末を利用します。  ");
-    expect(vi.mocked(fetchLatestAnswerSubmission)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetchLatestAnswerSubmission)).toHaveBeenCalledTimes(latestCallsBeforeLogin);
     expect(attempts).toHaveLength(1);
 
     await act(async () => result.current.saveAnswers());
@@ -609,14 +1284,16 @@ describe("useQuizSession hook", () => {
       freeText: string | null;
     }[] = [];
     const canonicalRevision = 7;
-    vi.mocked(fetchLatestAnswerSubmission)
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        submissionId,
-        revision: canonicalRevision,
-        restoreIntegrity: restoreIntegrity(true),
-        answers: [],
-      });
+    vi.mocked(fetchAnswerBootstrap)
+      .mockResolvedValueOnce(makeBootstrap("owner", null, true))
+      .mockImplementationOnce(async () =>
+        makeBootstrap("owner", {
+          submissionId,
+          revision: canonicalRevision,
+          restoreIntegrity: restoreIntegrity(true),
+          answers: canonicalAnswers,
+        }),
+      );
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session" && init?.method === "POST")
         return {
@@ -632,7 +1309,14 @@ describe("useQuizSession hook", () => {
         posts.push(body);
         return posts.length === 1
           ? { ok: false, status: 401, json: async () => ({ message: "expired" }) }
-          : { ok: true, json: async () => ({ submissionId, revision: canonicalRevision + 1 }) };
+          : {
+              ok: true,
+              json: async () => ({
+                submissionId,
+                revision: canonicalRevision + 1,
+                completionSnapshot: failedCompletionSnapshot(submissionId, canonicalRevision + 1),
+              }),
+            };
       }
       if (url.startsWith("/api/answers/batch?"))
         return {
@@ -727,21 +1411,32 @@ describe("useQuizSession hook", () => {
             freeText: null,
           },
     );
-    vi.mocked(fetchLatestAnswerSubmission)
-      .mockResolvedValueOnce({
-        submissionId,
-        revision: 2,
-        answers: canonicalAnswers,
-        restoreIntegrity: restoreIntegrity(true),
-      })
-      .mockResolvedValueOnce({
-        submissionId,
-        revision: 4,
-        answers: canonicalAnswers,
-        restoreIntegrity: restoreIntegrity(true),
-      });
+    const initialSubmission = {
+      submissionId,
+      revision: 2,
+      answers: canonicalAnswers,
+      restoreIntegrity: restoreIntegrity(true),
+    };
+    const latestSubmission = {
+      submissionId,
+      revision: 4,
+      answers: canonicalAnswers,
+      restoreIntegrity: restoreIntegrity(true),
+    };
+    vi.mocked(fetchAnswerBootstrap)
+      .mockResolvedValueOnce(makeBootstrap("owner", initialSubmission))
+      .mockResolvedValueOnce(makeBootstrap("owner", latestSubmission));
     const posts: Record<string, unknown>[] = [];
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/assisted")
+        return {
+          ok: true,
+          json: async () => ({
+            participant: assistedParticipant,
+            hasSubmission: false,
+            eligible: false,
+          }),
+        };
       if (url === "/api/participants/session" && init?.method === "POST")
         return {
           ok: true,
@@ -755,7 +1450,14 @@ describe("useQuizSession hook", () => {
         posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
         return posts.length === 1
           ? { ok: false, status: 401, json: async () => ({ message: "expired" }) }
-          : { ok: true, json: async () => ({ submissionId, revision: 5 }) };
+          : {
+              ok: true,
+              json: async () => ({
+                submissionId,
+                revision: 5,
+                completionSnapshot: failedCompletionSnapshot(submissionId, 5),
+              }),
+            };
       }
       if (url.startsWith("/api/answers/batch?"))
         return {
@@ -832,12 +1534,34 @@ describe("useQuizSession hook", () => {
       freeText: string | null;
     }[] = [];
     let latestAfterIdChange: Awaited<ReturnType<typeof fetchLatestAnswerSubmission>> = null;
+    const originalAnswers = [1, 2, 3, 4, 5].map((questionId) =>
+      questionId === 5
+        ? {
+            questionId,
+            answerKind: "freeText" as const,
+            selectedIndex: null,
+            freeText: "元の保存済み回答",
+          }
+        : {
+            questionId,
+            answerKind: "selected" as const,
+            selectedIndex: 0,
+            freeText: null,
+          },
+    );
     const posts: Record<string, unknown>[] = [];
     let savedAnswerRead = 0;
-    vi.mocked(fetchLatestAnswerSubmission)
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ submissionId, revision: 2, answers: [] })
-      .mockImplementationOnce(async () => latestAfterIdChange);
+    vi.mocked(fetchAnswerBootstrap)
+      .mockResolvedValueOnce(makeBootstrap("owner", null, true))
+      .mockResolvedValueOnce(
+        makeBootstrap("owner", {
+          submissionId,
+          revision: 2,
+          answers: originalAnswers,
+          restoreIntegrity: restoreIntegrity(true),
+        }),
+      )
+      .mockImplementationOnce(async () => makeBootstrap("owner", latestAfterIdChange));
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session" && init?.method === "POST")
         return {
@@ -929,6 +1653,13 @@ describe("useQuizSession hook", () => {
   it("clears the previous participant draft when reauthentication succeeds as another participant", async () => {
     const otherParticipant = { id: 8, name: "別の参加者" };
     const attempts: Record<string, unknown>[] = [];
+    vi.mocked(fetchAnswerBootstrap)
+      .mockResolvedValueOnce(makeBootstrap("owner"))
+      .mockResolvedValueOnce({
+        ...makeBootstrap("owner"),
+        owner: otherParticipant,
+        participant: otherParticipant,
+      });
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session" && init?.method === "POST")
         return {
@@ -950,7 +1681,11 @@ describe("useQuizSession hook", () => {
           ? { ok: false, status: 401, json: async () => ({ message: "expired" }) }
           : {
               ok: true,
-              json: async () => ({ submissionId: request.submissionId, revision: 1 }),
+              json: async () => ({
+                submissionId: request.submissionId,
+                revision: 1,
+                completionSnapshot: failedCompletionSnapshot(String(request.submissionId), 1),
+              }),
             };
       }
       throw new Error(`Unexpected request: ${url}`);
@@ -970,7 +1705,9 @@ describe("useQuizSession hook", () => {
     expect(result.current.selections).toEqual({});
     expect(result.current.answeredCount).toBe(0);
     expect(result.current.submissionId).not.toBe(previousSubmissionId);
-    expect(vi.mocked(fetchLatestAnswerSubmission)).toHaveBeenCalledTimes(2);
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(2, "owner");
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(2);
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
 
     await answerAll(result);
     await act(async () => result.current.saveAnswers());
@@ -1049,6 +1786,7 @@ describe("useQuizSession hook", () => {
     let currentSubmissionId = "";
     let canonicalAnswers: PersistedAnswer[] = [];
     const canonicalRevision = 7;
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("owner", null, true));
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
@@ -1064,7 +1802,11 @@ describe("useQuizSession hook", () => {
         }
         return {
           ok: true,
-          json: async () => ({ submissionId: body.submissionId, revision: 8 }),
+          json: async () => ({
+            submissionId: body.submissionId,
+            revision: 8,
+            completionSnapshot: failedCompletionSnapshot(body.submissionId, 8),
+          }),
         };
       }
       if (url.startsWith("/api/answers/batch?")) {
@@ -1300,6 +2042,18 @@ describe("useQuizSession hook", () => {
   it("starts a session after login and does not replace reauthentication with a failed login state", async () => {
     let sessionExists = false;
     let loginFails = false;
+    const postLoginQuestions = batchQuestions().map((item) => ({
+      ...item,
+      question: `Post-login question ${item.id}?`,
+    }));
+    vi.mocked(fetchAnswerBootstrap)
+      .mockRejectedValueOnce(
+        new ApiError({ status: 401, message: "Expired", code: null, retryAt: null }),
+      )
+      .mockResolvedValueOnce({
+        ...makeBootstrap("owner"),
+        questions: postLoginQuestions,
+      });
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session" && init?.method === "POST") {
         if (loginFails)
@@ -1325,9 +2079,30 @@ describe("useQuizSession hook", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.access.kind).toBe("login"));
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(1, "owner");
+    const bootstrapCallsBeforeLogin = vi.mocked(fetchAnswerBootstrap).mock.calls.length;
     await act(async () => result.current.login("参加者", "1234"));
     expect(result.current.access).toEqual({ kind: "ready", participant });
     await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    expect(vi.mocked(fetchAnswerBootstrap).mock.calls.length - bootstrapCallsBeforeLogin).toBe(1);
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "owner");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) => url === "/api/questions/batch" && (!init?.method || init.method === "GET"),
+      ),
+    ).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) => url === "/api/answers/latest" && (!init?.method || init.method === "GET"),
+      ),
+    ).toBe(false);
+    expect(
+      result.current.quizzes.map(({ question: item }) => ({
+        id: item.id,
+        question: item.question,
+      })),
+    ).toEqual(postLoginQuestions.map(({ id, question }) => ({ id, question })));
     await answerAll(result);
     await act(async () => result.current.saveAnswers());
     expect(result.current.access.kind).toBe("reauthentication");
@@ -1338,8 +2113,682 @@ describe("useQuizSession hook", () => {
     expect(result.current.access.kind).toBe("reauthentication");
   });
 
+  it("falls back to owner bootstrap after assisted login bootstrap returns 404", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    const { result, fetchMock } = await startWithExpiredOwnerSession();
+    const bootstrapCallsBeforeLogin = vi.mocked(fetchAnswerBootstrap).mock.calls.length;
+    const savedSubmission = {
+      submissionId,
+      revision: 2,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 0,
+        freeText: null,
+      })),
+    };
+    const completionSnapshot = {
+      status: "ready" as const,
+      identity: {
+        scope: "owner" as const,
+        ownerParticipantId: participant.id,
+        participantId: participant.id,
+        submissionId,
+        revision: 2,
+      },
+      resultsState: "waiting" as const,
+      resultsVisible: false,
+    };
+    vi.mocked(fetchAnswerBootstrap)
+      .mockRejectedValueOnce(
+        new ApiError({ status: 404, message: "Missing", code: null, retryAt: null }),
+      )
+      .mockResolvedValueOnce({
+        ...makeBootstrap("owner", savedSubmission),
+        completionSnapshot,
+      });
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.answerMode).toBe("owner");
+    expect(result.current.phase).toEqual({ kind: "complete", completionSnapshot });
+    expect(result.current.submissionId).toBe(submissionId);
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 2, "owner");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("ignores a successful assisted login bootstrap after unmount", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    const { result, unmount } = await startWithExpiredOwnerSession();
+    const bootstrapCallsBeforeLogin = vi.mocked(fetchAnswerBootstrap).mock.calls.length;
+    let resolveBootstrap!: (bootstrap: Awaited<ReturnType<typeof fetchAnswerBootstrap>>) => void;
+    const pendingBootstrap = new Promise<Awaited<ReturnType<typeof fetchAnswerBootstrap>>>(
+      (resolve) => {
+        resolveBootstrap = resolve;
+      },
+    );
+    vi.mocked(fetchAnswerBootstrap).mockReturnValueOnce(pendingBootstrap);
+    let loginPromise!: Promise<number>;
+    act(() => {
+      loginPromise = result.current.login("参加者", "1234");
+    });
+    await waitFor(() =>
+      expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(bootstrapCallsBeforeLogin + 1),
+    );
+    expect(fetchAnswerBootstrap).toHaveBeenLastCalledWith("assisted");
+    const accessBeforeUnmount = result.current.access;
+    const phaseBeforeUnmount = result.current.phase;
+    unmount();
+    resolveBootstrap(makeBootstrap("assisted"));
+
+    await act(async () => {
+      await expect(loginPromise).resolves.toBe(participant.id);
+    });
+
+    expect(result.current.access).toEqual(accessBeforeUnmount);
+    expect(result.current.phase).toEqual(phaseBeforeUnmount);
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+  });
+
+  it("ignores a successful assisted login owner fallback after unmount", async () => {
+    const staleDraft = await createAssistedDraft();
+    const { result, unmount, fetchMock } = await startWithExpiredOwnerSession();
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(staleDraft));
+    const bootstrapCallsBeforeLogin = vi.mocked(fetchAnswerBootstrap).mock.calls.length;
+    const savedSubmission = {
+      submissionId,
+      revision: 2,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 0,
+        freeText: null,
+      })),
+    };
+    let resolveBootstrap!: (bootstrap: Awaited<ReturnType<typeof fetchAnswerBootstrap>>) => void;
+    const pendingOwnerBootstrap = new Promise<Awaited<ReturnType<typeof fetchAnswerBootstrap>>>(
+      (resolve) => {
+        resolveBootstrap = resolve;
+      },
+    );
+    vi.mocked(fetchAnswerBootstrap)
+      .mockResolvedValueOnce(makeBootstrap("assisted", savedSubmission))
+      .mockReturnValueOnce(pendingOwnerBootstrap);
+    let loginPromise!: Promise<number>;
+    act(() => {
+      loginPromise = result.current.login("参加者", "1234");
+    });
+    await waitFor(() =>
+      expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(bootstrapCallsBeforeLogin + 2),
+    );
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 2, "owner");
+    const accessBeforeUnmount = result.current.access;
+    const phaseBeforeUnmount = result.current.phase;
+    unmount();
+    resolveBootstrap(makeBootstrap("owner"));
+
+    await act(async () => {
+      await expect(loginPromise).resolves.toBe(participant.id);
+    });
+
+    expect(result.current.access).toEqual(accessBeforeUnmount);
+    expect(result.current.phase).toEqual(phaseBeforeUnmount);
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("blocks restoration after login when a saved submission lacks restore integrity", async () => {
+    const { result } = await startWithExpiredOwnerSession();
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(
+      makeBootstrap("owner", {
+        submissionId,
+        revision: 2,
+        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 0,
+          freeText: null,
+        })),
+      }),
+    );
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(result.current.restoreError).toContain("整合性を確認できません");
+    expect(result.current.saveConfirmed).toBe(false);
+  });
+
+  it("seeds a valid saved bootstrap fetched during reauthentication", async () => {
+    const { result } = await startWithExpiredOwnerSession();
+    const savedSubmission = {
+      submissionId,
+      revision: 2,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 0,
+        freeText: null,
+      })),
+    };
+    const completionSnapshot = {
+      status: "ready" as const,
+      identity: {
+        scope: "owner" as const,
+        ownerParticipantId: participant.id,
+        participantId: participant.id,
+        submissionId,
+        revision: 2,
+      },
+      resultsState: "waiting" as const,
+      resultsVisible: false,
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce({
+      ...makeBootstrap("owner", savedSubmission),
+      completionSnapshot,
+    });
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.phase).toEqual({ kind: "complete", completionSnapshot });
+    expect(result.current.revision).toBe(2);
+  });
+
+  it("keeps reauthentication after the post-login bootstrap returns 401", async () => {
+    const { result } = await startWithExpiredOwnerSession();
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(
+      new ApiError({ status: 401, message: "Expired again", code: null, retryAt: null }),
+    );
+
+    await act(async () => result.current.login("参加者", "1234"));
+
+    expect(result.current.access).toEqual({ kind: "reauthentication", participant });
+    expect(result.current.phase.kind).toBe("ready");
+  });
+
+  it.each([
+    ["HTTP 403", new ApiError({ status: 403, message: "Forbidden", code: null, retryAt: null })],
+    ["a network error", new Error("offline")],
+  ])("shows a retryable error when the post-login bootstrap returns %s", async (_label, error) => {
+    const { result } = await startWithExpiredOwnerSession();
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(error);
+
+    await act(async () => result.current.login("参加者", "1234"));
+
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(result.current.phase).toMatchObject({
+      kind: "submission-error",
+      message: expect.stringContaining("通信状態"),
+    });
+  });
+
+  it("falls back to owner after login when the assisted saved submission has no matching draft", async () => {
+    const staleDraft = await createAssistedDraft();
+    const { result, fetchMock } = await startWithExpiredOwnerSession();
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(staleDraft));
+    const bootstrapCallsBeforeLogin = vi.mocked(fetchAnswerBootstrap).mock.calls.length;
+    const savedSubmission = {
+      submissionId,
+      revision: 2,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    };
+    const ownerSubmission = {
+      ...savedSubmission,
+      revision: 3,
+    };
+    const ownerCompletionSnapshot = {
+      status: "ready" as const,
+      identity: {
+        scope: "owner" as const,
+        ownerParticipantId: participant.id,
+        participantId: participant.id,
+        submissionId,
+        revision: 3,
+      },
+      resultsState: "unavailable" as const,
+      resultsVisible: true,
+    };
+    vi.mocked(fetchAnswerBootstrap)
+      .mockResolvedValueOnce(makeBootstrap("assisted", savedSubmission))
+      .mockResolvedValueOnce({
+        ...makeBootstrap("owner", ownerSubmission),
+        completionSnapshot: ownerCompletionSnapshot,
+      });
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.answerMode).toBe("owner");
+    expect(result.current.assistedScreen).toBe("closed");
+    expect(result.current.phase).toEqual({
+      kind: "complete",
+      completionSnapshot: ownerCompletionSnapshot,
+    });
+    expect(result.current.submissionId).toBe(submissionId);
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 2, "owner");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("falls back to owner after reauthentication when the saved assisted ID differs from the local correction", async () => {
+    const draft = await createAssistedDraft();
+    const draftSubmissionId = draft.submissionId as string;
+    const draftRevision = draft.revision as number;
+    const initiallySavedSubmission = {
+      submissionId: draftSubmissionId,
+      revision: draftRevision,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 0,
+        freeText: null,
+      })),
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(
+      makeBootstrap("assisted", initiallySavedSubmission),
+    );
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session" && init?.method === "POST") {
+        return {
+          ok: true,
+          json: async () => ({ participant, expiresAt: "2030-01-01T00:00:00.000Z" }),
+        };
+      }
+      if (url === "/api/participants/session") {
+        return { ok: true, json: async () => ({ participant }) };
+      }
+      if (url.startsWith("/api/answers/batch") && init?.method === "POST") {
+        return { ok: false, status: 401, json: async () => ({ message: "Expired" }) };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    for (const quiz of result.current.quizzes) {
+      act(() => result.current.select(quiz.question.id, 1));
+    }
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.access.kind).toBe("reauthentication");
+    const bootstrapCallsBeforeLogin = vi.mocked(fetchAnswerBootstrap).mock.calls.length;
+
+    const persistedDraft = JSON.parse(
+      window.sessionStorage.getItem("stcirt-assisted-answer-draft")!,
+    ) as Record<string, unknown>;
+    const canonicalSubmissionId = "00000000-0000-4000-8000-000000000099";
+    const canonicalRevision = 3;
+    window.sessionStorage.setItem(
+      "stcirt-assisted-answer-draft",
+      JSON.stringify({
+        ...persistedDraft,
+        submissionId: canonicalSubmissionId,
+        revision: canonicalRevision,
+      }),
+    );
+    const canonicalSubmission = {
+      submissionId: canonicalSubmissionId,
+      revision: canonicalRevision,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    };
+    const ownerSubmission = {
+      submissionId,
+      revision: 4,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 2,
+        freeText: null,
+      })),
+    };
+    const ownerCompletionSnapshot = {
+      status: "ready" as const,
+      identity: {
+        scope: "owner" as const,
+        ownerParticipantId: participant.id,
+        participantId: participant.id,
+        submissionId,
+        revision: 4,
+      },
+      resultsState: "waiting" as const,
+      resultsVisible: false,
+    };
+    vi.mocked(fetchAnswerBootstrap)
+      .mockResolvedValueOnce(makeBootstrap("assisted", canonicalSubmission))
+      .mockResolvedValueOnce({
+        ...makeBootstrap("owner", ownerSubmission),
+        completionSnapshot: ownerCompletionSnapshot,
+      });
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(result.current.answerMode).toBe("owner");
+    expect(result.current.phase).toEqual({
+      kind: "complete",
+      completionSnapshot: ownerCompletionSnapshot,
+    });
+    expect(result.current.submissionId).toBe(submissionId);
+    expect(result.current.revision).toBe(4);
+    expect(result.current.quizzes).toEqual([]);
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 2, "owner");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("restores a stored assisted draft after login when bootstrap has no submission", async () => {
+    const { result, draft, fetchMock, bootstrapCallsBeforeLogin } =
+      await startAssistedReauthWithStoredDraft();
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(makeBootstrap("assisted", null));
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    expect(result.current.answerMode).toBe("assisted");
+    expect(result.current.submissionId).toBe(draft.submissionId);
+    expect(result.current.revision).toBe(draft.revision);
+    expect(result.current.selections).toEqual({ 1: 0 });
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBe(
+      JSON.stringify(draft),
+    );
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("keeps a matching assisted draft complete when bootstrap lacks restore integrity", async () => {
+    const { result, draft, fetchMock, bootstrapCallsBeforeLogin } =
+      await startAssistedReauthWithStoredDraft();
+    const savedSubmission = {
+      submissionId: draft.submissionId as string,
+      revision: draft.revision as number,
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 0,
+        freeText: null,
+      })),
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(
+      makeBootstrap("assisted", savedSubmission),
+    );
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.answerMode).toBe("assisted");
+    expect(result.current.submissionId).toBe(draft.submissionId);
+    expect(result.current.revision).toBe(draft.revision);
+    expect(result.current.restoreError).toContain("整合性を確認できません");
+    expect(result.current.saveConfirmed).toBe(false);
+    expect(result.current.answeredCount).toBe(0);
+    expect(result.current.quizzes).toEqual([]);
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBe(
+      JSON.stringify(draft),
+    );
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("restores free-text responses from a matching assisted draft after login", async () => {
+    const { result, draft, fetchMock, bootstrapCallsBeforeLogin } =
+      await startAssistedReauthWithStoredDraft();
+    type DraftQuiz = {
+      question: ReturnType<typeof question>;
+      shuffled: { choices: string[]; choiceIndices: number[] };
+    };
+    const freeText = "確認済みの回答を復元します。";
+    const draftWithFreeText = {
+      ...draft,
+      quizzes: (draft.quizzes as DraftQuiz[]).map((quiz) =>
+        quiz.question.id === 5
+          ? {
+              ...quiz,
+              question: { ...quiz.question, answerType: "freeText" as const, choices: [] },
+              shuffled: { choices: [], choiceIndices: [] },
+            }
+          : quiz,
+      ),
+      freeResponses: { 5: freeText },
+    };
+    window.sessionStorage.setItem(
+      "stcirt-assisted-answer-draft",
+      JSON.stringify(draftWithFreeText),
+    );
+    const savedSubmission = {
+      submissionId: draft.submissionId as string,
+      revision: draft.revision as number,
+      restoreIntegrity: restoreIntegrity(true),
+      answers: [
+        ...[1, 2, 3, 4].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 0,
+          freeText: null,
+        })),
+        {
+          questionId: 5,
+          answerKind: "freeText" as const,
+          selectedIndex: null,
+          freeText,
+        },
+      ],
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(
+      makeBootstrap("assisted", savedSubmission),
+    );
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    expect(result.current.answerMode).toBe("assisted");
+    expect(result.current.selections).toEqual({ 1: 0 });
+    expect(result.current.freeResponses).toEqual({ 5: freeText });
+    expect(result.current.answeredCount).toBe(2);
+    expect(result.current.submissionId).toBe(draft.submissionId);
+    expect(result.current.revision).toBe(draft.revision);
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("hydrates a valid saved owner submission after assisted reauthentication falls back", async () => {
+    const { result, fetchMock, bootstrapCallsBeforeLogin } =
+      await startAssistedReauthWithMismatchedDraft();
+    const ownerSubmission = {
+      submissionId: "00000000-0000-4000-8000-000000000098",
+      revision: 4,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 2,
+        freeText: null,
+      })),
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(makeBootstrap("owner", ownerSubmission));
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.answerMode).toBe("owner");
+    expect(result.current.submissionId).toBe(ownerSubmission.submissionId);
+    expect(result.current.revision).toBe(4);
+    expect(result.current.restoreError).toBeNull();
+    expect(result.current.saveConfirmed).toBe(true);
+    expect(result.current.quizzes).toEqual([]);
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 2, "owner");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("preserves an assisted failed attempt after same-target reauthentication finds no submission", async () => {
+    const { result, fetchMock, bootstrapCallsBeforeLogin } =
+      await startAssistedReauthWithMismatchedDraft({
+        bootstrap: makeBootstrap("assisted", null),
+      });
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(result.current.answerMode).toBe("assisted");
+    expect(result.current.phase).toMatchObject({ retryRequired: true });
+    expect(result.current.selections).toEqual({ 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 });
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("keeps a same-target assisted submission and failed correction after reauthentication", async () => {
+    const { result, draft, fetchMock, bootstrapCallsBeforeLogin } =
+      await startAssistedReauthWithMismatchedDraft({ preserveLocalSubmissionIdentity: true });
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(result.current.answerMode).toBe("assisted");
+    expect(result.current.phase).toMatchObject({ retryRequired: true });
+    expect(result.current.submissionId).toBe(draft.submissionId);
+    expect(result.current.revision).toBe(draft.revision);
+    expect(result.current.selections).toEqual({ 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 });
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it.each(["missing", "invalid"] as const)(
+    "blocks correction for a %s restoreIntegrity on the owner fallback submission",
+    async (integrity) => {
+      const { result, fetchMock, bootstrapCallsBeforeLogin } =
+        await startAssistedReauthWithMismatchedDraft();
+      const ownerSubmission = {
+        submissionId: "00000000-0000-4000-8000-000000000098",
+        revision: 4,
+        ...(integrity === "invalid" ? { restoreIntegrity: { status: "invalid" as const } } : {}),
+        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 2,
+          freeText: null,
+        })),
+      };
+      vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(
+        makeBootstrap("owner", ownerSubmission),
+      );
+
+      await act(async () => result.current.login("参加者", "1234"));
+      await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+      expect(result.current.answerMode).toBe("owner");
+      expect(result.current.submissionId).toBe(ownerSubmission.submissionId);
+      expect(result.current.revision).toBe(4);
+      expect(result.current.restoreError).toContain("整合性を確認できません");
+      expect(result.current.saveConfirmed).toBe(false);
+      expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 2, "owner");
+      expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+    },
+  );
+
+  it("ignores a successful owner fallback bootstrap after unmount", async () => {
+    const { result, unmount, bootstrapCallsBeforeLogin } =
+      await startAssistedReauthWithMismatchedDraft();
+    let resolveBootstrap!: (bootstrap: Awaited<ReturnType<typeof fetchAnswerBootstrap>>) => void;
+    const pendingBootstrap = new Promise<Awaited<ReturnType<typeof fetchAnswerBootstrap>>>(
+      (resolve) => {
+        resolveBootstrap = resolve;
+      },
+    );
+    vi.mocked(fetchAnswerBootstrap).mockReturnValueOnce(pendingBootstrap);
+    let loginPromise!: Promise<number>;
+    act(() => {
+      loginPromise = result.current.login("参加者", "1234");
+    });
+    await waitFor(() =>
+      expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(bootstrapCallsBeforeLogin + 2),
+    );
+    const accessBeforeUnmount = result.current.access;
+    const phaseBeforeUnmount = result.current.phase;
+    unmount();
+    resolveBootstrap(makeBootstrap("owner"));
+
+    await act(async () => {
+      await expect(loginPromise).resolves.toBe(participant.id);
+    });
+
+    expect(result.current.access).toEqual(accessBeforeUnmount);
+    expect(result.current.phase).toEqual(phaseBeforeUnmount);
+  });
+
+  it("ignores a post-login bootstrap rejection after the session epoch is invalidated", async () => {
+    const { result, unmount } = await startWithExpiredOwnerSession();
+    let rejectBootstrap!: (reason?: unknown) => void;
+    const pendingBootstrap = new Promise<Awaited<ReturnType<typeof fetchAnswerBootstrap>>>(
+      (_resolve, reject) => {
+        rejectBootstrap = reject;
+      },
+    );
+    vi.mocked(fetchAnswerBootstrap).mockReturnValueOnce(pendingBootstrap);
+    let loginPromise!: Promise<number>;
+    act(() => {
+      loginPromise = result.current.login("参加者", "1234");
+    });
+    await waitFor(() => expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(2));
+    const accessBeforeUnmount = result.current.access;
+    const phaseBeforeUnmount = result.current.phase;
+    unmount();
+    rejectBootstrap(
+      new ApiError({ status: 401, message: "Expired again", code: null, retryAt: null }),
+    );
+
+    await act(async () => {
+      await expect(loginPromise).resolves.toBe(participant.id);
+    });
+
+    expect(result.current.access).toEqual(accessBeforeUnmount);
+    expect(result.current.phase).toEqual(phaseBeforeUnmount);
+  });
+
   it("retains, retries, and edits a fifth-question free-text answer", async () => {
     const posts: Record<string, unknown>[] = [];
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("owner", null, true));
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
@@ -1350,7 +2799,14 @@ describe("useQuizSession hook", () => {
         posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
         if (posts.length === 1)
           return { ok: false, status: 503, json: async () => ({ message: "一時的な通信エラー" }) };
-        return { ok: true, json: async () => ({ submissionId, revision: 1 }) };
+        return {
+          ok: true,
+          json: async () => ({
+            submissionId,
+            revision: 1,
+            completionSnapshot: failedCompletionSnapshot(submissionId, 1),
+          }),
+        };
       }
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -1389,7 +2845,7 @@ describe("useQuizSession hook", () => {
   });
 
   it("revisits the latest saved submission in completion and restores answers for correction", async () => {
-    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce({
+    const savedSubmission = {
       submissionId,
       revision: 3,
       restoreIntegrity: restoreIntegrity(true),
@@ -1407,17 +2863,27 @@ describe("useQuizSession hook", () => {
           freeText: "回答を保存しました。",
         },
       ],
-    });
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("owner", savedSubmission));
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce(savedSubmission);
     const fetchMock = setupFetch({ freeTextFifth: true });
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
 
+    expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(1);
+    expect(fetchAnswerBootstrap).toHaveBeenCalledWith("owner");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
     expect(result.current.submissionId).toBe(submissionId);
     expect(result.current.revision).toBe(3);
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(0);
     expect(result.current.selections).toEqual({});
     expect(result.current.freeResponses).toEqual({});
     expect(result.current.saveConfirmed).toBe(true);
+
+    act(() => result.current.retrySubmissionCheck());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    expect(fetchLatestAnswerSubmission).toHaveBeenCalledWith("owner");
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(0);
 
     await act(async () => result.current.editAnswers(() => true));
     expect(result.current.selections).toEqual(
@@ -1440,12 +2906,14 @@ describe("useQuizSession hook", () => {
   });
 
   it("keeps malformed latest submissions complete and disables answer restoration", async () => {
-    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce({
-      submissionId,
-      revision: 1,
-      answers: [],
-      restoreIntegrity: { status: "invalid" },
-    });
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", {
+        submissionId,
+        revision: 1,
+        answers: [],
+        restoreIntegrity: { status: "invalid" },
+      }),
+    );
     setupFetch();
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
@@ -1455,16 +2923,18 @@ describe("useQuizSession hook", () => {
   });
 
   it("does not treat a saved submission without an integrity guarantee as completed", async () => {
-    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce({
-      submissionId,
-      revision: 2,
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
-        questionId,
-        answerKind: "selected" as const,
-        selectedIndex: 1,
-        freeText: null,
-      })),
-    });
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", {
+        submissionId,
+        revision: 2,
+        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 1,
+          freeText: null,
+        })),
+      }),
+    );
     const fetchMock = setupFetch();
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
@@ -1475,11 +2945,20 @@ describe("useQuizSession hook", () => {
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
   });
 
-  it("does not start an attempt after a latest-submission failure and retries the lookup", async () => {
-    vi.mocked(fetchLatestAnswerSubmission)
-      .mockRejectedValueOnce(new Error("temporary failure"))
-      .mockResolvedValueOnce(null);
+  it("does not start an attempt after a bootstrap failure and retries latest then questions", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(new Error("temporary failure"));
+    const retryOrder: string[] = [];
+    vi.mocked(fetchLatestAnswerSubmission).mockImplementationOnce(async () => {
+      retryOrder.push("latest");
+      return null;
+    });
     const fetchMock = setupFetch();
+    const originalFetch = fetchMock.getMockImplementation();
+    if (!originalFetch) throw new Error("Expected fetch mock implementation");
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/questions/batch") retryOrder.push("questions");
+      return originalFetch(url, init);
+    });
     const { result } = renderHook(() => useQuizSession());
     await waitFor(() => expect(result.current.phase.kind).toBe("submission-error"));
     expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/questions/batch")).toBe(
@@ -1488,29 +2967,58 @@ describe("useQuizSession hook", () => {
 
     act(() => result.current.retrySubmissionCheck());
     await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
-    expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(2);
+    expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(1);
+    expect(retryOrder).toEqual(["latest", "questions"]);
     expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/questions/batch")).toBe(true);
   });
 
-  it("reuses the loaded exam questions when restoring a submission after a status recheck", async () => {
-    vi.mocked(fetchLatestAnswerSubmission)
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        submissionId,
-        revision: 2,
-        restoreIntegrity: restoreIntegrity(),
-        answers: [1, 2, 3, 4, 5].map((questionId) => ({
-          questionId,
-          answerKind: "selected" as const,
-          selectedIndex: 1,
-          freeText: null,
-        })),
-      });
+  it("does not load questions when a submission status retry finds a saved submission", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(new Error("temporary failure"));
     const fetchMock = setupFetch();
-    const { result } = await start();
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("submission-error"));
+    fetchMock.mockClear();
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce({
+      submissionId,
+      revision: 2,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    });
 
     act(() => result.current.retrySubmissionCheck());
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(fetchLatestAnswerSubmission).toHaveBeenCalledWith("owner");
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("loads questions only when editing a saved submission after a status recheck", async () => {
+    const savedSubmission = {
+      submissionId,
+      revision: 2,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("owner", savedSubmission));
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce(savedSubmission);
+    const fetchMock = setupFetch();
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(0);
+
+    act(() => result.current.retrySubmissionCheck());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(0);
 
     expect(result.current.submissionId).toBe(submissionId);
     expect(result.current.revision).toBe(2);

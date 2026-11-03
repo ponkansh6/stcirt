@@ -26,19 +26,34 @@ type RouteHandler = (request: Request) => Promise<Response>;
 type Scenario = {
   name: string;
   handler:
+    | "participantSession"
     | "assistedStatus"
     | "answersLatest"
     | "answersBatch"
     | "participantResults"
     | "questionsBatch"
-    | "answersVisibility";
+    | "answersVisibility"
+    | "answerBootstrap";
   url: string;
   visible?: boolean;
+  session?: "savedOwner" | "newOwner" | "eligibleOwner" | "assistedNewOwner";
 };
 
 function assertScenarioResponse(scenario: Scenario, response: Response, body: unknown) {
   assert.equal(response.status, 200, `${scenario.name} must return successfully`);
   const data = body as Record<string, unknown>;
+  if (scenario.name === "participant-session/owner") {
+    assert.deepEqual(data, {
+      participant: { id: OWNER_ID, name: "Bench owner" },
+    });
+    return;
+  }
+  if (scenario.name === "participant-session/new-owner") {
+    assert.deepEqual(data, {
+      participant: { id: NEW_OWNER_ID, name: "Bench new owner" },
+    });
+    return;
+  }
   if (scenario.name === "assisted-status/owner") {
     assert.equal(response.headers.get("cache-control"), "private, no-store");
     assert.deepEqual(data, {
@@ -48,8 +63,26 @@ function assertScenarioResponse(scenario: Scenario, response: Response, body: un
     });
     return;
   }
+  if (scenario.name === "assisted-status/new-owner") {
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    assert.deepEqual(data, {
+      participant: { id: NEW_ASSISTED_ID, name: "Bench new assisted" },
+      hasSubmission: false,
+      eligible: false,
+    });
+    return;
+  }
+  if (scenario.name === "assisted-status/eligible-owner") {
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    assert.deepEqual(data, { participant: null, hasSubmission: false, eligible: true });
+    return;
+  }
   if (scenario.name.startsWith("answers-latest/")) {
     assert.equal(response.headers.get("cache-control"), "private, no-store");
+    if (scenario.name.includes("/new-")) {
+      assert.equal(data.submission, null, "New participants must have no saved submission");
+      return;
+    }
     const assisted = scenario.name.endsWith("assisted");
     assert.ok(data.submission !== null && typeof data.submission === "object");
     const submission = data.submission as Record<string, unknown>;
@@ -64,6 +97,64 @@ function assertScenarioResponse(scenario: Scenario, response: Response, body: un
         freeText: index === 4 ? `Response ${assisted ? ASSISTED_ID : OWNER_ID}` : null,
       })),
     );
+    return;
+  }
+  if (scenario.name.startsWith("answer-bootstrap/")) {
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    const assisted = scenario.name.includes("assisted");
+    const isNew = scenario.name.includes("new");
+    const assistedNewOwner = scenario.session === "assistedNewOwner";
+    const expectedOwnerId = assistedNewOwner
+      ? ASSISTED_NEW_OWNER_ID
+      : isNew
+        ? NEW_OWNER_ID
+        : OWNER_ID;
+    const expectedParticipantId = assisted
+      ? assistedNewOwner
+        ? ASSISTED_NEW_TARGET_ID
+        : ASSISTED_ID
+      : isNew
+        ? NEW_OWNER_ID
+        : OWNER_ID;
+    assert.equal(data.mode, assisted ? "assisted" : "owner");
+    assert.deepEqual(data.owner, {
+      id: expectedOwnerId,
+      name: assistedNewOwner
+        ? "Bench assisted new owner"
+        : isNew
+          ? "Bench new owner"
+          : "Bench owner",
+    });
+    assert.deepEqual(data.participant, {
+      id: expectedParticipantId,
+      name: assistedNewOwner
+        ? "Bench assisted new target"
+        : assisted
+          ? "Bench assisted"
+          : isNew
+            ? "Bench new owner"
+            : "Bench owner",
+    });
+    if (isNew) {
+      assert.equal(data.submission, null);
+      assert.deepEqual(
+        data.questions,
+        QUESTION_IDS.map((id, index) => ({
+          id,
+          question: `Benchmark question ${index + 1}`,
+          choices: index === 4 ? [] : ["A", "B", "C", "D"],
+          answerType: index === 4 ? "freeText" : "selected",
+        })),
+      );
+      assert.equal(JSON.stringify(data.questions).includes("correctIndex"), false);
+      assert.equal(JSON.stringify(data.questions).includes("explanation"), false);
+      return;
+    }
+    assert.equal(data.questions, undefined, "Saved bootstrap must defer public question reads");
+    assert.ok(data.submission !== null && typeof data.submission === "object");
+    const submission = data.submission as Record<string, unknown>;
+    assert.equal(submission.submissionId, assisted ? ASSISTED_SUBMISSION_ID : OWNER_SUBMISSION_ID);
+    assert.equal(submission.revision, assisted ? 5 : 4);
     return;
   }
   if (scenario.name.startsWith("answers-batch-get/")) {
@@ -126,6 +217,13 @@ function assertScenarioResponse(scenario: Scenario, response: Response, body: un
 
 const OWNER_ID = 701;
 const ASSISTED_ID = 702;
+const NEW_OWNER_ID = 708;
+const NEW_ASSISTED_ID = 709;
+const ASSISTED_NEW_OWNER_ID = 704;
+const ASSISTED_NEW_TARGET_ID = 705;
+const ELIGIBLE_OWNER_ID = 710;
+const ELIGIBLE_SUBMISSION_ID = "00000000-0000-4000-8000-000000000710";
+const ASSISTED_NEW_OWNER_SUBMISSION_ID = "00000000-0000-4000-8000-000000000704";
 const QUESTION_IDS = [101, 102, 103, 104, 105];
 const QUESTION_VERSIONS = [
   "nagano-001-v1",
@@ -181,7 +279,15 @@ describe("answer route local SQLite latency benchmark", () => {
   let testDb: TestDb | null = null;
   let logger: SqlLogger | null = null;
   let handlers: Record<string, RouteHandler> | null = null;
-  let cookieHeader = "";
+  let cookieHeaders: Record<
+    "savedOwner" | "newOwner" | "eligibleOwner" | "assistedNewOwner",
+    string
+  > = {
+    savedOwner: "",
+    newOwner: "",
+    eligibleOwner: "",
+    assistedNewOwner: "",
+  };
   let initialization: Promise<void> | null = null;
   let cleaned = false;
 
@@ -196,24 +302,52 @@ describe("answer route local SQLite latency benchmark", () => {
       dbRef.db = activeTestDb.db;
 
       await seedFixture();
-      const token = createParticipantSession(OWNER_ID, 60 * 60);
-      assert.ok(token, "Participant cookie must be created for the local route benchmark");
-      cookieHeader = `stcirt_participant_session=${token.value}`;
-      const [assisted, latest, batch, results, questions, visibility] = await Promise.all([
-        import("@/app/api/participants/assisted/route"),
-        import("@/app/api/answers/latest/route"),
-        import("@/app/api/answers/batch/route"),
-        import("@/app/api/participants/results/route"),
-        import("@/app/api/questions/batch/route"),
-        import("@/app/api/answers/visibility/route"),
-      ]);
+      const savedOwnerToken = createParticipantSession(OWNER_ID, 60 * 60);
+      const newOwnerToken = createParticipantSession(NEW_OWNER_ID, 60 * 60);
+      const eligibleOwnerToken = createParticipantSession(ELIGIBLE_OWNER_ID, 60 * 60);
+      const assistedNewOwnerToken = createParticipantSession(ASSISTED_NEW_OWNER_ID, 60 * 60);
+      assert.ok(
+        savedOwnerToken,
+        "Saved participant cookie must be created for the local route benchmark",
+      );
+      assert.ok(
+        newOwnerToken,
+        "New participant cookie must be created for the local route benchmark",
+      );
+      assert.ok(
+        eligibleOwnerToken,
+        "Eligible participant cookie must be created for the local route benchmark",
+      );
+      assert.ok(
+        assistedNewOwnerToken,
+        "Assisted-new owner cookie must be created for the local route benchmark",
+      );
+      cookieHeaders = {
+        savedOwner: `stcirt_participant_session=${savedOwnerToken.value}`,
+        newOwner: `stcirt_participant_session=${newOwnerToken.value}`,
+        eligibleOwner: `stcirt_participant_session=${eligibleOwnerToken.value}`,
+        assistedNewOwner: `stcirt_participant_session=${assistedNewOwnerToken.value}`,
+      };
+      const [session, assisted, latest, batch, results, questions, visibility, bootstrap] =
+        await Promise.all([
+          import("@/app/api/participants/session/route"),
+          import("@/app/api/participants/assisted/route"),
+          import("@/app/api/answers/latest/route"),
+          import("@/app/api/answers/batch/route"),
+          import("@/app/api/participants/results/route"),
+          import("@/app/api/questions/batch/route"),
+          import("@/app/api/answers/visibility/route"),
+          import("@/app/api/answers/bootstrap/route"),
+        ]);
       handlers = {
+        participantSession: session.GET,
         assistedStatus: assisted.GET,
         answersLatest: latest.GET,
         answersBatch: batch.GET,
         participantResults: results.GET,
         questionsBatch: questions.GET,
         answersVisibility: visibility.GET,
+        answerBootstrap: bootstrap.GET,
       };
       process.once("exit", cleanup);
       activeLogger.reset();
@@ -233,11 +367,33 @@ describe("answer route local SQLite latency benchmark", () => {
     await testDb.db.insert(schema.examParticipants).values([
       { id: OWNER_ID, normalizedName: "bench-owner", displayName: "Bench owner" },
       { id: ASSISTED_ID, normalizedName: "bench-assisted", displayName: "Bench assisted" },
+      { id: NEW_OWNER_ID, normalizedName: "bench-new-owner", displayName: "Bench new owner" },
+      {
+        id: NEW_ASSISTED_ID,
+        normalizedName: "bench-new-assisted",
+        displayName: "Bench new assisted",
+      },
+      {
+        id: ASSISTED_NEW_OWNER_ID,
+        normalizedName: "bench-assisted-new-owner",
+        displayName: "Bench assisted new owner",
+      },
+      {
+        id: ASSISTED_NEW_TARGET_ID,
+        normalizedName: "bench-assisted-new-target",
+        displayName: "Bench assisted new target",
+      },
+      {
+        id: ELIGIBLE_OWNER_ID,
+        normalizedName: "bench-eligible-owner",
+        displayName: "Bench eligible owner",
+      },
     ]);
-    await testDb.db.insert(schema.assistedParticipants).values({
-      ownerParticipantId: OWNER_ID,
-      targetParticipantId: ASSISTED_ID,
-    });
+    await testDb.db.insert(schema.assistedParticipants).values([
+      { ownerParticipantId: OWNER_ID, targetParticipantId: ASSISTED_ID },
+      { ownerParticipantId: NEW_OWNER_ID, targetParticipantId: NEW_ASSISTED_ID },
+      { ownerParticipantId: ASSISTED_NEW_OWNER_ID, targetParticipantId: ASSISTED_NEW_TARGET_ID },
+    ]);
     await testDb.db.insert(schema.examQuestions).values(
       QUESTION_IDS.map((id, index) => ({
         id,
@@ -253,9 +409,14 @@ describe("answer route local SQLite latency benchmark", () => {
     const submissionRows = [
       { id: OWNER_SUBMISSION_ID, participantId: OWNER_ID, revision: 4 },
       { id: ASSISTED_SUBMISSION_ID, participantId: ASSISTED_ID, revision: 5 },
+      {
+        id: ASSISTED_NEW_OWNER_SUBMISSION_ID,
+        participantId: ASSISTED_NEW_OWNER_ID,
+        revision: 4,
+      },
     ];
-    await testDb.db.insert(schema.examAnswerSubmissions).values(
-      submissionRows.map(({ id, participantId, revision }) => ({
+    await testDb.db.insert(schema.examAnswerSubmissions).values([
+      ...submissionRows.map(({ id, participantId, revision }) => ({
         id,
         participantId,
         questionIds: QUESTION_IDS,
@@ -264,7 +425,14 @@ describe("answer route local SQLite latency benchmark", () => {
         ),
         revision,
       })),
-    );
+      {
+        id: ELIGIBLE_SUBMISSION_ID,
+        participantId: ELIGIBLE_OWNER_ID,
+        questionIds: [],
+        questionVersions: {},
+        revision: 1,
+      },
+    ]);
     await testDb.db.insert(schema.examSubmissionAnswers).values(
       submissionRows.flatMap(({ id, participantId }) =>
         QUESTION_IDS.map((questionId, index) => ({
@@ -348,9 +516,32 @@ describe("answer route local SQLite latency benchmark", () => {
 
   const scenarios: Scenario[] = [
     {
+      name: "participant-session/owner",
+      handler: "participantSession",
+      url: "http://localhost/api/participants/session",
+    },
+    {
+      name: "participant-session/new-owner",
+      handler: "participantSession",
+      url: "http://localhost/api/participants/session",
+      session: "newOwner",
+    },
+    {
       name: "assisted-status/owner",
       handler: "assistedStatus",
       url: "http://localhost/api/participants/assisted",
+    },
+    {
+      name: "assisted-status/new-owner",
+      handler: "assistedStatus",
+      url: "http://localhost/api/participants/assisted",
+      session: "newOwner",
+    },
+    {
+      name: "assisted-status/eligible-owner",
+      handler: "assistedStatus",
+      url: "http://localhost/api/participants/assisted",
+      session: "eligibleOwner",
     },
     {
       name: "answers-latest/owner",
@@ -361,6 +552,18 @@ describe("answer route local SQLite latency benchmark", () => {
       name: "answers-latest/assisted",
       handler: "answersLatest",
       url: "http://localhost/api/answers/latest?scope=assisted",
+    },
+    {
+      name: "answers-latest/new-owner",
+      handler: "answersLatest",
+      url: "http://localhost/api/answers/latest",
+      session: "newOwner",
+    },
+    {
+      name: "answers-latest/new-assisted",
+      handler: "answersLatest",
+      url: "http://localhost/api/answers/latest?scope=assisted",
+      session: "newOwner",
     },
     {
       name: "answers-batch-get/owner",
@@ -411,7 +614,150 @@ describe("answer route local SQLite latency benchmark", () => {
       url: "http://localhost/api/participants/results?scope=assisted",
       visible: true,
     },
+    {
+      name: "answer-bootstrap/owner-new",
+      handler: "answerBootstrap",
+      url: "http://localhost/api/answers/bootstrap?mode=owner",
+      session: "newOwner",
+    },
+    {
+      name: "answer-bootstrap/owner-saved",
+      handler: "answerBootstrap",
+      url: "http://localhost/api/answers/bootstrap?mode=owner",
+    },
+    {
+      name: "answer-bootstrap/assisted-new",
+      handler: "answerBootstrap",
+      url: "http://localhost/api/answers/bootstrap?mode=assisted",
+      session: "assistedNewOwner",
+    },
+    {
+      name: "answer-bootstrap/assisted-saved",
+      handler: "answerBootstrap",
+      url: "http://localhost/api/answers/bootstrap?mode=assisted",
+    },
   ];
+
+  const routeMeasurements = new Map<string, { durationMs: number[]; sqlStatements: number[] }>();
+  const flowRoutes = {
+    ownerNew: [
+      "participant-session/new-owner",
+      "answers-latest/new-owner",
+      "questions-batch/participant",
+    ],
+    assistedNew: [
+      "participant-session/new-owner",
+      "assisted-status/new-owner",
+      "answers-latest/new-assisted",
+      "questions-batch/participant",
+    ],
+    ownerSaved: ["participant-session/owner", "answers-latest/owner"],
+    assistedSaved: [
+      "participant-session/owner",
+      "assisted-status/owner",
+      "answers-latest/assisted",
+    ],
+  } as const;
+  const bootstrapRoutes = {
+    ownerNew: "answer-bootstrap/owner-new",
+    assistedNew: "answer-bootstrap/assisted-new",
+    ownerSaved: "answer-bootstrap/owner-saved",
+    assistedSaved: "answer-bootstrap/assisted-saved",
+  } as const;
+
+  function emitFlowResults() {
+    for (const [flow, routeNames] of Object.entries(flowRoutes)) {
+      const routes = routeNames.map((routeName) => {
+        const measurement = routeMeasurements.get(routeName);
+        assert.ok(measurement, `Missing route measurements for ${routeName}`);
+        return measurement;
+      });
+      const sampleCount = Math.min(...routes.map((route) => route.durationMs.length));
+      const totalDurations = Array.from({ length: sampleCount }, (_, sampleIndex) =>
+        routes.reduce((total, route) => total + route.durationMs[sampleIndex]!, 0),
+      );
+      const totalStatements = Array.from({ length: sampleCount }, (_, sampleIndex) =>
+        routes.reduce((total, route) => total + route.sqlStatements[sampleIndex]!, 0),
+      );
+      emitResult({
+        benchmark: "answer-flow-db-baseline-local",
+        flow,
+        routes: routeNames,
+        samples: sampleCount,
+        warmupSamples: WARMUP_SAMPLES,
+        routeHandlerElapsedMsTotal: {
+          p50: percentile(totalDurations, 50),
+          p95: percentile(totalDurations, 95),
+        },
+        sqlStatementsTotalPerFlow: {
+          mean: mean(totalStatements),
+          p50: percentile(totalStatements, 50),
+          p95: percentile(totalStatements, 95),
+        },
+        timingScope:
+          "sum of independently measured in-process route handler times over the listed current routes; excludes browser/network time and remote Turso RTT",
+        sqlMetricScope:
+          "count-only Drizzle statements summed across the listed route handlers; separate from browser HTTP request counts; SQL text and bound values are not emitted",
+      });
+    }
+
+    for (const [flow, legacyRouteNames] of Object.entries(flowRoutes)) {
+      const legacyRoutes = legacyRouteNames.map((routeName) => {
+        const measurement = routeMeasurements.get(routeName);
+        assert.ok(measurement, `Missing legacy flow measurements for ${routeName}`);
+        return measurement;
+      });
+      const legacySampleCount = Math.min(...legacyRoutes.map((route) => route.durationMs.length));
+      const legacyDurations = Array.from({ length: legacySampleCount }, (_, sampleIndex) =>
+        legacyRoutes.reduce((total, route) => total + route.durationMs[sampleIndex]!, 0),
+      );
+      const legacyStatements = Array.from({ length: legacySampleCount }, (_, sampleIndex) =>
+        legacyRoutes.reduce((total, route) => total + route.sqlStatements[sampleIndex]!, 0),
+      );
+      const bootstrapScenario = bootstrapRoutes[flow as keyof typeof bootstrapRoutes];
+      const bootstrapMeasurement = routeMeasurements.get(bootstrapScenario);
+      assert.ok(
+        bootstrapMeasurement,
+        `Missing bootstrap route measurements for ${bootstrapScenario}`,
+      );
+      emitResult({
+        benchmark: "answer-bootstrap-db-comparison-local",
+        flow,
+        legacyHttpRequestCount: legacyRouteNames.length,
+        bootstrapHttpRequestCount: 1,
+        legacyRoutes: legacyRouteNames,
+        bootstrapRoute: bootstrapScenario,
+        samples: Math.min(legacySampleCount, bootstrapMeasurement.durationMs.length),
+        warmupSamples: WARMUP_SAMPLES,
+        legacyRouteSum: {
+          routeHandlerElapsedMs: {
+            p50: percentile(legacyDurations, 50),
+            p95: percentile(legacyDurations, 95),
+          },
+          sqlStatements: {
+            mean: mean(legacyStatements),
+            p50: percentile(legacyStatements, 50),
+            p95: percentile(legacyStatements, 95),
+          },
+        },
+        singleBootstrapRoute: {
+          routeHandlerElapsedMs: {
+            p50: percentile(bootstrapMeasurement.durationMs, 50),
+            p95: percentile(bootstrapMeasurement.durationMs, 95),
+          },
+          sqlStatements: {
+            mean: mean(bootstrapMeasurement.sqlStatements),
+            p50: percentile(bootstrapMeasurement.sqlStatements, 50),
+            p95: percentile(bootstrapMeasurement.sqlStatements, 95),
+          },
+        },
+        comparisonScope:
+          "legacy route-sum baseline versus one direct bootstrap route handler; route-level in-process local SQLite measurements, not browser flow latency or remote Turso RTT",
+        sqlMetricScope:
+          "count-only Drizzle statements; separate from browser HTTP request count; SQL text and bound values are not emitted",
+      });
+    }
+  }
 
   for (const scenario of scenarios) {
     const durations: number[] = [];
@@ -430,7 +776,9 @@ describe("answer route local SQLite latency benchmark", () => {
         }
         logger.reset();
         invocation += 1;
-        const request = new Request(scenario.url, { headers: { cookie: cookieHeader } });
+        const request = new Request(scenario.url, {
+          headers: { cookie: cookieHeaders[scenario.session ?? "savedOwner"] },
+        });
         const startedAt = performance.now();
         const response = await handlers[scenario.handler](request);
         const elapsedMs = performance.now() - startedAt;
@@ -443,6 +791,10 @@ describe("answer route local SQLite latency benchmark", () => {
         durations.push(elapsedMs);
         statementCounts.push(sqlStatements);
         if (durations.length === MEASURED_SAMPLES) {
+          routeMeasurements.set(scenario.name, {
+            durationMs: [...durations],
+            sqlStatements: [...statementCounts],
+          });
           emitResult({
             benchmark: "answer-route-latency-local",
             scenario: scenario.name,
@@ -462,6 +814,7 @@ describe("answer route local SQLite latency benchmark", () => {
             sqlMetricScope:
               "count-only Drizzle statements; SQL text and bound values are not emitted",
           });
+          if (scenario === scenarios.at(-1)) emitFlowResults();
         }
       },
       {

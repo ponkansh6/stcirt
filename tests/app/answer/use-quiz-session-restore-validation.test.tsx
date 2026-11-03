@@ -3,9 +3,14 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { useQuizSession } from "@/app/answer/use-quiz-session";
 
 const mockLatest = vi.hoisted(() => vi.fn());
+const mockBootstrap = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/client")>();
-  return { ...actual, fetchLatestAnswerSubmission: mockLatest };
+  return {
+    ...actual,
+    fetchAnswerBootstrap: mockBootstrap,
+    fetchLatestAnswerSubmission: mockLatest,
+  };
 });
 
 const participant = { id: 7, name: "参加者" };
@@ -27,6 +32,7 @@ const validAnswers = () =>
 describe("useQuizSession saved answer validation", () => {
   beforeEach(() => {
     mockLatest.mockReset();
+    mockBootstrap.mockReset();
     vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(submissionId);
   });
 
@@ -36,7 +42,7 @@ describe("useQuizSession saved answer validation", () => {
   });
 
   async function loadSavedSubmission(answers: unknown[], freeTextFifth = false) {
-    mockLatest.mockResolvedValue({
+    const submission = {
       submissionId,
       revision: 2,
       answers,
@@ -48,6 +54,12 @@ describe("useQuizSession saved answer validation", () => {
           choiceCount: freeTextFifth && id === 5 ? 0 : 4,
         })),
       },
+    };
+    mockBootstrap.mockResolvedValue({
+      mode: "owner",
+      owner: participant,
+      participant,
+      submission,
     });
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session")
@@ -67,6 +79,8 @@ describe("useQuizSession saved answer validation", () => {
     vi.stubGlobal("fetch", fetchMock);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    expect(mockBootstrap).toHaveBeenCalledWith("owner");
+    expect(mockLatest).not.toHaveBeenCalled();
     return { ...hook, fetchMock };
   }
 

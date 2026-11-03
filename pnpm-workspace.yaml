@@ -1,6 +1,7 @@
 allowBuilds:
   bun: true
   esbuild: true
+  koffi: false
   sharp: true
   unrs-resolver: true
 overrides:
@@ -12,7 +13,8 @@ overrides:
   ajv@8: 8.20.0
   "@tootallnate/once": 2.0.1
   esbuild@0.18.20: 0.25.12
-  fast-uri: 3.1.8
+  fast-uri: 3.1.9
   js-yaml: 4.3.2
-  undici: 8.10.2
+  undici: 8.12.2
   source-map-js: 1.2.2
+  zod@4.1.11: 4.6.7

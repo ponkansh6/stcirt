@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type * as ReactTypes from "react";
 import { useState } from "react";
 import QuizRunner from "@/app/answer/quiz-runner";
@@ -108,9 +108,12 @@ function triggerVisibleTabRefresh() {
   }
 }
 
-function expectCompletionStatus() {
+function expectCompletionStatus(message: string, role: "status" | "alert" = "status") {
   expect(screen.getByRole("heading", { level: 1, name: "回答済み" })).toBeInTheDocument();
-  expect(screen.queryByText(/結果.*(確認|公開|待ち)/)).not.toBeInTheDocument();
+  const guidance = screen
+    .getAllByRole(role)
+    .find((element) => element.textContent?.includes(message));
+  expect(guidance).toBeInTheDocument();
 }
 
 function getAnswererNameField(container: HTMLElement) {
@@ -172,7 +175,7 @@ describe("QuizRunner remaining coverage states", () => {
       document.dispatchEvent(new Event("visibilitychange"));
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
       expect(resultsLink).toBeInTheDocument();
-      expectCompletionStatus();
+      expectCompletionStatus("結果が公開されています。結果ページから確認できます。");
     } finally {
       if (originalVisibilityDescriptor) {
         Object.defineProperty(document, "visibilityState", originalVisibilityDescriptor);
@@ -596,7 +599,7 @@ describe("QuizRunner remaining coverage states", () => {
       document.dispatchEvent(new Event("visibilitychange"));
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
       expect(resultsLink).toBeInTheDocument();
-      expectCompletionStatus();
+      expectCompletionStatus("結果が公開されています。結果ページから確認できます。");
     } finally {
       if (originalVisibilityDescriptor) {
         Object.defineProperty(document, "visibilityState", originalVisibilityDescriptor);
@@ -617,7 +620,7 @@ describe("QuizRunner remaining coverage states", () => {
     triggerVisibleTabRefresh();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     expect(resultsLink).toBeInTheDocument();
-    expectCompletionStatus();
+    expectCompletionStatus("結果が公開されています。結果ページから確認できます。");
   });
 
   it("refreshes publication on return to the tab and clears the CTA after a confirmed waiting response", async () => {
@@ -632,7 +635,7 @@ describe("QuizRunner remaining coverage states", () => {
     triggerVisibleTabRefresh();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(resultsLink).not.toBeInTheDocument());
-    expectCompletionStatus();
+    expectCompletionStatus("結果の公開状況は確認済みです。回答の編集可否を確認しています…");
   });
 
   it("removes the results CTA and keeps the completion copy when results are unavailable", async () => {
@@ -649,7 +652,7 @@ describe("QuizRunner remaining coverage states", () => {
     triggerVisibleTabRefresh();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
-    expectCompletionStatus();
+    expectCompletionStatus("結果は公開されていますが、表示できる結果がありません。");
   });
 
   it("clears the results CTA and offers reauthentication after a 401 while keeping completion copy", async () => {
@@ -663,7 +666,10 @@ describe("QuizRunner remaining coverage states", () => {
     triggerVisibleTabRefresh();
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
-    expectCompletionStatus();
+    expectCompletionStatus(
+      "再ログイン後に回答状態を確認してください。回答は自動送信されません。",
+      "alert",
+    );
     expect(screen.getByRole("heading", { name: "参加状態の確認が必要です" })).toBeInTheDocument();
     expect(screen.getByLabelText("4桁PIN")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "再ログインする" })).toBeInTheDocument();
@@ -690,6 +696,88 @@ describe("QuizRunner remaining coverage states", () => {
     expect(screen.queryByRole("button", { name: "代理回答を修正する" })).not.toBeInTheDocument();
   });
 
+  it("offers a new assisted answer after results are waiting without waiting for the edit lock", async () => {
+    const pendingVisibility = deferred<Response>();
+    const fetchMock = vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/api/answers/visibility")
+        ? pendingVisibility.promise
+        : Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ state: "waiting" }),
+          } as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          submissionId: "owner-submission",
+          revision: 1,
+          assistedParticipant: { participant: null, hasSubmission: false, eligible: true },
+        },
+      ),
+    );
+    render(<QuizRunner />);
+
+    expect(await screen.findByRole("button", { name: "代理回答を行う" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/answers/visibility?submissionId=owner-submission",
+      expect.anything(),
+    );
+
+    await act(async () => {
+      pendingVisibility.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ resultsVisible: false }),
+      } as Response);
+    });
+  });
+
+  it("waits for the edit lock before offering to revise a saved assisted submission", async () => {
+    const pendingVisibility = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes("/api/answers/visibility")
+          ? pendingVisibility.promise
+          : Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ state: "waiting" }),
+            } as Response),
+      ),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          submissionId: "owner-submission",
+          revision: 1,
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+        },
+      ),
+    );
+    render(<QuizRunner />);
+
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "代理回答を修正する" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      pendingVisibility.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ resultsVisible: false }),
+      } as Response);
+    });
+    expect(await screen.findByRole("button", { name: "代理回答を修正する" })).toBeInTheDocument();
+  });
+
   it("resumes the one linked participant and changes its completion action after saving", async () => {
     const resumeAssisted = vi.fn();
     const returnToOwner = vi.fn();
@@ -709,6 +797,8 @@ describe("QuizRunner remaining coverage states", () => {
     );
     mockUseQuizSession.mockReturnValue(
       session(completePhase, {
+        revision: 1,
+        submissionId: "owner-submission",
         assistedParticipant: {
           participant: { id: 18, name: "代理回答者" },
           hasSubmission: false,
@@ -732,7 +822,7 @@ describe("QuizRunner remaining coverage states", () => {
           eligible: false,
         },
         revision: 1,
-        submissionId: "assisted-submission-1",
+        submissionId: "owner-submission",
       }),
     );
     rerender(<QuizRunner />);
@@ -743,15 +833,23 @@ describe("QuizRunner remaining coverage states", () => {
   it("shows the in-progress assisted status and disables duplicate starts", async () => {
     const startAssisted = vi.fn();
     const returnToOwner = vi.fn();
-    vi.mocked(fetch).mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({ state: "waiting" }),
-    } as Response);
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ resultsVisible: false }),
+      } as Response);
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "complete" },
         {
+          revision: 1,
+          submissionId: "owner-submission",
           assistedBusy: true,
           assistedError:
             "代理回答の状態を確認できませんでした。時間をおいて再読み込みしてください。",

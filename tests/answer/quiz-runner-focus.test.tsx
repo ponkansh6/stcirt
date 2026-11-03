@@ -131,7 +131,9 @@ describe("QuizRunner batch answer sheet", () => {
 
       currentPhase = { kind: "complete" };
       rerender(<RunnerPage />);
-      expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しています…");
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "回答は保存されています。結果の公開状況を確認しています。",
+      );
       const pendingCompletionHeading = screen.getByRole("heading", { name: "回答済み" });
       expect(pendingCompletionHeading).toBeInTheDocument();
       expect(document.activeElement).not.toBe(pendingCompletionHeading);
@@ -205,7 +207,9 @@ describe("QuizRunner batch answer sheet", () => {
         access: { kind: "ready", participant: { id: 7, name: "参加者" } },
       };
       rerender(<RunnerPage />);
-      expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しています…");
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "回答は保存されています。結果の公開状況を確認しています。",
+      );
       expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
 
       await act(async () => {

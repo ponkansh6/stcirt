@@ -99,9 +99,9 @@ describe("QuizRunner publication lookup lifecycle", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "complete" }));
     render(<RunnerPage />);
 
-    expect(
-      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "回答は保存されています。結果の公開状況を確認しています。",
+    );
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15_000);
       await Promise.resolve();
@@ -273,7 +273,12 @@ describe("QuizRunner publication lookup lifecycle", () => {
       await Promise.resolve();
     });
     expect(resultRequest).toBe(2);
-    expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しました。");
+    const confirmationLiveRegions = [
+      ...screen.queryAllByRole("status"),
+      ...screen.queryAllByRole("alert"),
+    ].filter((region) => region.textContent?.includes("結果の公開状況を確認しました。"));
+    expect(confirmationLiveRegions).toHaveLength(1);
+    expect(confirmationLiveRegions[0]).toHaveTextContent("結果の公開状況を確認しました。");
     expect(resultRequest).toBe(2);
     expect(screen.queryByRole("button", { name: "もう一度確認する" })).not.toBeInTheDocument();
   });

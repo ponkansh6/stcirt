@@ -6,7 +6,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  ViewTransition,
   type FormEvent,
   type ReactNode,
 } from "react";
@@ -390,8 +389,16 @@ export default function QuizRunner() {
     retry: retryParticipantResults,
     authExpired: participantResultsAuthExpired,
     clearAuthExpired: clearParticipantResultsAuthExpired,
-  } = useParticipantResultsVisibility(phase, access, answerMode);
-  const visibilityStatus = useSubmissionVisibility(
+  } = useParticipantResultsVisibility(phase, access, answerMode, {
+    submissionId,
+    revision,
+    assistedParticipantId: assistedParticipant?.participant?.id,
+  });
+  const {
+    status: visibilityStatus,
+    lookupStatus: visibilityLookupStatus,
+    recheck: recheckVisibility,
+  } = useSubmissionVisibility(
     {
       access,
       answerMode,
@@ -414,10 +421,10 @@ export default function QuizRunner() {
     const snapshot = liveVisibilityRef.current;
     return snapshot?.key === currentVisibilityKey ? snapshot.status : "unknown";
   }, [currentVisibilityKey]);
-  const beginCorrection = useCallback(
-    () => editAnswers(() => getLiveVisibilityStatus() === "unlocked"),
-    [editAnswers, getLiveVisibilityStatus],
-  );
+  const beginCorrection = useCallback(async () => {
+    if (!(await recheckVisibility())) return;
+    await editAnswers(() => getLiveVisibilityStatus() === "unlocked");
+  }, [editAnswers, getLiveVisibilityStatus, recheckVisibility]);
   useEffect(() => {
     if (!autoEditAssisted) return;
     if (phase.kind !== "complete" || answerMode !== "assisted") {
@@ -430,7 +437,10 @@ export default function QuizRunner() {
     }
     if (visibilityStatus === "unlocked") {
       clearAutoEditAssisted();
-      void editAnswers(() => getLiveVisibilityStatus() === "unlocked");
+      void (async () => {
+        if (!(await recheckVisibility())) return;
+        await editAnswers(() => getLiveVisibilityStatus() === "unlocked");
+      })();
     }
   }, [
     answerMode,
@@ -439,6 +449,7 @@ export default function QuizRunner() {
     editAnswers,
     getLiveVisibilityStatus,
     phase.kind,
+    recheckVisibility,
     visibilityStatus,
   ]);
   const retryRequired = phase.kind === "answering" && phase.retryRequired;
@@ -532,14 +543,24 @@ export default function QuizRunner() {
   });
   useEffect(() => {
     if (phase.kind !== "complete" || !shouldFocusCompletion.current) return;
-    if (access.kind === "ready" && participantResultsStatus === "unknown") return;
+    if (
+      access.kind !== "ready" ||
+      participantResultsLookupStatus === "inactive" ||
+      participantResultsLookupStatus === "pending" ||
+      participantResultsLookupStatus === "retrying"
+    ) {
+      return;
+    }
     const completionHeading = completionHeadingRef.current;
     if (!completionHeading) return;
-    if (document.activeElement === document.body) {
+    if (
+      document.activeElement === document.body ||
+      document.activeElement === finalCheckHeadingRef.current
+    ) {
       completionHeading.focus({ preventScroll: true });
     }
     shouldFocusCompletion.current = false;
-  }, [access.kind, participantResultsStatus, phase.kind, ui.surface]);
+  }, [access.kind, participantResultsLookupStatus, phase.kind, ui.surface]);
   useLayoutEffect(() => {
     if (
       participantResultsLookupStatus !== "retrying" ||
@@ -839,116 +860,116 @@ export default function QuizRunner() {
   }
 
   if (ui.surface === "complete") {
-    if (access.kind === "ready" && participantResultsStatus === "unknown") {
-      return (
-        <main className="mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-12">
-          <ParticipantCard>
-            <h1
-              ref={completionHeadingRef}
-              tabIndex={-1}
-              className="text-2xl font-bold focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4"
-            >
-              {saveConfirmed && !restoreError ? "回答済み" : "回答状態の確認が必要です"}
-            </h1>
-            {restoreError && (
-              <p className="mt-3 text-error" role="alert">
-                {restoreError}
-              </p>
-            )}
-            {saveConfirmed && !restoreError && (
-              <p className="mt-3 text-sm leading-relaxed text-muted">
-                回答は保存されています。結果の公開状況を確認しています。
-              </p>
-            )}
-            {participantResultsLookupStatus === "error" ||
-            participantResultsLookupStatus === "retrying" ? (
-              <>
-                <p className="mt-4 text-muted" role="status" aria-live="polite">
-                  {participantResultsLookupStatus === "retrying"
-                    ? "結果の公開状況を再確認しています…"
-                    : "結果の公開状況を確認できませんでした。回答は再送せず、公開状況だけをもう一度確認できます。"}
-                </p>
-                <Button
-                  ref={publicationRetryButtonRef}
-                  className="mt-6"
-                  onClick={() => {
-                    shouldRestorePublicationRetryFocus.current =
-                      document.activeElement === publicationRetryButtonRef.current;
-                    retryParticipantResults();
-                  }}
-                  disabled={participantResultsLookupStatus === "retrying"}
-                >
-                  {participantResultsLookupStatus === "retrying"
-                    ? "確認しています…"
-                    : "もう一度確認する"}
-                </Button>
-              </>
-            ) : (
-              <p className="mt-4 text-muted" role="status" aria-live="polite">
-                結果の公開状況を確認しています…
-              </p>
-            )}
-          </ParticipantCard>
-        </main>
-      );
-    }
     const answeringForAssisted = answerMode === "assisted";
+    const resultLookupPending =
+      participantResultsStatus === "unknown" && participantResultsLookupStatus === "pending";
+    const resultLookupFailed =
+      participantResultsStatus === "unknown" && participantResultsLookupStatus === "error";
     const canCorrectAnswers =
       !restoreError &&
       participantResultsStatus === "confirmed" &&
       participantResultsState === "waiting" &&
-      visibilityStatus === "unlocked";
+      visibilityStatus === "unlocked" &&
+      visibilityLookupStatus === "settled";
     const participantResultsPublished =
       participantResultsState === "visible" || participantResultsState === "unavailable";
     const canAnswerForAssisted =
+      !restoreError &&
       answerMode === "owner" &&
       access.kind === "ready" &&
+      participantResultsStatus === "confirmed" &&
+      participantResultsState === "waiting" &&
       (assistedParticipant === null ||
         Boolean(assistedParticipant.participant) ||
         assistedParticipant.eligible);
+    const canOpenAssistedAction =
+      canAnswerForAssisted &&
+      (assistedParticipant?.hasSubmission
+        ? visibilityStatus === "unlocked" && visibilityLookupStatus === "settled"
+        : visibilityStatus !== "locked");
+    const completionGuidance = restoreError
+      ? restoreError
+      : access.kind === "reauthentication"
+        ? ui.message
+        : participantResultsAuthExpired
+          ? "再ログイン後に回答状態を確認してください。回答は自動送信されません。"
+          : participantResultsStatus === "unknown"
+            ? participantResultsLookupStatus === "retrying"
+              ? "結果の公開状況を再確認しています…"
+              : resultLookupFailed
+                ? "結果の公開状況を確認できませんでした。回答は再送せず、公開状況だけをもう一度確認できます。"
+                : resultLookupPending
+                  ? "回答は保存されています。結果の公開状況を確認しています。"
+                  : "回答は保存されています。結果の公開状況を確認できませんでした。"
+            : participantResultsState === "waiting"
+              ? visibilityStatus === "unknown"
+                ? visibilityLookupStatus === "error"
+                  ? assistedParticipant?.hasSubmission
+                    ? "結果の公開状況は確認済みですが、回答の編集可否を確認できませんでした。安全のため本人回答と保存済み代理回答の修正を停止しています。"
+                    : "結果の公開状況は確認済みですが、回答の編集可否を確認できませんでした。安全のため本人回答の修正を停止しています。新しい代理回答は開始できます。"
+                  : "結果の公開状況は確認済みです。回答の編集可否を確認しています…"
+                : visibilityStatus === "locked"
+                  ? "結果の公開前ですが、この回答は現在修正できません。"
+                  : "回答は保存されています。結果の公開前は回答を修正できます。本人で回答できない場合は代理回答も利用できます。"
+              : participantResultsState === "visible"
+                ? "結果が公開されています。結果ページから確認できます。"
+                : participantResultsState === "unavailable"
+                  ? "結果は公開されていますが、表示できる結果がありません。回答の修正や代理回答はできません。"
+                  : "回答状態を確認できませんでした。回答を再送せず、状態の確認だけをやり直してください。";
+    const announcedCompletionGuidance =
+      participantResultsLookupStatus === "retry-success"
+        ? `結果の公開状況を確認しました。${completionGuidance}`
+        : completionGuidance;
+    const completionGuidanceRole =
+      restoreError ||
+      resultLookupFailed ||
+      visibilityLookupStatus === "error" ||
+      access.kind === "reauthentication" ||
+      participantResultsAuthExpired
+        ? "alert"
+        : "status";
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
           <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
-          <ViewTransition
-            key={saveConfirmed && !restoreError ? "saved" : "unconfirmed"}
-            name="answer-confirmation"
-            default="auto"
+          <h1
+            ref={completionHeadingRef}
+            tabIndex={-1}
+            className="text-3xl font-bold tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4"
           >
-            <h1
-              ref={completionHeadingRef}
-              tabIndex={-1}
-              className="text-3xl font-bold tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4"
-            >
-              {saveConfirmed && !restoreError ? ui.status : "回答状態の確認が必要です"}
-            </h1>
-          </ViewTransition>
-          {participantResultsLookupStatus === "retry-success" && (
-            <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-              結果の公開状況を確認しました。
-            </p>
-          )}
-          {ui.message && (
-            <p className="mt-4 text-muted" role={ui.statusRole} aria-live="polite">
-              {ui.message}
-            </p>
-          )}
+            {saveConfirmed && !restoreError ? ui.status : "回答状態の確認が必要です"}
+          </h1>
           <AnswererNameField
             answerMode={answerMode}
             ownerName={ownerName}
             assistedName={assistedParticipant?.participant?.name}
             className="mt-3"
           />
-          {canCorrectAnswers && (
-            <p className="mt-2 text-sm leading-relaxed text-muted">
-              披露宴までは修正ボタンから回答の変更が可能です。ご自分で回答できない方向けに代理回答が一人まで可能です。
-            </p>
-          )}
-          {restoreError && (
-            <p className="mt-4 text-sm font-medium text-error" role="alert">
-              {restoreError}
-            </p>
-          )}
+          <p
+            className="mt-4 text-sm leading-relaxed text-muted"
+            role={completionGuidanceRole}
+            aria-live={completionGuidanceRole === "status" ? "polite" : undefined}
+          >
+            {announcedCompletionGuidance}
+          </p>
+          {participantResultsStatus === "unknown" &&
+            (participantResultsLookupStatus === "error" ||
+              participantResultsLookupStatus === "retrying") && (
+              <Button
+                ref={publicationRetryButtonRef}
+                className="mt-6"
+                onClick={() => {
+                  shouldRestorePublicationRetryFocus.current =
+                    document.activeElement === publicationRetryButtonRef.current;
+                  retryParticipantResults();
+                }}
+                disabled={participantResultsLookupStatus === "retrying"}
+              >
+                {participantResultsLookupStatus === "retrying"
+                  ? "確認しています…"
+                  : "もう一度確認する"}
+              </Button>
+            )}
           {editLoadError && (
             <div className="mt-3 text-sm font-medium text-error" role="alert">
               <p>{editLoadError}</p>
@@ -974,11 +995,6 @@ export default function QuizRunner() {
               >
                 参加状態の確認が必要です
               </h2>
-              {ui.message && (
-                <p className="mt-2 text-sm leading-relaxed text-muted" role={ui.statusRole}>
-                  {ui.message}
-                </p>
-              )}
               <p className="mt-2 text-sm leading-relaxed text-muted">
                 再ログイン後、回答の修正や代理回答を続けられます。
               </p>
@@ -1000,58 +1016,39 @@ export default function QuizRunner() {
               {isPreparingEdit ? "設問を読み込んでいます…" : "回答を修正する"}
             </Button>
           )}
-          {participantResultsState === "waiting" &&
-            visibilityStatus === "unknown" &&
-            !restoreError && (
-              <p
-                className="mt-3 text-sm leading-relaxed text-muted"
-                role={participantResultsLookupStatus === "retry-success" ? undefined : "status"}
-                aria-live={
-                  participantResultsLookupStatus === "retry-success" ? undefined : "polite"
-                }
-              >
-                回答の公開状態を確認しています。確認できるまで編集はできません。
-              </p>
-            )}
           {answeringForAssisted && (
             <Button variant="outline" className="mt-3" onClick={() => returnToOwner()}>
               自分の回答に戻る
             </Button>
           )}
-          {!participantResultsPublished &&
-            visibilityStatus !== "locked" &&
-            !answeringForAssisted &&
-            canAnswerForAssisted && (
-              <div className="mt-4">
-                {assistedError && (
-                  <p className="mb-2 text-sm text-error" role="alert">
-                    {assistedError}
-                  </p>
-                )}
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    if (assistedParticipant?.participant) void resumeAssisted();
-                    else openAssistedLogin();
-                  }}
-                  disabled={
-                    assistedBusy ||
-                    Boolean(assistedParticipant?.hasSubmission && visibilityStatus !== "unlocked")
-                  }
-                >
-                  {assistedBusy
-                    ? "回答状態を確認しています…"
-                    : assistedParticipant?.hasSubmission
-                      ? "代理回答を修正する"
-                      : "代理回答を行う"}
-                </Button>
-                {assistedParticipant?.participant && !assistedParticipant.hasSubmission && (
-                  <p className="mt-2 text-sm text-muted">
-                    {assistedParticipant.participant.name}さんの回答を再開できます。
-                  </p>
-                )}
-              </div>
-            )}
+          {!participantResultsPublished && !answeringForAssisted && canOpenAssistedAction && (
+            <div className="mt-4">
+              {assistedError && (
+                <p className="mb-2 text-sm text-error" role="alert">
+                  {assistedError}
+                </p>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (assistedParticipant?.participant) void resumeAssisted();
+                  else openAssistedLogin();
+                }}
+                disabled={assistedBusy}
+              >
+                {assistedBusy
+                  ? "回答状態を確認しています…"
+                  : assistedParticipant?.hasSubmission
+                    ? "代理回答を修正する"
+                    : "代理回答を行う"}
+              </Button>
+              {assistedParticipant?.participant && !assistedParticipant.hasSubmission && (
+                <p className="mt-2 text-sm text-muted">
+                  {assistedParticipant.participant.name}さんの回答を再開できます。
+                </p>
+              )}
+            </div>
+          )}
           {participantResultsVisible && !participantResultsAuthExpired && (
             <div className="mt-3 flex flex-col items-start gap-2">
               <Link

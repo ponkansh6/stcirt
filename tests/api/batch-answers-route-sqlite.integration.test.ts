@@ -35,6 +35,7 @@ import {
   operatePresentationControls,
   setParticipantResultsVisible,
 } from "@/lib/db/repository/presentation-repository.mutations";
+import { getParticipantResult } from "@/lib/db/repository/presentation-repository.reads";
 
 describe("POST /api/answers/batch with SQLite persistence", () => {
   let testDb: TestDb;
@@ -90,7 +91,22 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ submissionId, revision: 1 });
+    await expect(response.json()).resolves.toMatchObject({
+      submissionId,
+      revision: 1,
+      completionSnapshot: {
+        status: "ready",
+        identity: {
+          scope: "assisted",
+          ownerParticipantId: 42,
+          participantId: targetId,
+          submissionId,
+          revision: 1,
+        },
+        resultsState: "waiting",
+        resultsVisible: false,
+      },
+    });
     const [submission] = await testDb.db.select().from(schema.examAnswerSubmissions);
     expect(submission).toMatchObject({ id: submissionId, participantId: targetId, revision: 1 });
     expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(5);
@@ -103,7 +119,44 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     });
   });
 
-  it("accepts a batch save while published and leaves the public snapshot unchanged until aggregation", async () => {
+  it("rejects a first assisted batch after publication at the write boundary", async () => {
+    const submissionId = "00000000-0000-4000-8000-000000000421";
+    const operationId = "00000000-0000-4000-8000-000000000422";
+    const answers = [
+      ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
+      { questionId: 5, freeText: "answer after publication" },
+    ];
+    await testDb.db
+      .insert(schema.participantResultSettings)
+      .values({ id: 1, visible: true, everPublished: true })
+      .onConflictDoUpdate({
+        target: schema.participantResultSettings.id,
+        set: { visible: true, everPublished: true },
+      });
+
+    const response = await POST(
+      new Request("http://localhost/api/answers/batch?scope=assisted", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost",
+          Cookie: "stcirt_participant_session=owner-session",
+        },
+        body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
+      }),
+    );
+
+    expect(response.status).toBe(423);
+    await expect(response.json()).resolves.toEqual({
+      message: "Assisted answers are locked while results are visible",
+      error: "SUBMISSION_LOCKED",
+    });
+    await expect(testDb.db.select().from(schema.examAnswerSubmissions)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.examSubmissionOperations)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.examSubmissionAnswers)).resolves.toHaveLength(0);
+  });
+
+  it("accepts a first batch save while published and leaves the public snapshot unchanged until aggregation", async () => {
     const submissionId = "00000000-0000-4000-8000-000000000411";
     const operationId = "00000000-0000-4000-8000-000000000412";
     const answers = [
@@ -130,6 +183,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
 
     await operatePresentationControls("00000000-0000-4000-8000-000000000413", "aggregate");
     await setParticipantResultsVisible(true);
+    await expect(getParticipantResult(42)).resolves.toMatchObject({ state: "visible" });
     const beforeSnapshot = await testDb.db
       .select()
       .from(schema.presentationEntries)
@@ -148,7 +202,22 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ submissionId, revision: 1 });
+    await expect(response.json()).resolves.toMatchObject({
+      submissionId,
+      revision: 1,
+      completionSnapshot: {
+        status: "ready",
+        identity: {
+          scope: "owner",
+          ownerParticipantId: 42,
+          participantId: 42,
+          submissionId,
+          revision: 1,
+        },
+        resultsState: "visible",
+        resultsVisible: true,
+      },
+    });
     const [savedSubmission] = await testDb.db
       .select()
       .from(schema.examAnswerSubmissions)

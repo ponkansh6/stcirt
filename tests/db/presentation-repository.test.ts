@@ -21,6 +21,7 @@ import {
   getAdminPresentationControls,
   getAdminPresentationDeck,
   getParticipantResult,
+  getParticipantResultState,
   getPublicPresentation,
   operatePresentation,
   operatePresentationControls,
@@ -2308,7 +2309,7 @@ describe("presentation repository", () => {
     });
   });
 
-  it("allows an answer update after publication while keeping its snapshot unchanged", async () => {
+  it("blocks an answer correction after publication without changing its snapshot", async () => {
     await addCurrentFiveQuestions();
     const participantId = await addParticipant("Contended participant");
     const submissionId = `submission-${participantId}-latest`;
@@ -2328,33 +2329,38 @@ describe("presentation repository", () => {
     });
     await completeConcurrentQ5Assessment(submissionId, 1);
     await operatePresentation("concurrent-show-initial-aggregate", "aggregate");
+    const answersBeforeCorrection = await testDb.db
+      .select()
+      .from(schema.examSubmissionAnswers)
+      .where(eq(schema.examSubmissionAnswers.submissionId, submissionId));
 
     const nextAnswers = answers.map((answer) =>
       answer.questionId === 1 && "selectedIndex" in answer
         ? { ...answer, selectedIndex: 1 }
         : answer,
     );
-    const [show, update] = await raceWithFirstCommitHeld(
-      schema.participantResultSettings,
-      () => setParticipantResultsVisible(true),
-      () =>
-        saveAnswerSubmission({
-          submissionId,
-          operationId: "concurrent-show-update-after",
-          expectedRevision: 1,
-          participantId,
-          answers: nextAnswers,
-        }),
-    );
-
-    expect(show.status).toBe("fulfilled");
-    expect(update.status).toBe("fulfilled");
+    await setParticipantResultsVisible(true);
+    await expect(
+      saveAnswerSubmission({
+        submissionId,
+        operationId: "concurrent-show-update-after",
+        expectedRevision: 1,
+        participantId,
+        answers: nextAnswers,
+      }),
+    ).rejects.toMatchObject({ status: 423, code: "SUBMISSION_LOCKED" });
     await expect(
       testDb.db
         .select({ revision: schema.examAnswerSubmissions.revision })
         .from(schema.examAnswerSubmissions)
         .where(eq(schema.examAnswerSubmissions.id, submissionId)),
-    ).resolves.toEqual([{ revision: 2 }]);
+    ).resolves.toEqual([{ revision: 1 }]);
+    await expect(
+      testDb.db
+        .select()
+        .from(schema.examSubmissionAnswers)
+        .where(eq(schema.examSubmissionAnswers.submissionId, submissionId)),
+    ).resolves.toEqual(answersBeforeCorrection);
     const [settings] = await testDb.db
       .select()
       .from(schema.participantResultSettings)
@@ -2899,6 +2905,7 @@ describe("presentation repository", () => {
     const lateParticipant = await addParticipant("Late participant");
     await setParticipantResultsVisible(true);
     await expect(getParticipantResult(lateParticipant)).resolves.toEqual({ state: "unavailable" });
+    await expect(getParticipantResultState(lateParticipant)).resolves.toBe("unavailable");
 
     await testDb.db
       .update(schema.examQuestions)
@@ -2924,6 +2931,7 @@ describe("presentation repository", () => {
         },
       ],
     });
+    await expect(getParticipantResultState(first)).resolves.toBe("visible");
     await expect(getParticipantResult(second)).resolves.toEqual({
       state: "visible",
       rank: 2,
@@ -3039,6 +3047,7 @@ describe("presentation repository", () => {
       .set({ answers: legacyOnChoiceQuestion })
       .where(eq(schema.presentationEntries.participantId, first));
     await expect(getParticipantResult(first)).resolves.toEqual({ state: "unavailable" });
+    await expect(getParticipantResultState(first)).resolves.toBe("unavailable");
     await testDb.db
       .update(schema.presentationEntries)
       .set({ answers: legacyAndUnansweredSnapshot.slice(1) })

@@ -15,6 +15,7 @@ import {
 const api = vi.hoisted(() => ({
   createParticipantSession: vi.fn(),
   deleteParticipantSession: vi.fn(),
+  fetchAnswerBootstrap: vi.fn(),
   fetchAnswerSubmission: vi.fn(),
   fetchAssistedParticipant: vi.fn(),
   fetchExamQuestions: vi.fn(),
@@ -109,6 +110,27 @@ function makeSubmission(overrides: Partial<AnswerSubmission> = {}): AnswerSubmis
   };
 }
 
+function makeBootstrap(
+  mode: "owner" | "assisted" = "owner",
+  submission: AnswerSubmission | null = null,
+  freeTextFifth = false,
+  ownerOverride: Participant = participant,
+) {
+  return {
+    mode,
+    owner: ownerOverride,
+    participant: mode === "assisted" ? assistedParticipant : ownerOverride,
+    submission,
+    ...(submission === null
+      ? {
+          questions: [1, 2, 3, 4, 5].map((id) =>
+            question(id, freeTextFifth && id === 5 ? "freeText" : "selected"),
+          ),
+        }
+      : {}),
+  };
+}
+
 async function enterAnswering(
   options: {
     latest?: AnswerSubmission | null;
@@ -118,6 +140,9 @@ async function enterAnswering(
 ) {
   api.fetchParticipantSession.mockResolvedValue(participant);
   api.fetchLatestAnswerSubmission.mockResolvedValue(options.latest ?? null);
+  api.fetchAnswerBootstrap.mockResolvedValue(
+    makeBootstrap("owner", options.latest ?? null, options.freeTextFifth),
+  );
   api.fetchExamQuestions.mockResolvedValue(
     [1, 2, 3, 4, 5].map((id) =>
       question(id, options.freeTextFifth && id === 5 ? "freeText" : "selected"),
@@ -130,7 +155,7 @@ async function enterAnswering(
 
 async function enterOwnerComplete() {
   api.fetchParticipantSession.mockResolvedValue(participant);
-  api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+  api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
   const hook = renderHook(() => useQuizSession());
   await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
   await waitFor(() => expect(api.fetchAssistedParticipant).toHaveBeenCalledOnce());
@@ -211,6 +236,9 @@ describe("useQuizSession state transitions", () => {
     window.sessionStorage.clear();
     vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(submissionId);
     api.fetchParticipantSession.mockResolvedValue(null);
+    api.fetchAnswerBootstrap.mockImplementation(async (mode: "owner" | "assisted") =>
+      makeBootstrap(mode),
+    );
     api.fetchAssistedParticipant.mockResolvedValue({
       participant: null,
       hasSubmission: false,
@@ -233,6 +261,7 @@ describe("useQuizSession state transitions", () => {
   });
 
   it("moves to login after a session lookup failure and exposes the original login error", async () => {
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     api.fetchParticipantSession.mockRejectedValueOnce(new Error("offline"));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
@@ -250,6 +279,7 @@ describe("useQuizSession state transitions", () => {
 
   it("drains participant-session lookup completion after unmount", async () => {
     const pending = deferred<Participant | null>();
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     api.fetchParticipantSession.mockReturnValueOnce(pending.promise);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(api.fetchParticipantSession).toHaveBeenCalledOnce());
@@ -260,6 +290,7 @@ describe("useQuizSession state transitions", () => {
 
   it("drains participant-session lookup failure after unmount", async () => {
     const pending = deferred<Participant | null>();
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     api.fetchParticipantSession.mockReturnValueOnce(pending.promise);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(api.fetchParticipantSession).toHaveBeenCalledOnce());
@@ -273,8 +304,12 @@ describe("useQuizSession state transitions", () => {
   it("drains a failed question load after unmount", async () => {
     const pendingQuestion = deferred<ReturnType<typeof question>[]>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("offline"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
     api.fetchExamQuestions.mockReturnValueOnce(pendingQuestion.promise);
     const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+    act(() => hook.result.current.retrySubmissionCheck());
     await waitFor(() => expect(api.fetchExamQuestions).toHaveBeenCalledOnce());
     hook.unmount();
     pendingQuestion.reject(new Error("offline"));
@@ -286,6 +321,7 @@ describe("useQuizSession state transitions", () => {
 
   it("does not apply a successful login after unmount", async () => {
     const pending = deferred<{ participant: Participant }>();
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     api.createParticipantSession.mockReturnValueOnce(pending.promise);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
@@ -303,6 +339,7 @@ describe("useQuizSession state transitions", () => {
 
   it("does not apply a failed login after unmount", async () => {
     const pending = deferred<{ participant: Participant }>();
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     api.createParticipantSession.mockReturnValueOnce(pending.promise);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
@@ -318,6 +355,7 @@ describe("useQuizSession state transitions", () => {
   });
 
   it("uses the fallback login message for non-Error failures", async () => {
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
     api.createParticipantSession.mockRejectedValueOnce({ reason: "offline" });
@@ -333,6 +371,7 @@ describe("useQuizSession state transitions", () => {
   });
 
   it("ignores save and refresh requests while logged out without a submission", async () => {
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
     expect(hook.result.current.submissionId).toBeNull();
@@ -433,17 +472,77 @@ describe("useQuizSession state transitions", () => {
     expect(hook.result.current.answeredCount).toBe(5);
   });
 
-  it("loads a complete ordered exam with exactly one batch call", async () => {
+  it("loads the complete ordered exam from one bootstrap without a separate batch call", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchExamQuestions.mockResolvedValueOnce([1, 2, 3, 4, 5].map((id) => question(id)));
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", null));
 
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
 
-    expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledWith("owner");
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
     expect(hook.result.current.quizzes.map(({ question: item }) => item.id)).toEqual([
       1, 2, 3, 4, 5,
     ]);
+  });
+
+  it("falls back from a missing assisted target to owner bootstrap questions", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    api.fetchAnswerBootstrap
+      .mockRejectedValueOnce(apiError(404, "assisted participant not found"))
+      .mockResolvedValueOnce(makeBootstrap("owner"));
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+
+    expect(hook.result.current.answerMode).toBe("owner");
+    expect(hook.result.current.quizzes.map(({ question: item }) => item.id)).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(1, "assisted");
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(2, "owner");
+    expect(api.fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+  });
+
+  it("ignores an initial owner bootstrap success after unmount", async () => {
+    const pendingBootstrap = deferred<ReturnType<typeof makeBootstrap>>();
+    api.fetchAnswerBootstrap.mockReturnValueOnce(pendingBootstrap.promise);
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(api.fetchAnswerBootstrap).toHaveBeenCalledOnce());
+    const accessBeforeUnmount = hook.result.current.access;
+    const phaseBeforeUnmount = hook.result.current.phase;
+    hook.unmount();
+    pendingBootstrap.resolve(makeBootstrap("owner"));
+    await act(async () => pendingBootstrap.promise);
+
+    expect(hook.result.current.access).toEqual(accessBeforeUnmount);
+    expect(hook.result.current.phase).toEqual(phaseBeforeUnmount);
+  });
+
+  it("ignores owner fallback bootstrap success after an assisted saved submission when unmounted", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    const pendingOwnerBootstrap = deferred<ReturnType<typeof makeBootstrap>>();
+    api.fetchAnswerBootstrap
+      .mockResolvedValueOnce(makeBootstrap("assisted", makeSubmission()))
+      .mockReturnValueOnce(pendingOwnerBootstrap.promise);
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(api.fetchAnswerBootstrap).toHaveBeenCalledTimes(2));
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(1, "assisted");
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(2, "owner");
+    const accessBeforeUnmount = hook.result.current.access;
+    const phaseBeforeUnmount = hook.result.current.phase;
+    hook.unmount();
+    pendingOwnerBootstrap.resolve(makeBootstrap("owner"));
+    await act(async () => pendingOwnerBootstrap.promise);
+
+    expect(hook.result.current.access).toEqual(accessBeforeUnmount);
+    expect(hook.result.current.phase).toEqual(phaseBeforeUnmount);
+    expect(api.fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -460,11 +559,15 @@ describe("useQuizSession state transitions", () => {
     "does not start an exam from a $label batch and offers a working retry",
     async ({ questions }) => {
       api.fetchParticipantSession.mockResolvedValueOnce(participant);
+      api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("offline"));
+      api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
       api.fetchExamQuestions
         .mockResolvedValueOnce(questions)
         .mockResolvedValueOnce([1, 2, 3, 4, 5].map((id) => question(id)));
 
       const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+      act(() => hook.result.current.retrySubmissionCheck());
       await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
       expect(hook.result.current.quizzes).toEqual([]);
       act(() => hook.result.current.retryLoad());
@@ -490,7 +593,7 @@ describe("useQuizSession state transitions", () => {
     "keeps a saved attempt locked when edit receives an invalid $label exam batch",
     async ({ questions }) => {
       api.fetchParticipantSession.mockResolvedValueOnce(participant);
-      api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+      api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
       api.fetchExamQuestions
         .mockResolvedValueOnce(questions)
         .mockResolvedValueOnce([1, 2, 3, 4, 5].map((id) => question(id)));
@@ -515,8 +618,8 @@ describe("useQuizSession state transitions", () => {
 
   it("marks a saved submission unrestorable when its questions are unavailable", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(
-      makeSubmission({ restoreIntegrity: { status: "invalid" } }),
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(
+      makeBootstrap("owner", makeSubmission({ restoreIntegrity: { status: "invalid" } })),
     );
     api.fetchExamQuestions.mockResolvedValueOnce([]);
     const hook = renderHook(() => useQuizSession());
@@ -527,7 +630,7 @@ describe("useQuizSession state transitions", () => {
 
   it("does not restore or edit a saved answer set whose current question manifest changed", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
     api.fetchExamQuestions.mockResolvedValueOnce([11, 12, 13, 14, 15].map((id) => question(id)));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
@@ -543,7 +646,7 @@ describe("useQuizSession state transitions", () => {
 
   it("does not fetch questions unless the current visibility gate is unlocked", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
 
@@ -557,7 +660,7 @@ describe("useQuizSession state transitions", () => {
   it("rechecks the live visibility gate before applying a loaded correction", async () => {
     const pendingQuestions = deferred<ReturnType<typeof question>[]>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
     api.fetchExamQuestions.mockReturnValueOnce(pendingQuestions.promise);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
@@ -580,7 +683,7 @@ describe("useQuizSession state transitions", () => {
   it("loads saved correction questions once when edit is requested more than once", async () => {
     const pendingQuestions = deferred<ReturnType<typeof question>[]>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
     api.fetchExamQuestions.mockReturnValueOnce(pendingQuestions.promise);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
@@ -604,7 +707,7 @@ describe("useQuizSession state transitions", () => {
 
   it("lets the participant retry a failed deferred question load", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
     api.fetchExamQuestions
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce([1, 2, 3, 4, 5].map((id) => question(id)));
@@ -625,7 +728,7 @@ describe("useQuizSession state transitions", () => {
 
   it("ignores edit retries when no correction load has failed", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
 
@@ -639,7 +742,7 @@ describe("useQuizSession state transitions", () => {
   it("discards a deferred edit failure after switching away from its participant", async () => {
     const pendingQuestions = deferred<ReturnType<typeof question>[]>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
     api.fetchExamQuestions.mockReturnValueOnce(pendingQuestions.promise);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
@@ -665,20 +768,81 @@ describe("useQuizSession state transitions", () => {
 
   it("retries a failed load from the already loaded questions", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("offline"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
     api.fetchExamQuestions
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce([1, 2, 3, 4, 5].map((id) => question(id)));
     const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+    act(() => hook.result.current.retrySubmissionCheck());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
     act(() => hook.result.current.retryLoad());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
     expect(hook.result.current.quizzes).toHaveLength(5);
   });
 
+  it("blocks correction after retry finds a saved submission without restore integrity", async () => {
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("bootstrap offline"));
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+    const { restoreIntegrity: _restoreIntegrity, ...submissionWithoutIntegrity } = makeSubmission();
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(submissionWithoutIntegrity);
+
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+
+    expect(hook.result.current.restoreError).toContain("保存済み回答の整合性を確認できません");
+    expect(hook.result.current.selections).toEqual({});
+    expect(hook.result.current.saveConfirmed).toBe(false);
+  });
+
+  it("requires reauthentication when retrying the latest lookup returns 401", async () => {
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("bootstrap offline"));
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+    api.fetchLatestAnswerSubmission.mockRejectedValueOnce(apiError(401, "expired"));
+
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
+
+    expect(hook.result.current.phase.kind).toBe("ready");
+    expect(hook.result.current.access).toEqual({ kind: "reauthentication", participant });
+  });
+
+  it.each([
+    ["HTTP 403", apiError(403, "forbidden")],
+    ["a network error", new Error("offline")],
+  ])(
+    "keeps the submission check retryable when latest lookup returns %s",
+    async (_label, error) => {
+      api.fetchParticipantSession.mockResolvedValueOnce(participant);
+      api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("bootstrap offline"));
+      const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+      api.fetchLatestAnswerSubmission.mockRejectedValueOnce(error);
+
+      act(() => hook.result.current.retrySubmissionCheck());
+      await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+
+      expect(hook.result.current.access).toEqual({ kind: "ready", participant });
+      expect(hook.result.current.phase).toMatchObject({
+        kind: "submission-error",
+        message: "回答状況を確認できませんでした。通信状態を確認して再試行してください。",
+      });
+    },
+  );
+
   it("ignores repeated load retries while the first retry is pending", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("offline"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
     api.fetchExamQuestions.mockRejectedValueOnce(new Error("offline"));
     const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+    act(() => hook.result.current.retrySubmissionCheck());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("load-error"));
 
     const pending = deferred<ReturnType<typeof question>[]>();
@@ -698,9 +862,9 @@ describe("useQuizSession state transitions", () => {
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
   });
 
-  it("requires reauthentication after latest-submission authorization expires, then retries transport errors", async () => {
+  it("requires reauthentication after bootstrap authorization expires, then retries submission checks", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockRejectedValueOnce(apiError(401, "expired"));
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
     expect(hook.result.current.access).toEqual({ kind: "reauthentication", participant });
@@ -713,7 +877,7 @@ describe("useQuizSession state transitions", () => {
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
   });
 
-  it("purges the assisted draft and requests reauthentication when latest-submission lookup returns 401", async () => {
+  it("purges the assisted draft and requests reauthentication when assisted bootstrap returns 401", async () => {
     window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
     window.sessionStorage.setItem(
       "stcirt-assisted-answer-draft",
@@ -725,7 +889,7 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: false,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockRejectedValueOnce(apiError(401, "expired"));
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
 
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
@@ -735,28 +899,29 @@ describe("useQuizSession state transitions", () => {
     expect(api.fetchExamQuestions).not.toHaveBeenCalled();
   });
 
-  it("purges the assisted draft but keeps latest-submission 403 retryable", async () => {
+  it("preserves the assisted draft and keeps bootstrap 403 retryable", async () => {
+    const draft = makeCurrentAssistedDraft();
     window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
-    window.sessionStorage.setItem(
-      "stcirt-assisted-answer-draft",
-      JSON.stringify(makeCurrentAssistedDraft()),
-    );
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
     api.fetchParticipantSession.mockResolvedValue(participant);
     api.fetchAssistedParticipant.mockResolvedValue({
       participant: assistedParticipant,
       hasSubmission: false,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(403, "forbidden"));
 
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
 
     expect(hook.result.current.access).toEqual({ kind: "ready", participant });
-    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBe(
+      JSON.stringify(draft),
+    );
     expect(api.fetchExamQuestions).not.toHaveBeenCalled();
     act(() => hook.result.current.retrySubmissionCheck());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    expect(hook.result.current.selections).toEqual(draft.selections);
   });
 
   it("keeps an assisted draft and blocks attempt startup after a malformed successful lookup", async () => {
@@ -769,8 +934,8 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: false,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockRejectedValueOnce(
-      new Error("Invalid response schema for fetch latest answer submission"),
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(
+      new Error("Invalid response schema for fetch answer bootstrap"),
     );
 
     const hook = renderHook(() => useQuizSession());
@@ -801,7 +966,7 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: false,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(invalidSaved);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("assisted", invalidSaved));
 
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
@@ -823,7 +988,7 @@ describe("useQuizSession state transitions", () => {
 
   it("ignores repeated submission-check retries while the lookup is pending", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockRejectedValueOnce(new Error("offline"));
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("offline"));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
     const pending = deferred<AnswerSubmission | null>();
@@ -831,17 +996,107 @@ describe("useQuizSession state transitions", () => {
     act(() => hook.result.current.retrySubmissionCheck());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("checking-submission"));
     act(() => hook.result.current.retrySubmissionCheck());
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledTimes(2);
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledOnce();
     pending.resolve(null);
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
   });
 
-  it("ignores participant resolution while a submission check is already in flight", async () => {
-    const pendingLookup = deferred<AnswerSubmission | null>();
+  it("keeps the new-epoch save lock when an old retry question load settles", async () => {
+    const oldQuestions = deferred<ReturnType<typeof question>[]>();
+    const newSave = deferred<{ submissionId: string; revision: number }>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockReturnValueOnce(pendingLookup.promise);
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("temporary bootstrap failure"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+    api.fetchExamQuestions.mockReturnValueOnce(oldQuestions.promise);
     const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(api.fetchExamQuestions).toHaveBeenCalledOnce());
+
+    await act(async () => hook.result.current.switchParticipant());
+    expect(hook.result.current.access.kind).toBe("login");
+    api.createParticipantSession.mockResolvedValueOnce({ participant: otherParticipant });
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(
+      makeBootstrap("owner", null, false, otherParticipant),
+    );
+    await act(async () => hook.result.current.login("参加者", "1234"));
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    [1, 2, 3, 4, 5].forEach((id) => act(() => hook.result.current.select(id, 0)));
+    api.submitAnswerBatch.mockReturnValueOnce(newSave.promise);
+    let save!: Promise<void>;
+    act(() => {
+      save = hook.result.current.saveAnswers();
+    });
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submitting"));
+
+    await act(async () => {
+      oldQuestions.resolve([1, 2, 3, 4, 5].map((id) => question(id)));
+      await oldQuestions.promise;
+    });
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submitting"));
+    await act(async () => hook.result.current.saveAnswers());
+    expect(api.submitAnswerBatch).toHaveBeenCalledOnce();
+    expect(hook.result.current.phase.kind).toBe("submitting");
+
+    await act(async () => {
+      newSave.resolve({ submissionId, revision: 1 });
+      await save;
+    });
+    expect(hook.result.current.phase.kind).toBe("complete");
+  });
+
+  it("does not start an owner resolver while assisted retry lookup is pending", async () => {
+    const hook = await enterOwnerComplete();
+    await act(async () => hook.result.current.startAssisted("代理回答者"));
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    const pendingLatest = deferred<AnswerSubmission | null>();
+    api.fetchLatestAnswerSubmission.mockReturnValueOnce(pendingLatest.promise);
+    const bootstrapCallsBeforeRetry = api.fetchAnswerBootstrap.mock.calls.length;
+
+    act(() => hook.result.current.retrySubmissionCheck());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("checking-submission"));
+    act(() => hook.result.current.returnToOwner());
+
+    expect(hook.result.current.answerMode).toBe("owner");
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledOnce();
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledTimes(bootstrapCallsBeforeRetry);
+    pendingLatest.resolve(null);
+    await act(async () => pendingLatest.promise);
+  });
+
+  it("ignores a retry lookup result after unmount", async () => {
+    const hook = await enterAnswering();
+    const pendingLatest = deferred<AnswerSubmission | null>();
+    api.fetchLatestAnswerSubmission.mockReturnValueOnce(pendingLatest.promise);
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("checking-submission"));
+    const accessBeforeUnmount = hook.result.current.access;
+    const phaseBeforeUnmount = hook.result.current.phase;
+    hook.unmount();
+
+    pendingLatest.resolve(makeSubmission());
+    await act(async () => {
+      await pendingLatest.promise;
+      await Promise.resolve();
+    });
+
+    expect(hook.result.current.access).toEqual(accessBeforeUnmount);
+    expect(hook.result.current.phase).toEqual(phaseBeforeUnmount);
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+  });
+
+  it("ignores participant resolution while a submission check is already in flight", async () => {
+    const pendingBootstrap = deferred<ReturnType<typeof makeBootstrap>>();
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAnswerBootstrap.mockReturnValueOnce(pendingBootstrap.promise);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce({
+      ...makeBootstrap("owner"),
+      owner: otherParticipant,
+      participant: otherParticipant,
+    });
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(api.fetchAnswerBootstrap).toHaveBeenCalledOnce());
 
     api.createParticipantSession.mockResolvedValueOnce({ participant: otherParticipant });
     await act(async () => hook.result.current.login("別の参加者", "1234"));
@@ -851,26 +1106,28 @@ describe("useQuizSession state transitions", () => {
         participant: otherParticipant,
       }),
     );
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledOnce();
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledTimes(2);
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(1, "owner");
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(2, "owner");
 
     hook.unmount();
-    pendingLookup.resolve(null);
+    pendingBootstrap.resolve(makeBootstrap("owner"));
     await act(async () => {
-      await pendingLookup.promise;
+      await pendingBootstrap.promise;
       await Promise.resolve();
     });
   });
 
-  it("requires reauthentication after latest-submission authorization expires", async () => {
+  it("requires reauthentication after bootstrap authorization expires", async () => {
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockRejectedValueOnce(apiError(401, "expired"));
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
     expect(hook.result.current.access).toEqual({ kind: "reauthentication", participant });
     expect(hook.result.current.phase.kind).toBe("ready");
     expect(api.fetchExamQuestions).not.toHaveBeenCalled();
     act(() => hook.result.current.retrySubmissionCheck());
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledOnce();
+    expect(api.fetchLatestAnswerSubmission).not.toHaveBeenCalled();
   });
 
   it("drains a successful submission response after unmount", async () => {
@@ -890,8 +1147,12 @@ describe("useQuizSession state transitions", () => {
   it("stops question loading when the pending question resolves after unmount", async () => {
     const pendingQuestion = deferred<ReturnType<typeof question>[]>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("offline"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
     api.fetchExamQuestions.mockReturnValueOnce(pendingQuestion.promise);
     const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+    act(() => hook.result.current.retrySubmissionCheck());
     await waitFor(() => expect(api.fetchExamQuestions).toHaveBeenCalledOnce());
     hook.unmount();
     pendingQuestion.resolve([1, 2, 3, 4, 5].map((id) => question(id)));
@@ -904,13 +1165,13 @@ describe("useQuizSession state transitions", () => {
   });
 
   it("stops submission lookup updates after unmount", async () => {
-    const pending = deferred<AnswerSubmission | null>();
+    const pending = deferred<ReturnType<typeof makeBootstrap>>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockReturnValueOnce(pending.promise);
+    api.fetchAnswerBootstrap.mockReturnValueOnce(pending.promise);
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledOnce());
+    await waitFor(() => expect(api.fetchAnswerBootstrap).toHaveBeenCalledOnce());
     hook.unmount();
-    pending.resolve(null);
+    pending.resolve(makeBootstrap("owner"));
     await act(async () => {
       await pending.promise;
       // Let resolveParticipant finish its post-fetch mounted check.
@@ -920,11 +1181,11 @@ describe("useQuizSession state transitions", () => {
   });
 
   it("does not update state when submission lookup rejects after unmount", async () => {
-    const pending = deferred<AnswerSubmission | null>();
+    const pending = deferred<ReturnType<typeof makeBootstrap>>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockReturnValueOnce(pending.promise);
+    api.fetchAnswerBootstrap.mockReturnValueOnce(pending.promise);
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledOnce());
+    await waitFor(() => expect(api.fetchAnswerBootstrap).toHaveBeenCalledOnce());
     hook.unmount();
     pending.reject(new Error("offline"));
     await act(async () => {
@@ -938,7 +1199,7 @@ describe("useQuizSession state transitions", () => {
   it("drains saved-submission question loading after unmount", async () => {
     const pendingQuestion = deferred<ReturnType<typeof question>[]>();
     api.fetchParticipantSession.mockResolvedValueOnce(participant);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
     api.fetchExamQuestions.mockReturnValueOnce(pendingQuestion.promise);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
@@ -1043,11 +1304,10 @@ describe("useQuizSession state transitions", () => {
     [1, 2, 3, 4, 5].forEach((id) => act(() => hook.result.current.select(id, 0)));
     api.submitAnswerBatch.mockRejectedValueOnce(apiError(400, "invalid"));
     await act(async () => hook.result.current.saveAnswers());
-    expect(hook.result.current.phase).toMatchObject({
-      kind: "answering",
-      retryRequired: false,
-      message: "invalid",
-    });
+    const phase = hook.result.current.phase;
+    expect(phase).toMatchObject({ kind: "answering", message: "invalid" });
+    if (phase.kind !== "answering") throw new Error("Expected answering phase");
+    expect(phase.retryRequired).toBeFalsy();
   });
 
   it("counts a saved free response when a selected answer is changed", async () => {
@@ -1078,7 +1338,9 @@ describe("useQuizSession state transitions", () => {
     const operationId = api.submitAnswerBatch.mock.calls[0]![0].operationId;
     expect(hook.result.current.access.kind).toBe("reauthentication");
 
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission({ revision: 0 }));
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(
+      makeBootstrap("owner", makeSubmission({ revision: 0 })),
+    );
     await act(async () => hook.result.current.login("参加者", "1234"));
     await waitFor(() =>
       expect(hook.result.current.phase).toMatchObject({
@@ -1096,7 +1358,9 @@ describe("useQuizSession state transitions", () => {
     [1, 2, 3, 4, 5].forEach((id) => act(() => hook.result.current.select(id, 0)));
     api.submitAnswerBatch.mockRejectedValueOnce(apiError(401, "expired"));
     await act(async () => hook.result.current.saveAnswers());
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission({ revision: 2 }));
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(
+      makeBootstrap("owner", makeSubmission({ revision: 2 })),
+    );
     await act(async () => hook.result.current.login("参加者", "1234"));
     await waitFor(() =>
       expect(hook.result.current.phase).toMatchObject({
@@ -1118,7 +1382,7 @@ describe("useQuizSession state transitions", () => {
     api.submitAnswerBatch.mockRejectedValueOnce(apiError(401, "expired"));
     await act(async () => hook.result.current.saveAnswers());
     const questionCallCount = api.fetchExamQuestions.mock.calls.length;
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", null));
     await act(async () => hook.result.current.login("参加者", "1234"));
     await waitFor(() =>
       expect(hook.result.current.phase).toMatchObject({
@@ -1136,7 +1400,9 @@ describe("useQuizSession state transitions", () => {
     api.submitAnswerBatch.mockRejectedValueOnce(apiError(401, "expired"));
     await act(async () => hook.result.current.saveAnswers());
 
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission({ revision: 2 }));
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(
+      makeBootstrap("owner", makeSubmission({ revision: 2 })),
+    );
     await act(async () => hook.result.current.login("参加者", "1234"));
     await waitFor(() =>
       expect(hook.result.current.phase).toMatchObject({
@@ -1148,11 +1414,14 @@ describe("useQuizSession state transitions", () => {
     api.fetchAnswerSubmission.mockRejectedValueOnce(apiError(401, "expired"));
     await act(async () => hook.result.current.refreshSavedAnswers());
     expect(hook.result.current.access.kind).toBe("reauthentication");
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", null));
     await act(async () => hook.result.current.login("参加者", "1234"));
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
-    expect(hook.result.current.phase).toMatchObject({ kind: "answering", retryRequired: false });
-    expect(hook.result.current.phase).toMatchObject({ message: undefined });
+    const phase = hook.result.current.phase;
+    expect(phase.kind).toBe("answering");
+    if (phase.kind !== "answering") throw new Error("Expected answering phase");
+    expect(phase.retryRequired).toBeFalsy();
+    expect(phase.message).toBeUndefined();
   });
 
   it("resumes without a retry message when the saved revision is unchanged", async () => {
@@ -1161,7 +1430,9 @@ describe("useQuizSession state transitions", () => {
     api.submitAnswerBatch.mockRejectedValueOnce(apiError(401, "expired"));
     await act(async () => hook.result.current.saveAnswers());
 
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission({ revision: 2 }));
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(
+      makeBootstrap("owner", makeSubmission({ revision: 2 })),
+    );
     await act(async () => hook.result.current.login("参加者", "1234"));
     await waitFor(() =>
       expect(hook.result.current.phase).toMatchObject({
@@ -1172,11 +1443,16 @@ describe("useQuizSession state transitions", () => {
 
     api.fetchAnswerSubmission.mockRejectedValueOnce(apiError(401, "expired"));
     await act(async () => hook.result.current.refreshSavedAnswers());
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission({ revision: 2 }));
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(
+      makeBootstrap("owner", makeSubmission({ revision: 2 })),
+    );
     await act(async () => hook.result.current.login("参加者", "1234"));
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
-    expect(hook.result.current.phase).toMatchObject({ kind: "answering", retryRequired: false });
-    expect(hook.result.current.phase).toMatchObject({ message: undefined });
+    const phase = hook.result.current.phase;
+    expect(phase.kind).toBe("answering");
+    if (phase.kind !== "answering") throw new Error("Expected answering phase");
+    expect(phase.retryRequired).toBeFalsy();
+    expect(phase.message).toBeUndefined();
   });
 
   it("does not allow edits while a retry is required", async () => {
@@ -1358,7 +1634,8 @@ describe("useQuizSession state transitions", () => {
     expect(hook.result.current.selections).toEqual({});
     expect(hook.result.current.freeResponses).toEqual({});
     expect(api.fetchAnswerSubmission).toHaveBeenCalledTimes(previousRefreshCount + 1);
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledOnce();
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledOnce();
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledWith("owner");
   });
 
   it("drains a conflict reconciliation response that resolves after unmount", async () => {
@@ -1621,7 +1898,9 @@ describe("useQuizSession state transitions", () => {
     await act(async () => hook.result.current.saveAnswers());
     expect(hook.result.current.access.kind).toBe("reauthentication");
     api.createParticipantSession.mockResolvedValueOnce({ participant: otherParticipant });
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(
+      makeBootstrap("owner", null, false, otherParticipant),
+    );
     await act(async () => hook.result.current.login("別の参加者", "1234"));
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
     expect(hook.result.current.access).toMatchObject({
@@ -1639,6 +1918,7 @@ describe("useQuizSession state transitions", () => {
       JSON.stringify(makeAssistedDraft()),
     );
     api.fetchParticipantSession.mockResolvedValue(participant);
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     api.fetchAssistedParticipant.mockRejectedValueOnce(apiError(401, "expired"));
 
     const hook = renderHook(() => useQuizSession());
@@ -1653,34 +1933,52 @@ describe("useQuizSession state transitions", () => {
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
   });
 
-  it("retains an assisted draft when startup status fails only from a transient network error", async () => {
+  it("retains an assisted draft after a transient bootstrap failure and retries the saved scope", async () => {
     window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
     const draft = makeAssistedDraft();
     window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
     api.fetchParticipantSession.mockResolvedValue(participant);
-    api.fetchAssistedParticipant.mockRejectedValueOnce(new Error("offline"));
+    api.fetchAssistedParticipant.mockResolvedValueOnce({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("offline"));
 
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
 
-    expect(hook.result.current.answerMode).toBe("owner");
-    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).not.toBeNull();
+    expect(hook.result.current.answerMode).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBe(
+      JSON.stringify(draft),
+    );
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    expect(hook.result.current.selections).toEqual(draft.selections);
   });
 
-  it("purges an assisted draft after an explicit startup 403", async () => {
+  it("retains an assisted draft and retries after an explicit bootstrap 403", async () => {
     window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
     window.sessionStorage.setItem(
       "stcirt-assisted-answer-draft",
       JSON.stringify(makeAssistedDraft()),
     );
     api.fetchParticipantSession.mockResolvedValue(participant);
-    api.fetchAssistedParticipant.mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.fetchAssistedParticipant.mockResolvedValueOnce({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
 
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
 
-    expect(hook.result.current.answerMode).toBe("owner");
-    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(hook.result.current.answerMode).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).not.toBeNull();
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    expect(hook.result.current.selections).toEqual(makeAssistedDraft().selections);
   });
 
   it("purges an assisted draft when no participant session remains", async () => {
@@ -1689,6 +1987,7 @@ describe("useQuizSession state transitions", () => {
       "stcirt-assisted-answer-draft",
       JSON.stringify(makeAssistedDraft()),
     );
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
     api.fetchParticipantSession.mockResolvedValue(null);
 
     const hook = renderHook(() => useQuizSession());
@@ -1700,8 +1999,9 @@ describe("useQuizSession state transitions", () => {
 
   it("starts a name-only assisted answer, saves it in its own scope, edits it, and returns to the owner", async () => {
     const hook = await enterOwnerComplete();
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap
+      .mockResolvedValueOnce(makeBootstrap("assisted"))
+      .mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
 
     act(() => hook.result.current.openAssistedLogin());
     expect(hook.result.current.assistedScreen).toBe("login");
@@ -1709,7 +2009,7 @@ describe("useQuizSession state transitions", () => {
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
 
     expect(api.createAssistedParticipant).toHaveBeenCalledWith("代理回答者");
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("assisted");
+    expect(api.fetchAnswerBootstrap).toHaveBeenLastCalledWith("assisted");
     expect(hook.result.current).toMatchObject({
       answerMode: "assisted",
       assistedScreen: "active",
@@ -1730,7 +2030,8 @@ describe("useQuizSession state transitions", () => {
     );
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
 
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("owner");
+    expect(api.fetchAnswerBootstrap).toHaveBeenLastCalledWith("owner");
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
   });
 
@@ -1741,13 +2042,13 @@ describe("useQuizSession state transitions", () => {
       eligible: false,
     });
     const hook = await enterOwnerComplete();
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("assisted"));
 
     await act(async () => hook.result.current.resumeAssisted());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
 
     expect(api.createAssistedParticipant).not.toHaveBeenCalled();
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("assisted");
+    expect(api.fetchAnswerBootstrap).toHaveBeenLastCalledWith("assisted");
     expect(hook.result.current).toMatchObject({
       answerMode: "assisted",
       assistedParticipant: {
@@ -1778,10 +2079,10 @@ describe("useQuizSession state transitions", () => {
         { questionId: 5, answerKind: "legacy" as const, selectedIndex: 0, freeText: null },
       ],
     });
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("assisted", saved));
     api.fetchExamQuestions.mockResolvedValueOnce(
       [1, 2, 3, 4, 5].map((id) => question(id, id === 5 ? "freeText" : "selected")),
     );
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(saved);
     await act(async () => hook.result.current.resumeAssisted());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
     expect(hook.result.current.autoEditAssisted).toBe(true);
@@ -1798,7 +2099,7 @@ describe("useQuizSession state transitions", () => {
     expect(hook.result.current.selections).toEqual(hook.result.current.savedSelections);
     expect(hook.result.current.answeredCount).toBe(4);
     expect(hook.result.current.legacyAnswerIds).toEqual([5]);
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("assisted");
+    expect(api.fetchAnswerBootstrap).toHaveBeenLastCalledWith("assisted");
     act(() => hook.result.current.select(1, 0));
     expect(
       JSON.parse(window.sessionStorage.getItem("stcirt-assisted-answer-draft")!).legacyAnswerIds,
@@ -1830,10 +2131,10 @@ describe("useQuizSession state transitions", () => {
         },
       ],
     });
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("assisted", saved));
     api.fetchExamQuestions.mockResolvedValueOnce(
       [1, 2, 3, 4, 5].map((id) => question(id, id === 5 ? "freeText" : "selected")),
     );
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(saved);
 
     await act(async () => hook.result.current.resumeAssisted());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
@@ -1853,10 +2154,10 @@ describe("useQuizSession state transitions", () => {
       eligible: false,
     });
     const hook = await enterOwnerComplete();
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
-    api.fetchLatestAnswerSubmission
-      .mockRejectedValueOnce(new Error("owner reload failed"))
-      .mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap
+      .mockResolvedValueOnce(makeBootstrap("assisted"))
+      .mockRejectedValueOnce(new Error("owner reload failed"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
     api.submitAnswerBatch.mockImplementationOnce(async ({ submissionId: currentId }) => ({
       submissionId: currentId,
       revision: 1,
@@ -1898,15 +2199,15 @@ describe("useQuizSession state transitions", () => {
         eligible: false,
       });
       const hook = await enterOwnerComplete();
-      api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+      api.fetchAnswerBootstrap
+        .mockResolvedValueOnce(makeBootstrap("assisted"))
+        .mockResolvedValueOnce(makeBootstrap("owner", invalidSubmission));
 
       await act(async () => hook.result.current.resumeAssisted());
       await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
       for (const quiz of hook.result.current.quizzes) {
         act(() => hook.result.current.select(quiz.question.id, 0));
       }
-
-      api.fetchLatestAnswerSubmission.mockResolvedValueOnce(invalidSubmission);
 
       await act(async () => hook.result.current.saveAnswers());
       await waitFor(() => expect(hook.result.current.phase.kind).toBe("owner-return-error"));
@@ -1917,7 +2218,7 @@ describe("useQuizSession state transitions", () => {
           "代理回答は保存されましたが、自分の保存済み回答を確認できませんでした",
         ),
       });
-      expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
+      expect(api.fetchExamQuestions).not.toHaveBeenCalled();
       expect(api.submitAnswerBatch).toHaveBeenCalledWith(expect.any(Object), "assisted");
     },
   );
@@ -1929,10 +2230,10 @@ describe("useQuizSession state transitions", () => {
       eligible: false,
     });
     const hook = await enterOwnerComplete();
-    api.fetchLatestAnswerSubmission
-      .mockResolvedValueOnce(null)
+    api.fetchAnswerBootstrap
+      .mockResolvedValueOnce(makeBootstrap("assisted"))
       .mockRejectedValueOnce(apiError(401, "expired"))
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce(makeBootstrap("owner", null, false, otherParticipant));
 
     await act(async () => hook.result.current.resumeAssisted());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
@@ -1956,7 +2257,7 @@ describe("useQuizSession state transitions", () => {
         answerMode: "owner",
       }),
     );
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("owner");
+    expect(api.fetchAnswerBootstrap).toHaveBeenLastCalledWith("owner");
   });
 
   it("reauthenticates after an owner reload 401 and retries owner status without resubmitting assisted answers", async () => {
@@ -1966,10 +2267,10 @@ describe("useQuizSession state transitions", () => {
       eligible: false,
     });
     const hook = await enterOwnerComplete();
-    api.fetchLatestAnswerSubmission
-      .mockResolvedValueOnce(null)
+    api.fetchAnswerBootstrap
+      .mockResolvedValueOnce(makeBootstrap("assisted"))
       .mockRejectedValueOnce(apiError(401, "expired"))
-      .mockResolvedValueOnce(makeSubmission());
+      .mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
     api.submitAnswerBatch.mockImplementationOnce(async ({ submissionId: currentId }) => ({
       submissionId: currentId,
       revision: 1,
@@ -1995,9 +2296,38 @@ describe("useQuizSession state transitions", () => {
 
     await act(async () => hook.result.current.login("参加者", "1234"));
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("owner");
+    expect(api.fetchAnswerBootstrap).toHaveBeenLastCalledWith("owner");
     expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
     expect(hook.result.current.answerMode).toBe("owner");
+  });
+
+  it("clears assisted recovery after an owner reload 403", async () => {
+    api.fetchAssistedParticipant.mockResolvedValue({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    const hook = await enterOwnerComplete();
+    api.fetchAnswerBootstrap
+      .mockResolvedValueOnce(makeBootstrap("assisted"))
+      .mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.submitAnswerBatch.mockImplementationOnce(async ({ submissionId: currentId }) => ({
+      submissionId: currentId,
+      revision: 1,
+    }));
+
+    await act(async () => hook.result.current.resumeAssisted());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    for (const quiz of hook.result.current.quizzes) {
+      act(() => hook.result.current.select(quiz.question.id, 0));
+    }
+    await act(async () => hook.result.current.saveAnswers());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("owner-return-error"));
+
+    expect(hook.result.current.answerMode).toBe("owner");
+    expect(hook.result.current.access).toMatchObject({ kind: "ready", participant });
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
   });
 
   it("does not treat a mismatched save response as assisted success or return to owner", async () => {
@@ -2010,8 +2340,11 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: true,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockResolvedValue(
-      makeSubmission({ submissionId: draft.submissionId, revision: draft.revision }),
+    api.fetchAnswerBootstrap.mockResolvedValue(
+      makeBootstrap(
+        "assisted",
+        makeSubmission({ submissionId: draft.submissionId, revision: draft.revision }),
+      ),
     );
     api.submitAnswerBatch.mockResolvedValueOnce({
       submissionId: "00000000-0000-4000-8000-000000000099",
@@ -2030,14 +2363,15 @@ describe("useQuizSession state transitions", () => {
       phase: { kind: "complete" },
     });
     expect(hook.result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledTimes(1);
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledWith("assisted");
+    expect(api.fetchLatestAnswerSubmission).not.toHaveBeenCalled();
     expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).not.toBeNull();
 
     await act(async () => hook.result.current.editAnswers(() => true));
     await act(async () => hook.result.current.saveAnswers());
     expect(hook.result.current.phase.kind).toBe("complete");
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledTimes(1);
+    expect(api.fetchLatestAnswerSubmission).not.toHaveBeenCalled();
     expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
     expect(hook.result.current.answerMode).toBe("assisted");
   });
@@ -2054,9 +2388,14 @@ describe("useQuizSession state transitions", () => {
       eligible: true,
     });
     const hook = await enterOwnerComplete();
-    api.fetchLatestAnswerSubmission
-      .mockResolvedValueOnce(makeSubmission({ submissionId: draft.submissionId, revision: 2 }))
-      .mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap
+      .mockResolvedValueOnce(
+        makeBootstrap(
+          "assisted",
+          makeSubmission({ submissionId: draft.submissionId, revision: 2 }),
+        ),
+      )
+      .mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
     api.submitAnswerBatch.mockResolvedValueOnce({
       submissionId: draft.submissionId,
       revision: 3,
@@ -2079,7 +2418,7 @@ describe("useQuizSession state transitions", () => {
       expect.objectContaining({ submissionId: draft.submissionId, expectedRevision: 2 }),
       "assisted",
     );
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenLastCalledWith("owner");
+    expect(api.fetchAnswerBootstrap).toHaveBeenLastCalledWith("owner");
     expect(api.submitAnswerBatch).toHaveBeenCalledTimes(1);
   });
 
@@ -2096,11 +2435,14 @@ describe("useQuizSession state transitions", () => {
       eligible: false,
     });
     api.fetchExamQuestions.mockResolvedValue([1, 2, 3, 4, 5].map((id) => question(id)));
-    api.fetchLatestAnswerSubmission
+    api.fetchAnswerBootstrap
       .mockResolvedValueOnce(
-        makeSubmission({ submissionId: makeAssistedDraft().submissionId, revision: 3 }),
+        makeBootstrap(
+          "assisted",
+          makeSubmission({ submissionId: makeAssistedDraft().submissionId, revision: 3 }),
+        ),
       )
-      .mockResolvedValueOnce(makeSubmission());
+      .mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
 
     const hook = renderHook(() => useQuizSession());
     await waitFor(() =>
@@ -2111,8 +2453,8 @@ describe("useQuizSession state transitions", () => {
     );
     expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenNthCalledWith(1, "assisted");
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenNthCalledWith(2, "owner");
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(1, "assisted");
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(2, "owner");
   });
 
   it("restores an assisted draft on revisit, persists edits, and removes it after save", async () => {
@@ -2125,7 +2467,6 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: false,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockResolvedValue(null);
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
 
@@ -2137,7 +2478,8 @@ describe("useQuizSession state transitions", () => {
       submissionId: draft.submissionId,
       revision: draft.revision,
     });
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledWith("assisted");
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledWith("assisted");
+    expect(api.fetchLatestAnswerSubmission).not.toHaveBeenCalled();
     expect(api.fetchExamQuestions).not.toHaveBeenCalled();
 
     for (const id of [2, 3, 4, 5]) act(() => hook.result.current.select(id, 1));
@@ -2170,7 +2512,7 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: false,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockResolvedValue(null);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("assisted"));
 
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
@@ -2209,13 +2551,13 @@ describe("useQuizSession state transitions", () => {
         hasSubmission: false,
         eligible: false,
       });
-      api.fetchLatestAnswerSubmission.mockResolvedValue(null);
+      api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("assisted"));
 
       const hook = renderHook(() => useQuizSession());
       await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
 
       expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
-      expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
+      expect(api.fetchExamQuestions).not.toHaveBeenCalled();
       expect(hook.result.current.selections).toEqual({});
     },
   );
@@ -2244,8 +2586,11 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: true,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockResolvedValue(
-      makeSubmission({ submissionId: draft.submissionId, revision: draft.revision }),
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(
+      makeBootstrap(
+        "assisted",
+        makeSubmission({ submissionId: draft.submissionId, revision: draft.revision }),
+      ),
     );
 
     const hook = renderHook(() => useQuizSession());
@@ -2283,7 +2628,7 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: false,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockResolvedValue(null);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("assisted"));
 
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
@@ -2312,25 +2657,25 @@ describe("useQuizSession state transitions", () => {
       eligible: false,
     });
     const hook = await enterOwnerComplete();
+    const bootstrapCount = api.fetchAnswerBootstrap.mock.calls.length;
     await act(async () => hook.result.current.switchParticipant());
-    const submissionLookupCount = api.fetchLatestAnswerSubmission.mock.calls.length;
 
     await act(async () => hook.result.current.resumeAssisted());
 
     expect(hook.result.current.access.kind).toBe("login");
     expect(hook.result.current.answerMode).toBe("owner");
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledTimes(submissionLookupCount);
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledTimes(bootstrapCount);
   });
 
   it("does not attempt to resume when no linked participant exists", async () => {
     const hook = await enterOwnerComplete();
-    const submissionLookupCount = api.fetchLatestAnswerSubmission.mock.calls.length;
+    const bootstrapCount = api.fetchAnswerBootstrap.mock.calls.length;
 
     await act(async () => hook.result.current.resumeAssisted());
 
     expect(hook.result.current.phase.kind).toBe("complete");
     expect(hook.result.current.answerMode).toBe("owner");
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledTimes(submissionLookupCount);
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledTimes(bootstrapCount);
     expect(api.createAssistedParticipant).not.toHaveBeenCalled();
   });
 
@@ -2371,7 +2716,7 @@ describe("useQuizSession state transitions", () => {
 
   it("does not switch away from assisted answers when the owner session has expired", async () => {
     const hook = await enterOwnerComplete();
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("assisted"));
     act(() => hook.result.current.openAssistedLogin());
     await act(async () => hook.result.current.startAssisted("代理回答者"));
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
@@ -2395,7 +2740,7 @@ describe("useQuizSession state transitions", () => {
     async (outcome) => {
       const pending = deferred<AssistedParticipantState>();
       api.fetchParticipantSession.mockResolvedValue(participant);
-      api.fetchLatestAnswerSubmission.mockResolvedValue(makeSubmission());
+      api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
       api.fetchAssistedParticipant.mockReturnValueOnce(pending.promise);
       const hook = renderHook(() => useQuizSession());
       await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
@@ -2432,8 +2777,11 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: true,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockResolvedValue(
-      makeSubmission({ submissionId: draft.submissionId, revision: draft.revision }),
+    api.fetchAnswerBootstrap.mockResolvedValue(
+      makeBootstrap(
+        "assisted",
+        makeSubmission({ submissionId: draft.submissionId, revision: draft.revision }),
+      ),
     );
 
     const hook = renderHook(() => useQuizSession());
@@ -2455,8 +2803,11 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: true,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockResolvedValue(
-      makeSubmission({ submissionId: draft.submissionId, revision: draft.revision + 1 }),
+    api.fetchAnswerBootstrap.mockResolvedValue(
+      makeBootstrap(
+        "assisted",
+        makeSubmission({ submissionId: draft.submissionId, revision: draft.revision + 1 }),
+      ),
     );
 
     const hook = renderHook(() => useQuizSession());
@@ -2475,29 +2826,310 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: false,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAnswerBootstrap
+      .mockRejectedValueOnce(apiError(404, "assisted participant not found"))
+      .mockResolvedValueOnce(makeBootstrap("owner", makeSubmission()));
 
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
 
     expect(hook.result.current.answerMode).toBe("owner");
     expect(hook.result.current.assistedScreen).toBe("closed");
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledWith("owner");
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(2, "owner");
     expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
   });
 
-  it("falls back to the owner scope when restoring an assisted link fails", async () => {
+  it("keeps the assisted scope and draft when assisted bootstrap fails transiently", async () => {
+    const draft = makeCurrentAssistedDraft();
     window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
     api.fetchParticipantSession.mockResolvedValue(participant);
-    api.fetchAssistedParticipant.mockRejectedValueOnce(new Error("offline"));
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    api.fetchAssistedParticipant.mockResolvedValueOnce({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(new Error("assisted bootstrap failed"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
 
     const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+
+    expect(hook.result.current.answerMode).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBe(
+      JSON.stringify(draft),
+    );
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledOnce();
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+    expect(hook.result.current.selections).toEqual(draft.selections);
+    expect(hook.result.current.freeResponses).toEqual(draft.freeResponses);
+    expect(hook.result.current.answeredCount).toBe(2);
+  });
+
+  it("clears assisted scope and draft after a non-auth bootstrap failure with no session", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem(
+      "stcirt-assisted-answer-draft",
+      JSON.stringify(makeCurrentAssistedDraft()),
+    );
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.fetchParticipantSession.mockResolvedValueOnce(null);
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
 
     expect(hook.result.current.answerMode).toBe("owner");
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledWith("owner");
-    expect(api.fetchAssistedParticipant).toHaveBeenCalled();
+    expect(hook.result.current.assistedScreen).toBe("closed");
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(api.fetchAssistedParticipant).not.toHaveBeenCalled();
+  });
+
+  it("keeps an assisted draft and shows a retry message when non-auth recovery cannot verify the session", async () => {
+    const draft = makeCurrentAssistedDraft();
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.fetchParticipantSession.mockRejectedValueOnce(new Error("offline"));
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
+
+    expect(hook.result.current.access).toMatchObject({
+      kind: "login",
+      message: expect.stringContaining("通信状態"),
+    });
+    expect(hook.result.current.answerMode).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBe("assisted");
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBe(
+      JSON.stringify(draft),
+    );
+  });
+
+  it.each([
+    ["resolves", "resolve"],
+    ["rejects", "reject"],
+  ] as const)("ignores non-auth session lookup that %s after unmount", async (_label, outcome) => {
+    const pendingSession = deferred<Participant | null>();
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.fetchParticipantSession.mockReturnValueOnce(pendingSession.promise);
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(api.fetchParticipantSession).toHaveBeenCalledOnce());
+    hook.unmount();
+
+    if (outcome === "resolve") {
+      pendingSession.resolve(participant);
+      await act(async () => pendingSession.promise);
+    } else {
+      pendingSession.reject(new Error("offline"));
+      await act(async () => {
+        await expect(pendingSession.promise).rejects.toThrow("offline");
+      });
+    }
+    expect(api.fetchAssistedParticipant).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [401, "resolves"],
+    [401, "rejects"],
+    [403, "resolves"],
+    [403, "rejects"],
+  ] as const)(
+    "ignores assisted-status request that %s after a bootstrap %i and unmount",
+    async (status, outcome) => {
+      window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+      api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(status, "bootstrap failure"));
+      api.fetchParticipantSession.mockResolvedValueOnce(participant);
+      const pendingStatus = deferred<AssistedParticipantState>();
+      api.fetchAssistedParticipant.mockReturnValueOnce(pendingStatus.promise);
+
+      const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(api.fetchAssistedParticipant).toHaveBeenCalledOnce());
+      hook.unmount();
+
+      if (outcome === "resolves") {
+        pendingStatus.resolve({
+          participant: assistedParticipant,
+          hasSubmission: false,
+          eligible: false,
+        });
+        await act(async () => pendingStatus.promise);
+      } else {
+        pendingStatus.reject(new Error("offline"));
+        await act(async () => {
+          await expect(pendingStatus.promise).rejects.toThrow("offline");
+        });
+      }
+    },
+  );
+
+  it("keeps assisted reauthentication when the optional status check fails", async () => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAssistedParticipant.mockRejectedValueOnce(new Error("offline"));
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.access.kind).toBe("reauthentication"));
+
+    expect(hook.result.current.answerMode).toBe("assisted");
+    expect(hook.result.current.phase.kind).toBe("ready");
+  });
+
+  it("restores an assisted free-text draft when retry finds no submission", async () => {
+    const draft = makeCurrentAssistedDraft();
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAssistedParticipant.mockResolvedValueOnce({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+
+    expect(hook.result.current.freeResponses).toEqual(draft.freeResponses);
+    expect(hook.result.current.answeredCount).toBe(2);
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+  });
+
+  it("blocks assisted restoration when retry finds a matching submission without integrity", async () => {
+    const draft = makeCurrentAssistedDraft();
+    const { restoreIntegrity: _restoreIntegrity, ...submissionWithoutIntegrity } = makeSubmission({
+      submissionId: draft.submissionId,
+      revision: draft.revision,
+    });
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAssistedParticipant.mockResolvedValueOnce({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(submissionWithoutIntegrity);
+
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("complete"));
+
+    expect(hook.result.current.restoreError).toContain("整合性を確認できません");
+    expect(hook.result.current.saveConfirmed).toBe(false);
+    expect(hook.result.current.selections).toEqual({});
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBe(
+      JSON.stringify(draft),
+    );
+  });
+
+  it("restores an assisted draft when retry finds its matching saved submission", async () => {
+    const draft = makeCurrentAssistedDraft();
+    const savedSubmission = makeSubmission({
+      submissionId: draft.submissionId,
+      revision: draft.revision,
+      answers: [
+        ...[1, 2, 3, 4].map((questionId) => ({
+          questionId,
+          answerKind: "selected" as const,
+          selectedIndex: 0,
+          freeText: null,
+        })),
+        {
+          questionId: 5,
+          answerKind: "freeText" as const,
+          selectedIndex: null,
+          freeText: "Q5 response",
+        },
+      ],
+    });
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAssistedParticipant.mockResolvedValueOnce({
+      participant: assistedParticipant,
+      hasSubmission: true,
+      eligible: false,
+    });
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(savedSubmission);
+
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+
+    expect(hook.result.current.submissionId).toBe(draft.submissionId);
+    expect(hook.result.current.revision).toBe(draft.revision);
+    expect(hook.result.current.freeResponses).toEqual(draft.freeResponses);
+    expect(hook.result.current.answeredCount).toBe(2);
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+  });
+
+  it("returns to owner bootstrap when retry finds a different saved assisted submission", async () => {
+    const draft = makeCurrentAssistedDraft();
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    api.fetchAnswerBootstrap
+      .mockRejectedValueOnce(apiError(403, "forbidden"))
+      .mockResolvedValueOnce(makeBootstrap("owner"));
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAssistedParticipant.mockResolvedValueOnce({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(
+      makeSubmission({ submissionId: "00000000-0000-4000-8000-000000000099", revision: 3 }),
+    );
+
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
+
+    expect(hook.result.current.answerMode).toBe("owner");
+    expect(hook.result.current.quizzes).toHaveLength(5);
+    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledOnce();
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(1, "assisted");
+    expect(api.fetchAnswerBootstrap).toHaveBeenNthCalledWith(2, "owner");
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+  });
+
+  it("ignores a failed assisted submission retry after unmount", async () => {
+    api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(403, "forbidden"));
+    api.fetchParticipantSession.mockResolvedValueOnce(participant);
+    api.fetchAssistedParticipant.mockResolvedValueOnce({
+      participant: assistedParticipant,
+      hasSubmission: false,
+      eligible: false,
+    });
+    const hook = renderHook(() => useQuizSession());
+    await waitFor(() => expect(hook.result.current.phase.kind).toBe("submission-error"));
+
+    const pendingLatest = deferred<AnswerSubmission | null>();
+    api.fetchLatestAnswerSubmission.mockReturnValueOnce(pendingLatest.promise);
+    act(() => hook.result.current.retrySubmissionCheck());
+    await waitFor(() => expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledOnce());
+    hook.unmount();
+    pendingLatest.reject(new Error("offline"));
+    await act(async () => {
+      await expect(pendingLatest.promise).rejects.toThrow("offline");
+    });
   });
 
   it("keeps the owner completion usable after a transient assisted status failure", async () => {
@@ -2608,14 +3240,14 @@ describe("useQuizSession state transitions", () => {
       hasSubmission: false,
       eligible: false,
     });
-    api.fetchLatestAnswerSubmission.mockResolvedValue(null);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("assisted"));
 
     const hook = renderHook(() => useQuizSession());
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
 
     expect(hook.result.current.answerMode).toBe("assisted");
     expect(hook.result.current.selections).toEqual({});
-    expect(api.fetchExamQuestions).toHaveBeenCalledOnce();
+    expect(api.fetchExamQuestions).not.toHaveBeenCalled();
   });
 
   it("turns an assisted status 401 into owner reauthentication", async () => {
@@ -2693,6 +3325,7 @@ describe("useQuizSession state transitions", () => {
         "stcirt-assisted-answer-draft",
         JSON.stringify(makeAssistedDraft()),
       );
+      api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
       api.fetchParticipantSession.mockRejectedValueOnce(apiError(status, "unauthorized"));
 
       const hook = renderHook(() => useQuizSession());
@@ -2703,18 +3336,31 @@ describe("useQuizSession state transitions", () => {
     },
   );
 
-  it("retains an assisted draft when participant-session lookup fails transiently", async () => {
-    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
-    const draft = makeAssistedDraft();
-    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
-    api.fetchParticipantSession.mockRejectedValueOnce(new Error("offline"));
+  it.each([
+    ["a network error", new Error("offline")],
+    ["an HTTP 503", apiError(503, "unavailable")],
+  ])(
+    "retains an assisted draft when participant-session lookup fails with %s",
+    async (_label, lookupError) => {
+      window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+      const draft = makeAssistedDraft();
+      window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+      api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "expired"));
+      api.fetchParticipantSession.mockRejectedValueOnce(lookupError);
 
-    const hook = renderHook(() => useQuizSession());
-    await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
+      const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
 
-    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBe("assisted");
-    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).not.toBeNull();
-  });
+      expect(hook.result.current.access).toMatchObject({
+        kind: "login",
+        message: expect.stringContaining("通信状態"),
+      });
+      expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBe("assisted");
+      expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBe(
+        JSON.stringify(draft),
+      );
+    },
+  );
 
   it("clears the assisted login error when returning to the completed owner answer", async () => {
     const hook = await enterOwnerComplete();
@@ -2758,7 +3404,7 @@ describe("useQuizSession state transitions", () => {
     });
     expect(api.createAssistedParticipant).toHaveBeenCalledOnce();
     registration.resolve({ participant: assistedParticipant, hasSubmission: false });
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(null);
+    api.fetchAnswerBootstrap.mockResolvedValueOnce(makeBootstrap("assisted"));
     await act(async () => starting);
     await waitFor(() => expect(hook.result.current.phase.kind).toBe("answering"));
     expect(hook.result.current.answerMode).toBe("assisted");
@@ -2778,7 +3424,7 @@ describe("useQuizSession state transitions", () => {
     registration.resolve({ participant: assistedParticipant, hasSubmission: false });
     await starting;
 
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledTimes(1);
-    expect(api.fetchLatestAnswerSubmission).toHaveBeenCalledWith("owner");
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledTimes(1);
+    expect(api.fetchAnswerBootstrap).toHaveBeenCalledWith("owner");
   });
 });

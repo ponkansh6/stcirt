@@ -184,6 +184,56 @@ async function mockParticipantSession(
     });
   });
 
+  await page.route("**/api/answers/bootstrap**", async (route) => {
+    const url = new URL(route.request().url());
+    const mode = url.searchParams.get("mode");
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    if (!activeParticipant) {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Participant session required" }),
+      });
+      return;
+    }
+    if (mode === "assisted") {
+      await route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Assisted participant not found" }),
+      });
+      return;
+    }
+    if (mode !== "owner") {
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Invalid answer bootstrap mode" }),
+      });
+      return;
+    }
+    const submission = activeLatestSubmission
+      ? {
+          ...activeLatestSubmission,
+          restoreIntegrity: restoreIntegrity(activeLatestSubmission.answers),
+        }
+      : null;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        mode: "owner",
+        owner: activeParticipant,
+        participant: activeParticipant,
+        submission,
+        ...(submission === null ? { questions: [1, 2, 3, 4, 5].map(questionFor) } : {}),
+      }),
+    });
+  });
+
   await page.route("**/api/answers/latest", async (route) => {
     await route.fulfill({
       status: 200,
@@ -589,7 +639,7 @@ async function answerQuestion(page: Page, id: number, choice: string) {
   }
 }
 
-test("@chromium participant login follows native Tab/Enter and session request order", async ({
+test("@chromium participant login follows native Tab/Enter and bootstrap request order", async ({
   page,
 }) => {
   const requestTrace = captureApiRequests(page);
@@ -623,20 +673,49 @@ test("@chromium participant login follows native Tab/Enter and session request o
     }),
   ).toBeVisible();
   expect(loginRequests).toEqual([{ name: "Aki", pin: "0123" }]);
-  expect(questionRequests).toEqual(["/api/questions/batch"]);
+  expect(questionRequests).toEqual([]);
+  const unauthenticatedBootstrap = requestIndex(
+    requestTrace,
+    "GET",
+    "/api/answers/bootstrap?mode=owner",
+  );
   const session = requestIndex(requestTrace, "GET", "/api/participants/session");
   const login = requestIndex(requestTrace, "POST", "/api/participants/session");
-  const latest = requestIndex(requestTrace, "GET", "/api/answers/latest");
-  const questions = requestIndex(requestTrace, "GET", "/api/questions/batch");
-  expect(session).toBeGreaterThanOrEqual(0);
+  const ownerBootstrap = requestIndex(
+    requestTrace,
+    "GET",
+    "/api/answers/bootstrap?mode=owner",
+    login + 1,
+  );
+  expect(unauthenticatedBootstrap).toBeGreaterThanOrEqual(0);
+  expect(session).toBeGreaterThan(unauthenticatedBootstrap);
   expect(login).toBeGreaterThan(session);
-  expect(latest).toBeGreaterThan(login);
-  expect(questions).toBeGreaterThan(latest);
+  expect(ownerBootstrap).toBeGreaterThan(login);
+  const ownerBootstrapCalls = requestTrace.filter((request) =>
+    request.path.startsWith("/api/answers/bootstrap"),
+  );
+  const initialOwnerBootstrapCalls = requestTrace.filter(
+    (request, index) => index < login && request.path.startsWith("/api/answers/bootstrap"),
+  );
+  // Next StrictMode replays the initial mount effect in the dev E2E build.
+  expect(initialOwnerBootstrapCalls.length).toBeGreaterThanOrEqual(1);
+  expect(initialOwnerBootstrapCalls.length).toBeLessThanOrEqual(2);
+  expect(
+    requestTrace.filter(
+      (request, index) => index > login && request.path.startsWith("/api/answers/bootstrap"),
+    ),
+  ).toHaveLength(1);
+  expect(
+    ownerBootstrapCalls.every((request) => request.path === "/api/answers/bootstrap?mode=owner"),
+  ).toBe(true);
+  expect(requestIndex(requestTrace, "GET", "/api/answers/latest")).toBe(-1);
+  expect(requestIndex(requestTrace, "GET", "/api/questions/batch")).toBe(-1);
 });
 
 test("@chromium saved revisit defers one question batch until correction starts", async ({
   page,
 }) => {
+  const requestTrace = captureApiRequests(page);
   const questionRequests: string[] = [];
   await mockParticipantSession(page, "Aki", {
     submissionId: "00000000-0000-4000-8000-000000000087",
@@ -661,10 +740,75 @@ test("@chromium saved revisit defers one question batch until correction starts"
 
   await expect(page.getByRole("heading", { level: 1, name: "回答済み" })).toBeVisible();
   expect(questionRequests).toEqual([]);
+  const ownerBootstrapCalls = requestTrace.filter((request) =>
+    request.path.startsWith("/api/answers/bootstrap"),
+  );
+  // The dev E2E build can replay the startup effect under Next StrictMode.
+  expect(ownerBootstrapCalls.length).toBeGreaterThanOrEqual(1);
+  expect(ownerBootstrapCalls.length).toBeLessThanOrEqual(2);
+  expect(
+    ownerBootstrapCalls.every((request) => request.path === "/api/answers/bootstrap?mode=owner"),
+  ).toBe(true);
+  expect(requestIndex(requestTrace, "GET", "/api/participants/session")).toBe(-1);
+  expect(requestIndex(requestTrace, "GET", "/api/answers/latest")).toBe(-1);
+  expect(requestIndex(requestTrace, "GET", "/api/questions/batch")).toBe(-1);
 
   await page.getByRole("button", { name: "回答を修正する", exact: true }).click();
   await expect(page.locator('section[aria-labelledby="question-title-1"]')).toBeVisible();
   expect(questionRequests).toEqual(["/api/questions/batch"]);
+});
+
+test("@chromium direct assisted-new startup uses bootstrap with its public questions", async ({
+  page,
+}) => {
+  const requestTrace = captureApiRequests(page);
+  const questionRequests: string[] = [];
+  const owner = { id: 17, name: "本人" };
+  const assisted = { id: 18, name: "代理回答者" };
+  await page.addInitScript(() => {
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+  });
+  await page.route("**/api/answers/bootstrap**", async (route) => {
+    const url = new URL(route.request().url());
+    expect(url.searchParams.getAll("mode")).toEqual(["assisted"]);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        mode: "assisted",
+        owner,
+        participant: assisted,
+        submission: null,
+        questions: [1, 2, 3, 4, 5].map(questionFor),
+      }),
+    });
+  });
+  await mockQuestions(page, questionRequests);
+
+  await page.goto("/answer");
+
+  await expect(
+    page.locator('section[aria-labelledby="question-title-1"]').getByRole("heading", {
+      name: "Question 1?",
+    }),
+  ).toBeVisible();
+  const assistedBootstrapCalls = requestTrace.filter((request) =>
+    request.path.startsWith("/api/answers/bootstrap"),
+  );
+  // The dev E2E build can replay the startup effect under Next StrictMode.
+  expect(assistedBootstrapCalls.length).toBeGreaterThanOrEqual(1);
+  expect(assistedBootstrapCalls.length).toBeLessThanOrEqual(2);
+  expect(
+    assistedBootstrapCalls.every(
+      (request) =>
+        request.method === "GET" && request.path === "/api/answers/bootstrap?mode=assisted",
+    ),
+  ).toBe(true);
+  expect(requestIndex(requestTrace, "GET", "/api/participants/session")).toBe(-1);
+  expect(requestIndex(requestTrace, "GET", "/api/participants/assisted")).toBe(-1);
+  expect(requestIndex(requestTrace, "GET", "/api/answers/latest")).toBe(-1);
+  expect(requestIndex(requestTrace, "GET", "/api/questions/batch")).toBe(-1);
+  expect(questionRequests).toEqual([]);
 });
 
 test("@chromium root-to-answer flow keeps choices local, blocks an incomplete batch, then confirms all five with the participant cookie", async ({
@@ -850,12 +994,17 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
 }) => {
   // This sets a 320 CSS px viewport; browser zoom at 200% needs a real-browser check.
   await page.setViewportSize({ width: 320, height: 900 });
-  await mockParticipantSession(page);
-  await page.route("**/api/questions/batch", async (route) => {
+  await mockParticipantSession(page, "Aki");
+  const owner = { id: 17, name: "Aki" };
+  await page.route("**/api/answers/bootstrap**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
+        mode: "owner",
+        owner,
+        participant: owner,
+        submission: null,
         questions: [1, 2, 3, 4, 5].map((id) =>
           makeQuestion({
             id,
@@ -877,7 +1026,6 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   });
 
   await page.goto("/answer");
-  await signIn(page);
 
   const group = page.locator("#question-1 fieldset");
   await expect(group).toBeVisible();
@@ -1012,6 +1160,12 @@ test("@chromium returns to owner completion after an assisted save and opens tar
     { questionId: 4, answerKind: "selected", selectedIndex: 0, freeText: null },
     { questionId: 5, answerKind: "freeText", selectedIndex: null, freeText: "本人の回答" },
   ];
+  const ownerSubmission = {
+    submissionId: "00000000-0000-4000-8000-000000000041",
+    revision: 1,
+    answers: questions,
+    restoreIntegrity: restoreIntegrity(questions),
+  };
   let assistedName: string | null = null;
   let assistedSubmission: {
     submissionId: string;
@@ -1022,6 +1176,38 @@ test("@chromium returns to owner completion after an assisted save and opens tar
   const assistedLatestRequests: string[] = [];
   const assistedSaves: BatchPayload[] = [];
   const ownerSubmissions: Array<{ submissionId: string; revision: number }> = [];
+  const bootstrapModes: string[] = [];
+
+  await page.route("**/api/answers/bootstrap**", async (route) => {
+    const url = new URL(route.request().url());
+    const mode = url.searchParams.get("mode");
+    bootstrapModes.push(mode ?? "");
+    const owner = { id: 17, name: "本人" };
+    if (mode === "owner") {
+      ownerSubmissions.push({
+        submissionId: ownerSubmission.submissionId,
+        revision: ownerSubmission.revision,
+      });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ mode, owner, participant: owner, submission: ownerSubmission }),
+      });
+      return;
+    }
+    const participant = { id: 18, name: assistedName ?? "代理回答者" };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        mode: "assisted",
+        owner,
+        participant,
+        submission: assistedSubmission,
+        ...(assistedSubmission === null ? { questions: [1, 2, 3, 4, 5].map(questionFor) } : {}),
+      }),
+    });
+  });
 
   await page.route("**/api/participants/session", async (route) => {
     await route.fulfill({
@@ -1077,12 +1263,6 @@ test("@chromium returns to owner completion after an assisted save and opens tar
     const url = new URL(route.request().url());
     assistedLatestRequests.push(url.search);
     const assisted = url.searchParams.get("scope") === "assisted";
-    const ownerSubmission = {
-      submissionId: "00000000-0000-4000-8000-000000000041",
-      revision: 1,
-      answers: questions,
-      restoreIntegrity: restoreIntegrity(questions),
-    };
     if (!assisted) {
       ownerSubmissions.push({
         submissionId: ownerSubmission.submissionId,
@@ -1160,6 +1340,14 @@ test("@chromium returns to owner completion after an assisted save and opens tar
   await page.goto("/answer");
   await expectResultsWaiting(page);
   await expect(page.getByRole("button", { name: "代理回答を行う" })).toBeVisible();
+  // The dev E2E build can replay the startup effect under Next StrictMode.
+  expect(bootstrapModes.length).toBeGreaterThanOrEqual(1);
+  expect(bootstrapModes.length).toBeLessThanOrEqual(2);
+  expect(bootstrapModes.every((mode) => mode === "owner")).toBe(true);
+  expect(requestIndex(requestTrace, "GET", "/api/participants/session")).toBe(-1);
+  expect(requestIndex(requestTrace, "GET", "/api/answers/latest")).toBe(-1);
+  expect(requestIndex(requestTrace, "GET", "/api/questions/batch")).toBe(-1);
+  const assistedBootstrapStart = requestTrace.length;
   await page.getByRole("button", { name: "代理回答を行う" }).click();
   await expect(page.getByRole("heading", { name: "代理回答" })).toBeVisible();
   await page.getByLabel("本来回答する人のお名前").fill("代理回答者");
@@ -1169,31 +1357,57 @@ test("@chromium returns to owner completion after an assisted save and opens tar
       name: "Question 1?",
     }),
   ).toBeVisible();
-  await expect.poll(() => assistedLatestRequests).toContain("?scope=assisted");
+  const assistedActivationBootstraps = requestTrace
+    .slice(assistedBootstrapStart)
+    .filter((request) => request.path === "/api/answers/bootstrap?mode=assisted");
+  expect(assistedActivationBootstraps).toHaveLength(1);
+  expect(assistedActivationBootstraps[0]?.method).toBe("GET");
+  expect(
+    requestTrace
+      .slice(assistedBootstrapStart)
+      .some((request) => request.path.startsWith("/api/answers/latest")),
+  ).toBe(false);
+  expect(
+    requestTrace
+      .slice(assistedBootstrapStart)
+      .some((request) => request.path.startsWith("/api/questions/batch")),
+  ).toBe(false);
   const assistedIdentityPost = requestIndex(requestTrace, "POST", "/api/participants/assisted");
-  const assistedLatest = requestIndex(requestTrace, "GET", "/api/answers/latest?scope=assisted");
-  const questionsLoaded = requestIndex(
-    requestTrace,
-    "GET",
-    "/api/questions/batch",
-    assistedIdentityPost + 1,
-  );
   expect(assistedIdentityPost).toBeGreaterThanOrEqual(0);
-  expect(assistedLatest).toBeGreaterThan(assistedIdentityPost);
-  expect(questionsLoaded).toBeGreaterThan(assistedIdentityPost);
+  expect(requestIndex(requestTrace, "GET", "/api/answers/bootstrap?mode=assisted")).toBeGreaterThan(
+    assistedIdentityPost,
+  );
 
   for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "B");
+  const ownerReturnBootstrap = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "GET" &&
+      url.pathname === "/api/answers/bootstrap" &&
+      url.searchParams.get("mode") === "owner"
+    );
+  });
+  const beforeOwnerReturn = requestTrace.length;
   await page.getByRole("button", { name: "5問の回答を確定する" }).click();
   // Saving an assisted answer returns directly to the owner's completion view.
   await expectResultsWaiting(page);
+  await ownerReturnBootstrap;
+  const ownerReturnRequests = requestTrace.slice(beforeOwnerReturn);
+  expect(
+    ownerReturnRequests.filter((request) => request.path === "/api/answers/bootstrap?mode=owner"),
+  ).toHaveLength(1);
+  expect(
+    ownerReturnRequests.some((request) => request.path.startsWith("/api/answers/latest")),
+  ).toBe(false);
   await expect(page.getByRole("definition")).toHaveText("本人");
   await expect(page.getByText("本人の回答", { exact: true })).toHaveCount(0);
   await expect(page.getByText("代理回答者", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
   expect(assistedSaves).toHaveLength(1);
   const assistedSave = requestIndex(requestTrace, "POST", "/api/answers/batch?scope=assisted");
-  expect(assistedSave).toBeGreaterThan(assistedLatest);
+  expect(assistedSave).toBeGreaterThan(assistedIdentityPost);
 
+  const savedEditStart = requestTrace.length;
   await page.getByRole("button", { name: "代理回答を修正する" }).click();
   await expect(
     page.locator('section[aria-labelledby="question-title-1"]').getByRole("heading", {
@@ -1201,20 +1415,39 @@ test("@chromium returns to owner completion after an assisted save and opens tar
     }),
   ).toBeVisible();
   await expect(page.getByRole("radio", { name: /Option 1B/ })).toBeChecked();
+  const savedEditRequests = requestTrace.slice(savedEditStart);
+  expect(
+    savedEditRequests.filter((request) => request.path === "/api/answers/bootstrap?mode=assisted"),
+  ).toHaveLength(1);
+  expect(savedEditRequests.some((request) => request.path.startsWith("/api/questions/batch"))).toBe(
+    true,
+  );
+  expect(savedEditRequests.some((request) => request.path.startsWith("/api/answers/latest"))).toBe(
+    false,
+  );
   const assistedRequestsBeforeReload = assistedLatestRequests.filter(
     (search) => search === "?scope=assisted",
   ).length;
   const ownerRequestsBeforeReload = assistedLatestRequests.filter((search) => search === "").length;
+  const bootstrapCountBeforeReload = bootstrapModes.length;
   await page.reload();
   await expectResultsWaiting(page);
   await expect(page.getByRole("definition")).toHaveText("本人");
   await expect(page.getByText("本人の回答", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "代理回答を修正する" })).toBeVisible();
-  await expect
-    .poll(() => assistedLatestRequests.filter((search) => search === "").length)
-    .toBeGreaterThan(ownerRequestsBeforeReload);
+  const reloadBootstrapModes = bootstrapModes.slice(bootstrapCountBeforeReload);
+  // A missing or revision-mismatched saved edit draft falls back through an
+  // owner bootstrap; StrictMode may replay either bootstrap request.
+  expect(reloadBootstrapModes.length).toBeGreaterThanOrEqual(1);
+  expect(reloadBootstrapModes.length).toBeLessThanOrEqual(4);
+  expect(reloadBootstrapModes).toContain("assisted");
+  expect(reloadBootstrapModes).toContain("owner");
+  expect(reloadBootstrapModes.every((mode) => mode === "assisted" || mode === "owner")).toBe(true);
+  expect(assistedLatestRequests.filter((search) => search === "").length).toBe(
+    ownerRequestsBeforeReload,
+  );
   expect(assistedLatestRequests.filter((search) => search === "?scope=assisted").length).toBe(
-    assistedRequestsBeforeReload + 1,
+    assistedRequestsBeforeReload,
   );
   expect(assistedSaves).toHaveLength(1);
 

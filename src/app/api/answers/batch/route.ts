@@ -15,6 +15,7 @@ import {
 } from "@/lib/participants/security";
 import { resolveAnswerScope } from "@/lib/participants/answer-scope";
 import { resolveAnswerSubmissionAccess } from "@/lib/participants/answer-submission-access";
+import { getAnswerCompletionSnapshot } from "@/lib/participants/answer-completion-snapshot";
 
 export const maxDuration = 60;
 
@@ -27,7 +28,7 @@ export const GET = withErrorHandling(async function (request: Request) {
   return ok(submission);
 }, "GET /api/answers/batch");
 
-export const POST = withErrorHandling(async function (request: Request) {
+const post = withErrorHandling(async function (request: Request) {
   if (!requestHasValidOrigin(request)) {
     return fail("Invalid request origin", 403);
   }
@@ -37,10 +38,8 @@ export const POST = withErrorHandling(async function (request: Request) {
     return fail("Participant session required", 401);
   }
 
-  const scope = await resolveAnswerScope(
-    session.id,
-    new URL(request.url).searchParams.get("scope"),
-  );
+  const requestedScope = new URL(request.url).searchParams.get("scope");
+  const scope = await resolveAnswerScope(session.id, requestedScope);
   if ("error" in scope) return fail(scope.error, scope.status);
 
   let body: unknown;
@@ -56,6 +55,7 @@ export const POST = withErrorHandling(async function (request: Request) {
     const saved = await saveAnswerSubmission({
       ...parsed.data,
       participantId: scope.participantId,
+      ...(requestedScope === "assisted" ? { scope: "assisted" as const } : {}),
     });
     if (saved.assessmentTarget) {
       const target = saved.assessmentTarget;
@@ -75,7 +75,18 @@ export const POST = withErrorHandling(async function (request: Request) {
         console.error("answer_assessment_failed", { reason: "schedule_failed" });
       }
     }
-    return ok({ submissionId: saved.submissionId, revision: saved.revision });
+    const completionSnapshot = await getAnswerCompletionSnapshot({
+      scope: requestedScope === "assisted" ? "assisted" : "owner",
+      ownerParticipantId: session.id,
+      participantId: scope.participantId,
+      submissionId: saved.submissionId,
+      revision: saved.revision,
+    });
+    return ok({
+      submissionId: saved.submissionId,
+      revision: saved.revision,
+      completionSnapshot,
+    });
   } catch (error) {
     if (error instanceof BatchSubmissionError) {
       if (error.code) {
@@ -89,3 +100,9 @@ export const POST = withErrorHandling(async function (request: Request) {
     throw error;
   }
 }, "POST /api/answers/batch");
+
+export async function POST(request: Request) {
+  const response = await post(request);
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}

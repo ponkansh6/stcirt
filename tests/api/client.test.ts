@@ -4,6 +4,7 @@ import {
   createAssistedParticipant,
   createParticipantSession,
   deleteParticipantSession,
+  fetchAnswerBootstrap,
   fetchAnswerSubmission,
   fetchExamQuestions,
   fetchAssistedParticipant,
@@ -84,6 +85,89 @@ describe("api client", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ submission: null }), { status: 200 }));
     await expect(fetchLatestAnswerSubmission()).resolves.toBeNull();
     expect(fetchSpy).toHaveBeenCalledWith("/api/answers/latest", { credentials: "same-origin" });
+  });
+
+  it("loads owner and assisted bootstrap DTOs with same-origin no-store requests", async () => {
+    const owner = { id: 42, name: "Owner" };
+    const ownerBootstrap = {
+      mode: "owner",
+      owner,
+      participant: owner,
+      submission: null,
+      completionSnapshot: null,
+      questions: examQuestions(),
+    };
+    const assistedBootstrap = {
+      mode: "assisted",
+      owner,
+      participant: { id: 77, name: "Assisted" },
+      submission: null,
+      completionSnapshot: null,
+      questions: examQuestions(),
+    };
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(ownerBootstrap), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(assistedBootstrap), { status: 200 }));
+
+    await expect(fetchAnswerBootstrap("owner")).resolves.toEqual(ownerBootstrap);
+    await expect(fetchAnswerBootstrap("assisted")).resolves.toEqual(assistedBootstrap);
+
+    expect(fetchSpy).toHaveBeenNthCalledWith(1, "/api/answers/bootstrap?mode=owner", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    expect(fetchSpy).toHaveBeenNthCalledWith(2, "/api/answers/bootstrap?mode=assisted", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+  });
+
+  it("accepts a saved bootstrap without questions and rejects private question fields", async () => {
+    const savedBootstrap = {
+      mode: "owner",
+      owner: { id: 42, name: "Owner" },
+      participant: { id: 42, name: "Owner" },
+      submission: {
+        submissionId: "00000000-0000-4000-8000-000000000701",
+        revision: 1,
+        answers: [],
+      },
+      completionSnapshot: {
+        status: "failed",
+        identity: {
+          scope: "owner",
+          ownerParticipantId: 42,
+          participantId: 42,
+          submissionId: "00000000-0000-4000-8000-000000000701",
+          revision: 1,
+        },
+        resultsState: null,
+        resultsVisible: null,
+      },
+    };
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(savedBootstrap), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ...savedBootstrap,
+            submission: null,
+            completionSnapshot: null,
+            questions: examQuestions().map((question, index) =>
+              index === 0 ? { ...question, correctIndex: 2 } : question,
+            ),
+          }),
+          { status: 200 },
+        ),
+      );
+
+    await expect(fetchAnswerBootstrap("owner")).resolves.toEqual(savedBootstrap);
+    await expect(fetchAnswerBootstrap("owner")).rejects.toThrow(
+      "Invalid response schema for load answer session",
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a malformed successful latest-submission response", async () => {
@@ -169,7 +253,22 @@ describe("api client", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ submission: null }), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({ submissionId: "00000000-0000-4000-8000-000000000002", revision: 1 }),
+          JSON.stringify({
+            submissionId: "00000000-0000-4000-8000-000000000002",
+            revision: 1,
+            completionSnapshot: {
+              status: "failed",
+              identity: {
+                scope: "assisted",
+                ownerParticipantId: 7,
+                participantId: 8,
+                submissionId: "00000000-0000-4000-8000-000000000002",
+                revision: 1,
+              },
+              resultsState: null,
+              resultsVisible: null,
+            },
+          }),
           { status: 200 },
         ),
       );

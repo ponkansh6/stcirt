@@ -294,9 +294,9 @@ describe("QuizRunner batch answer sheet", () => {
       vi.fn(async (url: string) => ({
         ok: true,
         json: async () => {
-          if (url.includes("/api/answers/visibility")) {
+          if (String(url).includes("/visibility")) {
             visibilityReads += 1;
-            return { resultsVisible: visibilityReads > 1 };
+            return { resultsVisible: visibilityReads > 2 };
           }
           return { state: "waiting" };
         },
@@ -313,6 +313,7 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
     await screen.findByRole("button", { name: "回答を修正する" });
     fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
+    await waitFor(() => expect(editAnswers).toHaveBeenCalledOnce());
     expect(editGuard?.()).toBe(true);
 
     await act(async () => {
@@ -323,7 +324,7 @@ describe("QuizRunner batch answer sheet", () => {
       document.dispatchEvent(new Event("visibilitychange"));
       await Promise.resolve();
     });
-    await waitFor(() => expect(visibilityReads).toBe(2));
+    await waitFor(() => expect(visibilityReads).toBe(3));
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument(),
     );
@@ -336,9 +337,7 @@ describe("QuizRunner batch answer sheet", () => {
       vi.fn(async (url: string) => ({
         ok: true,
         json: async () =>
-          url.includes("/api/answers/visibility")
-            ? { resultsVisible: false }
-            : { state: "waiting" },
+          String(url).includes("/visibility") ? { resultsVisible: false } : { state: "waiting" },
       })),
     );
     let editGuard: (() => boolean) | undefined;
@@ -352,6 +351,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     await screen.findByRole("button", { name: "回答を修正する" });
     fireEvent.click(screen.getByRole("button", { name: "回答を修正する" }));
+    await waitFor(() => expect(editAnswers).toHaveBeenCalledOnce());
     expect(editGuard?.()).toBe(true);
 
     mockUseQuizSession.mockReturnValue(

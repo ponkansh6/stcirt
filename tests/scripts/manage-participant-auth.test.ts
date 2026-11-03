@@ -147,9 +147,17 @@ describe("participant auth management", () => {
     expect(status).toBe(0);
     expect(calls.map(({ args }) => args)).toEqual([
       ["whoami"],
-      ["env", "ls", "production"],
-      ["env", "add", "PARTICIPANT_PIN", "production", "--force", "--sensitive"],
-      ["env", "add", "PARTICIPANT_SESSION_SECRET", "production", "--force", "--sensitive"],
+      ["env", "list", "--environment", "production", "--json"],
+      ["env", "add", "PARTICIPANT_PIN", "--environment", "production", "--force", "--sensitive"],
+      [
+        "env",
+        "add",
+        "PARTICIPANT_SESSION_SECRET",
+        "--environment",
+        "production",
+        "--force",
+        "--sensitive",
+      ],
     ]);
     expect(calls.every(({ args }) => args[0] !== "deploy")).toBe(true);
     expect(calls[2].input).toBe("0007\n");
@@ -285,6 +293,7 @@ describe("participant auth management", () => {
       "env",
       "add",
       "ADMIN_PRESENTATION_PIN",
+      "--environment",
       "preview",
       "--force",
       "--sensitive",
@@ -293,6 +302,7 @@ describe("participant auth management", () => {
       "env",
       "add",
       "ADMIN_PRESENTATION_SESSION_SECRET",
+      "--environment",
       "preview",
       "--force",
       "--sensitive",
@@ -386,9 +396,17 @@ describe("participant auth management", () => {
 
     expect(calls.map(({ args }) => args)).toEqual([
       ["whoami"],
-      ["env", "ls", "production"],
-      ["env", "add", "PARTICIPANT_PIN", "production", "--force", "--sensitive"],
-      ["env", "add", "PARTICIPANT_SESSION_SECRET", "production", "--force", "--sensitive"],
+      ["env", "list", "--environment", "production", "--json"],
+      ["env", "add", "PARTICIPANT_PIN", "--environment", "production", "--force", "--sensitive"],
+      [
+        "env",
+        "add",
+        "PARTICIPANT_SESSION_SECRET",
+        "--environment",
+        "production",
+        "--force",
+        "--sensitive",
+      ],
     ]);
     expect(calls[2].input).toBe("0042\n");
     expect(calls[3].input).toBe(`${secret}\n`);
@@ -410,7 +428,7 @@ describe("participant auth management", () => {
       calls.push(args);
       return {
         status: 0,
-        stdout: args[0] === "env" && args[1] === "ls" ? "PARTICIPANT_PIN branch: release" : "",
+        stdout: args[0] === "env" && args[1] === "list" ? "PARTICIPANT_PIN branch: release" : "",
         stderr: "",
       };
     });
@@ -418,7 +436,7 @@ describe("participant auth management", () => {
 
     await syncPair({ target: "preview", envPath, projectPath, spawn, log });
 
-    expect(calls).toContainEqual(["env", "ls", "preview"]);
+    expect(calls).toContainEqual(["env", "list", "--environment", "preview", "--json"]);
     expect(log.mock.calls.flat().join(" ")).toContain("branch-specific Preview override");
     expect(calls.every((args) => args[0] !== "deploy")).toBe(true);
   });
@@ -437,7 +455,7 @@ describe("participant auth management", () => {
     const spawn = vi.fn((_command: string, args: string[]) => {
       calls.push(args);
       return {
-        status: args[0] === "env" && args[1] === "ls" ? 1 : 0,
+        status: args[0] === "env" && args[1] === "list" ? 1 : 0,
         stdout: secret,
         stderr: secret,
       };
@@ -448,7 +466,7 @@ describe("participant auth management", () => {
       syncPair({ target: "production", envPath, projectPath, spawn, log }),
     ).rejects.toThrow("environment preflight failed");
 
-    expect(calls).toEqual([["whoami"], ["env", "ls", "production"]]);
+    expect(calls).toEqual([["whoami"], ["env", "list", "--environment", "production", "--json"]]);
     expect(log.mock.calls.flat().join(" ")).not.toContain(secret);
   });
 
@@ -477,13 +495,29 @@ describe("participant auth management", () => {
     // The accepted PIN upsert remains in Vercel when the later secret upsert fails.
     expect(calls).toEqual([
       { args: ["whoami"], status: 0 },
-      { args: ["env", "ls", "production"], status: 0 },
+      { args: ["env", "list", "--environment", "production", "--json"], status: 0 },
       {
-        args: ["env", "add", "PARTICIPANT_PIN", "production", "--force", "--sensitive"],
+        args: [
+          "env",
+          "add",
+          "PARTICIPANT_PIN",
+          "--environment",
+          "production",
+          "--force",
+          "--sensitive",
+        ],
         status: 0,
       },
       {
-        args: ["env", "add", "PARTICIPANT_SESSION_SECRET", "production", "--force", "--sensitive"],
+        args: [
+          "env",
+          "add",
+          "PARTICIPANT_SESSION_SECRET",
+          "--environment",
+          "production",
+          "--force",
+          "--sensitive",
+        ],
         status: 1,
       },
     ]);

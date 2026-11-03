@@ -201,6 +201,21 @@ describe("/api/participants/assisted", () => {
     expect(releaseParticipantAuthReservation).toHaveBeenCalledOnce();
   });
 
+  it("returns the publication lock when an assisted start is rejected", async () => {
+    vi.mocked(createAssistedParticipant).mockRejectedValueOnce(
+      new AssistedParticipantError("Assisted answers are locked while results are visible", 423),
+    );
+
+    const response = await POST(postRequest({ name: "代理" }));
+
+    expect(response.status).toBe(423);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({
+      error: "Assisted answers are locked while results are visible",
+    });
+    expect(releaseParticipantAuthReservation).toHaveBeenCalledOnce();
+  });
+
   it("fails closed when rate limiting or reservation release is unavailable", async () => {
     state.rate = { available: false, allowed: false, reservation: [] };
     const rateUnavailable = await POST(postRequest({ name: "代理" }));

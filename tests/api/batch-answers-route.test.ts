@@ -4,6 +4,7 @@ import { GET, POST } from "@/app/api/answers/batch/route";
 import { GET as getVisibility } from "@/app/api/answers/visibility/route";
 
 const afterRef = vi.hoisted(() => ({ callback: null as null | (() => Promise<void>) }));
+const getAnswerCompletionSnapshotMock = vi.hoisted(() => vi.fn());
 
 vi.mock("next/server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("next/server")>();
@@ -24,8 +25,8 @@ vi.mock("@/lib/db/repository/answer-repository", () => ({
   BatchSubmissionError: class BatchSubmissionError extends Error {
     constructor(
       message: string,
-      readonly status: 400 | 404 | 409 | 503,
-      readonly code?: "DATABASE_LOCKED",
+      readonly status: 400 | 404 | 409 | 423 | 503,
+      readonly code?: "DATABASE_LOCKED" | "SUBMISSION_LOCKED",
     ) {
       super(message);
     }
@@ -54,6 +55,9 @@ vi.mock("@/lib/participants/answer-scope", () => ({
     return { participantId: 99 };
   }),
 }));
+vi.mock("@/lib/participants/answer-completion-snapshot", () => ({
+  getAnswerCompletionSnapshot: getAnswerCompletionSnapshotMock,
+}));
 
 import {
   BatchSubmissionError,
@@ -79,6 +83,12 @@ beforeEach(() => {
   afterRef.callback = null;
   process.env.TYPESAFE_API_KEY = "test-key";
   vi.mocked(findParticipantById).mockResolvedValue({ id: 42, name: "参加者" });
+  getAnswerCompletionSnapshotMock.mockImplementation(async (input) => ({
+    status: "ready",
+    identity: input,
+    resultsState: "waiting",
+    resultsVisible: false,
+  }));
 });
 
 describe("/api/answers/batch route handlers", () => {
@@ -311,6 +321,7 @@ describe("/api/answers/batch route handlers", () => {
     );
 
     expect(response.status).toBe(403);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(saveAnswerSubmission).not.toHaveBeenCalled();
   });
 
@@ -361,12 +372,71 @@ describe("/api/answers/batch route handlers", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toMatchObject({
+      submissionId,
+      revision: 1,
+      completionSnapshot: {
+        status: "ready",
+        identity: {
+          scope: "assisted",
+          ownerParticipantId: 42,
+          participantId: 99,
+          submissionId,
+          revision: 1,
+        },
+      },
+    });
     expect(saveAnswerSubmission).toHaveBeenCalledWith({
       submissionId,
       operationId,
       expectedRevision: 0,
       answers,
       participantId: 99,
+      scope: "assisted",
+    });
+    expect(getAnswerCompletionSnapshotMock).toHaveBeenCalledWith({
+      scope: "assisted",
+      ownerParticipantId: 42,
+      participantId: 99,
+      submissionId,
+      revision: 1,
+    });
+  });
+
+  it("keeps a successful save when the completion snapshot read fails", async () => {
+    vi.mocked(saveAnswerSubmission).mockResolvedValueOnce({
+      submissionId,
+      revision: 1,
+      assessmentTarget: null,
+    });
+    getAnswerCompletionSnapshotMock.mockResolvedValueOnce({
+      status: "failed",
+      identity: {
+        scope: "owner",
+        ownerParticipantId: 42,
+        participantId: 42,
+        submissionId,
+        revision: 1,
+      },
+      resultsState: null,
+      resultsVisible: null,
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/answers/batch", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ submissionId, operationId, expectedRevision: 0, answers }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toMatchObject({
+      submissionId,
+      revision: 1,
+      completionSnapshot: { status: "failed", resultsState: null, resultsVisible: null },
     });
   });
 
@@ -489,6 +559,40 @@ describe("/api/answers/batch route handlers", () => {
     expect(afterRef.callback).toBeNull();
   });
 
+  it("POST returns the publication lock as a recoverable submission lock", async () => {
+    vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(
+      new BatchSubmissionError(
+        "Answer corrections are locked while results are visible",
+        423,
+        "SUBMISSION_LOCKED",
+      ),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/answers/batch?scope=assisted", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ submissionId, operationId, expectedRevision: 1, answers }),
+      }),
+    );
+
+    expect(response.status).toBe(423);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({
+      message: "Answer corrections are locked while results are visible",
+      error: "SUBMISSION_LOCKED",
+    });
+    expect(saveAnswerSubmission).toHaveBeenCalledWith({
+      submissionId,
+      operationId,
+      expectedRevision: 1,
+      answers,
+      participantId: 99,
+      scope: "assisted",
+    });
+    expect(afterRef.callback).toBeNull();
+  });
+
   it("POST returns a generic 500 when the repository fails unexpectedly", async () => {
     vi.mocked(saveAnswerSubmission).mockRejectedValueOnce(new Error("sensitive repository detail"));
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -503,6 +607,7 @@ describe("/api/answers/batch route handlers", () => {
       );
 
       expect(response.status).toBe(500);
+      expect(response.headers.get("Cache-Control")).toBe("private, no-store");
       await expect(response.json()).resolves.toEqual({ error: "Internal server error" });
       expect(response.headers.get("content-type")).toContain("application/json");
       expect(response.headers.get("set-cookie")).toBeNull();
@@ -530,7 +635,23 @@ describe("/api/answers/batch route handlers", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ submissionId, revision: 1 });
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+    await expect(response.json()).resolves.toEqual({
+      submissionId,
+      revision: 1,
+      completionSnapshot: {
+        status: "ready",
+        identity: {
+          scope: "owner",
+          ownerParticipantId: 42,
+          participantId: 42,
+          submissionId,
+          revision: 1,
+        },
+        resultsState: "waiting",
+        resultsVisible: false,
+      },
+    });
     expect(saveAnswerSubmission).toHaveBeenCalledWith({
       submissionId,
       operationId,
@@ -632,7 +753,11 @@ describe("/api/answers/batch route handlers", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ submissionId, revision: 1 });
+    await expect(response.json()).resolves.toMatchObject({
+      submissionId,
+      revision: 1,
+      completionSnapshot: { status: "ready" },
+    });
     expect(errorLog).toHaveBeenCalledWith("answer_assessment_failed", {
       reason: "schedule_failed",
     });
@@ -658,7 +783,11 @@ describe("/api/answers/batch route handlers", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ submissionId, revision: 1 });
+    await expect(response.json()).resolves.toMatchObject({
+      submissionId,
+      revision: 1,
+      completionSnapshot: { status: "ready" },
+    });
     await afterRef.callback?.();
     expect(errorLog).toHaveBeenCalledWith("answer_assessment_failed", {
       reason: "worker_failed",

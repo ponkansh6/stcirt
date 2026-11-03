@@ -741,7 +741,7 @@ describe("saveAnswerSubmission", () => {
     ).resolves.toEqual([{ revision: 2 }]);
   });
 
-  it("allows saves while results are visible and keeps matching replays idempotent", async () => {
+  it("allows a first save and matching replay while blocking a new correction when published", async () => {
     const input = {
       submissionId,
       operationId: firstOperationId,
@@ -764,19 +764,122 @@ describe("saveAnswerSubmission", () => {
     await expect(saveAnswerSubmission(input)).resolves.toMatchObject({ revision: 1 });
     // If replay tried to acquire the presentation lock, it would recreate this row.
     await testDb.db.delete(schema.presentationSessions);
-    // The UI disables correction, but the API accepts a stale/direct save.
+    // A replay is the already committed operation, so it remains idempotent.
     await expect(saveAnswerSubmission(input)).resolves.toMatchObject({ revision: 1 });
     expect(await testDb.db.select().from(schema.presentationSessions)).toHaveLength(0);
     await expect(
       saveAnswerSubmission({ ...input, operationId: secondOperationId, expectedRevision: 1 }),
-    ).resolves.toMatchObject({ revision: 2 });
+    ).rejects.toMatchObject({ status: 423, code: "SUBMISSION_LOCKED" });
+    expect(
+      await testDb.db
+        .select()
+        .from(schema.examSubmissionOperations)
+        .where(eq(schema.examSubmissionOperations.operationId, secondOperationId)),
+    ).toHaveLength(0);
     await expect(getAnswerSubmission(submissionId, participantId)).resolves.toMatchObject({
       resultsVisible: true,
-      revision: 2,
+      revision: 1,
     });
   });
 
-  it("does not serialize answer updates with publication visibility", async () => {
+  it("blocks a first assisted save after publication and rolls back its initial write", async () => {
+    const [target] = await testDb.db
+      .insert(schema.examParticipants)
+      .values({ normalizedName: "代理", displayName: "代理" })
+      .returning({ id: schema.examParticipants.id });
+    const assistedSubmissionId = "00000000-0000-4000-8000-000000000007";
+    const assistedOperationId = "00000000-0000-4000-8000-000000000008";
+    await testDb.db
+      .insert(schema.participantResultSettings)
+      .values({ id: 1, visible: true, everPublished: true })
+      .onConflictDoUpdate({
+        target: schema.participantResultSettings.id,
+        set: { visible: true, everPublished: true },
+      });
+    observedQueries.length = 0;
+
+    await expect(
+      saveAnswerSubmission({
+        submissionId: assistedSubmissionId,
+        operationId: assistedOperationId,
+        expectedRevision: 0,
+        participantId: target!.id,
+        scope: "assisted",
+        answers,
+      }),
+    ).rejects.toMatchObject({ status: 423, code: "SUBMISSION_LOCKED" });
+
+    await expect(
+      testDb.db
+        .select()
+        .from(schema.examAnswerSubmissions)
+        .where(eq(schema.examAnswerSubmissions.id, assistedSubmissionId)),
+    ).resolves.toHaveLength(0);
+    await expect(
+      testDb.db
+        .select()
+        .from(schema.examSubmissionOperations)
+        .where(eq(schema.examSubmissionOperations.operationId, assistedOperationId)),
+    ).resolves.toHaveLength(0);
+    await expect(
+      testDb.db
+        .select()
+        .from(schema.examSubmissionAnswers)
+        .where(eq(schema.examSubmissionAnswers.submissionId, assistedSubmissionId)),
+    ).resolves.toHaveLength(0);
+
+    const submissionWriteIndex = observedQueries.findIndex((query) =>
+      /insert\s+into\s+exam_answer_submissions/i.test(query),
+    );
+    const publicationReadIndex = observedQueries.findIndex((query) =>
+      /participant_result_settings/i.test(query),
+    );
+    expect(submissionWriteIndex).toBeGreaterThanOrEqual(0);
+    expect(publicationReadIndex).toBeGreaterThan(submissionWriteIndex);
+  });
+
+  it("keeps a committed assisted operation replay idempotent after publication", async () => {
+    const [target] = await testDb.db
+      .insert(schema.examParticipants)
+      .values({ normalizedName: "代理", displayName: "代理" })
+      .returning({ id: schema.examParticipants.id });
+    const replayInput = {
+      submissionId: "00000000-0000-4000-8000-000000000009",
+      operationId: "00000000-0000-4000-8000-00000000000a",
+      expectedRevision: 0,
+      participantId: target!.id,
+      scope: "assisted" as const,
+      answers,
+    };
+    await expect(saveAnswerSubmission(replayInput)).resolves.toMatchObject({ revision: 1 });
+    await testDb.db
+      .insert(schema.participantResultSettings)
+      .values({ id: 1, visible: true, everPublished: true })
+      .onConflictDoUpdate({
+        target: schema.participantResultSettings.id,
+        set: { visible: true, everPublished: true },
+      });
+
+    await expect(saveAnswerSubmission(replayInput)).resolves.toMatchObject({
+      submissionId: replayInput.submissionId,
+      revision: 1,
+      assessmentTarget: null,
+    });
+    await expect(
+      testDb.db
+        .select({ revision: schema.examAnswerSubmissions.revision })
+        .from(schema.examAnswerSubmissions)
+        .where(eq(schema.examAnswerSubmissions.id, replayInput.submissionId)),
+    ).resolves.toEqual([{ revision: 1 }]);
+    await expect(
+      testDb.db
+        .select()
+        .from(schema.examSubmissionOperations)
+        .where(eq(schema.examSubmissionOperations.operationId, replayInput.operationId)),
+    ).resolves.toHaveLength(1);
+  });
+
+  it("uses current publication visibility for correction after an earlier unlocked read", async () => {
     const [session] = await testDb.db
       .insert(schema.presentationSessions)
       .values({
@@ -798,6 +901,9 @@ describe("saveAnswerSubmission", () => {
       participantId,
       answers,
     });
+    await expect(getAnswerSubmissionVisibility(submissionId, participantId)).resolves.toEqual({
+      resultsVisible: false,
+    });
     await setParticipantResultsVisible(true);
     await expect(
       saveAnswerSubmission({
@@ -807,18 +913,18 @@ describe("saveAnswerSubmission", () => {
         participantId,
         answers,
       }),
-    ).resolves.toMatchObject({ revision: 2 });
+    ).rejects.toMatchObject({ status: 423, code: "SUBMISSION_LOCKED" });
 
     await setParticipantResultsVisible(false);
     await expect(
       saveAnswerSubmission({
         submissionId,
         operationId: "00000000-0000-4000-8000-000000000006",
-        expectedRevision: 2,
+        expectedRevision: 1,
         participantId,
         answers,
       }),
-    ).resolves.toMatchObject({ revision: 3 });
+    ).resolves.toMatchObject({ revision: 2 });
   });
 
   it("allows an existing submission revision after results are hidden", async () => {

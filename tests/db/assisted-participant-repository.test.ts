@@ -115,9 +115,11 @@ async function commitWinnerThenCauseSqliteUniqueConflict(
 
 describe("assisted-participant-repository", () => {
   let testDb: TestDb;
+  const observedQueries: string[] = [];
 
   beforeEach(async () => {
-    testDb = await createTestDb();
+    observedQueries.length = 0;
+    testDb = await createTestDb({ logger: { logQuery: (query) => observedQueries.push(query) } });
     dbRef.db = testDb.db;
   });
 
@@ -221,6 +223,54 @@ describe("assisted-participant-repository", () => {
       status: 409,
     });
     await expect(dbRef.db!.select().from(schema.assistedParticipants)).resolves.toHaveLength(0);
+  });
+
+  it("rejects a new or repeated assisted target start after publication", async () => {
+    const ownerId = await addParticipant("本人");
+    await completeParticipant(ownerId, "owner");
+    await dbRef
+      .db!.insert(schema.participantResultSettings)
+      .values({ id: 1, visible: true, everPublished: true })
+      .onConflictDoUpdate({
+        target: schema.participantResultSettings.id,
+        set: { visible: true, everPublished: true },
+      });
+
+    await expect(createAssistedParticipant(ownerId, "代理")).rejects.toMatchObject({
+      name: "AssistedParticipantError",
+      status: 423,
+    });
+    await expect(dbRef.db!.select().from(schema.assistedParticipants)).resolves.toHaveLength(0);
+    await expect(dbRef.db!.select().from(schema.examParticipants)).resolves.toHaveLength(1);
+  });
+
+  it("rejects reopening an existing assisted target after publication", async () => {
+    const ownerId = await addParticipant("本人");
+    await completeParticipant(ownerId, "owner");
+    await createAssistedParticipant(ownerId, "代理");
+    await dbRef
+      .db!.insert(schema.participantResultSettings)
+      .values({ id: 1, visible: true, everPublished: true })
+      .onConflictDoUpdate({
+        target: schema.participantResultSettings.id,
+        set: { visible: true, everPublished: true },
+      });
+    observedQueries.length = 0;
+
+    await expect(createAssistedParticipant(ownerId, "代理")).rejects.toMatchObject({
+      name: "AssistedParticipantError",
+      status: 423,
+    });
+    await expect(dbRef.db!.select().from(schema.assistedParticipants)).resolves.toHaveLength(1);
+
+    const writerIndex = observedQueries.findIndex((query) =>
+      /update\s+exam_participants\s+set\s+id\s*=\s*id/i.test(query),
+    );
+    const publicationReadIndex = observedQueries.findIndex((query) =>
+      /participant_result_settings/i.test(query),
+    );
+    expect(writerIndex).toBeGreaterThanOrEqual(0);
+    expect(publicationReadIndex).toBeGreaterThan(writerIndex);
   });
 
   it("rejects invalid names and unknown owners before creating any relation", async () => {

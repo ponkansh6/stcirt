@@ -1,12 +1,17 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../index";
-import { assistedParticipants, examAnswerSubmissions, examParticipants } from "../schema";
+import {
+  assistedParticipants,
+  examAnswerSubmissions,
+  examParticipants,
+  participantResultSettings,
+} from "../schema";
 import { normalizeParticipantName } from "./participant-repository";
 
 export class AssistedParticipantError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 404 | 409,
+    readonly status: 400 | 404 | 409 | 423,
   ) {
     super(message);
     this.name = "AssistedParticipantError";
@@ -39,12 +44,29 @@ export async function createAssistedParticipant(ownerParticipantId: number, name
 
   try {
     return await db.transaction(async (tx) => {
+      // Acquire the writer before reading publication state or returning an
+      // existing target. This orders an assisted start against a concurrent
+      // publish action even when the relation already exists.
+      await tx.run(sql`
+        UPDATE exam_participants SET id = id WHERE id = ${ownerParticipantId}
+      `);
       const [owner] = await tx
         .select({ id: examParticipants.id, normalizedName: examParticipants.normalizedName })
         .from(examParticipants)
         .where(eq(examParticipants.id, ownerParticipantId))
         .limit(1);
       if (!owner) throw new AssistedParticipantError("Participant not found", 404);
+
+      const [resultSettings] = await tx
+        .select({ visible: participantResultSettings.visible })
+        .from(participantResultSettings)
+        .where(eq(participantResultSettings.id, 1));
+      if (resultSettings?.visible) {
+        throw new AssistedParticipantError(
+          "Assisted answers are locked while results are visible",
+          423,
+        );
+      }
 
       const [existingLink] = await tx
         .select({ id: examParticipants.id, name: examParticipants.displayName })

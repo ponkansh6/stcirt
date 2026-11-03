@@ -3,6 +3,7 @@ export {
   getAdminPresentationControls,
   getAdminPresentationDeck,
   getParticipantResult,
+  getParticipantResultState,
   getPublicPresentation,
 } from "./presentation-repository.reads";
 export type {

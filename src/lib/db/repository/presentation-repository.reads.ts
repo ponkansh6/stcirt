@@ -178,15 +178,188 @@ export async function readAdminPresentation(
   } satisfies AdminPresentation;
 }
 
+type ParticipantResultPublicationState = "waiting" | "unavailable" | "published";
+
+function participantResultPublicationState(
+  visible: boolean,
+  hasEntry: boolean,
+): ParticipantResultPublicationState {
+  if (!visible) return "waiting";
+  return hasEntry ? "published" : "unavailable";
+}
+
+function isValidParticipantResultSnapshot(
+  entry: {
+    score: number;
+    rank: number;
+    isAggregationTarget: boolean;
+    answers: unknown;
+  },
+  questionRows: {
+    position: number;
+    sourceQuestionId: number;
+    question: unknown;
+    choices: unknown;
+  }[],
+  entryCount: number,
+): boolean {
+  if (
+    !Number.isFinite(entry.score) ||
+    entry.score < 0 ||
+    entry.score > questionRows.length ||
+    (entry.isAggregationTarget &&
+      (!Number.isInteger(entry.rank) || entry.rank < 1 || entry.rank > entryCount)) ||
+    (!entry.isAggregationTarget && entry.rank !== 0) ||
+    (entry.isAggregationTarget && entryCount < 1) ||
+    questionRows.length === 0 ||
+    !Array.isArray(entry.answers) ||
+    entry.answers.length !== questionRows.length
+  ) {
+    return false;
+  }
+
+  const questionIds = new Set<number>();
+  const positions = new Set<number>();
+  for (const [index, question] of questionRows.entries()) {
+    if (
+      !Number.isInteger(question.position) ||
+      question.position !== index ||
+      positions.has(question.position) ||
+      !Number.isInteger(question.sourceQuestionId) ||
+      questionIds.has(question.sourceQuestionId)
+    ) {
+      return false;
+    }
+    positions.add(question.position);
+    questionIds.add(question.sourceQuestionId);
+  }
+
+  const answerByQuestionId = new Map<number, PresentationAnswerSnapshot>();
+  for (const item of entry.answers as unknown[]) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      !("questionId" in item) ||
+      typeof item.questionId !== "number" ||
+      !Number.isInteger(item.questionId) ||
+      !questionIds.has(item.questionId) ||
+      !("answerKind" in item) ||
+      !["selected", "freeText", "legacy", "unanswered"].includes(String(item.answerKind)) ||
+      answerByQuestionId.has(item.questionId)
+    ) {
+      return false;
+    }
+    answerByQuestionId.set(item.questionId, item as PresentationAnswerSnapshot);
+  }
+
+  for (const question of questionRows) {
+    const answer = answerByQuestionId.get(question.sourceQuestionId);
+    if (
+      !answer ||
+      typeof question.question !== "string" ||
+      !Array.isArray(question.choices) ||
+      !Array.from(question.choices).every((choice) => typeof choice === "string")
+    ) {
+      return false;
+    }
+    if (answer.answerKind === "selected" && question.choices.length === 0) return false;
+    if (
+      answer.answerKind === "freeText" &&
+      (question.choices.length > 0 ||
+        typeof answer.freeText !== "string" ||
+        (answer.normalizedScore !== null &&
+          (!Number.isFinite(answer.normalizedScore) ||
+            answer.normalizedScore < 0 ||
+            answer.normalizedScore > 1)))
+    ) {
+      return false;
+    }
+    if (
+      answer.answerKind === "legacy" &&
+      (question.position !== questionRows.length - 1 ||
+        question.choices.length !== 0 ||
+        !Number.isInteger(answer.selectedIndex) ||
+        answer.selectedIndex === null ||
+        answer.selectedIndex < 0 ||
+        answer.freeText !== null ||
+        answer.rawScore !== null ||
+        answer.normalizedScore !== null)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function readParticipantResultState(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  participantId: number,
+): Promise<"waiting" | "visible" | "unavailable"> {
+  const [settings] = await tx
+    .select({ visible: participantResultSettings.visible })
+    .from(participantResultSettings)
+    .where(eq(participantResultSettings.id, 1));
+  if (!settings?.visible) return "waiting";
+
+  const [entry] = await tx
+    .select({
+      score: presentationEntries.score,
+      rank: presentationEntries.rank,
+      isAggregationTarget: presentationEntries.isAggregationTarget,
+      answers: presentationEntries.answers,
+    })
+    .from(presentationEntries)
+    .where(
+      and(
+        eq(presentationEntries.sessionId, 1),
+        eq(presentationEntries.participantId, participantId),
+      ),
+    );
+  const state = participantResultPublicationState(settings.visible, Boolean(entry));
+  if (state !== "published") return state;
+  if (!entry) return "unavailable";
+
+  const [questionRows, entryCount] = await Promise.all([
+    tx
+      .select({
+        position: presentationQuestions.position,
+        sourceQuestionId: presentationQuestions.sourceQuestionId,
+        question: presentationQuestions.question,
+        choices: presentationQuestions.choices,
+      })
+      .from(presentationQuestions)
+      .where(eq(presentationQuestions.sessionId, 1))
+      .orderBy(asc(presentationQuestions.position)),
+    tx
+      .select({ value: count() })
+      .from(presentationEntries)
+      .where(
+        and(
+          eq(presentationEntries.sessionId, 1),
+          eq(presentationEntries.isAggregationTarget, true),
+        ),
+      ),
+  ]);
+  return isValidParticipantResultSnapshot(entry, questionRows, entryCount[0]?.value ?? 0)
+    ? "visible"
+    : "unavailable";
+}
+
+/** Read the result state with only fields needed to validate publication data. */
+export async function getParticipantResultState(
+  participantId: number,
+): Promise<"waiting" | "visible" | "unavailable"> {
+  return db.transaction((tx) => readParticipantResultState(tx, participantId));
+}
+
 export async function getParticipantResult(participantId: number): Promise<ParticipantResult> {
   return db.transaction(async (tx) => {
     const [settings] = await tx
       .select({ visible: participantResultSettings.visible })
       .from(participantResultSettings)
       .where(eq(participantResultSettings.id, 1));
-    if (!settings?.visible) {
-      return { state: "waiting" as const };
-    }
+    if (!settings?.visible) return { state: "waiting" as const };
+
     const [entry] = await tx
       .select({
         score: presentationEntries.score,
@@ -201,6 +374,8 @@ export async function getParticipantResult(participantId: number): Promise<Parti
           eq(presentationEntries.participantId, participantId),
         ),
       );
+    const publicationState = participantResultPublicationState(settings.visible, Boolean(entry));
+    if (publicationState !== "published") return { state: publicationState };
     if (!entry) return { state: "unavailable" as const };
     const questionRows = await tx
       .select()
@@ -216,67 +391,18 @@ export async function getParticipantResult(participantId: number): Promise<Parti
           eq(presentationEntries.isAggregationTarget, true),
         ),
       );
-    if (
-      !Number.isFinite(entry.score) ||
-      entry.score < 0 ||
-      entry.score > questionRows.length ||
-      (entry.isAggregationTarget &&
-        (!Number.isInteger(entry.rank) || entry.rank < 1 || entry.rank > entryCount.value)) ||
-      (!entry.isAggregationTarget && entry.rank !== 0) ||
-      (entry.isAggregationTarget && entryCount.value < 1) ||
-      questionRows.length === 0 ||
-      !Array.isArray(entry.answers) ||
-      entry.answers.length !== questionRows.length
-    ) {
+    if (!isValidParticipantResultSnapshot(entry, questionRows, entryCount.value)) {
       return { state: "unavailable" as const };
     }
-    const questionIds = new Set<number>();
-    const positions = new Set<number>();
-    for (const [index, question] of questionRows.entries()) {
-      if (
-        !Number.isInteger(question.position) ||
-        question.position !== index ||
-        positions.has(question.position) ||
-        !Number.isInteger(question.sourceQuestionId) ||
-        questionIds.has(question.sourceQuestionId)
-      ) {
-        return { state: "unavailable" as const };
-      }
-      positions.add(question.position);
-      questionIds.add(question.sourceQuestionId);
-    }
-    const answerByQuestionId = new Map<number, PresentationAnswerSnapshot>();
-    for (const item of entry.answers as unknown[]) {
-      if (
-        !item ||
-        typeof item !== "object" ||
-        !("questionId" in item) ||
-        typeof item.questionId !== "number" ||
-        !Number.isInteger(item.questionId) ||
-        !questionIds.has(item.questionId) ||
-        !("answerKind" in item) ||
-        !["selected", "freeText", "legacy", "unanswered"].includes(String(item.answerKind)) ||
-        answerByQuestionId.has(item.questionId)
-      ) {
-        return { state: "unavailable" as const };
-      }
-      answerByQuestionId.set(item.questionId, item as PresentationAnswerSnapshot);
-    }
+    const answerByQuestionId = new Map(
+      (entry.answers as PresentationAnswerSnapshot[]).map((answer) => [answer.questionId, answer]),
+    );
 
     const questions: ParticipantResultQuestion[] = [];
     for (const question of questionRows) {
-      const answer = answerByQuestionId.get(question.sourceQuestionId);
-      if (
-        !answer ||
-        typeof question.question !== "string" ||
-        !Array.isArray(question.choices) ||
-        !Array.from(question.choices).every((choice) => typeof choice === "string")
-      ) {
-        return { state: "unavailable" as const };
-      }
+      const answer = answerByQuestionId.get(question.sourceQuestionId)!;
       let answerDto: ParticipantResultQuestion["answer"];
       if (answer.answerKind === "selected") {
-        if (question.choices.length === 0) return { state: "unavailable" as const };
         const selectedIndex = answer.selectedIndex;
         const validCorrectIndex =
           Number.isInteger(question.correctIndex) &&
@@ -298,29 +424,13 @@ export async function getParticipantResult(participantId: number): Promise<Parti
           };
         }
       } else if (answer.answerKind === "freeText") {
-        if (question.choices.length > 0) return { state: "unavailable" as const };
         if (typeof answer.freeText !== "string") return { state: "unavailable" as const };
         const score = answer.normalizedScore;
-        if (score !== null && (!Number.isFinite(score) || score < 0 || score > 1)) {
-          return { state: "unavailable" as const };
-        }
         answerDto = { kind: "freeText", value: answer.freeText, score };
       } else if (answer.answerKind === "legacy") {
         // The historical legacy answer is the final free-response question:
         // its original choices are no longer in the snapshot, but its old
         // selected index is retained without interpreting it.
-        if (
-          question.position !== questionRows.length - 1 ||
-          question.choices.length !== 0 ||
-          !Number.isInteger(answer.selectedIndex) ||
-          answer.selectedIndex === null ||
-          answer.selectedIndex < 0 ||
-          answer.freeText !== null ||
-          answer.rawScore !== null ||
-          answer.normalizedScore !== null
-        ) {
-          return { state: "unavailable" as const };
-        }
         answerDto = { kind: "legacy" };
       } else {
         answerDto = { kind: "unanswered" };

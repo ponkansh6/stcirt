@@ -55,7 +55,9 @@ function publicationFetchMock(responses: Array<unknown>) {
 async function getSettledCompletionHeading() {
   await waitFor(() =>
     expect(
-      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+        exact: true,
+      }),
     ).not.toBeInTheDocument(),
   );
   return screen.getByRole("heading", { name: "回答済み" });
@@ -164,7 +166,7 @@ describe("QuizRunner batch answer sheet", () => {
     );
     render(<RunnerPage />);
     expect(
-      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.getByText("回答は保存されています。結果の公開状況を確認しています。", { exact: true }),
     ).toBeInTheDocument();
     expect(
       screen.getByText("回答は保存されています。結果の公開状況を確認しています。"),
@@ -184,15 +186,246 @@ describe("QuizRunner batch answer sheet", () => {
     });
 
     expect(
-      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+        exact: true,
+      }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "回答を修正する" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "代理回答を行う" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "代理回答を行う" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "代理回答を行う" }));
     expect(openAssistedLogin).toHaveBeenCalledOnce();
   });
+
+  it("keeps one completion card with the participant name and guidance while the first lookup is pending", async () => {
+    const pendingResult = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes("/api/answers/visibility")
+          ? Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ resultsVisible: false }),
+            })
+          : pendingResult.promise,
+      ),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "complete" }, { revision: 1, submissionId: "submission-1" }),
+    );
+    render(
+      <>
+        <button type="button">別の操作</button>
+        <RunnerPage />
+      </>,
+    );
+
+    const heading = screen.getByRole("heading", { name: "回答済み" });
+    expect(screen.getByRole("definition")).toHaveTextContent("参加者");
+    expect(
+      screen.getByText("回答は保存されています。結果の公開状況を確認しています。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
+
+    const otherAction = screen.getByRole("button", { name: "別の操作" });
+    otherAction.focus();
+    await act(async () => {
+      pendingResult.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      } as Response);
+    });
+
+    expect(await screen.findByRole("button", { name: "回答を修正する" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "回答済み" })).toBe(heading);
+    expect(otherAction).toHaveFocus();
+  });
+
+  it("focuses the completion heading after submit once and preserves later focus through refresh", async () => {
+    const pendingSave = deferred<void>();
+    const saveAnswers = vi.fn(() => pendingSave.promise);
+    type MutableCompletionSession = Omit<
+      ReturnType<typeof session>,
+      "submissionId" | "revision"
+    > & {
+      submissionId: string | null;
+      revision: number;
+    };
+    let currentSession: MutableCompletionSession = session(
+      { kind: "answering" },
+      {
+        selections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0 },
+        answeredCount: 5,
+        saveAnswers,
+        submissionId: "submission-1",
+      },
+    );
+    mockUseQuizSession.mockImplementation(() => currentSession);
+    const fetchMock = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () =>
+          String(input).includes("/api/answers/visibility")
+            ? { resultsVisible: false }
+            : { state: "waiting" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    let completionHeadingFocusCount = 0;
+    const countCompletionFocus = (event: FocusEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.matches("main h1") &&
+        target.textContent?.trim() === "回答済み"
+      ) {
+        completionHeadingFocusCount += 1;
+      }
+    };
+    document.addEventListener("focusin", countCompletionFocus);
+
+    try {
+      const { rerender } = render(
+        <>
+          <button type="button">別の操作</button>
+          <RunnerPage />
+        </>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+      currentSession = { ...currentSession, phase: { kind: "submitting" } };
+      rerender(
+        <>
+          <button type="button">別の操作</button>
+          <RunnerPage />
+        </>,
+      );
+      expect(screen.getByRole("heading", { name: "回答内容を確認してください" })).toHaveFocus();
+
+      const completionSnapshot = {
+        status: "ready",
+        identity: {
+          scope: "owner",
+          ownerParticipantId: 7,
+          participantId: 7,
+          submissionId: "submission-1",
+          revision: 1,
+        },
+        resultsState: "waiting",
+        resultsVisible: false,
+      } as const;
+      currentSession = {
+        ...currentSession,
+        phase: { kind: "complete", completionSnapshot },
+        submissionId: "submission-1",
+        revision: 1,
+        saveConfirmed: true,
+      };
+      rerender(
+        <>
+          <button type="button">別の操作</button>
+          <RunnerPage />
+        </>,
+      );
+      const completionHeading = screen.getByRole("heading", { name: "回答済み" });
+      expect(completionHeading).toHaveFocus();
+      expect(completionHeadingFocusCount).toBe(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      const otherAction = screen.getByRole("button", { name: "別の操作" });
+      otherAction.focus();
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: "visible",
+      });
+      fireEvent(document, new Event("visibilitychange"));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      expect(completionHeadingFocusCount).toBe(1);
+      expect(otherAction).toHaveFocus();
+
+      await act(async () => {
+        pendingSave.resolve(undefined);
+        await pendingSave.promise;
+      });
+    } finally {
+      document.removeEventListener("focusin", countCompletionFocus);
+    }
+  });
+
+  it("does not offer an assisted answer action when restored answer integrity is invalid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () =>
+            String(input).includes("/api/answers/visibility")
+              ? { resultsVisible: false }
+              : { state: "waiting" },
+        }),
+      ),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          restoreError: "保存済み回答の整合性を確認できませんでした。",
+          revision: 1,
+          submissionId: "submission-1",
+        },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("整合性を確認できませんでした");
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      state: "waiting",
+      resultsVisible: true,
+      guidance: "結果の公開前ですが、この回答は現在修正できません。",
+    },
+    {
+      state: "unavailable",
+      resultsVisible: true,
+      guidance:
+        "結果は公開されていますが、表示できる結果がありません。回答の修正や代理回答はできません。",
+    },
+  ] as const)(
+    "keeps edit and assisted actions hidden for $state completion state",
+    async ({ state, resultsVisible, guidance }) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL) =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () =>
+              String(input).includes("/api/answers/visibility") ? { resultsVisible } : { state },
+          }),
+        ),
+      );
+      mockUseQuizSession.mockReturnValue(
+        session({ kind: "complete" }, { revision: 1, submissionId: "submission-1" }),
+      );
+
+      render(<RunnerPage />);
+
+      await waitFor(() => expect(screen.getByText(guidance)).toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
+    },
+  );
 
   it("offers a GET-only manual retry after an initial publication lookup failure", async () => {
     const saveAnswers = vi.fn();
@@ -245,7 +478,12 @@ describe("QuizRunner batch answer sheet", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "回答を修正する" })).toBeInTheDocument(),
     );
-    expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しました。");
+    const confirmationLiveRegions = [
+      ...screen.queryAllByRole("status"),
+      ...screen.queryAllByRole("alert"),
+    ].filter((region) => region.textContent?.includes("結果の公開状況を確認しました。"));
+    expect(confirmationLiveRegions).toHaveLength(1);
+    expect(confirmationLiveRegions[0]).toHaveTextContent("結果の公開状況を確認しました。");
     expect(screen.getByRole("heading", { name: "回答済み" })).toHaveFocus();
     expect(publicationRequestCount(fetchMock)).toBe(2);
     expect(saveAnswers).not.toHaveBeenCalled();
@@ -273,7 +511,9 @@ describe("QuizRunner batch answer sheet", () => {
     });
     expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
     expect(
-      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+        exact: true,
+      }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
@@ -327,7 +567,12 @@ describe("QuizRunner batch answer sheet", () => {
       expect(screen.getByRole("button", { name: "回答を修正する" })).toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: "別の操作" })).toHaveFocus();
-    expect(screen.getByRole("status")).toHaveTextContent("結果の公開状況を確認しました。");
+    const confirmationLiveRegions = [
+      ...screen.queryAllByRole("status"),
+      ...screen.queryAllByRole("alert"),
+    ].filter((region) => region.textContent?.includes("結果の公開状況を確認しました。"));
+    expect(confirmationLiveRegions).toHaveLength(1);
+    expect(confirmationLiveRegions[0]).toHaveTextContent("結果の公開状況を確認しました。");
   });
 
   it("prioritizes reauthentication after a manual publication retry returns 401", async () => {
@@ -399,7 +644,7 @@ describe("QuizRunner batch answer sheet", () => {
     });
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
     expect(
-      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.getByText("回答は保存されています。結果の公開状況を確認しています。", { exact: true }),
     ).toBeInTheDocument();
 
     await act(async () => {
@@ -410,7 +655,9 @@ describe("QuizRunner batch answer sheet", () => {
       } as Response);
     });
     expect(
-      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+        exact: true,
+      }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
     expect(saveAnswers).not.toHaveBeenCalled();
@@ -440,11 +687,11 @@ describe("QuizRunner batch answer sheet", () => {
 
       expect(await getSettledCompletionHeading()).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
-      expect(
-        screen.queryByText(
-          "披露宴までは修正ボタンから回答の変更が可能です。ご自分で回答できない方向けに代理回答が一人まで可能です。",
-        ),
-      ).not.toBeInTheDocument();
+      const expectedGuidance =
+        state === "visible"
+          ? "結果が公開されています。結果ページから確認できます。"
+          : "結果は公開されていますが、表示できる結果がありません。回答の修正や代理回答はできません。";
+      await waitFor(() => expect(screen.getByText(expectedGuidance)).toBeInTheDocument());
 
       await act(async () => {
         pendingBatch.resolve({
@@ -488,10 +735,8 @@ describe("QuizRunner batch answer sheet", () => {
     });
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(
-      screen.queryByText(
-        "披露宴までは修正ボタンから回答の変更が可能です。ご自分で回答できない方向けに代理回答が一人まで可能です。",
-      ),
-    ).not.toBeInTheDocument();
+      screen.getByText("結果が公開されています。結果ページから確認できます。"),
+    ).toBeInTheDocument();
   });
 
   it.each(["visible", "unavailable"] as const)(
@@ -517,7 +762,9 @@ describe("QuizRunner batch answer sheet", () => {
       render(<RunnerPage />);
 
       expect(
-        screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+        screen.getByText("回答は保存されています。結果の公開状況を確認しています。", {
+          exact: true,
+        }),
       ).toBeInTheDocument();
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
       await act(async () => {
@@ -556,10 +803,8 @@ describe("QuizRunner batch answer sheet", () => {
     expect(await getSettledCompletionHeading()).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(
-      screen.queryByText(
-        "披露宴までは修正ボタンから回答の変更が可能です。ご自分で回答できない方向けに代理回答が一人まで可能です。",
-      ),
-    ).not.toBeInTheDocument();
+      screen.getByText("結果の公開状況は確認済みです。回答の編集可否を確認しています…"),
+    ).toBeInTheDocument();
 
     await act(async () => {
       pendingBatch.resolve({
@@ -571,10 +816,55 @@ describe("QuizRunner batch answer sheet", () => {
     expect(await screen.findByRole("button", { name: "回答を修正する" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "披露宴までは修正ボタンから回答の変更が可能です。ご自分で回答できない方向けに代理回答が一人まで可能です。",
+        "回答は保存されています。結果の公開前は回答を修正できます。本人で回答できない場合は代理回答も利用できます。",
       ),
     ).toBeInTheDocument();
   });
+
+  it.each([
+    ["locked", { ok: true, status: 200, json: async () => ({ resultsVisible: true }) }],
+    ["failed", { ok: false, status: 503, json: async () => ({}) }],
+  ] as const)(
+    "blocks correction when the fresh visibility recheck is %s and removes the stale action",
+    async (_state, recheckResponse) => {
+      const editAnswers = vi.fn();
+      let visibilityRequest = 0;
+      const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        if (String(input).startsWith("/api/answers/visibility")) {
+          visibilityRequest += 1;
+          return Promise.resolve(
+            visibilityRequest === 1
+              ? { ok: true, status: 200, json: async () => ({ resultsVisible: false }) }
+              : recheckResponse,
+          );
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ state: "waiting" }),
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      mockUseQuizSession.mockReturnValue(
+        session({ kind: "complete" }, { editAnswers, revision: 1, submissionId: "submission-1" }),
+      );
+
+      render(<RunnerPage />);
+
+      const correction = await screen.findByRole("button", { name: "回答を修正する" });
+      expect(visibilityRequest).toBe(1);
+      fireEvent.click(correction);
+
+      await waitFor(() => expect(visibilityRequest).toBe(2));
+      await waitFor(() =>
+        expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument(),
+      );
+      expect(editAnswers).not.toHaveBeenCalled();
+      if (_state === "failed") {
+        expect(screen.getByRole("alert")).toHaveTextContent("編集可否を確認できませんでした");
+      }
+    },
+  );
 
   it("keeps completion visible without correction when the batch visibility request fails", async () => {
     vi.stubGlobal(
@@ -599,7 +889,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
   });
 
-  it("keeps a new assisted answer available while waiting is confirmed and the batch check is unknown", async () => {
+  it("allows a new assisted answer while visibility is pending, then hides it when locked", async () => {
     const pendingResult = deferred<Response>();
     const pendingBatch = deferred<Response>();
     const openAssistedLogin = vi.fn();
@@ -631,19 +921,24 @@ describe("QuizRunner batch answer sheet", () => {
         json: async () => ({ state: "waiting" }),
       } as Response);
     });
-    const assistedButton = await screen.findByRole("button", { name: "代理回答を行う" });
-    expect(assistedButton).toBeInTheDocument();
-    fireEvent.click(assistedButton);
-    expect(openAssistedLogin).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(
+        screen.getByText("結果の公開状況は確認済みです。回答の編集可否を確認しています…"),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "代理回答を行う" })).toBeInTheDocument();
 
     await act(async () => {
-      // A refresh is not part of the completion flow; resolve the deferred batch to leave no request pending.
       pendingBatch.resolve({
         ok: true,
         status: 200,
-        json: async () => ({ resultsVisible: false }),
+        json: async () => ({ resultsVisible: true }),
       } as Response);
     });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument(),
+    );
+    expect(openAssistedLogin).not.toHaveBeenCalled();
   });
 
   it.each(["visible", "unavailable"] as const)(
@@ -720,34 +1015,40 @@ describe("QuizRunner batch answer sheet", () => {
 
     render(<RunnerPage />);
 
-    const assistedButton = await screen.findByRole("button", { name: "代理回答を修正する" });
-    expect(assistedButton).toBeDisabled();
+    await waitFor(() =>
+      expect(
+        screen.getByText("結果の公開状況は確認済みです。回答の編集可否を確認しています…"),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("button", { name: "代理回答を修正する" })).not.toBeInTheDocument();
     await act(async () => {
       pendingBatch.resolve({
         ok: true,
         status: 200,
-        json: async () => ({ resultsVisible: true }),
+        json: async () => ({ resultsVisible: false }),
       } as Response);
     });
-    expect(screen.queryByRole("button", { name: "代理回答を修正する" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "代理回答を修正する" })).toBeEnabled();
   });
 
   it("reopens a completed answer set for editing with its saved radio answer and neutral copy", async () => {
     const editAnswers = vi.fn();
     const saveAnswers = vi.fn();
     const savedSelections = { 1: 3, 2: 0, 3: 2, 4: 3, 5: 0 };
+    let visibilityRequest = 0;
     vi.stubGlobal(
       "fetch",
-      vi.fn((input: RequestInfo | URL) =>
-        Promise.resolve({
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input).startsWith("/api/answers/visibility")) visibilityRequest += 1;
+        return Promise.resolve({
           ok: true,
           status: 200,
           json: async () =>
             String(input).includes("/api/answers/visibility")
               ? { resultsVisible: false }
               : { state: "waiting" },
-        }),
-      ),
+        });
+      }),
     );
     let currentSession = session(
       { kind: "complete" },
@@ -767,7 +1068,8 @@ describe("QuizRunner batch answer sheet", () => {
     const editButton = await screen.findByRole("button", { name: "回答を修正する" });
     await waitFor(() => expect(editButton).toBeEnabled());
     fireEvent.click(editButton);
-    expect(editAnswers).toHaveBeenCalledOnce();
+    await waitFor(() => expect(editAnswers).toHaveBeenCalledOnce());
+    expect(visibilityRequest).toBe(2);
 
     await act(async () => {
       currentSession = {
@@ -818,24 +1120,32 @@ describe("QuizRunner batch answer sheet", () => {
     if (_label === "private results" || _label === "unavailable results") {
       expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
       expect(
-        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+        screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+          exact: true,
+        }),
       ).not.toBeInTheDocument();
     } else if (_label === "unknown results") {
       expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "もう一度確認する" })).toBeInTheDocument();
       expect(
-        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+        screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+          exact: true,
+        }),
       ).not.toBeInTheDocument();
     } else if (_label === "expired authentication") {
       expect(screen.getByRole("region", { name: "参加状態の確認が必要です" })).toBeInTheDocument();
       expect(
-        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+        screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+          exact: true,
+        }),
       ).not.toBeInTheDocument();
     } else {
       expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "もう一度確認する" })).toBeInTheDocument();
       expect(
-        screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+        screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+          exact: true,
+        }),
       ).not.toBeInTheDocument();
     }
   });
@@ -863,7 +1173,7 @@ describe("QuizRunner batch answer sheet", () => {
     const { rerender } = render(<RunnerPage />);
 
     expect(
-      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.getByText("回答は保存されています。結果の公開状況を確認しています。", { exact: true }),
     ).toBeInTheDocument();
     await act(async () => {
       currentSession = {
@@ -883,7 +1193,7 @@ describe("QuizRunner batch answer sheet", () => {
       } as Response);
     });
     expect(
-      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.getByText("回答は保存されています。結果の公開状況を確認しています。", { exact: true }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
 
@@ -895,7 +1205,9 @@ describe("QuizRunner batch answer sheet", () => {
       } as Response);
     });
     expect(
-      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+        exact: true,
+      }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
   });
@@ -940,7 +1252,7 @@ describe("QuizRunner batch answer sheet", () => {
       rerender(<RunnerPage />);
     });
     expect(
-      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.getByText("回答は保存されています。結果の公開状況を確認しています。", { exact: true }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
 
@@ -952,13 +1264,16 @@ describe("QuizRunner batch answer sheet", () => {
       } as Response);
     });
     expect(
-      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+        exact: true,
+      }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
   });
 
   it("retries publication lookup after form authentication recovers a results API 401", async () => {
     const pendingAfterLogin = deferred<Response>();
+    const saveAnswers = vi.fn();
     let resultRequest = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       if (String(input).startsWith("/api/answers/visibility")) {
@@ -975,25 +1290,25 @@ describe("QuizRunner batch answer sheet", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const login = vi.fn(async () => 7);
-    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }, { login }));
+    mockUseQuizSession.mockReturnValue(session({ kind: "complete" }, { login, saveAnswers }));
     render(<RunnerPage />);
 
     const reauthentication = await screen.findByRole("region", {
       name: "参加状態の確認が必要です",
     });
+    await waitFor(() => expect(publicationRequestCount(fetchMock)).toBe(1));
     fireEvent.change(within(reauthentication).getByLabelText("4桁PIN"), {
       target: { value: "0123" },
     });
     fireEvent.click(within(reauthentication).getByRole("button", { name: "再ログインする" }));
     await waitFor(() => expect(login).toHaveBeenCalledWith("参加者", "0123"));
 
-    expect(
-      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
-    ).toBeInTheDocument();
     await waitFor(() => expect(publicationRequestCount(fetchMock)).toBe(2));
     expect(
       screen.queryByRole("region", { name: "参加状態の確認が必要です" }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+    expect(saveAnswers).not.toHaveBeenCalled();
 
     await act(async () => {
       pendingAfterLogin.resolve({
@@ -1003,9 +1318,13 @@ describe("QuizRunner batch answer sheet", () => {
       } as Response);
     });
     expect(
-      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+        exact: true,
+      }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
+    expect(publicationRequestCount(fetchMock)).toBe(2);
+    expect(saveAnswers).not.toHaveBeenCalled();
   });
 
   it("does not let a late response from an earlier completion interval confirm the next one", async () => {
@@ -1025,7 +1344,7 @@ describe("QuizRunner batch answer sheet", () => {
     const { rerender } = render(<RunnerPage />);
 
     expect(
-      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.getByText("回答は保存されています。結果の公開状況を確認しています。", { exact: true }),
     ).toBeInTheDocument();
     await act(async () => {
       currentSession = { ...currentSession, phase: { kind: "answering" } };
@@ -1037,7 +1356,7 @@ describe("QuizRunner batch answer sheet", () => {
     });
     expect(resultRequest).toBe(2);
     expect(
-      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.getByText("回答は保存されています。結果の公開状況を確認しています。", { exact: true }),
     ).toBeInTheDocument();
 
     await act(async () => {
@@ -1048,7 +1367,7 @@ describe("QuizRunner batch answer sheet", () => {
       } as Response);
     });
     expect(
-      screen.getByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.getByText("回答は保存されています。結果の公開状況を確認しています。", { exact: true }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
 
@@ -1060,7 +1379,9 @@ describe("QuizRunner batch answer sheet", () => {
       } as Response);
     });
     expect(
-      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+        exact: true,
+      }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
   });
@@ -1075,7 +1396,9 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByRole("heading", { name: "回答済み" })).toBeInTheDocument();
     expect(screen.getByText(/確認できませんでした/)).toBeInTheDocument();
     expect(
-      screen.queryByText("結果の公開状況を確認しています…", { exact: true }),
+      screen.queryByText("回答は保存されています。結果の公開状況を確認しています。", {
+        exact: true,
+      }),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
@@ -1135,12 +1458,9 @@ describe("QuizRunner batch answer sheet", () => {
     const reauthentication = screen.getByRole("region", {
       name: "参加状態の確認が必要です",
     });
-    expect(within(reauthentication).getByRole("alert")).toHaveTextContent(
-      "全5問の回答は記録されています",
-    );
-    expect(within(reauthentication).getByRole("alert")).toHaveTextContent(
-      "回答は自動送信されません",
-    );
+    expect(reauthentication).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("全5問の回答は記録されています");
+    expect(screen.getByRole("alert")).toHaveTextContent("回答は自動送信されません");
     const reauthenticate = screen.getByRole("button", { name: "再ログインする" });
     expect(reauthenticate).toHaveClass("bg-primary");
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
@@ -1162,7 +1482,7 @@ describe("QuizRunner batch answer sheet", () => {
     await waitFor(() => expect(unlockedCorrection).toBeEnabled());
     expect(saveAnswers).not.toHaveBeenCalled();
     fireEvent.click(unlockedCorrection);
-    expect(editAnswers).toHaveBeenCalledOnce();
+    await waitFor(() => expect(editAnswers).toHaveBeenCalledOnce());
     expect(saveAnswers).not.toHaveBeenCalled();
   });
 

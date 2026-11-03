@@ -272,7 +272,7 @@ export async function syncPair({
     throw new Error("Vercel CLI authentication preflight failed; run `vercel login` and retry.");
   log(`Vercel project: ${projectName}; target: ${target}.`);
 
-  const listed = runCli(["env", "ls", target], undefined, spawn);
+  const listed = runCli(["env", "list", "--environment", target, "--json"], undefined, spawn);
   if (resultFailed(listed)) {
     throw new Error(`Vercel ${target} environment preflight failed; no variables were changed.`);
   }
@@ -291,7 +291,7 @@ export async function syncPair({
     [secretKey, pair.secret],
   ]) {
     const result = runCli(
-      ["env", "add", key, target, "--force", "--sensitive"],
+      ["env", "add", key, "--environment", target, "--force", "--sensitive"],
       `${value}\n`,
       spawn,
     );

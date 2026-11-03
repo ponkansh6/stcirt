@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { QuizQuestion } from "@/types/quiz";
 import {
+  answerBootstrapSchema,
+  answerCompletionSnapshotSchema,
   answerBatchResultSchema,
   answerSubmissionSchema,
   latestAnswerSubmissionSchema,
@@ -145,6 +147,17 @@ export type AssistedParticipantState = {
   eligible: boolean;
 };
 export type AnswerScope = "owner" | "assisted";
+export type AnswerCompletionSnapshot = z.infer<typeof answerCompletionSnapshotSchema>;
+export type AnswerBootstrap = z.infer<typeof answerBootstrapSchema>;
+
+export async function fetchAnswerBootstrap(mode: AnswerScope): Promise<AnswerBootstrap> {
+  return request(
+    `/api/answers/bootstrap?mode=${mode}`,
+    { cache: "no-store" },
+    "load answer session",
+    answerBootstrapSchema,
+  );
+}
 
 const participantSchema = z.object({ id: z.number(), name: z.string() });
 const participantSessionSchema = z.object({
@@ -239,7 +252,7 @@ export type AnswerBatchInput = {
   )[];
 };
 
-export type AnswerBatchResult = { submissionId: string; revision: number };
+export type AnswerBatchResult = z.infer<typeof answerBatchResultSchema>;
 
 function scopedPath(path: string, scope: AnswerScope): string {
   return scope === "assisted" ? `${path}${path.includes("?") ? "&" : "?"}scope=assisted` : path;

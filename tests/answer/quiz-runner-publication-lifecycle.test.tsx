@@ -109,6 +109,77 @@ function ParticipantResultsProbe({
   return <div data-testid="lookup-status">{visibility.lookupStatus}</div>;
 }
 
+function SeededParticipantResultsProbe({
+  revision = 1,
+  failedSnapshot = false,
+}: {
+  revision?: number;
+  failedSnapshot?: boolean;
+}) {
+  const identity = {
+    scope: "owner" as const,
+    ownerParticipantId: 7,
+    participantId: 7,
+    submissionId: "completion-submission",
+    revision: 1,
+  };
+  const completionSnapshot = failedSnapshot
+    ? { status: "failed" as const, identity, resultsState: null, resultsVisible: null }
+    : {
+        status: "ready" as const,
+        identity,
+        resultsState: "waiting" as const,
+        resultsVisible: false,
+      };
+  const visibility = useParticipantResultsVisibility(
+    { kind: "complete", completionSnapshot },
+    { kind: "ready", participant: { id: 7, name: "参加者" } },
+    "owner",
+    { submissionId: "completion-submission", revision },
+  );
+  return (
+    <div>
+      <span data-testid="lookup-status">{visibility.lookupStatus}</span>
+      <span data-testid="result-state">{visibility.state}</span>
+    </div>
+  );
+}
+
+function AssistedParticipantResultsProbe({
+  mismatch = "none",
+}: {
+  mismatch?: "none" | "scope" | "owner" | "target";
+}) {
+  const completionSnapshot = {
+    status: "ready" as const,
+    identity: {
+      scope: mismatch === "scope" ? ("owner" as const) : ("assisted" as const),
+      ownerParticipantId: mismatch === "owner" ? 9 : 7,
+      participantId: mismatch === "target" ? 9 : 8,
+      submissionId: "assisted-completion-submission",
+      revision: 3,
+    },
+    resultsState: "waiting" as const,
+    resultsVisible: false,
+  };
+  const visibility = useParticipantResultsVisibility(
+    { kind: "complete", completionSnapshot },
+    { kind: "ready", participant: { id: 7, name: "参加者" } },
+    "assisted",
+    {
+      submissionId: "assisted-completion-submission",
+      revision: 3,
+      assistedParticipantId: 8,
+    },
+  );
+  return (
+    <div>
+      <span data-testid="lookup-status">{visibility.lookupStatus}</span>
+      <span data-testid="result-state">{visibility.state}</span>
+    </div>
+  );
+}
+
 describe("QuizRunner publication lookup lifecycle", () => {
   beforeEach(() => mockUseQuizSession.mockReset());
   afterEach(() => {
@@ -121,6 +192,129 @@ describe("QuizRunner publication lookup lifecycle", () => {
       Reflect.deleteProperty(document, "visibilityState");
     }
   });
+
+  it("seeds a matching completion state without the initial results GET and keeps resume refresh", async () => {
+    const fetchMock = publicationFetchMock([
+      { ok: true, status: 200, json: async () => ({ state: "unavailable" }) },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SeededParticipantResultsProbe />);
+
+    expect(screen.getByTestId("lookup-status")).toHaveTextContent("settled");
+    expect(screen.getByTestId("result-state")).toHaveTextContent("waiting");
+    expect(publicationRequestCount(fetchMock)).toBe(0);
+
+    const persistedPageShow = new Event("pageshow");
+    Object.defineProperty(persistedPageShow, "persisted", { value: true });
+    window.dispatchEvent(persistedPageShow);
+
+    await waitFor(() => expect(publicationRequestCount(fetchMock)).toBe(1));
+    await waitFor(() =>
+      expect(screen.getByTestId("result-state")).toHaveTextContent("unavailable"),
+    );
+  });
+
+  it("polls a seeded waiting result every 60 seconds while the tab is visible", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/answers/visibility")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ resultsVisible: false }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          state: "visible",
+          score: 1,
+          maxScore: 1,
+          rank: 1,
+          isAggregationTarget: true,
+          participantCount: 1,
+          questions: [
+            {
+              position: 0,
+              question: "Question",
+              answer: { kind: "selected", value: "A", correctness: "correct" },
+            },
+          ],
+        }),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SeededParticipantResultsProbe />);
+
+    expect(publicationRequestCount(fetchMock as ReturnType<typeof publicationFetchMock>)).toBe(0);
+    expect(screen.getByTestId("result-state")).toHaveTextContent("waiting");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(publicationRequestCount(fetchMock as ReturnType<typeof publicationFetchMock>)).toBe(1);
+    expect(screen.getByTestId("result-state")).toHaveTextContent("visible");
+  });
+
+  it("does not use a result snapshot from a different submission revision", async () => {
+    const fetchMock = publicationFetchMock([
+      { ok: true, status: 200, json: async () => ({ state: "unavailable" }) },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SeededParticipantResultsProbe revision={2} />);
+
+    expect(publicationRequestCount(fetchMock)).toBe(1);
+    await waitFor(() =>
+      expect(screen.getByTestId("result-state")).toHaveTextContent("unavailable"),
+    );
+  });
+
+  it("uses a results GET as recovery when the matching snapshot read failed", async () => {
+    const fetchMock = publicationFetchMock([
+      { ok: true, status: 200, json: async () => ({ state: "unavailable" }) },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<SeededParticipantResultsProbe failedSnapshot />);
+
+    expect(publicationRequestCount(fetchMock)).toBe(1);
+    await waitFor(() =>
+      expect(screen.getByTestId("result-state")).toHaveTextContent("unavailable"),
+    );
+  });
+
+  it("seeds an assisted result only when owner, scope, and target identities match", async () => {
+    const fetchMock = publicationFetchMock([
+      { ok: true, status: 200, json: async () => ({ state: "unavailable" }) },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AssistedParticipantResultsProbe />);
+
+    expect(screen.getByTestId("lookup-status")).toHaveTextContent("settled");
+    expect(screen.getByTestId("result-state")).toHaveTextContent("waiting");
+    expect(publicationRequestCount(fetchMock)).toBe(0);
+  });
+
+  it.each(["scope", "owner", "target"] as const)(
+    "does not seed an assisted result with a mismatched %s identity",
+    async (mismatch) => {
+      const fetchMock = publicationFetchMock([
+        { ok: true, status: 200, json: async () => ({ state: "unavailable" }) },
+      ]);
+      vi.stubGlobal("fetch", fetchMock);
+      render(<AssistedParticipantResultsProbe mismatch={mismatch} />);
+
+      expect(publicationRequestCount(fetchMock)).toBe(1);
+      await waitFor(() =>
+        expect(screen.getByTestId("result-state")).toHaveTextContent("unavailable"),
+      );
+    },
+  );
 
   it("ignores non-persisted pageshow and suppresses resume retry after an initial error", async () => {
     const fetchMock = publicationFetchMock([{ ok: false, status: 503, json: async () => ({}) }]);
