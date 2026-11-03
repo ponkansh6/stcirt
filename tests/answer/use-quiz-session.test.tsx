@@ -607,6 +607,84 @@ describe("useQuizSession hook", () => {
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
   });
 
+  it("keeps a ready completion snapshot when activating an assisted saved submission without a draft", async () => {
+    const ownerSubmission = {
+      submissionId,
+      revision: 1,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    };
+    const assistedSubmission = {
+      submissionId: "00000000-0000-4000-8000-000000000098",
+      revision: 4,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 2,
+        freeText: null,
+      })),
+    };
+    const completionSnapshot = {
+      status: "ready" as const,
+      identity: {
+        scope: "assisted" as const,
+        ownerParticipantId: participant.id,
+        participantId: assistedParticipant.id,
+        submissionId: assistedSubmission.submissionId,
+        revision: assistedSubmission.revision,
+      },
+      resultsState: "waiting" as const,
+      resultsVisible: false,
+    };
+    vi.mocked(fetchAnswerBootstrap)
+      .mockResolvedValueOnce(makeBootstrap("owner", ownerSubmission))
+      .mockResolvedValueOnce({
+        ...makeBootstrap("assisted", assistedSubmission),
+        completionSnapshot,
+      });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/participants/assisted" && init?.method === "POST") {
+        return {
+          ok: true,
+          json: async () => ({ participant: assistedParticipant, hasSubmission: true }),
+        };
+      }
+      if (url === "/api/participants/assisted") {
+        return {
+          ok: true,
+          json: async () => ({ participant: assistedParticipant, hasSubmission: true }),
+        };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+
+    await act(async () => result.current.startAssisted("代理参加者"));
+
+    expect(result.current.answerMode).toBe("assisted");
+    expect(result.current.assistedParticipant?.hasSubmission).toBe(true);
+    expect(result.current.submissionId).toBe(assistedSubmission.submissionId);
+    expect(result.current.revision).toBe(assistedSubmission.revision);
+    expect(result.current.phase).toEqual({ kind: "complete", completionSnapshot });
+    expect(result.current.saveConfirmed).toBe(true);
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(1, "owner");
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(2, "assisted");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
   it("ignores the stale bootstrap response from StrictMode's first mount", async () => {
     let releaseStale!: (value: Awaited<ReturnType<typeof fetchAnswerBootstrap>>) => void;
     const staleResponse = new Promise<Awaited<ReturnType<typeof fetchAnswerBootstrap>>>(
@@ -2333,7 +2411,7 @@ describe("useQuizSession hook", () => {
     });
   });
 
-  it("falls back to owner after login when the assisted saved submission has no matching draft", async () => {
+  it("starts a new owner attempt after login when the assisted saved submission has no matching draft and owner has no saved submission", async () => {
     const staleDraft = await createAssistedDraft();
     const { result, fetchMock } = await startWithExpiredOwnerSession();
     window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
@@ -2350,39 +2428,88 @@ describe("useQuizSession hook", () => {
         freeText: null,
       })),
     };
-    const ownerSubmission = {
-      ...savedSubmission,
-      revision: 3,
-    };
-    const ownerCompletionSnapshot = {
-      status: "ready" as const,
-      identity: {
-        scope: "owner" as const,
-        ownerParticipantId: participant.id,
-        participantId: participant.id,
-        submissionId,
-        revision: 3,
-      },
-      resultsState: "unavailable" as const,
-      resultsVisible: true,
-    };
     vi.mocked(fetchAnswerBootstrap)
       .mockResolvedValueOnce(makeBootstrap("assisted", savedSubmission))
-      .mockResolvedValueOnce({
-        ...makeBootstrap("owner", ownerSubmission),
-        completionSnapshot: ownerCompletionSnapshot,
-      });
+      .mockResolvedValueOnce(makeBootstrap("owner", null));
 
     await act(async () => result.current.login("参加者", "1234"));
-    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
 
     expect(result.current.answerMode).toBe("owner");
     expect(result.current.assistedScreen).toBe("closed");
-    expect(result.current.phase).toEqual({
-      kind: "complete",
-      completionSnapshot: ownerCompletionSnapshot,
+    expect(result.current.phase).toEqual({ kind: "answering" });
+    expect(result.current.submissionId).not.toBeNull();
+    expect(result.current.revision).toBe(0);
+    expect(result.current.saveConfirmed).toBe(false);
+    expect(result.current.quizzes).toHaveLength(5);
+    expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
+    expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
+    expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 2, "owner");
+    expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("falls back to a new owner attempt when a matching assisted draft has a different in-memory submission", async () => {
+    const { result, fetchMock } = await startWithExpiredOwnerSession();
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    const originalFetch = fetchMock.getMockImplementation();
+    if (!originalFetch) throw new Error("Expected fetch mock implementation");
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith("/api/answers/batch") && init?.method === "POST") {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ message: "認証が必要です" }),
+        };
+      }
+      return originalFetch(url, init);
     });
-    expect(result.current.submissionId).toBe(submissionId);
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(makeBootstrap("assisted"));
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    const localSubmissionId = result.current.submissionId;
+    expect(localSubmissionId).not.toBeNull();
+    await answerAll(result);
+    await act(async () => result.current.saveAnswers());
+    await waitFor(() => expect(result.current.access.kind).toBe("reauthentication"));
+
+    const persistedDraft = JSON.parse(
+      window.sessionStorage.getItem("stcirt-assisted-answer-draft")!,
+    ) as Record<string, unknown>;
+    const serverSubmissionId = "00000000-0000-4000-8000-000000000099";
+    const serverSubmission = {
+      submissionId: serverSubmissionId,
+      revision: 3,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 1,
+        freeText: null,
+      })),
+    };
+    window.sessionStorage.setItem(
+      "stcirt-assisted-answer-draft",
+      JSON.stringify({ ...persistedDraft, submissionId: serverSubmissionId, revision: 3 }),
+    );
+    const bootstrapCallsBeforeLogin = vi.mocked(fetchAnswerBootstrap).mock.calls.length;
+    vi.mocked(fetchAnswerBootstrap)
+      .mockResolvedValueOnce(makeBootstrap("assisted", serverSubmission))
+      .mockResolvedValueOnce(makeBootstrap("owner", null));
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    expect(result.current.access).toEqual({ kind: "ready", participant });
+    expect(result.current.answerMode).toBe("owner");
+    expect(result.current.phase).toEqual({ kind: "answering" });
+    expect(result.current.submissionId).not.toBe(localSubmissionId);
+    expect(result.current.submissionId).not.toBe(serverSubmissionId);
+    expect(result.current.revision).toBe(0);
+    expect(result.current.saveConfirmed).toBe(false);
+    expect(result.current.quizzes).toHaveLength(5);
     expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
     expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");

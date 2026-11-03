@@ -94,6 +94,14 @@ describe("answerBootstrapSchema", () => {
     ).toBe(false);
   });
 
+  it("rejects a saved submission without its completion snapshot", () => {
+    expect(
+      answerBootstrapSchema.safeParse(
+        bootstrap({ submission: savedSubmission(), questions: undefined }),
+      ).success,
+    ).toBe(false);
+  });
+
   it.each(["waiting", "visible", "unavailable"] as const)(
     "accepts the minimal %s completion result state",
     (resultsState) => {

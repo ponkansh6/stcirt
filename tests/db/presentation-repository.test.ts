@@ -2302,6 +2302,7 @@ describe("presentation repository", () => {
     await setParticipantResultsVisible(false);
 
     await expect(getParticipantResult(participant)).resolves.toEqual({ state: "waiting" });
+    await expect(getParticipantResultState(participant)).resolves.toBe("waiting");
     await expect(getPublicPresentation()).resolves.toEqual(projectionBeforeHide);
     await expect(getAdminPresentation()).resolves.toMatchObject({
       projectionHidden: false,
@@ -2719,6 +2720,7 @@ describe("presentation repository", () => {
     await setParticipantResultsVisible(true);
 
     await expect(getParticipantResult(participant)).resolves.toEqual({ state: "unavailable" });
+    await expect(getParticipantResultState(participant)).resolves.toBe("unavailable");
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
       { participantId: participant, answers: [] },
     ]);
@@ -3225,6 +3227,7 @@ describe("presentation repository", () => {
 
   it("returns waiting before publication and unavailable for malformed result question data", async () => {
     await expect(getParticipantResult(1)).resolves.toEqual({ state: "waiting" });
+    await expect(getParticipantResultState(1)).resolves.toBe("waiting");
     await addFreeTextProjectionFixture("another-free-text-question");
 
     await testDb.db

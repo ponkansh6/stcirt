@@ -178,13 +178,9 @@ export async function readAdminPresentation(
   } satisfies AdminPresentation;
 }
 
-type ParticipantResultPublicationState = "waiting" | "unavailable" | "published";
+type ParticipantResultPublicationState = "unavailable" | "published";
 
-function participantResultPublicationState(
-  visible: boolean,
-  hasEntry: boolean,
-): ParticipantResultPublicationState {
-  if (!visible) return "waiting";
+function participantResultPublicationState(hasEntry: boolean): ParticipantResultPublicationState {
   return hasEntry ? "published" : "unavailable";
 }
 
@@ -315,9 +311,8 @@ async function readParticipantResultState(
         eq(presentationEntries.participantId, participantId),
       ),
     );
-  const state = participantResultPublicationState(settings.visible, Boolean(entry));
+  const state = participantResultPublicationState(Boolean(entry));
   if (state !== "published") return state;
-  if (!entry) return "unavailable";
 
   const [questionRows, entryCount] = await Promise.all([
     tx
@@ -340,7 +335,7 @@ async function readParticipantResultState(
         ),
       ),
   ]);
-  return isValidParticipantResultSnapshot(entry, questionRows, entryCount[0]?.value ?? 0)
+  return isValidParticipantResultSnapshot(entry, questionRows, entryCount[0]!.value)
     ? "visible"
     : "unavailable";
 }
@@ -374,8 +369,6 @@ export async function getParticipantResult(participantId: number): Promise<Parti
           eq(presentationEntries.participantId, participantId),
         ),
       );
-    const publicationState = participantResultPublicationState(settings.visible, Boolean(entry));
-    if (publicationState !== "published") return { state: publicationState };
     if (!entry) return { state: "unavailable" as const };
     const questionRows = await tx
       .select()
@@ -424,9 +417,9 @@ export async function getParticipantResult(participantId: number): Promise<Parti
           };
         }
       } else if (answer.answerKind === "freeText") {
-        if (typeof answer.freeText !== "string") return { state: "unavailable" as const };
         const score = answer.normalizedScore;
-        answerDto = { kind: "freeText", value: answer.freeText, score };
+        // Snapshot validation above rejects non-string freeText before projection.
+        answerDto = { kind: "freeText", value: answer.freeText as string, score };
       } else if (answer.answerKind === "legacy") {
         // The historical legacy answer is the final free-response question:
         // its original choices are no longer in the snapshot, but its old

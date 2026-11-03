@@ -233,6 +233,42 @@ describe("useSubmissionVisibility live snapshot", () => {
     expect(result.current.lookupStatus).toBe("settled");
   });
 
+  it("returns false when a saved-submission recheck is inactive", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useSubmissionVisibility({ ...props(), revision: 0 }));
+
+    let canEdit = true;
+    await act(async () => {
+      canEdit = await result.current.recheck();
+    });
+
+    expect(canEdit).toBe(false);
+    expect(result.current.lookupStatus).toBe("inactive");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when a queued visibility interval runs after unmount", async () => {
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const hookProps = {
+      ...props(),
+      phase: { kind: "complete", completionSnapshot: readySnapshot() } as Phase,
+    };
+    const view = renderHook(() => useSubmissionVisibility(hookProps));
+    const intervalCallback = setIntervalSpy.mock.calls.find(([, delay]) => delay === 60_000)?.[0];
+    expect(typeof intervalCallback).toBe("function");
+
+    view.unmount();
+    await act(async () => {
+      (intervalCallback as () => void)();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("coalesces recheck with the current identity's initial visibility GET", async () => {
     const response = deferred<Response>();
     const fetchMock = vi.fn().mockReturnValue(response.promise);
@@ -436,6 +472,68 @@ describe("useSubmissionVisibility live snapshot", () => {
     rerender({ hookProps: initialProps });
 
     expect(liveSnapshotRef.current).toEqual({ key, status: "locked" });
+  });
+
+  it("replaces a same-key live ref with its matching ready seed", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const key = makeSubmissionVisibilityKey({
+      participantId: 7,
+      answerMode: "owner",
+      assistedParticipantId: undefined,
+      submissionId: "submission-1",
+      revision: 1,
+    });
+    const liveSnapshotRef: { current: SubmissionVisibilitySnapshot | null } = {
+      current: { key, status: "locked" },
+    };
+    const hookProps = {
+      ...props(),
+      phase: { kind: "complete", completionSnapshot: readySnapshot() } as Phase,
+    };
+
+    renderHook(() => useSubmissionVisibility(hookProps, liveSnapshotRef));
+
+    expect(liveSnapshotRef.current).toEqual({ key, status: "unlocked" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a same-key live ref when the new completion snapshot is malformed", async () => {
+    const fetchResponse = deferred<Response>();
+    const fetchMock = vi.fn().mockReturnValue(fetchResponse.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const key = makeSubmissionVisibilityKey({
+      participantId: 7,
+      answerMode: "owner",
+      assistedParticipantId: undefined,
+      submissionId: "submission-1",
+      revision: 1,
+    });
+    const liveSnapshotRef: { current: SubmissionVisibilitySnapshot | null } = {
+      current: { key, status: "locked" },
+    };
+    const failedSnapshot = {
+      status: "failed" as const,
+      identity: readySnapshot().identity,
+      resultsState: null,
+      resultsVisible: null,
+    };
+    const { result } = renderHook(() =>
+      useSubmissionVisibility(
+        { ...props(), phase: { kind: "complete", completionSnapshot: failedSnapshot } as Phase },
+        liveSnapshotRef,
+      ),
+    );
+
+    expect(liveSnapshotRef.current).toEqual({ key, status: "unknown" });
+    expect(result.current.lookupStatus).toBe("pending");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      fetchResponse.resolve(visibilityResponse(false));
+      await fetchResponse.promise;
+    });
+    expect(liveSnapshotRef.current).toEqual({ key, status: "unlocked" });
   });
 
   it("invalidates a prior revision snapshot before a stale response can be applied", async () => {

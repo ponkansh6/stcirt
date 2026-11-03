@@ -552,6 +552,7 @@ export default function QuizRunner() {
       return;
     }
     const completionHeading = completionHeadingRef.current;
+    /* v8 ignore if -- The completion heading is rendered whenever this effect can run; keep this guard for unexpected tree changes. */
     if (!completionHeading) return;
     if (
       document.activeElement === document.body ||

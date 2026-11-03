@@ -58,6 +58,20 @@ describe("getAnswerCompletionSnapshot", () => {
     });
   });
 
+  it("returns failed when publication changes between the two reads", async () => {
+    getAnswerSubmissionCompletionVisibilityMock.mockResolvedValueOnce({
+      revision: input.revision,
+      resultsVisible: true,
+    });
+
+    await expect(getAnswerCompletionSnapshot(input)).resolves.toEqual({
+      status: "failed",
+      identity: input,
+      resultsState: null,
+      resultsVisible: null,
+    });
+  });
+
   it("returns failed when either state read fails", async () => {
     getParticipantResultStateMock.mockRejectedValueOnce(new Error("read failed"));
 

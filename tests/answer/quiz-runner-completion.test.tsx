@@ -1031,6 +1031,119 @@ describe("QuizRunner batch answer sheet", () => {
     expect(await screen.findByRole("button", { name: "代理回答を修正する" })).toBeEnabled();
   });
 
+  it("uses saved-assisted guidance when the visibility lookup fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) =>
+        String(input).includes("/api/answers/visibility")
+          ? Promise.resolve({ ok: false, status: 503, json: async () => ({}) })
+          : Promise.resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ state: "waiting" }),
+            }),
+      ),
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          answerMode: "assisted",
+          revision: 1,
+          submissionId: "assisted-submission-1",
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+        },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "安全のため本人回答と保存済み代理回答の修正を停止しています。",
+    );
+    expect(screen.queryByRole("button", { name: "代理回答を修正する" })).not.toBeInTheDocument();
+  });
+
+  it("shows unavailable-state guidance when a ready snapshot has no result state", async () => {
+    const completionSnapshot = {
+      status: "ready" as const,
+      identity: {
+        scope: "owner" as const,
+        ownerParticipantId: 7,
+        participantId: 7,
+        submissionId: "submission-1",
+        revision: 1,
+      },
+      resultsState: null,
+      resultsVisible: true,
+    };
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete", completionSnapshot },
+        { revision: 1, submissionId: "submission-1" },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    expect(
+      await screen.findByText(
+        "回答状態を確認できませんでした。回答を再送せず、状態の確認だけをやり直してください。",
+      ),
+    ).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-edit an assisted submission when a fresh recheck locks it", async () => {
+    let visibilityRequests = 0;
+    const editAnswers = vi.fn();
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/answers/visibility")) {
+        visibilityRequests += 1;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ resultsVisible: visibilityRequests > 1 }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: "waiting" }),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          answerMode: "assisted",
+          autoEditAssisted: true,
+          revision: 1,
+          submissionId: "assisted-submission-1",
+          assistedParticipant: {
+            participant: { id: 18, name: "代理回答者" },
+            hasSubmission: true,
+            eligible: false,
+          },
+          editAnswers,
+          clearAutoEditAssisted: vi.fn(),
+        },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    await waitFor(() => expect(visibilityRequests).toBe(2));
+    expect(editAnswers).not.toHaveBeenCalled();
+  });
+
   it("reopens a completed answer set for editing with its saved radio answer and neutral copy", async () => {
     const editAnswers = vi.fn();
     const saveAnswers = vi.fn();

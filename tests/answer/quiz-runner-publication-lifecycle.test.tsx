@@ -262,6 +262,54 @@ describe("QuizRunner publication lookup lifecycle", () => {
     expect(screen.getByTestId("result-state")).toHaveTextContent("visible");
   });
 
+  it("continues polling an unavailable result while the tab is visible", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    const fetchMock = publicationFetchMock([
+      { ok: true, status: 200, json: async () => ({ state: "unavailable" }) },
+      { ok: true, status: 200, json: async () => ({ state: "unavailable" }) },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ParticipantResultsProbe onRetry={vi.fn()} />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(publicationRequestCount(fetchMock)).toBe(1);
+    expect(screen.getByTestId("lookup-status")).toHaveTextContent("settled");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    expect(publicationRequestCount(fetchMock)).toBe(2);
+  });
+
+  it("ignores an interval callback that was queued before publication lookup unmount", async () => {
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    const fetchMock = publicationFetchMock([
+      { ok: true, status: 200, json: async () => ({ state: "waiting" }) },
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(<ParticipantResultsProbe onRetry={vi.fn()} />);
+    await waitFor(() => expect(publicationRequestCount(fetchMock)).toBe(1));
+    const intervalCallback = setIntervalSpy.mock.calls.find(([, delay]) => delay === 60_000)?.[0];
+    expect(typeof intervalCallback).toBe("function");
+
+    view.unmount();
+    await act(async () => {
+      (intervalCallback as () => void)();
+      await Promise.resolve();
+    });
+
+    expect(publicationRequestCount(fetchMock)).toBe(1);
+  });
+
   it("does not use a result snapshot from a different submission revision", async () => {
     const fetchMock = publicationFetchMock([
       { ok: true, status: 200, json: async () => ({ state: "unavailable" }) },

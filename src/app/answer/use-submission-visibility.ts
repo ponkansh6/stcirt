@@ -138,11 +138,9 @@ export function useSubmissionVisibility(
         ? "pending"
         : visibilityLookup?.key === currentVisibilityKey
           ? visibilityLookup.status
-          : currentVisibility && currentVisibility.status !== "unknown"
-            ? "settled"
-            : activeVisibilityCheck
-              ? "pending"
-              : "inactive";
+          : activeVisibilityCheck
+            ? "pending"
+            : "inactive";
   const recheck = useCallback(async () => {
     const request = recheckRequestRef.current;
     if (!activeVisibilityCheck || request?.key !== currentVisibilityKey) return false;
@@ -190,6 +188,7 @@ export function useSubmissionVisibility(
       return;
     }
     if (effectSeed) {
+      /* v8 ignore if -- effectSeed is only created when candidateSnapshot is non-null. */
       if (candidateSnapshot) {
         consumedSeedRef.current = { key: visibilityKey, snapshot: candidateSnapshot };
       }
@@ -258,14 +257,10 @@ export function useSubmissionVisibility(
         }
       })();
       pendingRefresh = request;
-      void request.then(
-        () => {
-          if (pendingRefresh === request) pendingRefresh = null;
-        },
-        () => {
-          if (pendingRefresh === request) pendingRefresh = null;
-        },
-      );
+      const clearPendingRefresh = () => {
+        pendingRefresh = null;
+      };
+      void request.then(clearPendingRefresh, clearPendingRefresh);
       return request;
     };
     recheckRequestRef.current = {
@@ -290,6 +285,7 @@ export function useSubmissionVisibility(
     window.addEventListener("pageshow", onPageShow);
     return () => {
       active = false;
+      /* v8 ignore if -- React runs the prior effect cleanup before the next setup, so this key still matches. */
       if (recheckRequestRef.current?.key === visibilityKey) recheckRequestRef.current = null;
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibilityChange);

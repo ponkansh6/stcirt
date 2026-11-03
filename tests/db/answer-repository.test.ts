@@ -21,6 +21,7 @@ vi.mock("@/lib/db", async (importOriginal) => {
 });
 
 import {
+  getAnswerSubmissionCompletionVisibility,
   getAnswerSubmission,
   getLatestAnswerSubmission,
   getStats,
@@ -140,6 +141,14 @@ describe("answer-repository", () => {
 
   afterEach(() => {
     testDb.cleanup();
+  });
+
+  it("returns null when completion visibility is requested for a missing submission", async () => {
+    const participantId = await insertParticipant("missing completion submission");
+
+    await expect(
+      getAnswerSubmissionCompletionVisibility("missing-completion-submission", participantId),
+    ).resolves.toBeNull();
   });
 
   describe("recordAnswer", () => {
