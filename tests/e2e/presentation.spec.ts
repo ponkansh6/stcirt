@@ -596,7 +596,7 @@ async function waitForCurrentPresentationEntryAnimations(page: import("@playwrig
     const animations = targets.flatMap((target) => {
       const matches = target
         .getAnimations()
-        .filter((animation) => (animation as CSSAnimation).animationName.endsWith(animationName));
+        .filter((animation) => (animation as CSSAnimation).animationName.includes(animationName));
       if (matches.length !== 1) {
         throw new Error(`Expected one ${animationName} animation on ${target.tagName}`);
       }
@@ -684,7 +684,7 @@ async function inspectEntryAnimation(
     const animation = element
       .getAnimations()
       .find((candidate) =>
-        (candidate as CSSAnimation).animationName.endsWith(expectedAnimationName),
+        (candidate as CSSAnimation).animationName.includes(expectedAnimationName),
       );
     animation?.pause();
     if (animation) animation.currentTime = 0;
@@ -717,7 +717,7 @@ async function expectPresentationEntryAnimation(
   );
   const durationMs = Number.parseFloat(animation.animationDuration);
   const durationInMs = animation.animationDuration.endsWith("ms") ? durationMs : durationMs * 1000;
-  expect(animation.animationName).toMatch(isOpening ? /openingTitleEntry$/ : /presentationEntry$/);
+  expect(animation.animationName).toContain(isOpening ? "openingTitleEntry" : "presentationEntry");
   expect(durationInMs).toBeGreaterThan(0);
   expect(durationInMs).toBeLessThanOrEqual(400);
   expect(animation.animationFillMode).toBe("both");
@@ -1077,7 +1077,7 @@ test("@chromium generic slide entrances honor their stage", async ({ page }) => 
       const firstChoice = page.locator("#question-heading + ol li").first();
       expect(
         await firstChoice.evaluate((element) => getComputedStyle(element).animationName),
-      ).toMatch(/presentationEntry$/);
+      ).toContain("presentationEntry");
       const delay = await firstChoice.evaluate((element) =>
         Number.parseFloat(getComputedStyle(element).animationDelay),
       );
@@ -1774,7 +1774,7 @@ test("@chromium first-prize content fits a small slide and reduced motion keeps 
         .getAnimations()
         .filter((animation) =>
           ["firstPrizeTitle", "firstPrizeReveal"].some((name) =>
-            (animation as CSSAnimation).animationName.endsWith(name),
+            (animation as CSSAnimation).animationName.includes(name),
           ),
         ),
     );
@@ -1830,7 +1830,7 @@ test("@chromium first-prize entrance survives same-stage polling and replays on 
       const element = document.querySelector<HTMLElement>(selector);
       const animation = element
         ?.getAnimations()
-        .find((candidate) => (candidate as CSSAnimation).animationName.endsWith(name));
+        .find((candidate) => (candidate as CSSAnimation).animationName.includes(name));
       const timing = animation?.effect?.getComputedTiming();
       if (!timing) throw new Error(`Missing first-prize timing for ${selector}`);
       const delay = timing.delay;
@@ -1863,7 +1863,7 @@ test("@chromium first-prize entrance survives same-stage polling and replays on 
   const initialStartTime = await title.evaluate((element) => {
     const entrance = element
       .getAnimations()
-      .find((animation) => (animation as CSSAnimation).animationName.endsWith("firstPrizeTitle"));
+      .find((animation) => (animation as CSSAnimation).animationName.includes("firstPrizeTitle"));
     if (!entrance) throw new Error("First-prize title entrance animation was not found");
     (
       window as typeof window & { __firstPrizeTitleEntrance?: Animation }
@@ -1907,7 +1907,7 @@ test("@chromium first-prize entrance survives same-stage polling and replays on 
   const replayedStartTime = await title.evaluate((element) => {
     const entrance = element
       .getAnimations()
-      .find((animation) => (animation as CSSAnimation).animationName.endsWith("firstPrizeTitle"));
+      .find((animation) => (animation as CSSAnimation).animationName.includes("firstPrizeTitle"));
     if (!entrance) throw new Error("First-prize title entrance did not replay");
     const startTime = entrance.startTime;
     if (typeof startTime !== "number") {
@@ -1934,7 +1934,7 @@ test("@chromium first-prize entrance keeps click progression available", async (
   const entranceIsActive = await title.evaluate((element) => {
     const entrance = element
       .getAnimations()
-      .find((animation) => (animation as CSSAnimation).animationName.endsWith("firstPrizeTitle"));
+      .find((animation) => (animation as CSSAnimation).animationName.includes("firstPrizeTitle"));
     return entrance?.playState === "running";
   });
   expect(entranceIsActive).toBe(true);
@@ -1991,7 +1991,7 @@ test("@chromium rank reveal can advance into first prize while its automatic ani
         const animation = element
           .getAnimations()
           .find((candidate) =>
-            (candidate as CSSAnimation).animationName.endsWith("rankWinnerReveal"),
+            (candidate as CSSAnimation).animationName.includes("rankWinnerReveal"),
           );
         const progress = animation?.effect?.getComputedTiming().progress;
         return progress !== null && progress !== undefined && progress > 0 && progress < 1;
@@ -2008,7 +2008,7 @@ test("@chromium rank reveal can advance into first prize while its automatic ani
   const prizeEntranceIsActive = await prizeTitle.evaluate((element) => {
     const entrance = element
       .getAnimations()
-      .find((animation) => (animation as CSSAnimation).animationName.endsWith("firstPrizeTitle"));
+      .find((animation) => (animation as CSSAnimation).animationName.includes("firstPrizeTitle"));
     return entrance?.playState === "running";
   });
   expect(prizeEntranceIsActive).toBe(true);

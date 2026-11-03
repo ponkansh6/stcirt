@@ -23,6 +23,7 @@ function completionSnapshotFor(
   owner: { id: number },
   participant: { id: number },
   submission: { submissionId: string; revision: number } | null,
+  resultsState: "waiting" | "visible" = "waiting",
 ) {
   if (submission === null) return null;
   return {
@@ -34,8 +35,8 @@ function completionSnapshotFor(
       submissionId: submission.submissionId,
       revision: submission.revision,
     },
-    resultsState: "waiting" as const,
-    resultsVisible: false,
+    resultsState,
+    resultsVisible: resultsState === "visible",
   };
 }
 
@@ -189,6 +190,7 @@ async function mockParticipantSession(
     revision: number;
     answers: SavedBatchAnswer[];
   } | null = null,
+  resultsState: "waiting" | "visible" = "waiting",
 ) {
   let activeLatestSubmission = latestSubmission;
   let activeParticipant = initialName ? { id: 17, name: initialName } : null;
@@ -255,6 +257,7 @@ async function mockParticipantSession(
           activeParticipant,
           activeParticipant,
           submission,
+          resultsState,
         ),
         ...(submission === null ? { questions: [1, 2, 3, 4, 5].map(questionFor) } : {}),
       }),
@@ -482,7 +485,12 @@ test("@chromium result navigation keeps completion visible with link pending unt
         freeText: "保存済み回答",
       },
     ];
-    await mockParticipantSession(page, ownerName, { submissionId, revision: 1, answers });
+    await mockParticipantSession(
+      page,
+      ownerName,
+      { submissionId, revision: 1, answers },
+      "visible",
+    );
     await mockQuestions(page);
     // The UI needs a published result to expose its link. The results-page SSR
     // still uses the real signed cookie and isolated database seeded above.
@@ -862,7 +870,16 @@ test("@chromium root-to-answer flow keeps choices local, blocks an incomplete ba
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ submissionId: body.submissionId, revision: 1 }),
+      body: JSON.stringify({
+        submissionId: body.submissionId,
+        revision: 1,
+        completionSnapshot: completionSnapshotFor(
+          "owner",
+          { id: 18 },
+          { id: 18 },
+          { submissionId: body.submissionId, revision: 1 },
+        ),
+      }),
     });
   });
 
@@ -943,7 +960,16 @@ test("@chromium pending batch preserves accessible motion behavior and locks the
       await postGate;
       const body = route.request().postDataJSON() as BatchPayload;
       await route.fulfill({
-        json: { submissionId: body.submissionId, revision: 1 },
+        json: {
+          submissionId: body.submissionId,
+          revision: 1,
+          completionSnapshot: completionSnapshotFor(
+            "owner",
+            { id: 18 },
+            { id: 18 },
+            { submissionId: body.submissionId, revision: 1 },
+          ),
+        },
       });
     } finally {
       finishPostRoute();
@@ -1374,6 +1400,12 @@ test("@chromium returns to owner completion after an assisted save and opens tar
       body: JSON.stringify({
         submissionId: body.submissionId,
         revision: body.expectedRevision + 1,
+        completionSnapshot: completionSnapshotFor(
+          "assisted",
+          { id: 17 },
+          { id: 18 },
+          { submissionId: body.submissionId, revision: body.expectedRevision + 1 },
+        ),
       }),
     });
   });
@@ -1605,7 +1637,16 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ submissionId, revision: canonical.revision }),
+        body: JSON.stringify({
+          submissionId,
+          revision: canonical.revision,
+          completionSnapshot: completionSnapshotFor(
+            "owner",
+            { id: 17 },
+            { id: 17 },
+            { submissionId, revision: canonical.revision },
+          ),
+        }),
       });
       return;
     }
