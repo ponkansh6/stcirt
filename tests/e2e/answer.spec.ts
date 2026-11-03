@@ -588,7 +588,7 @@ test("@chromium result navigation keeps completion visible with link pending unt
     await navigationRequest;
     await expect(page.getByRole("heading", { level: 1, name: "回答済み" })).toBeVisible();
     await expect(resultsLink).toBeVisible();
-    await expect(page.getByRole("status")).toHaveText("結果ページへ移動しています。");
+    await expect(resultsLink.getByRole("status")).toHaveText("結果ページへ移動しています。");
 
     releaseHeldNavigationRequest();
     await clickPromise;
