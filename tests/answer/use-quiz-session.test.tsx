@@ -163,11 +163,22 @@ describe("useQuizSession hook", () => {
     return hook;
   }
 
-  async function startWithExpiredOwnerSession() {
+  async function startWithExpiredOwnerSession(options: { rejectAnswerPosts?: boolean } = {}) {
     vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(
       new ApiError({ status: 401, message: "Expired", code: null, retryAt: null }),
     );
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (
+        options.rejectAnswerPosts &&
+        url.startsWith("/api/answers/batch") &&
+        init?.method === "POST"
+      ) {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ message: "認証が必要です" }),
+        };
+      }
       if (url === "/api/participants/session" && init?.method === "POST") {
         return {
           ok: true,
@@ -2451,20 +2462,8 @@ describe("useQuizSession hook", () => {
   });
 
   it("falls back to a new owner attempt when a matching assisted draft has a different in-memory submission", async () => {
-    const { result, fetchMock } = await startWithExpiredOwnerSession();
+    const { result, fetchMock } = await startWithExpiredOwnerSession({ rejectAnswerPosts: true });
     window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
-    const originalFetch = fetchMock.getMockImplementation();
-    if (!originalFetch) throw new Error("Expected fetch mock implementation");
-    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url.startsWith("/api/answers/batch") && init?.method === "POST") {
-        return {
-          ok: false,
-          status: 401,
-          json: async () => ({ message: "認証が必要です" }),
-        };
-      }
-      return originalFetch(url, init);
-    });
     vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(makeBootstrap("assisted"));
     await act(async () => result.current.login("参加者", "1234"));
     await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
