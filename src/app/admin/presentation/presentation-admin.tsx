@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import Link from "next/link";
 import styles from "./presentation-admin.module.css";
 
 type AdminState = {
@@ -20,6 +21,8 @@ type AggregationSummary = {
     questionVersionMismatch: number;
     q5AssessmentVersionMismatch: number;
   };
+  referenceParticipantCount?: number;
+  unmatchedReferenceNames?: string[];
 };
 const POLL_TIMEOUT_MS = 8_000;
 
@@ -124,10 +127,15 @@ async function postAction(action: "start" | "aggregate" | "reset") {
         questionVersionMismatch?: unknown;
         q5AssessmentVersionMismatch?: unknown;
       };
+      referenceParticipantCount?: unknown;
+      unmatchedReferenceNames?: unknown;
     };
   } | null;
   const summary = payload?.aggregationSummary;
   const reasonCounts = summary?.excludedReasonCounts;
+  const hasReferenceSummary =
+    summary?.referenceParticipantCount !== undefined ||
+    summary?.unmatchedReferenceNames !== undefined;
   if (
     !summary ||
     !reasonCounts ||
@@ -135,7 +143,11 @@ async function postAction(action: "start" | "aggregate" | "reset") {
     !isCount(summary.includedSubmissionCount) ||
     !isCount(summary.excludedSubmissionCount) ||
     !isCount(reasonCounts.questionVersionMismatch) ||
-    !isCount(reasonCounts.q5AssessmentVersionMismatch)
+    !isCount(reasonCounts.q5AssessmentVersionMismatch) ||
+    (hasReferenceSummary &&
+      (!isCount(summary.referenceParticipantCount) ||
+        !Array.isArray(summary.unmatchedReferenceNames) ||
+        !summary.unmatchedReferenceNames.every((name) => typeof name === "string")))
   )
     return null;
 
@@ -147,6 +159,12 @@ async function postAction(action: "start" | "aggregate" | "reset") {
       questionVersionMismatch: reasonCounts.questionVersionMismatch,
       q5AssessmentVersionMismatch: reasonCounts.q5AssessmentVersionMismatch,
     },
+    ...(hasReferenceSummary
+      ? {
+          referenceParticipantCount: summary.referenceParticipantCount as number,
+          unmatchedReferenceNames: summary.unmatchedReferenceNames as string[],
+        }
+      : {}),
   } satisfies AggregationSummary;
 }
 
@@ -538,6 +556,9 @@ export default function PresentationAdmin() {
               問題 {adminState.questionIndex + 1} / {adminState.questionCount}
             </p>
           ) : null}
+          <Link className={styles.settingsLink} href="/admin/presentation/reference-participants">
+            参考対象氏名を設定
+          </Link>
           <div className={styles.actions}>
             <button
               className={styles.secondaryButton}
@@ -635,6 +656,23 @@ export default function PresentationAdmin() {
                     )}{" "}
                     件
                   </p>
+                  {aggregationResult.referenceParticipantCount !== undefined &&
+                    aggregationResult.unmatchedReferenceNames !== undefined && (
+                      <>
+                        <p>
+                          参考対象{" "}
+                          {aggregationResult.referenceParticipantCount.toLocaleString("ja-JP")} 名
+                        </p>
+                        {aggregationResult.unmatchedReferenceNames.length > 0 ? (
+                          <p>
+                            未一致の参考対象氏名:{" "}
+                            {aggregationResult.unmatchedReferenceNames.join("、")}
+                          </p>
+                        ) : (
+                          <p>未一致の参考対象氏名はありません。</p>
+                        )}
+                      </>
+                    )}
                   <p>除外された回答は今回の集計スナップショットに含まれていません。</p>
                 </>
               )}

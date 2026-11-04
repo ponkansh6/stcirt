@@ -129,6 +129,31 @@
   margin-top: 22px;
 }
 
+.settingsLink {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 18px;
+  padding: 0 14px;
+  border: 1px solid #8d9a90;
+  border-radius: 8px;
+  color: #365b4a;
+  font-size: 0.88rem;
+  font-weight: 750;
+  text-align: center;
+  text-decoration: none;
+}
+
+.settingsLink:hover {
+  background: #f0f3ef;
+}
+
+.settingsLink:focus-visible {
+  outline: 3px solid #bb9147;
+  outline-offset: 2px;
+}
+
 .secondaryButton {
   min-height: 46px;
   padding: 0 16px;

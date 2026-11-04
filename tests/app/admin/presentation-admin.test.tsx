@@ -122,6 +122,10 @@ describe("presentation admin console", () => {
     await user.type(await screen.findByLabelText("管理者 PIN"), "2468");
     await user.click(screen.getByRole("button", { name: "管理ページにログイン" }));
     expect(await screen.findByText("現在の状態：未開始")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "参考対象氏名を設定" })).toHaveAttribute(
+      "href",
+      "/admin/presentation/reference-participants",
+    );
     expect(
       fetchMock.mock.calls.filter(
         ([path, init]) => String(path) === "/api/admin/session" && init?.method === "POST",
@@ -860,6 +864,8 @@ describe("presentation admin console", () => {
           includedSubmissionCount: 3,
           excludedSubmissionCount: 2,
           excludedReasonCounts: { questionVersionMismatch: 1, q5AssessmentVersionMismatch: 1 },
+          referenceParticipantCount: 2,
+          unmatchedReferenceNames: ["未登録名"],
         },
       },
     });
@@ -873,6 +879,8 @@ describe("presentation admin console", () => {
     expect(summary).toHaveTextContent("集計スナップショットを更新しました。");
     expect(summary).toHaveTextContent("集計対象 3 件 · 除外 2 件");
     expect(summary).toHaveTextContent("質問バージョン不一致 1 件、 Q5 評価バージョン不一致 1 件");
+    expect(summary).toHaveTextContent("参考対象 2 名");
+    expect(summary).toHaveTextContent("未一致の参考対象氏名: 未登録名");
     expect(summary.className).not.toContain("aggregateNotUpdated");
   });
 
@@ -885,6 +893,8 @@ describe("presentation admin console", () => {
           includedSubmissionCount: 0,
           excludedSubmissionCount: 4,
           excludedReasonCounts: { questionVersionMismatch: 4, q5AssessmentVersionMismatch: 0 },
+          referenceParticipantCount: 0,
+          unmatchedReferenceNames: [],
         },
       },
     });
@@ -899,7 +909,31 @@ describe("presentation admin console", () => {
     expect(summary).toHaveAttribute("role", "status");
     expect(summary).toHaveTextContent("集計対象となる回答が見つからなかったため");
     expect(summary).toHaveTextContent("集計対象 0 件 · 除外 4 件");
+    expect(summary).toHaveTextContent("未一致の参考対象氏名はありません。");
     expect(summary.className).toContain("aggregateNotUpdated");
+  });
+
+  it("renders a legacy aggregate summary without inventing reference counts", async () => {
+    const user = userEvent.setup();
+    apiFetch({
+      mutationPayload: {
+        aggregationSummary: {
+          snapshotUpdated: true,
+          includedSubmissionCount: 3,
+          excludedSubmissionCount: 2,
+          excludedReasonCounts: { questionVersionMismatch: 1, q5AssessmentVersionMismatch: 1 },
+        },
+      },
+    });
+    render(<PresentationAdmin />);
+
+    await user.click(await screen.findByRole("button", { name: "集計" }));
+
+    const summary = (await screen.findByText("集計スナップショットを更新しました。"))
+      .parentElement!;
+    expect(summary).toHaveTextContent("集計対象 3 件 · 除外 2 件");
+    expect(summary).not.toHaveTextContent("参考対象 0 名");
+    expect(summary).not.toHaveTextContent("未一致の参考対象氏名");
   });
 
   it.each([

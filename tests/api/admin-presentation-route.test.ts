@@ -256,6 +256,8 @@ describe("/api/admin/presentation route", () => {
       includedSubmissionCount: 2,
       excludedSubmissionCount: 1,
       excludedReasonCounts: { questionVersionMismatch: 1, q5AssessmentVersionMismatch: 0 },
+      referenceParticipantCount: 0,
+      unmatchedReferenceNames: [],
     };
     vi.mocked(operatePresentationControls).mockResolvedValueOnce({
       ...controlsPayload,

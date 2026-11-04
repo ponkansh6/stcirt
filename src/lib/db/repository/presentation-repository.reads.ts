@@ -51,6 +51,7 @@ type AdminPresentation = {
     score: number;
     rank: number | null;
     isAggregationTarget: boolean;
+    isReference: boolean;
     answers?: {
       questionId: number;
       answerKind: "selected" | "freeText" | "legacy" | "unanswered";
@@ -95,7 +96,10 @@ export type ParticipantResult =
       maxScore: number;
       rank: number | null;
       isAggregationTarget: boolean;
+      isReference: boolean;
+      equivalentRank: number | null;
       participantCount: number;
+      rankParticipantCount: number;
       questions: ParticipantResultQuestion[];
     };
 
@@ -168,13 +172,16 @@ export async function readAdminPresentation(
       explanation: question.explanation,
       answerType: question.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
     })),
-    entries: entries.map(({ displayName, score, rank, isAggregationTarget, answers }) => ({
-      displayName,
-      score,
-      rank: isAggregationTarget ? rank : null,
-      isAggregationTarget,
-      answers,
-    })),
+    entries: entries.map(
+      ({ displayName, score, rank, isAggregationTarget, isReference, answers }) => ({
+        displayName,
+        score,
+        rank: isAggregationTarget && !isReference ? rank : null,
+        isAggregationTarget,
+        isReference,
+        answers,
+      }),
+    ),
   } satisfies AdminPresentation;
 }
 
@@ -187,8 +194,10 @@ function participantResultPublicationState(hasEntry: boolean): ParticipantResult
 function isValidParticipantResultSnapshot(
   entry: {
     score: number;
-    rank: number;
+    rank: number | null;
     isAggregationTarget: boolean;
+    isReference: boolean;
+    equivalentRank: number | null;
     answers: unknown;
   },
   questionRows: {
@@ -197,16 +206,27 @@ function isValidParticipantResultSnapshot(
     question: unknown;
     choices: unknown;
   }[],
-  entryCount: number,
+  participantCount: number,
+  rankParticipantCount: number,
 ): boolean {
   if (
     !Number.isFinite(entry.score) ||
     entry.score < 0 ||
     entry.score > questionRows.length ||
     (entry.isAggregationTarget &&
-      (!Number.isInteger(entry.rank) || entry.rank < 1 || entry.rank > entryCount)) ||
-    (!entry.isAggregationTarget && entry.rank !== 0) ||
-    (entry.isAggregationTarget && entryCount < 1) ||
+      entry.isReference &&
+      (entry.rank !== null ||
+        !Number.isInteger(entry.equivalentRank) ||
+        entry.equivalentRank! < 1)) ||
+    (entry.isAggregationTarget &&
+      !entry.isReference &&
+      (!Number.isInteger(entry.rank) ||
+        entry.rank! < 1 ||
+        entry.rank! > rankParticipantCount ||
+        entry.equivalentRank !== null)) ||
+    (!entry.isAggregationTarget && (entry.rank !== null || entry.equivalentRank !== null)) ||
+    (entry.isAggregationTarget && participantCount < 1) ||
+    (entry.isAggregationTarget && !entry.isReference && rankParticipantCount < 1) ||
     questionRows.length === 0 ||
     !Array.isArray(entry.answers) ||
     entry.answers.length !== questionRows.length
@@ -302,6 +322,8 @@ async function readParticipantResultState(
       score: presentationEntries.score,
       rank: presentationEntries.rank,
       isAggregationTarget: presentationEntries.isAggregationTarget,
+      isReference: presentationEntries.isReference,
+      equivalentRank: presentationEntries.equivalentRank,
       answers: presentationEntries.answers,
     })
     .from(presentationEntries)
@@ -314,7 +336,7 @@ async function readParticipantResultState(
   const state = participantResultPublicationState(Boolean(entry));
   if (state !== "published") return state;
 
-  const [questionRows, entryCount] = await Promise.all([
+  const [questionRows, participantCount, rankParticipantCount] = await Promise.all([
     tx
       .select({
         position: presentationQuestions.position,
@@ -334,8 +356,23 @@ async function readParticipantResultState(
           eq(presentationEntries.isAggregationTarget, true),
         ),
       ),
+    tx
+      .select({ value: count() })
+      .from(presentationEntries)
+      .where(
+        and(
+          eq(presentationEntries.sessionId, 1),
+          eq(presentationEntries.isAggregationTarget, true),
+          eq(presentationEntries.isReference, false),
+        ),
+      ),
   ]);
-  return isValidParticipantResultSnapshot(entry, questionRows, entryCount[0]!.value)
+  return isValidParticipantResultSnapshot(
+    entry,
+    questionRows,
+    participantCount[0]!.value,
+    rankParticipantCount[0]!.value,
+  )
     ? "visible"
     : "unavailable";
 }
@@ -360,6 +397,8 @@ export async function getParticipantResult(participantId: number): Promise<Parti
         score: presentationEntries.score,
         rank: presentationEntries.rank,
         isAggregationTarget: presentationEntries.isAggregationTarget,
+        isReference: presentationEntries.isReference,
+        equivalentRank: presentationEntries.equivalentRank,
         answers: presentationEntries.answers,
       })
       .from(presentationEntries)
@@ -375,16 +414,35 @@ export async function getParticipantResult(participantId: number): Promise<Parti
       .from(presentationQuestions)
       .where(eq(presentationQuestions.sessionId, 1))
       .orderBy(asc(presentationQuestions.position));
-    const [entryCount] = await tx
-      .select({ value: count() })
-      .from(presentationEntries)
-      .where(
-        and(
-          eq(presentationEntries.sessionId, 1),
-          eq(presentationEntries.isAggregationTarget, true),
+    const [[entryCount], [rankEntryCount]] = await Promise.all([
+      tx
+        .select({ value: count() })
+        .from(presentationEntries)
+        .where(
+          and(
+            eq(presentationEntries.sessionId, 1),
+            eq(presentationEntries.isAggregationTarget, true),
+          ),
         ),
-      );
-    if (!isValidParticipantResultSnapshot(entry, questionRows, entryCount.value)) {
+      tx
+        .select({ value: count() })
+        .from(presentationEntries)
+        .where(
+          and(
+            eq(presentationEntries.sessionId, 1),
+            eq(presentationEntries.isAggregationTarget, true),
+            eq(presentationEntries.isReference, false),
+          ),
+        ),
+    ]);
+    if (
+      !isValidParticipantResultSnapshot(
+        entry,
+        questionRows,
+        entryCount!.value,
+        rankEntryCount!.value,
+      )
+    ) {
       return { state: "unavailable" as const };
     }
     const answerByQuestionId = new Map(
@@ -438,9 +496,12 @@ export async function getParticipantResult(participantId: number): Promise<Parti
       state: "visible" as const,
       score: entry.score,
       maxScore: questionRows.length,
-      rank: entry.isAggregationTarget ? entry.rank : null,
+      rank: entry.isAggregationTarget && !entry.isReference ? entry.rank : null,
       isAggregationTarget: entry.isAggregationTarget,
-      participantCount: entryCount.value,
+      isReference: entry.isReference,
+      equivalentRank: entry.isAggregationTarget && entry.isReference ? entry.equivalentRank : null,
+      participantCount: entryCount!.value,
+      rankParticipantCount: rankEntryCount!.value,
       questions,
     };
   });
@@ -579,7 +640,13 @@ function buildPublicProjection(
   const rank = rankForStage(state);
   if (rank !== null) {
     const winners = admin.entries
-      .filter((entry) => entry.isAggregationTarget && entry.rank !== null && entry.rank === rank)
+      .filter(
+        (entry) =>
+          entry.isAggregationTarget &&
+          !entry.isReference &&
+          entry.rank !== null &&
+          entry.rank === rank,
+      )
       .map((entry) => ({
         displayName: entry.displayName,
         score: entry.score,
@@ -902,6 +969,7 @@ export async function getPublicPresentation(): Promise<
           answers: presentationEntries.answers,
           rank: presentationEntries.rank,
           isAggregationTarget: presentationEntries.isAggregationTarget,
+          isReference: presentationEntries.isReference,
         })
         .from(presentationEntries)
         .where(
@@ -919,6 +987,7 @@ export async function getPublicPresentation(): Promise<
           score: presentationEntries.score,
           rank: presentationEntries.rank,
           isAggregationTarget: presentationEntries.isAggregationTarget,
+          isReference: presentationEntries.isReference,
           answers: presentationEntries.answers,
         })
         .from(presentationEntries)
@@ -926,6 +995,7 @@ export async function getPublicPresentation(): Promise<
           and(
             eq(presentationEntries.sessionId, 1),
             eq(presentationEntries.isAggregationTarget, true),
+            eq(presentationEntries.isReference, false),
             eq(presentationEntries.rank, rank),
           ),
         )

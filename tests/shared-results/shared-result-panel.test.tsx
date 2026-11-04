@@ -20,7 +20,10 @@ const initial = {
   state: "visible" as const,
   rank: 1,
   isAggregationTarget: true,
+  isReference: false,
+  equivalentRank: null,
   participantCount: 1,
+  rankParticipantCount: 1,
   score: 1,
   maxScore: 1,
   questions: [

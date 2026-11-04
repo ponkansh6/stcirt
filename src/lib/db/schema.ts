@@ -261,10 +261,12 @@ export const presentationEntries = sqliteTable(
     participantId: integer("participant_id").notNull(),
     displayName: text("display_name").notNull(),
     score: real("score").notNull(),
-    rank: integer("rank").notNull(),
+    rank: integer("rank"),
     isAggregationTarget: integer("is_aggregation_target", { mode: "boolean" })
       .notNull()
       .default(true),
+    isReference: integer("is_reference", { mode: "boolean" }).notNull().default(false),
+    equivalentRank: integer("equivalent_rank"),
     answers: text("answers", { mode: "json" }).notNull().$type<
       {
         questionId: number;
@@ -279,6 +281,15 @@ export const presentationEntries = sqliteTable(
   (t) => ({ pk: primaryKey({ columns: [t.sessionId, t.participantId] }) }),
 );
 
+// Admin-managed names used only when creating the next presentation snapshot.
+export const presentationReferenceSettings = sqliteTable("presentation_reference_settings", {
+  id: integer("id").primaryKey(),
+  names: text("names", { mode: "json" }).notNull().$type<string[]>(),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export const presentationOperations = sqliteTable("presentation_operations", {
   operationId: text("operation_id").primaryKey(),
   action: text("action").notNull(),
@@ -292,6 +303,8 @@ export const presentationOperations = sqliteTable("presentation_operations", {
       questionVersionMismatch: number;
       q5AssessmentVersionMismatch: number;
     };
+    referenceParticipantCount: number;
+    unmatchedReferenceNames: string[];
   } | null>(),
 });
 

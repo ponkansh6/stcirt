@@ -17,7 +17,10 @@ export type ParticipantResult =
       maxScore: number;
       rank: number | null;
       isAggregationTarget: boolean;
+      isReference: boolean;
+      equivalentRank: number | null;
       participantCount: number;
+      rankParticipantCount: number;
       questions: ParticipantResultQuestion[];
     };
 
@@ -43,11 +46,21 @@ export const parseParticipantResult = (payload: unknown): ParticipantResult | nu
   if (
     payload.state !== "visible" ||
     !(payload.rank === null || isPositiveInteger(payload.rank)) ||
+    !(payload.equivalentRank === null || isPositiveInteger(payload.equivalentRank)) ||
     !isNonNegativeInteger(payload.participantCount) ||
+    !isNonNegativeInteger(payload.rankParticipantCount) ||
+    payload.rankParticipantCount > payload.participantCount ||
     typeof payload.isAggregationTarget !== "boolean" ||
+    typeof payload.isReference !== "boolean" ||
     (payload.isAggregationTarget &&
-      (!isPositiveInteger(payload.rank) || payload.rank > payload.participantCount)) ||
-    (!payload.isAggregationTarget && payload.rank !== null) ||
+      !payload.isReference &&
+      (!isPositiveInteger(payload.rank) ||
+        payload.rank > payload.rankParticipantCount ||
+        payload.equivalentRank !== null)) ||
+    (payload.isAggregationTarget &&
+      payload.isReference &&
+      (payload.rank !== null || !isPositiveInteger(payload.equivalentRank))) ||
+    (!payload.isAggregationTarget && (payload.rank !== null || payload.equivalentRank !== null)) ||
     !isPositiveInteger(payload.maxScore) ||
     !isFiniteNumber(payload.score) ||
     !Array.isArray(payload.questions) ||
@@ -125,7 +138,10 @@ export const parseParticipantResult = (payload: unknown): ParticipantResult | nu
     maxScore: payload.maxScore,
     rank: payload.rank,
     isAggregationTarget: payload.isAggregationTarget,
+    isReference: payload.isReference,
+    equivalentRank: payload.equivalentRank,
     participantCount: payload.participantCount,
+    rankParticipantCount: payload.rankParticipantCount,
     questions,
   };
 };

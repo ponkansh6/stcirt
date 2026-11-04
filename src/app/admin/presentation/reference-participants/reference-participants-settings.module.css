@@ -1,0 +1,139 @@
+.shell {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 24px;
+  color: #263741;
+  background: radial-gradient(ellipse at 5% 0%, rgb(212 184 120 / 15%), transparent 34rem), #f4f1e9;
+  font-family: Meiryo, メイリオ, sans-serif;
+}
+
+.card {
+  width: min(100%, 680px);
+  padding: clamp(24px, 5vw, 44px);
+  border: 1px solid #d9d4c9;
+  border-radius: 16px;
+  background: #fffefa;
+  box-shadow: 0 14px 42px rgb(50 48 38 / 8%);
+}
+
+.eyebrow {
+  margin: 0;
+  color: #79653e;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.19em;
+}
+
+.card h1 {
+  margin: 8px 0 0;
+  font-size: clamp(1.55rem, 5vw, 2rem);
+  line-height: 1.25;
+  letter-spacing: -0.035em;
+}
+
+.intro,
+.note {
+  color: #59676b;
+  line-height: 1.7;
+}
+
+.intro {
+  margin: 18px 0 8px;
+}
+
+.note {
+  margin: 8px 0 0;
+  font-size: 0.84rem;
+}
+
+.label {
+  display: block;
+  margin-top: 20px;
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.textarea {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  margin-top: 8px;
+  padding: 12px 13px;
+  border: 1px solid #c9c3b7;
+  border-radius: 8px;
+  background: white;
+  color: #263741;
+  font: inherit;
+  line-height: 1.65;
+  resize: vertical;
+}
+
+.textarea:focus-visible,
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible {
+  outline: 3px solid #bb9147;
+  outline-offset: 2px;
+}
+
+.actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.primaryButton,
+.secondaryButton {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: 1px solid #365b4a;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 750;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primaryButton {
+  background: #365b4a;
+  color: white;
+}
+
+.secondaryButton {
+  border-color: #8d9a90;
+  background: #fffefa;
+  color: #365b4a;
+}
+
+.primaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.success,
+.error {
+  margin: 14px 0 0;
+  line-height: 1.6;
+}
+
+.success {
+  color: #365b4a;
+  font-weight: 750;
+}
+
+.error {
+  color: #9b4237;
+}
+
+@media (min-width: 560px) {
+  .actions {
+    grid-template-columns: 1fr 1fr;
+  }
+}

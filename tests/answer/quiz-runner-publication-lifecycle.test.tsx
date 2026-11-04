@@ -237,7 +237,10 @@ describe("QuizRunner publication lookup lifecycle", () => {
           maxScore: 1,
           rank: 1,
           isAggregationTarget: true,
+          isReference: false,
+          equivalentRank: null,
           participantCount: 1,
+          rankParticipantCount: 1,
           questions: [
             {
               position: 0,

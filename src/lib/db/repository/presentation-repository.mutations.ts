@@ -13,6 +13,7 @@ import {
   presentationEntries,
   presentationOperations,
   presentationQuestions,
+  presentationReferenceSettings,
   presentationSessions,
   participantResultSettings,
 } from "@/lib/db/schema";
@@ -48,7 +49,33 @@ export type PresentationAggregationSummary = {
     questionVersionMismatch: number;
     q5AssessmentVersionMismatch: number;
   };
+  referenceParticipantCount: number;
+  unmatchedReferenceNames: string[];
 };
+
+function cleanReferenceNames(names: string[]): string[] {
+  return [...new Set(names.filter((name) => name.trim().length > 0))];
+}
+
+export async function getPresentationReferenceNames(): Promise<string[]> {
+  const [settings] = await db
+    .select({ names: presentationReferenceSettings.names })
+    .from(presentationReferenceSettings)
+    .where(eq(presentationReferenceSettings.id, 1));
+  return settings?.names ?? [];
+}
+
+export async function setPresentationReferenceNames(names: string[]): Promise<string[]> {
+  const cleanNames = cleanReferenceNames(names);
+  await db
+    .insert(presentationReferenceSettings)
+    .values({ id: 1, names: cleanNames })
+    .onConflictDoUpdate({
+      target: presentationReferenceSettings.id,
+      set: { names: cleanNames, updatedAt: new Date() },
+    });
+  return cleanNames;
+}
 
 function makeVersionMaps(questions: { id: number; key: string; questionVersion: string | null }[]) {
   const questionVersions: Record<string, string> = {};
@@ -232,6 +259,14 @@ async function ensurePresentationSnapshot(
   }
   setOperationPhase?.("participants_read");
   const participants = await tx.select().from(examParticipants).orderBy(asc(examParticipants.id));
+  setOperationPhase?.("reference_settings_read");
+  const [referenceSettings] = await tx
+    .select({ names: presentationReferenceSettings.names })
+    .from(presentationReferenceSettings)
+    .where(eq(presentationReferenceSettings.id, 1));
+  const referenceNames = new Set(referenceSettings?.names ?? []);
+  const participantNames = new Set(participants.map(({ displayName }) => displayName));
+  const unmatchedReferenceNames = [...referenceNames].filter((name) => !participantNames.has(name));
   setOperationPhase?.("submissions_read");
   const submissions = await tx
     .select()
@@ -354,6 +389,10 @@ async function ensurePresentationSnapshot(
         includedSubmissionCount: 0,
         excludedSubmissionCount: excludedSubmissionIds.size,
         excludedReasonCounts,
+        referenceParticipantCount: participants.filter(({ displayName }) =>
+          referenceNames.has(displayName),
+        ).length,
+        unmatchedReferenceNames,
       },
     };
   }
@@ -395,7 +434,13 @@ async function ensurePresentationSnapshot(
       isAggregationTarget: validCompleteSet,
     };
   });
-  const eligibleScored = scored.filter((entry) => entry.isAggregationTarget);
+  const markedScored = scored.map((entry) => ({
+    ...entry,
+    isReference: referenceNames.has(entry.participant.displayName),
+  }));
+  const eligibleScored = markedScored.filter(
+    (entry) => entry.isAggregationTarget && !entry.isReference,
+  );
   eligibleScored.sort(
     (left, right) => right.score - left.score || left.participant.id - right.participant.id,
   );
@@ -408,12 +453,22 @@ async function ensurePresentationSnapshot(
     }
     return { ...entry, rank: priorRank };
   });
-  const rankByParticipantId = new Map(
+  const rankedEligibleByParticipantId = new Map(
     rankedEligible.map((entry) => [entry.participant.id, entry.rank]),
   );
-  const ranked = scored.map((entry) => ({
+  const eligibleReference = markedScored.filter(
+    (entry) => entry.isAggregationTarget && entry.isReference,
+  );
+  const equivalentRankByParticipantId = new Map(
+    eligibleReference.map((entry) => [
+      entry.participant.id,
+      1 + eligibleScored.filter((ordinary) => ordinary.score > entry.score).length,
+    ]),
+  );
+  const ranked = markedScored.map((entry) => ({
     ...entry,
-    rank: rankByParticipantId.get(entry.participant.id) ?? 0,
+    rank: rankedEligibleByParticipantId.get(entry.participant.id) ?? null,
+    equivalentRank: equivalentRankByParticipantId.get(entry.participant.id) ?? null,
   }));
 
   setOperationPhase?.("delete_entries");
@@ -435,15 +490,27 @@ async function ensurePresentationSnapshot(
   if (ranked.length) {
     setOperationPhase?.("insert_entries");
     await tx.insert(presentationEntries).values(
-      ranked.map(({ participant, score, rank, answers, isAggregationTarget }) => ({
-        sessionId: 1,
-        participantId: participant.id,
-        displayName: participant.displayName,
-        score,
-        rank,
-        isAggregationTarget,
-        answers,
-      })),
+      ranked.map(
+        ({
+          participant,
+          score,
+          rank,
+          answers,
+          isAggregationTarget,
+          isReference,
+          equivalentRank,
+        }) => ({
+          sessionId: 1,
+          participantId: participant.id,
+          displayName: participant.displayName,
+          score,
+          rank,
+          isAggregationTarget,
+          isReference,
+          equivalentRank,
+          answers,
+        }),
+      ),
     );
   }
   const invalidQuestionCursor =
@@ -483,6 +550,10 @@ async function ensurePresentationSnapshot(
       includedSubmissionCount: validatedLatestSubmissionByParticipant.size,
       excludedSubmissionCount: excludedSubmissionIds.size,
       excludedReasonCounts,
+      referenceParticipantCount: participants.filter(({ displayName }) =>
+        referenceNames.has(displayName),
+      ).length,
+      unmatchedReferenceNames,
     },
   };
 }

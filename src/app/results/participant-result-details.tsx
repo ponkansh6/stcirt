@@ -24,12 +24,20 @@ export default function ParticipantResultDetails({
         <div className="rounded-xl bg-surface-2 p-1.5 sm:p-5">
           <dt className="text-sm text-muted text-balance">順位</dt>
           <dd className="mt-1 flex min-h-10 items-baseline gap-2">
-            {result.rank === null ? (
+            {result.isReference && result.equivalentRank !== null ? (
+              <span className={`${scoreAndRankTextSize} font-bold`}>
+                {result.equivalentRank}位相当
+              </span>
+            ) : result.rank === null ? (
               <span className="text-xl font-bold text-muted">集計対象外</span>
             ) : (
               <span className={`${scoreAndRankTextSize} font-bold`}>{result.rank}位</span>
             )}
-            <span className="text-sm font-medium text-muted">/ {result.participantCount}人</span>
+            {!result.isReference && result.rank !== null ? (
+              <span className="text-sm font-medium text-muted">
+                / {result.rankParticipantCount}人
+              </span>
+            ) : null}
           </dd>
         </div>
         <div className="rounded-xl bg-surface-2 p-1.5 sm:p-5">

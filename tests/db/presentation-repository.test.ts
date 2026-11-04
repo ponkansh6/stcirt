@@ -28,6 +28,8 @@ import {
   setPresentationPosition,
   PresentationConflictError,
   setParticipantResultsVisible,
+  getPresentationReferenceNames,
+  setPresentationReferenceNames,
 } from "@/lib/db/repository/presentation-repository";
 import { saveAnswerSubmission } from "@/lib/db/repository/answer-repository";
 import {
@@ -443,6 +445,7 @@ describe("presentation repository", () => {
     // Migrations seed the normal seven-question set; these specs use an exact
     // two-question fixture so stage indexes and question counts stay local.
     await testDb.db.delete(schema.presentationOperations);
+    await testDb.db.delete(schema.presentationReferenceSettings);
     await testDb.db.delete(schema.presentationQuestions);
     await testDb.db.delete(schema.presentationEntries);
     await testDb.db.delete(schema.presentationSessions);
@@ -684,6 +687,8 @@ describe("presentation repository", () => {
         questionVersionMismatch: 1,
         q5AssessmentVersionMismatch: 0,
       },
+      referenceParticipantCount: 0,
+      unmatchedReferenceNames: [],
     });
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
       { state: "not_started", version: 0, snapshotRevision: 0, questionCount: 0 },
@@ -715,7 +720,7 @@ describe("presentation repository", () => {
       }),
     ]);
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
-      { participantId: noSubmission, rank: 0, isAggregationTarget: false },
+      { participantId: noSubmission, rank: null, isAggregationTarget: false },
       { participantId: zeroScore, rank: 1, isAggregationTarget: true },
     ]);
   });
@@ -1027,6 +1032,245 @@ describe("presentation repository", () => {
       score: 2,
       rank: 1,
     });
+  });
+
+  it("returns an empty reference-name list when no settings row exists", async () => {
+    await expect(getPresentationReferenceNames()).resolves.toEqual([]);
+  });
+
+  it("snapshots exact reference-name matches and computes equivalent rank without affecting official ranking", async () => {
+    const participants = await addRankFixture();
+    await expect(
+      setPresentationReferenceNames(["First", "Third", " first", " Missing ", "  ", "First"]),
+    ).resolves.toEqual(["First", "Third", " first", " Missing "]);
+    await expect(getPresentationReferenceNames()).resolves.toEqual([
+      "First",
+      "Third",
+      " first",
+      " Missing ",
+    ]);
+
+    const result = await op("aggregate", "reference-ranking-exact-match");
+    expect(result.aggregationSummary).toMatchObject({
+      referenceParticipantCount: 2,
+      unmatchedReferenceNames: [" first", " Missing "],
+    });
+    const entriesByName = new Map(result.entries.map((entry) => [entry.displayName, entry]));
+    expect(result.entries).toHaveLength(4);
+    expect(entriesByName.get("Unanswered")).toMatchObject({
+      rank: null,
+      isAggregationTarget: false,
+      isReference: false,
+    });
+    expect(entriesByName.get("First")).toMatchObject({
+      rank: null,
+      isAggregationTarget: true,
+      isReference: true,
+    });
+    expect(entriesByName.get("Tied")).toMatchObject({
+      rank: 1,
+      isAggregationTarget: true,
+      isReference: false,
+    });
+    expect(entriesByName.get("Third")).toMatchObject({
+      rank: null,
+      isAggregationTarget: true,
+      isReference: true,
+    });
+    const persistedEntries = await testDb.db.select().from(schema.presentationEntries);
+    const persistedById = new Map(persistedEntries.map((entry) => [entry.participantId, entry]));
+    expect(persistedById.get(participants.first)?.equivalentRank).toBe(1);
+    expect(persistedById.get(participants.third)?.equivalentRank).toBe(2);
+    expect(persistedById.get(participants.tied)?.equivalentRank).toBeNull();
+    expect(persistedById.get(participants.unanswered)?.equivalentRank).toBeNull();
+    await setParticipantResultsVisible(true);
+    await expect(getParticipantResult(participants.first)).resolves.toMatchObject({
+      state: "visible",
+      rank: null,
+      isAggregationTarget: true,
+      isReference: true,
+      equivalentRank: 1,
+      participantCount: 3,
+      rankParticipantCount: 1,
+    });
+    await expect(getParticipantResult(participants.third)).resolves.toMatchObject({
+      state: "visible",
+      rank: null,
+      isAggregationTarget: true,
+      isReference: true,
+      equivalentRank: 2,
+      participantCount: 3,
+      rankParticipantCount: 1,
+    });
+  });
+
+  it("keeps an unmatched valid-submission status separate from reference classification", async () => {
+    const participants = await addRankFixture();
+    await setPresentationReferenceNames(["Unanswered"]);
+    await startWithAggregate("reference-unanswered-participant");
+
+    const [snapshot] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, participants.unanswered));
+    expect(snapshot).toMatchObject({
+      isAggregationTarget: false,
+      isReference: true,
+      rank: null,
+      equivalentRank: null,
+    });
+
+    await setParticipantResultsVisible(true);
+    await expect(getParticipantResult(participants.unanswered)).resolves.toMatchObject({
+      state: "visible",
+      rank: null,
+      isAggregationTarget: false,
+      isReference: true,
+      equivalentRank: null,
+      participantCount: 3,
+      rankParticipantCount: 3,
+    });
+  });
+
+  it("keeps rankings and reference classification invariant when saved name order changes", async () => {
+    const participants = await addRankFixture();
+    const participantIds = Object.values(participants);
+    const readRanking = async () =>
+      (await testDb.db.select().from(schema.presentationEntries))
+        .filter((entry) => participantIds.includes(entry.participantId))
+        .map(({ participantId, isAggregationTarget, isReference, rank, equivalentRank }) => ({
+          participantId,
+          isAggregationTarget,
+          isReference,
+          rank,
+          equivalentRank,
+        }))
+        .sort((left, right) => left.participantId - right.participantId);
+
+    await setPresentationReferenceNames(["First", "Third"]);
+    await op("aggregate", "reference-name-order-forward");
+    const forwardRanking = await readRanking();
+
+    await setPresentationReferenceNames(["Third", "First"]);
+    await op("aggregate", "reference-name-order-reversed");
+    const reversedRanking = await readRanking();
+
+    expect(reversedRanking).toEqual(forwardRanking);
+  });
+
+  it("matches reference names exactly without case, width, or Unicode normalization and marks every same-name participant", async () => {
+    await addQuestions();
+    const entries = [
+      { normalizedName: "smith-one", displayName: "Smith" },
+      { normalizedName: "smith-two", displayName: "Smith" },
+      { normalizedName: "smith-lower", displayName: "smith" },
+      { normalizedName: "alice-ascii", displayName: "Alice" },
+      { normalizedName: "alice-fullwidth", displayName: "Ａlice" },
+      { normalizedName: "elodie-precomposed", displayName: "Élodie" },
+      { normalizedName: "elodie-decomposed", displayName: "E\u0301lodie" },
+    ];
+    const participants = await testDb.db
+      .insert(schema.examParticipants)
+      .values(entries)
+      .returning({ id: schema.examParticipants.id });
+    for (const { id } of participants) await addSubmission(id, [0, 0]);
+    await setPresentationReferenceNames(["Smith", "Alice", "Élodie", "Smith"]);
+
+    const result = await op("aggregate", "reference-exact-unicode-matching");
+    expect(result.aggregationSummary).toMatchObject({
+      referenceParticipantCount: 4,
+      unmatchedReferenceNames: [],
+    });
+    const byName = new Map<string, typeof result.entries>();
+    for (const entry of result.entries) {
+      byName.set(entry.displayName, [...(byName.get(entry.displayName) ?? []), entry]);
+    }
+    expect(byName.get("Smith")).toHaveLength(2);
+    expect(byName.get("Smith")?.every((entry) => entry.isReference)).toBe(true);
+    const persistedEntries = await testDb.db.select().from(schema.presentationEntries);
+    const smithIds = new Set(participants.slice(0, 2).map(({ id }) => id));
+    expect(
+      persistedEntries
+        .filter((entry) => smithIds.has(entry.participantId))
+        .map((entry) => entry.equivalentRank),
+    ).toEqual([1, 1]);
+    for (const name of ["smith", "Ａlice", "E\u0301lodie"]) {
+      expect(byName.get(name)).toEqual([expect.objectContaining({ isReference: false, rank: 1 })]);
+    }
+    for (const name of ["Alice", "Élodie"]) {
+      expect(byName.get(name)).toEqual([
+        expect.objectContaining({ isReference: true, rank: null }),
+      ]);
+    }
+  });
+
+  it("keeps reference classification fixed after settings and display names change, including operation replay", async () => {
+    const participants = await addRankFixture();
+    await setPresentationReferenceNames(["First"]);
+    const operationId = "reference-snapshot-settings-replay";
+    const original = await operatePresentation(operationId, "aggregate");
+
+    await setPresentationReferenceNames(["Tied"]);
+    await testDb.db
+      .update(schema.examParticipants)
+      .set({ displayName: "Renamed first" })
+      .where(eq(schema.examParticipants.id, participants.first));
+    const replay = await operatePresentation(operationId, "aggregate");
+
+    expect(replay.entries).toEqual(original.entries);
+    expect(replay.aggregationSummary).toEqual(original.aggregationSummary);
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({
+          displayName: "First",
+          isReference: true,
+          rank: null,
+        }),
+        expect.objectContaining({
+          displayName: "Tied",
+          isReference: false,
+          rank: 1,
+        }),
+      ]),
+    });
+    const persistedEntries = await testDb.db.select().from(schema.presentationEntries);
+    const persistedById = new Map(persistedEntries.map((entry) => [entry.participantId, entry]));
+    expect(persistedById.get(participants.first)).toMatchObject({
+      displayName: "First",
+      isReference: true,
+      rank: null,
+      equivalentRank: 1,
+    });
+    expect(persistedById.get(participants.tied)).toMatchObject({
+      displayName: "Tied",
+      isReference: false,
+      rank: 1,
+      equivalentRank: null,
+    });
+  });
+
+  it("publishes all-reference results as first-equivalent with no official ranking denominator", async () => {
+    const participants = await addRankFixture();
+    await setPresentationReferenceNames(["First", "Tied", "Third"]);
+    await startWithAggregate("all-reference-results");
+    await setParticipantResultsVisible(true);
+
+    await expect(getParticipantResult(participants.first)).resolves.toMatchObject({
+      state: "visible",
+      rank: null,
+      isAggregationTarget: true,
+      isReference: true,
+      equivalentRank: 1,
+      participantCount: 3,
+      rankParticipantCount: 0,
+    });
+
+    for (let index = 0; index < 4; index += 1) {
+      await op("advance", `all-reference-question-${index}`);
+    }
+    await expect(getAdminPresentation()).resolves.toMatchObject({ state: "podium_preview" });
+    await op("advance", "all-reference-finish");
+    await expect(getAdminPresentation()).resolves.toMatchObject({ state: "finished" });
   });
 
   it("keeps correct answers private on question stages and exposes only announced winners", async () => {
@@ -1491,7 +1735,10 @@ describe("presentation repository", () => {
       maxScore: 1,
       rank: 1,
       isAggregationTarget: true,
+      isReference: false,
+      equivalentRank: null,
       participantCount: 1,
+      rankParticipantCount: 1,
       questions: [
         {
           position: 0,
@@ -1740,6 +1987,8 @@ describe("presentation repository", () => {
             questionVersionMismatch: 1,
             q5AssessmentVersionMismatch: 0,
           },
+          referenceParticipantCount: 0,
+          unmatchedReferenceNames: [],
         });
         await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
           { state: "not_started", version: 0, snapshotRevision: 0, questionCount: 0 },
@@ -1909,6 +2158,8 @@ describe("presentation repository", () => {
           questionVersionMismatch: 0,
           q5AssessmentVersionMismatch: 1,
         },
+        referenceParticipantCount: 0,
+        unmatchedReferenceNames: [],
       });
       await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
         { state: "not_started", version: 0, snapshotRevision: 0, questionCount: 0 },
@@ -2271,6 +2522,9 @@ describe("presentation repository", () => {
       rank: 1,
       participantCount: 1,
       isAggregationTarget: true,
+      isReference: false,
+      equivalentRank: null,
+      rankParticipantCount: 1,
       score: 0,
       maxScore: 2,
       questions: [
@@ -2489,6 +2743,105 @@ describe("presentation repository", () => {
     await expect(testDb.db.select().from(schema.participantResultSettings)).resolves.toMatchObject([
       { id: 1, visible: false, everPublished: true },
     ]);
+  });
+
+  it("rolls back reference reaggregation after snapshot writes fail at transaction completion", async () => {
+    const participants = await addRankFixture();
+    await setPresentationReferenceNames(["First"]);
+    await operatePresentation("reference-rollback-initial-aggregate", "aggregate");
+    await setParticipantResultsVisible(true);
+
+    const originalPresentation = await getAdminPresentation();
+    const originalPublicResult = await getParticipantResult(participants.first);
+    const originalSession = await testDb.db.select().from(schema.presentationSessions);
+    const originalEntries = await testDb.db.select().from(schema.presentationEntries);
+    const originalOperations = await testDb.db.select().from(schema.presentationOperations);
+    expect(originalPresentation.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          displayName: "First",
+          isReference: true,
+          rank: null,
+        }),
+      ]),
+    );
+    const originalEntryById = new Map(originalEntries.map((entry) => [entry.participantId, entry]));
+    expect(originalEntryById.get(participants.first)).toMatchObject({
+      isReference: true,
+      rank: null,
+      equivalentRank: 1,
+    });
+
+    // The pending aggregate must use this new list, but it must not leak into
+    // the already published snapshot if the transaction fails after its writes.
+    await setPresentationReferenceNames(["Tied"]);
+    const database = dbRef.db!;
+    const originalTransaction = database.transaction.bind(database);
+    const failedAggregateResult: { value: unknown } = { value: null };
+    const failedTransactionEntries: { value: unknown } = { value: null };
+    const transactionSpy = vi.spyOn(database, "transaction");
+    transactionSpy.mockImplementation((callback, config) =>
+      originalTransaction(async (tx) => {
+        const result = await callback(tx);
+        failedAggregateResult.value = result as Awaited<ReturnType<typeof operatePresentation>>;
+        failedTransactionEntries.value = await tx.select().from(schema.presentationEntries);
+        throw Object.assign(new Error("simulated failure after aggregate writes"), {
+          code: "SQLITE_ERROR",
+        });
+      }, config),
+    );
+
+    try {
+      await expect(
+        operatePresentation("reference-rollback-failing-aggregate", "aggregate"),
+      ).rejects.toBeInstanceOf(PresentationOperationError);
+    } finally {
+      transactionSpy.mockRestore();
+    }
+
+    const capturedAggregateResult = failedAggregateResult.value as Awaited<
+      ReturnType<typeof operatePresentation>
+    > | null;
+    expect(capturedAggregateResult?.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          displayName: "Tied",
+          isReference: true,
+          rank: null,
+        }),
+        expect.objectContaining({
+          displayName: "First",
+          isReference: false,
+          rank: 1,
+        }),
+      ]),
+    );
+    const capturedEntries = failedTransactionEntries.value as typeof originalEntries | null;
+    const failedEntriesById = new Map(
+      (capturedEntries ?? []).map((entry) => [entry.participantId, entry]),
+    );
+    expect(failedEntriesById.get(participants.tied)).toMatchObject({
+      isReference: true,
+      rank: null,
+      equivalentRank: 1,
+    });
+    expect(failedEntriesById.get(participants.first)).toMatchObject({
+      isReference: false,
+      rank: 1,
+      equivalentRank: null,
+    });
+    await expect(getAdminPresentation()).resolves.toEqual(originalPresentation);
+    await expect(getParticipantResult(participants.first)).resolves.toEqual(originalPublicResult);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toEqual(
+      originalSession,
+    );
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toEqual(
+      originalEntries,
+    );
+    await expect(testDb.db.select().from(schema.presentationOperations)).resolves.toEqual(
+      originalOperations,
+    );
+    await expect(getPresentationReferenceNames()).resolves.toEqual(["Tied"]);
   });
 
   it("retries publication and start in fresh transactions after a lock error", async () => {
@@ -2782,6 +3135,10 @@ describe("presentation repository", () => {
     await addQuestions();
     const participant = await addParticipant("Waiting assessment");
     await addSubmission(participant, [0, 0]);
+    await setPresentationReferenceNames(["Waiting assessment"]);
+    const previousSnapshot = await op("aggregate", "pending-response-previous-snapshot");
+    await setParticipantResultsVisible(true);
+    await setPresentationReferenceNames(["Changed after previous snapshot"]);
     await testDb.db
       .update(schema.examQuestions)
       .set({ key: "it-literacy-005", choices: [] })
@@ -2803,12 +3160,32 @@ describe("presentation repository", () => {
     await expect(op("aggregate", "pending-response-aggregate")).rejects.toBeInstanceOf(
       PresentationConflictError,
     );
-    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
-    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(0);
-    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(1);
+    await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(2);
+    await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
+      {
+        participantId: participant,
+        displayName: "Waiting assessment",
+        isReference: true,
+        equivalentRank: 1,
+        rank: null,
+      },
+    ]);
     await expect(getAdminPresentation()).resolves.toMatchObject({
-      participantResultsVisible: false,
-      participantResultsReady: false,
+      entries: previousSnapshot.entries,
+      participantResultsVisible: true,
+    });
+    await expect(getParticipantResult(participant)).resolves.toMatchObject({
+      state: "visible",
+      isReference: true,
+      equivalentRank: 1,
+      rank: null,
+    });
+    await expect(getPresentationReferenceNames()).resolves.toEqual([
+      "Changed after previous snapshot",
+    ]);
+    await expect(getAdminPresentation()).resolves.toMatchObject({
+      participantResultsVisible: true,
     });
   });
 
@@ -2918,6 +3295,9 @@ describe("presentation repository", () => {
       rank: 1,
       participantCount: 2,
       isAggregationTarget: true,
+      isReference: false,
+      equivalentRank: null,
+      rankParticipantCount: 2,
       score: 2,
       maxScore: 2,
       questions: [
@@ -2939,6 +3319,9 @@ describe("presentation repository", () => {
       rank: 2,
       participantCount: 2,
       isAggregationTarget: true,
+      isReference: false,
+      equivalentRank: null,
+      rankParticipantCount: 2,
       score: 1,
       maxScore: 2,
       questions: [
@@ -3028,6 +3411,9 @@ describe("presentation repository", () => {
       rank: 1,
       participantCount: 2,
       isAggregationTarget: true,
+      isReference: false,
+      equivalentRank: null,
+      rankParticipantCount: 2,
       score: 2,
       maxScore: 2,
       questions: [
@@ -3102,7 +3488,10 @@ describe("presentation repository", () => {
     expect(freeTextResult).toEqual({
       state: "visible",
       rank: 2,
+      equivalentRank: null,
+      isReference: false,
       participantCount: 2,
+      rankParticipantCount: 2,
       isAggregationTarget: true,
       score: 1,
       maxScore: 2,
@@ -3163,7 +3552,7 @@ describe("presentation repository", () => {
     await setParticipantResultsVisible(true);
     await testDb.db
       .update(schema.presentationEntries)
-      .set({ isAggregationTarget: false, rank: 0 })
+      .set({ isAggregationTarget: false, rank: null })
       .where(eq(schema.presentationEntries.participantId, first));
 
     await expect(getParticipantResult(first)).resolves.toMatchObject({
@@ -3172,7 +3561,10 @@ describe("presentation repository", () => {
       maxScore: 2,
       rank: null,
       isAggregationTarget: false,
+      isReference: false,
+      equivalentRank: null,
       participantCount: 1,
+      rankParticipantCount: 1,
     });
   });
 
@@ -3725,6 +4117,8 @@ describe("presentation repository", () => {
         questionVersionMismatch: 0,
         q5AssessmentVersionMismatch: 0,
       },
+      referenceParticipantCount: 0,
+      unmatchedReferenceNames: [],
     });
   });
 });

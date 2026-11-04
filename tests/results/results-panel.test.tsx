@@ -17,7 +17,10 @@ const visibleResult = {
   state: "visible" as const,
   rank: 2,
   isAggregationTarget: true,
+  isReference: false,
+  equivalentRank: null,
   participantCount: 5,
+  rankParticipantCount: 5,
   score: 1.5,
   maxScore: 2,
   questions: [
@@ -81,14 +84,33 @@ describe("ResultsPanel", () => {
       ...visibleResult,
       rank: null,
       isAggregationTarget: false,
+      isReference: false,
+      equivalentRank: null,
       participantCount: 0,
+      rankParticipantCount: 0,
     };
     mockPoll(outsideTarget);
     render(<ResultsPanel initial={outsideTarget} scope={null} />);
 
     expect(screen.getByText("集計対象外")).toBeVisible();
-    expect(screen.getByText("/ 0人")).toBeVisible();
+    expect(screen.queryByText("/ 0人")).not.toBeInTheDocument();
     expect(screen.queryByText(/^\d+位$/)).not.toBeInTheDocument();
+  });
+
+  it("shows a reference participant's equivalent rank without a headcount denominator", () => {
+    const referenceResult = {
+      ...visibleResult,
+      rank: null,
+      isReference: true,
+      equivalentRank: 1,
+      participantCount: 8,
+      rankParticipantCount: 0,
+    };
+    mockPoll(referenceResult);
+    render(<ResultsPanel initial={referenceResult} scope={null} />);
+
+    expect(screen.getByText("1位相当")).toBeVisible();
+    expect(screen.queryByText(/\/\s*\d+人/)).not.toBeInTheDocument();
   });
 
   it("polls the assisted result endpoint and labels the result for the assisted respondent", async () => {
@@ -639,7 +661,10 @@ describe("ResultsPanel", () => {
           state: "visible",
           rank: 1,
           isAggregationTarget: true,
+          isReference: false,
+          equivalentRank: null,
           participantCount: 1,
+          rankParticipantCount: 1,
           score: 2,
           maxScore: 5,
           questions: [

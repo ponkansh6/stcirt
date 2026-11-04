@@ -406,4 +406,94 @@ describe("database migrations", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("preserves existing presentation entries and operation history when migration 0020 adds reference ranking", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stcirt-reference-ranking-migration-"));
+    const client = createClient({ url: `file:${dir}/migration.db` });
+    try {
+      await client.execute("PRAGMA foreign_keys = ON");
+      await client.execute("CREATE TABLE presentation_sessions (id integer PRIMARY KEY NOT NULL)");
+      await client.execute(`
+        CREATE TABLE presentation_entries (
+          session_id integer NOT NULL REFERENCES presentation_sessions(id) ON DELETE CASCADE,
+          participant_id integer NOT NULL,
+          display_name text NOT NULL,
+          score integer NOT NULL,
+          rank integer NOT NULL,
+          is_aggregation_target integer DEFAULT true NOT NULL,
+          answers text NOT NULL,
+          PRIMARY KEY(session_id, participant_id)
+        )
+      `);
+      await client.execute(
+        "CREATE TABLE presentation_operations (operation_id text PRIMARY KEY NOT NULL, payload text NOT NULL)",
+      );
+      await client.execute("INSERT INTO presentation_sessions (id) VALUES (1)");
+      await client.execute(`
+        INSERT INTO presentation_entries
+          (session_id, participant_id, display_name, score, rank, is_aggregation_target, answers)
+        VALUES
+          (1, 10, 'Ranked participant', 8, 1, 1, '[{"questionId":1}]'),
+          (1, 11, 'Not ranked participant', 0, 0, 0, '[]')
+      `);
+      await client.execute(
+        "INSERT INTO presentation_operations (operation_id, payload) VALUES ('aggregate-1', '{\"action\":\"aggregate\"}')",
+      );
+
+      const migration = readFileSync(
+        join(process.cwd(), "src/lib/db/migrations/0020_reference_ranking.sql"),
+        "utf8",
+      );
+      for (const statement of migration.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.execute(statement);
+      }
+
+      const entries = await client.execute(
+        "SELECT session_id, participant_id, display_name, score, rank, is_aggregation_target, is_reference, equivalent_rank, answers FROM presentation_entries ORDER BY participant_id",
+      );
+      expect(entries.rows).toEqual([
+        {
+          session_id: 1,
+          participant_id: 10,
+          display_name: "Ranked participant",
+          score: 8,
+          rank: 1,
+          is_aggregation_target: 1,
+          is_reference: 0,
+          equivalent_rank: null,
+          answers: '[{"questionId":1}]',
+        },
+        {
+          session_id: 1,
+          participant_id: 11,
+          display_name: "Not ranked participant",
+          score: 0,
+          rank: null,
+          is_aggregation_target: 0,
+          is_reference: 0,
+          equivalent_rank: null,
+          answers: "[]",
+        },
+      ]);
+      const operation = await client.execute(
+        "SELECT operation_id, payload FROM presentation_operations",
+      );
+      expect(operation.rows).toEqual([
+        { operation_id: "aggregate-1", payload: '{"action":"aggregate"}' },
+      ]);
+
+      await client.execute(`
+        INSERT INTO presentation_entries
+          (session_id, participant_id, display_name, score, rank, is_aggregation_target, answers)
+        VALUES (1, 12, 'Default values', 3, NULL, 0, '[]')
+      `);
+      const defaults = await client.execute(
+        "SELECT is_reference, equivalent_rank FROM presentation_entries WHERE participant_id = 12",
+      );
+      expect(defaults.rows).toEqual([{ is_reference: 0, equivalent_rank: null }]);
+    } finally {
+      client.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -63,6 +63,7 @@ export type PresentationOperationPhase =
   | "snapshot_probe_entry"
   | "source_questions_read"
   | "participants_read"
+  | "reference_settings_read"
   | "submissions_read"
   | "answers_read"
   | "assessments_read"

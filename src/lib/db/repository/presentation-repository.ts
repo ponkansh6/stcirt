@@ -18,5 +18,7 @@ export {
   operatePresentationControls,
   setPresentationPosition,
   setParticipantResultsVisible,
+  getPresentationReferenceNames,
+  setPresentationReferenceNames,
   PresentationConflictError,
 } from "./presentation-repository.mutations";

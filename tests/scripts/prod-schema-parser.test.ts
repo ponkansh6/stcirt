@@ -145,8 +145,10 @@ const expectedSchemaManifest = [
       "display_name",
       "score",
       "rank",
-      "answers",
       "is_aggregation_target",
+      "is_reference",
+      "equivalent_rank",
+      "answers",
     ],
   },
   {
@@ -156,6 +158,10 @@ const expectedSchemaManifest = [
   {
     tableName: "participant_result_settings",
     columns: ["id", "visible", "ever_published"],
+  },
+  {
+    tableName: "presentation_reference_settings",
+    columns: ["id", "names", "updated_at"],
   },
 ];
 
@@ -185,8 +191,8 @@ describe("production schema parser", () => {
     const schema = readFileSync(join(process.cwd(), "src/lib/db/schema.ts"), "utf8");
     const parsed = parseExpectedSchema(schema);
 
-    expect(parsed).toHaveLength(18);
-    expect(parsed.reduce((count, table) => count + table.columns.length, 0)).toBe(110);
+    expect(parsed).toHaveLength(19);
+    expect(parsed.reduce((count, table) => count + table.columns.length, 0)).toBe(115);
     expect(normalizeManifest(parsed)).toEqual(normalizeManifest(expectedSchemaManifest));
   });
 });

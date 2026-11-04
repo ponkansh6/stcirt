@@ -10,7 +10,10 @@ export function mapParticipantResult(result: RepositoryParticipantResult): Parti
     state: "visible",
     rank: result.rank,
     isAggregationTarget: result.isAggregationTarget,
+    isReference: result.isReference,
+    equivalentRank: result.equivalentRank,
     participantCount: result.participantCount,
+    rankParticipantCount: result.rankParticipantCount,
     score: result.score,
     maxScore: result.maxScore,
     questions: result.questions.map(({ position, question, answer }) => ({
