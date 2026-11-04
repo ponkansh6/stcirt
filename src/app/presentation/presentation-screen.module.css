@@ -722,6 +722,17 @@
     var(--first-prize-title-delay) both;
 }
 
+.firstPrizeLabel,
+.firstPrizeBrand {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.firstPrizeLabel {
+  font-size: 0.5em;
+  letter-spacing: 0.08em;
+}
+
 .firstPrizeHeader .firstPrizeDescription {
   max-width: 70ch;
   margin: clamp(8px, 1.1cqh, 14px) auto 0;
@@ -844,13 +855,13 @@
   justify-content: center;
   gap: clamp(6px, 0.8cqh, 10px);
   margin-top: clamp(44px, 5.5cqh, 68px);
-  margin-bottom: clamp(12px, 1.6cqh, 20px);
+  margin-bottom: clamp(8px, 1.2cqh, 16px);
 }
 
 .certificateLabel {
   color: #51432b;
   font-family: Meiryo, メイリオ, sans-serif;
-  font-size: clamp(var(--presentation-min-readable-size), 1.9cqw, 2rem);
+  font-size: clamp(calc(var(--presentation-min-readable-size) * 2), 3.8cqw, 4rem);
   font-weight: 650;
   letter-spacing: 0.18em;
   line-height: 1;
@@ -859,9 +870,9 @@
 .rankStamp {
   position: absolute;
   z-index: 2;
-  top: clamp(18px, 3cqh, 36px);
-  right: clamp(20px, 3.5cqw, 52px);
-  width: clamp(58px, 7cqw, 100px);
+  top: clamp(12px, 2cqh, 24px);
+  right: clamp(12px, 2cqw, 28px);
+  width: clamp(116px, 14cqw, 200px);
   pointer-events: none;
 }
 
@@ -1119,7 +1130,7 @@
   padding: 0.16em 0.8em;
   color: #30291f;
   font-family: Meiryo, メイリオ, sans-serif;
-  font-size: clamp(var(--presentation-min-readable-size), 2.4cqw, 2.4rem);
+  font-size: clamp(calc(var(--presentation-min-readable-size) * 2), 4.8cqw, 4.8rem);
   font-weight: 650;
   letter-spacing: 0.1em;
   line-height: 1.05;
@@ -1423,7 +1434,7 @@
   }
 
   .rank {
-    font-size: clamp(var(--presentation-min-readable-size), 3.8cqw, 2.2rem);
+    font-size: clamp(calc(var(--presentation-min-readable-size) * 2), 7.6cqw, 4.4rem);
   }
 
   .opening {
@@ -1451,6 +1462,18 @@
   .winnerIdentity {
     flex-wrap: wrap;
     gap: 4px 12px;
+  }
+}
+
+@media (max-width: 640px) and (orientation: portrait) {
+  .rankHeader {
+    margin-top: clamp(104px, 14cqh, 120px);
+  }
+
+  .rankStamp {
+    top: clamp(8px, 1.2cqh, 12px);
+    right: clamp(8px, 2cqw, 12px);
+    width: clamp(88px, 22cqw, 116px);
   }
 }
 

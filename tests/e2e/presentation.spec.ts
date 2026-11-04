@@ -652,7 +652,7 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
     case "first":
       return page.getByRole("region", { name: "第一位の勝者一覧" });
     case "first_prize":
-      return page.getByRole("heading", { name: "信州牛専門店　すき亭" });
+      return page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" });
     case "finished":
       return page.getByRole("heading", { name: /ご参加.*ありがとうございました/ });
     default:
@@ -744,6 +744,183 @@ function rankRegionFor(page: import("@playwright/test").Page, rank: "third" | "s
     .getByTestId("presentation-canvas")
     .locator(`section[class*="winners"][data-rank="${rank}"]:visible`);
 }
+
+test("@chromium rank text and stamp render at about twice their legacy CSS size reference", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  const viewportSizes = [
+    { width: 1920, height: 1080 },
+    { width: 1280, height: 720 },
+  ];
+  const ranks = ["third", "second", "first"] as const;
+
+  for (const viewportSize of viewportSizes) {
+    await page.setViewportSize(viewportSize);
+    for (const rank of ranks) {
+      mock.setPresentationPosition(rank);
+      await page.goto("/presentation");
+      const region = rankRegionFor(page, rank);
+      await expect(region).toBeVisible();
+      await region.evaluate(async (element) => {
+        await Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .map((animation) => animation.finished.catch(() => undefined)),
+        );
+      });
+
+      const metrics = await region.evaluate((element) => {
+        const measureTextHeight = (selector: string) => {
+          const target = element.querySelector<HTMLElement>(selector);
+          if (!target) throw new Error(`Missing rank metric target: ${selector}`);
+          const range = document.createRange();
+          range.selectNodeContents(target);
+          const actualHeight = range.getBoundingClientRect().height;
+
+          // The pre-change CSS used exactly half the current font-size at these desktop viewports.
+          // Measure a hidden clone in the same transformed canvas to include the real font metrics
+          // and presentation fit scale in this legacy baseline.
+          const baseline = target.cloneNode(true) as HTMLElement;
+          baseline.style.position = "absolute";
+          baseline.style.left = "-10000px";
+          baseline.style.top = "-10000px";
+          baseline.style.visibility = "hidden";
+          baseline.style.animation = "none";
+          baseline.style.transform = "none";
+          baseline.style.fontSize = `${Number.parseFloat(getComputedStyle(target).fontSize) / 2}px`;
+          target.parentElement?.append(baseline);
+          const baselineRange = document.createRange();
+          baselineRange.selectNodeContents(baseline);
+          const baselineHeight = baselineRange.getBoundingClientRect().height;
+          baseline.remove();
+          return { actual: actualHeight, baseline: baselineHeight };
+        };
+
+        const stamp = element.querySelector<HTMLImageElement>(
+          "[data-testid='presentation-exam-stamp']",
+        );
+        if (!stamp) throw new Error("Missing exam stamp metric target");
+        const stampBounds = stamp.getBoundingClientRect();
+        const baselineStamp = stamp.cloneNode(true) as HTMLImageElement;
+        baselineStamp.style.position = "absolute";
+        baselineStamp.style.left = "-10000px";
+        baselineStamp.style.top = "-10000px";
+        baselineStamp.style.visibility = "hidden";
+        baselineStamp.style.animation = "none";
+        baselineStamp.style.transform = getComputedStyle(stamp).transform;
+        baselineStamp.style.width = `${Number.parseFloat(getComputedStyle(stamp).width) / 2}px`;
+        stamp.parentElement?.append(baselineStamp);
+        const baselineStampWidth = baselineStamp.getBoundingClientRect().width;
+        baselineStamp.remove();
+
+        return {
+          rank: measureTextHeight("h1[class*='rank']"),
+          certificate: measureTextHeight("[class*='certificateLabel']"),
+          stamp: { actual: stampBounds.width, baseline: baselineStampWidth },
+        };
+      });
+
+      for (const [name, metric] of Object.entries(metrics)) {
+        const ratio = metric.actual / metric.baseline;
+        expect(
+          ratio,
+          `${rank} ${name} at ${viewportSize.width}x${viewportSize.height}`,
+        ).toBeGreaterThanOrEqual(1.8);
+        expect(
+          ratio,
+          `${rank} ${name} at ${viewportSize.width}x${viewportSize.height}`,
+        ).toBeLessThanOrEqual(2.2);
+      }
+    }
+  }
+});
+
+test("@chromium enlarged rank content stays inside small canvases with long tied winners", async ({
+  page,
+}) => {
+  const mock = await installAdminApiMock(page);
+  mock.setWinnerEntries([
+    { displayName: "とても長い名前の第一位受賞者 花子", score: 10, rank: 1 },
+    { displayName: "同点で受賞した長い名前の第一位受賞者 太郎", score: 10, rank: 1 },
+    { displayName: "とても長い名前の第二位受賞者", score: 8, rank: 2 },
+    { displayName: "同点の第二位受賞者", score: 8, rank: 2 },
+    { displayName: "とても長い名前の第三位受賞者", score: 6, rank: 3 },
+    { displayName: "同点の第三位受賞者", score: 6, rank: 3 },
+  ]);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const viewportSizes = [
+    { width: 800, height: 450 },
+    { width: 640, height: 360 },
+    { width: 390, height: 844 },
+  ];
+
+  for (const viewportSize of viewportSizes) {
+    await page.setViewportSize(viewportSize);
+    for (const rank of ["third", "second", "first"] as const) {
+      mock.setPresentationPosition(rank);
+      await page.goto("/presentation");
+      const region = rankRegionFor(page, rank);
+      await expect(region).toBeVisible();
+      const layout = await page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
+        const bounds = viewport.getBoundingClientRect();
+        const outOfBounds = Array.from(viewport.querySelectorAll("*"))
+          .map((node) => node.getBoundingClientRect())
+          .filter((rect) => rect.width > 0 && rect.height > 0)
+          .filter(
+            (rect) =>
+              rect.left < bounds.left - 1 ||
+              rect.right > bounds.right + 1 ||
+              rect.top < bounds.top - 1 ||
+              rect.bottom > bounds.bottom + 1,
+          ).length;
+        const stamp = viewport.querySelector<HTMLElement>(
+          "[data-testid='presentation-exam-stamp']",
+        );
+        const rankHeading = viewport.querySelector<HTMLElement>("h1[class*='rank']");
+        const certificate = viewport.querySelector<HTMLElement>("[class*='certificateLabel']");
+        const winners = Array.from(
+          viewport.querySelectorAll<HTMLElement>("[class*='winnerRankGroup'] article"),
+        );
+        if (!stamp || !rankHeading || !certificate || winners.length === 0) {
+          throw new Error("Rank labels, stamp, or winner content were not rendered");
+        }
+        const intersects = (left: DOMRect, right: DOMRect) =>
+          left.left < right.right &&
+          left.right > right.left &&
+          left.top < right.bottom &&
+          left.bottom > right.top;
+        const stampBounds = stamp.getBoundingClientRect();
+        return {
+          outOfBounds,
+          overlapsHeader: intersects(stampBounds, rankHeading.getBoundingClientRect()),
+          overlapsCertificate: intersects(stampBounds, certificate.getBoundingClientRect()),
+          overlapsWinnerContent: winners.some((winner) => {
+            const winnerBounds = winner.getBoundingClientRect();
+            return [
+              stampBounds,
+              rankHeading.getBoundingClientRect(),
+              certificate.getBoundingClientRect(),
+            ].some((headerBounds) => intersects(headerBounds, winnerBounds));
+          }),
+        };
+      });
+      expect(layout.outOfBounds, `${rank} at ${viewportSize.width}x${viewportSize.height}`).toBe(0);
+      expect(layout.overlapsHeader, `${rank} at ${viewportSize.width}x${viewportSize.height}`).toBe(
+        false,
+      );
+      expect(
+        layout.overlapsCertificate,
+        `${rank} at ${viewportSize.width}x${viewportSize.height}`,
+      ).toBe(false);
+      expect(
+        layout.overlapsWinnerContent,
+        `${rank} at ${viewportSize.width}x${viewportSize.height}`,
+      ).toBe(false);
+      await expect(page.getByTestId("presentation-canvas")).not.toHaveCSS("overflow", "visible");
+    }
+  }
+});
 
 async function expectRankAnticipation(
   region: import("@playwright/test").Locator,
@@ -1527,7 +1704,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
       state: "first_prize",
       text: [
         "1位の景品",
-        "信州牛専門店　すき亭",
+        "信州牛専門店　すき亭ギフト",
         "りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
       ],
     },
@@ -1590,11 +1767,11 @@ test("@chromium first-prize position is shared with the public projection and su
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "first_prize")).toBeVisible();
   await mutation;
-  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" })).toBeVisible();
   await expect(
     page.getByText("りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します"),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭" })).toHaveCSS(
+  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" })).toHaveCSS(
     "animation-name",
     "none",
   );
@@ -1613,7 +1790,9 @@ test("@chromium first-prize position is shared with the public projection and su
   const publicPage = await page.context().newPage();
   await publicPage.setViewportSize({ width: 640, height: 360 });
   await publicPage.goto("/presentation");
-  await expect(publicPage.getByRole("heading", { name: "信州牛専門店　すき亭" })).toBeVisible();
+  await expect(
+    publicPage.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" }),
+  ).toBeVisible();
   await expect(
     publicPage.getByText("りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します"),
   ).toBeVisible();
@@ -1670,7 +1849,7 @@ test("@chromium first-prize content fits a small slide and reduced motion keeps 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/presentation");
 
-  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭" });
+  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" });
   const description = page.getByText(
     "りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
   );
@@ -1680,6 +1859,26 @@ test("@chromium first-prize content fits a small slide and reduced motion keeps 
   await expect(description).toBeVisible();
   await expect(beef).toBeVisible();
   await expect(catalog).toBeVisible();
+
+  const titleMetrics = await page.getByTestId("presentation-canvas").evaluate((canvas) => {
+    const label = canvas.querySelector<HTMLElement>("[class*='firstPrizeLabel']");
+    const brand = canvas.querySelector<HTMLElement>("[class*='firstPrizeBrand']");
+    const title = canvas.querySelector<HTMLElement>("[class*='firstPrizeHeader'] h1");
+    if (!label || !brand || !title) throw new Error("First-prize heading spans were not rendered");
+    const rangeHeight = (element: HTMLElement) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return range.getBoundingClientRect().height;
+    };
+    return {
+      labelHeight: rangeHeight(label),
+      brandHeight: rangeHeight(brand),
+      brandFontSize: Number.parseFloat(getComputedStyle(brand).fontSize),
+      headingFontSize: Number.parseFloat(getComputedStyle(title).fontSize),
+    };
+  });
+  expect(titleMetrics.labelHeight / titleMetrics.brandHeight).toBeCloseTo(0.5, 1);
+  expect(titleMetrics.brandFontSize / titleMetrics.headingFontSize).toBeCloseTo(1, 2);
 
   const readBounds = async () => {
     await waitForRenderFrames(page);
@@ -1813,7 +2012,7 @@ test("@chromium first-prize entrance survives same-stage polling and replays on 
   const mock = await installAdminApiMock(page);
   mock.setPresentationPosition("first_prize");
   await page.goto("/presentation");
-  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭" });
+  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" });
   await expect(title).toBeVisible();
   await expect(
     page.getByText("りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します"),
@@ -1929,7 +2128,7 @@ test("@chromium first-prize entrance keeps click progression available", async (
   mock.setPresentationPosition("first_prize");
   await openPresenter(page);
 
-  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭" });
+  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" });
   await expect(title).toBeVisible();
   const entranceIsActive = await title.evaluate((element) => {
     const entrance = element
@@ -2004,7 +2203,7 @@ test("@chromium rank reveal can advance into first prize while its automatic ani
   await expect(slideFor(page, "first_prize")).toBeVisible();
   await mutation;
 
-  const prizeTitle = page.getByRole("heading", { name: "信州牛専門店　すき亭" });
+  const prizeTitle = page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" });
   const prizeEntranceIsActive = await prizeTitle.evaluate((element) => {
     const entrance = element
       .getAnimations()
@@ -2033,7 +2232,7 @@ test("@chromium finished skips the first-prize position when there is no first-p
   await expect(slideFor(page, "second")).toBeVisible();
   await mutation;
   expect(mock.getPresentationState().state).toBe("second");
-  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" })).toHaveCount(0);
 });
 
 test("@chromium long answer content remains complete and fits without an internal scroll region", async ({

@@ -3017,7 +3017,7 @@ describe("PresentationScreen", () => {
     });
     const prizeSlide = await screen.findByRole("region", { name: "現在のスライド" });
     expect(prizeSlide.querySelector("#first-prize-title")?.textContent).toBe(
-      "信州牛専門店　すき亭",
+      "信州牛専門店　すき亭ギフト",
     );
     expect(
       decodeURIComponent(screen.getByRole("img", { name: "和牛の写真" }).getAttribute("src") ?? ""),

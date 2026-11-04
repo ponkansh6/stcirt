@@ -811,7 +811,10 @@ describe("presentation projection and presenter progression", () => {
       const slide = await screen.findByRole("region", { name: "現在のスライド" });
       for (const content of contents) expect(slide).toHaveTextContent(content);
       if (projection.state === "first_prize") {
-        expect(slide.querySelector("#first-prize-title")?.textContent).toBe("信州牛専門店　すき亭");
+        const prizeTitle = slide.querySelector("#first-prize-title");
+        expect(prizeTitle?.textContent).toBe("信州牛専門店　すき亭ギフト");
+        expect(prizeTitle?.querySelector("span")?.textContent).toBe("信州牛専門店");
+        expect(prizeTitle?.querySelectorAll("span")[1]?.textContent).toBe("すき亭ギフト");
         const beef = within(slide).getByRole("img", { name: "和牛の写真" });
         const catalog = within(slide).getByRole("img", { name: "和牛カタログの表紙" });
         expect(decodeURIComponent(beef.getAttribute("src") ?? "")).toContain("/和牛.png");

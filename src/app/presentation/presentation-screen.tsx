@@ -1228,7 +1228,7 @@ export default function PresentationScreen({
     if (data.state === "answer") return `第${data.question.ordinal}問の解説`;
     if (data.state === "third" || data.state === "second" || data.state === "first")
       return `${rankTitle[data.state]}を発表します`;
-    if (data.state === "first_prize") return "1位の景品、信州牛専門店すき亭を紹介します";
+    if (data.state === "first_prize") return "1位の景品、信州牛専門店すき亭ギフトを紹介します";
     if (data.state === "standby") return "休憩中";
     if (data.state === "opening") return "発表を開始しました";
     if (data.state === "podium_preview") return "結果発表を開始します";
@@ -1538,7 +1538,11 @@ export default function PresentationScreen({
                           >
                             <header className={styles.firstPrizeHeader}>
                               <p>1位の景品</p>
-                              <h1 id="first-prize-title">信州牛専門店　すき亭</h1>
+                              <h1 id="first-prize-title">
+                                <span className={styles.firstPrizeLabel}>信州牛専門店</span>
+                                {"　"}
+                                <span className={styles.firstPrizeBrand}>すき亭ギフト</span>
+                              </h1>
                               <p className={styles.firstPrizeDescription}>
                                 りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します
                               </p>
