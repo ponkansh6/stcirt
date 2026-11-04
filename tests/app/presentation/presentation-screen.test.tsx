@@ -812,7 +812,8 @@ describe("presentation projection and presenter progression", () => {
       for (const content of contents) expect(slide).toHaveTextContent(content);
       if (projection.state === "first_prize") {
         const prizeTitle = slide.querySelector("#first-prize-title");
-        expect(prizeTitle?.textContent).toBe("信州牛専門店　すき亭ギフト");
+        expect(prizeTitle?.textContent).toBe("信州牛専門店すき亭ギフト");
+        expect(prizeTitle).toHaveAttribute("aria-label", "信州牛専門店　すき亭ギフト");
         expect(prizeTitle?.querySelector("span")?.textContent).toBe("信州牛専門店");
         expect(prizeTitle?.querySelectorAll("span")[1]?.textContent).toBe("すき亭ギフト");
         const beef = within(slide).getByRole("img", { name: "和牛の写真" });
@@ -828,6 +829,7 @@ describe("presentation projection and presenter progression", () => {
         );
         expect(stylesheet).toMatch(/\.firstPrizeBeef\s*\{[^}]*object-fit:\s*contain/s);
         expect(stylesheet).toMatch(/\.firstPrizeCatalog\s*\{[^}]*object-fit:\s*contain/s);
+        expect(stylesheet).toMatch(/\.firstPrizeLabel\s*\{[^}]*display:\s*block/s);
         expect(stylesheet).toMatch(/\.canvas\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9/s);
       }
       if (projection.state === "answer") {

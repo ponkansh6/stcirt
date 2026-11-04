@@ -1538,9 +1538,8 @@ export default function PresentationScreen({
                           >
                             <header className={styles.firstPrizeHeader}>
                               <p>1位の景品</p>
-                              <h1 id="first-prize-title">
+                              <h1 id="first-prize-title" aria-label="信州牛専門店　すき亭ギフト">
                                 <span className={styles.firstPrizeLabel}>信州牛専門店</span>
-                                {"　"}
                                 <span className={styles.firstPrizeBrand}>すき亭ギフト</span>
                               </h1>
                               <p className={styles.firstPrizeDescription}>

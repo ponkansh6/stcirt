@@ -652,7 +652,7 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
     case "first":
       return page.getByRole("region", { name: "第一位の勝者一覧" });
     case "first_prize":
-      return page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" });
+      return page.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ });
     case "finished":
       return page.getByRole("heading", { name: /ご参加.*ありがとうございました/ });
     default:
@@ -771,7 +771,7 @@ test("@chromium rank text and stamp render at about twice their legacy CSS size 
       });
 
       const metrics = await region.evaluate((element) => {
-        const measureTextHeight = (selector: string) => {
+        const measureTextHeight = (selector: string, baselineFontScale = 0.5) => {
           const target = element.querySelector<HTMLElement>(selector);
           if (!target) throw new Error(`Missing rank metric target: ${selector}`);
           const range = document.createRange();
@@ -788,7 +788,7 @@ test("@chromium rank text and stamp render at about twice their legacy CSS size 
           baseline.style.visibility = "hidden";
           baseline.style.animation = "none";
           baseline.style.transform = "none";
-          baseline.style.fontSize = `${Number.parseFloat(getComputedStyle(target).fontSize) / 2}px`;
+          baseline.style.fontSize = `${Number.parseFloat(getComputedStyle(target).fontSize) * baselineFontScale}px`;
           target.parentElement?.append(baseline);
           const baselineRange = document.createRange();
           baselineRange.selectNodeContents(baseline);
@@ -816,21 +816,25 @@ test("@chromium rank text and stamp render at about twice their legacy CSS size 
 
         return {
           rank: measureTextHeight("h1[class*='rank']"),
-          certificate: measureTextHeight("[class*='certificateLabel']"),
+          // The certificate label was reduced to two thirds of its enlarged size.
+          // A 1.5x clone reconstructs the committed enlarged size for comparison.
+          certificate: measureTextHeight("[class*='certificateLabel']", 1.5),
           stamp: { actual: stampBounds.width, baseline: baselineStampWidth },
         };
       });
 
       for (const [name, metric] of Object.entries(metrics)) {
         const ratio = metric.actual / metric.baseline;
+        const minimumRatio = name === "certificate" ? 0.62 : 1.8;
+        const maximumRatio = name === "certificate" ? 0.71 : 2.2;
         expect(
           ratio,
           `${rank} ${name} at ${viewportSize.width}x${viewportSize.height}`,
-        ).toBeGreaterThanOrEqual(1.8);
+        ).toBeGreaterThanOrEqual(minimumRatio);
         expect(
           ratio,
           `${rank} ${name} at ${viewportSize.width}x${viewportSize.height}`,
-        ).toBeLessThanOrEqual(2.2);
+        ).toBeLessThanOrEqual(maximumRatio);
       }
     }
   }
@@ -1704,7 +1708,8 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
       state: "first_prize",
       text: [
         "1位の景品",
-        "信州牛専門店　すき亭ギフト",
+        "信州牛専門店",
+        "すき亭ギフト",
         "りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
       ],
     },
@@ -1767,11 +1772,12 @@ test("@chromium first-prize position is shared with the public projection and su
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "first_prize")).toBeVisible();
   await mutation;
-  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ })).toBeVisible();
+  await expect(page.locator("[class*='firstPrizeLabel']")).toHaveCSS("display", "block");
   await expect(
     page.getByText("りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します"),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" })).toHaveCSS(
+  await expect(page.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ })).toHaveCSS(
     "animation-name",
     "none",
   );
@@ -1791,7 +1797,7 @@ test("@chromium first-prize position is shared with the public projection and su
   await publicPage.setViewportSize({ width: 640, height: 360 });
   await publicPage.goto("/presentation");
   await expect(
-    publicPage.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" }),
+    publicPage.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ }),
   ).toBeVisible();
   await expect(
     publicPage.getByText("りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します"),
@@ -1849,7 +1855,7 @@ test("@chromium first-prize content fits a small slide and reduced motion keeps 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/presentation");
 
-  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" });
+  const title = page.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ });
   const description = page.getByText(
     "りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
   );
@@ -2012,7 +2018,7 @@ test("@chromium first-prize entrance survives same-stage polling and replays on 
   const mock = await installAdminApiMock(page);
   mock.setPresentationPosition("first_prize");
   await page.goto("/presentation");
-  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" });
+  const title = page.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ });
   await expect(title).toBeVisible();
   await expect(
     page.getByText("りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します"),
@@ -2128,7 +2134,7 @@ test("@chromium first-prize entrance keeps click progression available", async (
   mock.setPresentationPosition("first_prize");
   await openPresenter(page);
 
-  const title = page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" });
+  const title = page.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ });
   await expect(title).toBeVisible();
   const entranceIsActive = await title.evaluate((element) => {
     const entrance = element
@@ -2203,7 +2209,7 @@ test("@chromium rank reveal can advance into first prize while its automatic ani
   await expect(slideFor(page, "first_prize")).toBeVisible();
   await mutation;
 
-  const prizeTitle = page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" });
+  const prizeTitle = page.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ });
   const prizeEntranceIsActive = await prizeTitle.evaluate((element) => {
     const entrance = element
       .getAnimations()
@@ -2232,7 +2238,7 @@ test("@chromium finished skips the first-prize position when there is no first-p
   await expect(slideFor(page, "second")).toBeVisible();
   await mutation;
   expect(mock.getPresentationState().state).toBe("second");
-  await expect(page.getByRole("heading", { name: "信州牛専門店　すき亭ギフト" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ })).toHaveCount(0);
 });
 
 test("@chromium long answer content remains complete and fits without an internal scroll region", async ({

@@ -729,6 +729,7 @@
 }
 
 .firstPrizeLabel {
+  display: block;
   font-size: 0.5em;
   letter-spacing: 0.08em;
 }
@@ -861,7 +862,11 @@
 .certificateLabel {
   color: #51432b;
   font-family: Meiryo, メイリオ, sans-serif;
-  font-size: clamp(calc(var(--presentation-min-readable-size) * 2), 3.8cqw, 4rem);
+  font-size: clamp(
+    calc(var(--presentation-min-readable-size) * 4 / 3),
+    calc(3.8cqw * 2 / 3),
+    calc(4rem * 2 / 3)
+  );
   font-weight: 650;
   letter-spacing: 0.18em;
   line-height: 1;
