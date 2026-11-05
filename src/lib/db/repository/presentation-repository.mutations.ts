@@ -53,6 +53,10 @@ export type PresentationAggregationSummary = {
   unmatchedReferenceNames: string[];
 };
 
+function referenceNameComparisonKey(name: string): string {
+  return name.replace(/[ \u3000]/g, "");
+}
+
 function cleanReferenceNames(names: string[]): string[] {
   return [...new Set(names.filter((name) => name.trim().length > 0))];
 }
@@ -265,8 +269,22 @@ async function ensurePresentationSnapshot(
     .from(presentationReferenceSettings)
     .where(eq(presentationReferenceSettings.id, 1));
   const referenceNames = new Set(referenceSettings?.names ?? []);
-  const participantNames = new Set(participants.map(({ displayName }) => displayName));
-  const unmatchedReferenceNames = [...referenceNames].filter((name) => !participantNames.has(name));
+  const referenceNameKeys = new Set(
+    [...referenceNames].map(referenceNameComparisonKey).filter((key) => key.length > 0),
+  );
+  const participantNameKeys = new Set(
+    participants
+      .map(({ displayName }) => referenceNameComparisonKey(displayName))
+      .filter((key) => key.length > 0),
+  );
+  const isReferenceName = (displayName: string) => {
+    const key = referenceNameComparisonKey(displayName);
+    return key.length > 0 && referenceNameKeys.has(key);
+  };
+  const unmatchedReferenceNames = [...referenceNames].filter((name) => {
+    const key = referenceNameComparisonKey(name);
+    return key.length === 0 || !participantNameKeys.has(key);
+  });
   setOperationPhase?.("submissions_read");
   const submissions = await tx
     .select()
@@ -390,7 +408,7 @@ async function ensurePresentationSnapshot(
         excludedSubmissionCount: excludedSubmissionIds.size,
         excludedReasonCounts,
         referenceParticipantCount: participants.filter(({ displayName }) =>
-          referenceNames.has(displayName),
+          isReferenceName(displayName),
         ).length,
         unmatchedReferenceNames,
       },
@@ -436,7 +454,7 @@ async function ensurePresentationSnapshot(
   });
   const markedScored = scored.map((entry) => ({
     ...entry,
-    isReference: referenceNames.has(entry.participant.displayName),
+    isReference: isReferenceName(entry.participant.displayName),
   }));
   const eligibleScored = markedScored.filter(
     (entry) => entry.isAggregationTarget && !entry.isReference,
@@ -551,7 +569,7 @@ async function ensurePresentationSnapshot(
       excludedSubmissionCount: excludedSubmissionIds.size,
       excludedReasonCounts,
       referenceParticipantCount: participants.filter(({ displayName }) =>
-        referenceNames.has(displayName),
+        isReferenceName(displayName),
       ).length,
       unmatchedReferenceNames,
     },

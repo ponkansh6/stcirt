@@ -1204,6 +1204,182 @@ describe("presentation repository", () => {
     }
   });
 
+  it("ignores only ASCII and ideographic spaces when matching reference names", async () => {
+    await addQuestions();
+    const names = [
+      "山田太郎",
+      "山田　太郎",
+      "SettingOnly",
+      "Participant Only",
+      "Repeat Space",
+      "Alice Smith",
+      "Tab\tName",
+      "alice smith",
+    ];
+    const participants = await testDb.db
+      .insert(schema.examParticipants)
+      .values(
+        names.map((displayName, index) => ({
+          normalizedName: `space-ref-${index}`,
+          displayName,
+        })),
+      )
+      .returning({ id: schema.examParticipants.id });
+    for (const { id } of participants) await addSubmission(id, [0, 0]);
+
+    const configuredNames = [
+      " 山田 太郎 ",
+      "山田　太郎",
+      "山田太郎",
+      "Setting Only",
+      "ParticipantOnly",
+      "Repeat  Space",
+      "Ａlice Smith",
+      "Tab Name",
+      "Missing　 Name ",
+      "Missing Name",
+      "   ",
+    ];
+    await expect(setPresentationReferenceNames(configuredNames)).resolves.toEqual([
+      " 山田 太郎 ",
+      "山田　太郎",
+      "山田太郎",
+      "Setting Only",
+      "ParticipantOnly",
+      "Repeat  Space",
+      "Ａlice Smith",
+      "Tab Name",
+      "Missing　 Name ",
+      "Missing Name",
+    ]);
+    await expect(getPresentationReferenceNames()).resolves.toEqual([
+      " 山田 太郎 ",
+      "山田　太郎",
+      "山田太郎",
+      "Setting Only",
+      "ParticipantOnly",
+      "Repeat  Space",
+      "Ａlice Smith",
+      "Tab Name",
+      "Missing　 Name ",
+      "Missing Name",
+    ]);
+
+    const result = await op("aggregate", "reference-ascii-ideographic-space-matching");
+    expect(result.aggregationSummary).toMatchObject({
+      referenceParticipantCount: 5,
+      unmatchedReferenceNames: ["Ａlice Smith", "Tab Name", "Missing　 Name ", "Missing Name"],
+    });
+    const byName = new Map(result.entries.map((entry) => [entry.displayName, entry]));
+    expect(byName.get("山田太郎")).toMatchObject({
+      isReference: true,
+      isAggregationTarget: true,
+      rank: null,
+    });
+    expect(byName.get("山田　太郎")).toMatchObject({
+      isReference: true,
+      isAggregationTarget: true,
+      rank: null,
+    });
+    expect(byName.get("SettingOnly")).toMatchObject({
+      isReference: true,
+      isAggregationTarget: true,
+      rank: null,
+    });
+    expect(byName.get("Participant Only")).toMatchObject({
+      isReference: true,
+      isAggregationTarget: true,
+      rank: null,
+    });
+    expect(byName.get("Repeat Space")).toMatchObject({
+      isReference: true,
+      isAggregationTarget: true,
+      rank: null,
+    });
+    for (const name of ["Alice Smith", "Tab\tName", "alice smith"]) {
+      expect(byName.get(name)).toMatchObject({
+        isReference: false,
+        isAggregationTarget: true,
+        rank: 1,
+      });
+    }
+    const persistedEntries = await testDb.db.select().from(schema.presentationEntries);
+    const persistedById = new Map(
+      persistedEntries.map((entry) => [entry.participantId, entry.equivalentRank]),
+    );
+    const participantIdByName = new Map(
+      (
+        await testDb.db
+          .select({
+            id: schema.examParticipants.id,
+            displayName: schema.examParticipants.displayName,
+          })
+          .from(schema.examParticipants)
+      ).map(({ id, displayName }) => [displayName, id]),
+    );
+    for (const displayName of [
+      "山田太郎",
+      "山田　太郎",
+      "SettingOnly",
+      "Participant Only",
+      "Repeat Space",
+    ]) {
+      const participantId = participantIdByName.get(displayName);
+      expect(participantId).toBeDefined();
+      expect(persistedById.get(participantId!)).toBe(1);
+    }
+
+    // A compatibility mismatch returns a summary without replacing the saved snapshot.
+    const snapshotBeforeMismatch = await testDb.db.select().from(schema.presentationEntries);
+    await setPresentationReferenceNames([" 山田 太郎 ", "Unmatched　 Name "]);
+    for (const { id } of participants) {
+      await testDb.db
+        .update(schema.examAnswerSubmissions)
+        .set({ questionVersions: {} })
+        .where(eq(schema.examAnswerSubmissions.id, `submission-${id}-latest`));
+    }
+
+    const mismatch = await op("aggregate", "reference-space-compatibility-mismatch");
+    expect(mismatch.aggregationSummary).toMatchObject({
+      snapshotUpdated: false,
+      referenceParticipantCount: 2,
+      unmatchedReferenceNames: ["Unmatched　 Name "],
+    });
+    expect(mismatch.entries).toEqual(result.entries);
+    expect(await testDb.db.select().from(schema.presentationEntries)).toEqual(
+      snapshotBeforeMismatch,
+    );
+    await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
+      { snapshotRevision: 1 },
+    ]);
+  });
+
+  it("does not match empty comparison keys from legacy reference settings", async () => {
+    await addQuestions();
+    const participantId = await addParticipant(" ");
+    await addSubmission(participantId, [0, 0]);
+    await testDb.db.insert(schema.presentationReferenceSettings).values({
+      id: 1,
+      names: ["　"],
+    });
+
+    const result = await op("aggregate", "reference-empty-comparison-key");
+    expect(result.aggregationSummary).toMatchObject({
+      referenceParticipantCount: 0,
+      unmatchedReferenceNames: ["　"],
+    });
+    expect(result.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          displayName: " ",
+          isReference: false,
+          isAggregationTarget: true,
+          rank: 1,
+        }),
+      ]),
+    );
+  });
+
   it("keeps reference classification fixed after settings and display names change, including operation replay", async () => {
     const participants = await addRankFixture();
     await setPresentationReferenceNames(["First"]);
