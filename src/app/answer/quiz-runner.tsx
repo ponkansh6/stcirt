@@ -1144,7 +1144,7 @@ export default function QuizRunner() {
                       event.preventDefault();
                       jumpToQuestion(question.id);
                     }}
-                    aria-label={`第${index + 1}問へ移動、${answered ? "✓ 済" : "未回答"}`}
+                    aria-label={`第${index + 1}問${answered ? "✓ 済" : "未回答"}へ移動`}
                     className={`flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${answered ? "border-primary bg-primary text-on-primary" : "border-control-border bg-surface-2 text-muted"}`}
                   >
                     <span>第{index + 1}問</span>

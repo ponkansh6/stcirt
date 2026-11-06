@@ -345,7 +345,7 @@ describe("QuizRunner batch answer sheet", () => {
       }),
     );
     const { rerender } = render(<RunnerPage />);
-    const questionLink = screen.getByRole("link", { name: "第1問へ移動、✓ 済" });
+    const questionLink = screen.getByRole("link", { name: "第1問✓ 済へ移動" });
     questionLink.focus();
     expect(document.activeElement).toBe(questionLink);
 
@@ -385,7 +385,7 @@ describe("QuizRunner batch answer sheet", () => {
     });
     await waitFor(() => expect(document.activeElement).toBe(finalCheckHeading));
 
-    const questionLink = screen.getByRole("link", { name: "第1問へ移動、✓ 済" });
+    const questionLink = screen.getByRole("link", { name: "第1問✓ 済へ移動" });
     questionLink.focus();
     expect(document.activeElement).toBe(questionLink);
     finalCheckHeading.focus();
@@ -464,7 +464,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "answering" };
     rerender(<RunnerPage />);
-    const questionLink = screen.getByRole("link", { name: "第1問へ移動、✓ 済" });
+    const questionLink = screen.getByRole("link", { name: "第1問✓ 済へ移動" });
     questionLink.focus();
     expect(document.activeElement).toBe(questionLink);
 
@@ -498,7 +498,7 @@ describe("QuizRunner batch answer sheet", () => {
     heading!.scrollIntoView = scrollIntoView;
     heading!.focus = focus;
 
-    fireEvent.click(screen.getByRole("link", { name: "第2問へ移動、未回答" }));
+    fireEvent.click(screen.getByRole("link", { name: "第2問未回答へ移動" }));
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "start" });
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     scrollIntoView.mockClear();

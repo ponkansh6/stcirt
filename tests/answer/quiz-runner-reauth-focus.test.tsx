@@ -271,7 +271,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     fireEvent.change(screen.getByLabelText("4桁PIN"), { target: { value: "0123" } });
     fireEvent.click(screen.getByRole("button", { name: "再ログインする" }));
-    const questionLink = screen.getByRole("link", { name: "第2問へ移動、✓ 済" });
+    const questionLink = screen.getByRole("link", { name: "第2問✓ 済へ移動" });
     questionLink.focus();
     expect(document.activeElement).toBe(questionLink);
 
