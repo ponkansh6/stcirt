@@ -14,6 +14,7 @@ import { gradeFreeResponse, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION } from "@/l
 import { scoreQ5 } from "@/lib/jev/scoring";
 import { randomUUID } from "node:crypto";
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
+import { isSqliteLockContention } from "./sqlite-error-classification";
 import { QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
 
 export type BatchAnswer =
@@ -704,17 +705,6 @@ async function withAnswerTransactionRetry<T>(
       else await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
-}
-
-function isSqliteLockContention(error: unknown): boolean {
-  return sqliteCauseObjects(error).some((value) => {
-    const codes = [value.code, value.extendedCode].filter(
-      (code): code is string => typeof code === "string",
-    );
-    return codes.some(
-      (code) => /^SQLITE_BUSY(?:_|$)/.test(code) || /^SQLITE_LOCKED(?:_|$)/.test(code),
-    );
-  });
 }
 
 function isKnownSqliteConflict(error: unknown): boolean {

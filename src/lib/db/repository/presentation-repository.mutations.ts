@@ -36,6 +36,7 @@ import {
   JEV_RUBRIC_VERSION,
 } from "@/lib/jev/adapter";
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
+import { isSqliteLockContention } from "./sqlite-error-classification";
 
 export class PresentationConflictError extends Error {
   readonly status = 409;
@@ -925,7 +926,7 @@ async function operatePresentationWithResponse<T>(
     if (error instanceof PresentationConflictError) throw error;
     // Lock contention is retried by starting a fresh transaction above. If all
     // attempts are exhausted, preserve the database error for the caller.
-    if (isSqliteLockRace(error)) {
+    if (isSqliteLockContention(error)) {
       if (action === "aggregate") throw makePresentationOperationError(phase, error);
       throw error;
     }
@@ -959,24 +960,10 @@ async function withTransactionRetry<T>(run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (error) {
-      if (!isSqliteLockRace(error) || attempt >= maxAttempts - 1) throw error;
+      if (!isSqliteLockContention(error) || attempt >= maxAttempts - 1) throw error;
       await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
     }
   }
-}
-
-function isSqliteLockRace(error: unknown) {
-  for (const value of sqliteCauseObjects(error)) {
-    const codes = [value.code, value.extendedCode].filter(
-      (code): code is string => typeof code === "string",
-    );
-    if (
-      codes.some((code) => /^SQLITE_BUSY(?:_|$)/.test(code) || /^SQLITE_LOCKED(?:_|$)/.test(code))
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function isKnownTransactionRace(error: unknown) {
