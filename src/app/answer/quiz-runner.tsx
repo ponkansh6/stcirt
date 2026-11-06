@@ -1237,7 +1237,7 @@ export default function QuizRunner() {
                 className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-card sm:p-7"
                 aria-labelledby={questionTitleId}
               >
-                <p className="mb-2 text-sm font-semibold tracking-widest">
+                <p className="mb-2 text-sm font-semibold">
                   <span className="text-accent">第{index + 1}問</span>{" "}
                   <span className="font-medium tracking-normal text-muted">/ 全5問</span>
                 </p>
@@ -1311,7 +1311,7 @@ export default function QuizRunner() {
           className="mt-7 rounded-2xl border border-border-subtle border-l-4 border-l-accent bg-surface p-5 shadow-card sm:p-7"
           aria-labelledby="final-check-title"
         >
-          <p className="text-sm font-semibold tracking-widest text-accent">最終確認</p>
+          <p className="text-sm font-semibold text-accent">最終確認</p>
           {visibilityUnknown && !publishedLock && (
             <p className="mt-3 text-sm text-muted" role="status" aria-live="polite">
               公開状態を確認できません。確認できるまで編集はできません。

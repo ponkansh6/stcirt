@@ -23,19 +23,26 @@ export default function ParticipantResultDetails({
         ) : null}
         <div className="rounded-xl bg-surface-2 p-1.5 sm:p-5">
           <dt className="text-sm text-muted text-balance">順位</dt>
-          <dd className="mt-1 flex min-h-10 items-baseline gap-2">
+          <dd className="mt-1 flex min-h-10 flex-wrap items-baseline gap-2">
             {result.isReference && result.equivalentRank !== null ? (
-              <span className={`${scoreAndRankTextSize} font-bold`}>
+              <span
+                className={`${scoreAndRankTextSize} [min-inline-size:0] [max-inline-size:100%] [word-break:keep-all] [overflow-wrap:anywhere] font-bold`}
+              >
                 {result.equivalentRank}位相当
               </span>
             ) : result.rank === null ? (
               <span className="text-xl font-bold text-muted">集計対象外</span>
             ) : (
-              <span className={`${scoreAndRankTextSize} font-bold`}>{result.rank}位</span>
+              <span
+                className={`${scoreAndRankTextSize} [min-inline-size:0] [max-inline-size:100%] [word-break:keep-all] [overflow-wrap:anywhere] font-bold`}
+              >
+                {result.rank}位
+              </span>
             )}
             {!result.isReference && result.rank !== null ? (
-              <span className="text-sm font-medium text-muted">
-                / {result.rankParticipantCount}人
+              <span className="[min-inline-size:0] [max-inline-size:100%] [word-break:keep-all] [overflow-wrap:anywhere] text-sm font-medium text-muted">
+                /{"\u00a0"}
+                {result.rankParticipantCount}人
               </span>
             ) : null}
           </dd>

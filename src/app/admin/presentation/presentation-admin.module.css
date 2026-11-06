@@ -16,7 +16,7 @@
   padding: clamp(24px, 5vw, 44px);
   border: 1px solid #d9d4c9;
   border-radius: 16px;
-  background: #fffefa;
+  background: var(--color-surface);
   box-shadow: 0 14px 42px rgb(50 48 38 / 8%);
 }
 
@@ -25,7 +25,7 @@
   padding: clamp(24px, 5vw, 44px);
   border: 1px solid #d9d4c9;
   border-radius: 16px;
-  background: #fffefa;
+  background: var(--color-surface);
   box-shadow: 0 14px 42px rgb(50 48 38 / 8%);
 }
 
@@ -34,7 +34,6 @@
   color: #79653e;
   font-size: 0.68rem;
   font-weight: 800;
-  letter-spacing: 0.19em;
 }
 
 .loginCard h1,

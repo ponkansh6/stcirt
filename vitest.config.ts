@@ -8,7 +8,7 @@ export default defineConfig({
     globals: true,
     environment: "jsdom",
     setupFiles: ["./tests/setup.ts"],
-    exclude: ["tests/e2e/**", "node_modules", ".next"],
+    exclude: ["tests/e2e/**", "node_modules", ".next", ".agents/skills/hallmark/**"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary", "json", "html"],
