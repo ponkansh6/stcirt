@@ -1123,7 +1123,7 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   await expect(firstRadio).not.toBeChecked();
   await page.keyboard.press("Space");
   await expect(firstRadio).toBeChecked();
-  await expect(navigation.getByRole("link", { name: "第1問へ移動、回答済み" })).toBeVisible();
+  await expect(navigation.getByRole("link", { name: "第1問✓ 済へ移動" })).toBeVisible();
   const firstRow = firstRadio.locator("xpath=..");
   const radioFocusRing = await firstRow.evaluate((element) => getComputedStyle(element).boxShadow);
   expect(radioFocusRing).not.toBe("none");
@@ -1134,7 +1134,7 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   await expect(navigation.getByRole("list").getByRole("listitem")).toHaveCount(5);
   await expect(navigation.locator("a, button, input")).toHaveCount(5);
   const targetHeading = page.locator("#question-5 h2");
-  await navigation.getByRole("link", { name: "第5問へ移動、未回答" }).click();
+  await navigation.getByRole("link", { name: "第5問未回答へ移動" }).click();
   await expect(targetHeading).toBeFocused();
   const headingTop = await targetHeading.evaluate((heading) => heading.getBoundingClientRect().top);
   const stickyBottom = await page
@@ -1171,7 +1171,7 @@ test("@mobile reviews and edits an answer at 320px with a hittable review target
   await page.getByRole("textbox", { name: "回答" }).fill("小画面で編集する回答です。");
   await page
     .getByRole("navigation", { name: "設問へ移動" })
-    .getByRole("link", { name: "第5問へ移動、回答済み" })
+    .getByRole("link", { name: "第5問✓ 済へ移動" })
     .click();
   await page.keyboard.press("End");
 
@@ -1191,7 +1191,7 @@ test("@mobile reviews and edits an answer at 320px with a hittable review target
   await selectRadio(page, /Option 3C/);
   await page
     .getByRole("navigation", { name: "設問へ移動" })
-    .getByRole("link", { name: "第5問へ移動、回答済み" })
+    .getByRole("link", { name: "第5問✓ 済へ移動" })
     .click();
   await page.keyboard.press("End");
   await expect(reviewItems.nth(2)).toContainText("Option 3C");
