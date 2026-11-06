@@ -27,6 +27,7 @@ export default function ResultsPanel({
   );
   const [authorized, setAuthorized] = useState(initial.state !== "unauthenticated");
   const [refreshError, setRefreshError] = useState(false);
+  const resultsRootRef = useRef<HTMLElement | null>(null);
   const pendingRef = useRef(false);
   const queuedRef = useRef(false);
   const requestRevisionRef = useRef(0);
@@ -110,7 +111,9 @@ export default function ResultsPanel({
       if (document.visibilityState === "visible") refresh(scope);
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
+    resultsRootRef.current?.setAttribute("data-results-visibility-listener-ready", "true");
     return () => {
+      resultsRootRef.current?.removeAttribute("data-results-visibility-listener-ready");
       queuedRef.current = false;
       pendingRef.current = false;
       inFlightRequestRef.current = null;
@@ -148,7 +151,10 @@ export default function ResultsPanel({
   }, [authorized, currentStatusKey, result.state]);
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
+    <main
+      ref={resultsRootRef}
+      className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12"
+    >
       <section className="rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10">
         <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
         {!authorized ? (

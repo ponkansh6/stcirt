@@ -317,7 +317,7 @@ describe("QuizRunner remaining coverage states", () => {
       expect(within(questionCards[4]).getByText("B. B", { exact: true })).toBeInTheDocument();
 
       fireEvent.click(
-        within(questionCards[0]).getByRole("button", { name: "第1問「設問1」を編集" }),
+        within(questionCards[0]).getByRole("button", { name: "第1問「設問1」を編集する" }),
       );
       fireEvent.click(document.getElementById("answer-1-1") as HTMLInputElement);
 
@@ -367,9 +367,9 @@ describe("QuizRunner remaining coverage states", () => {
     firstHeading!.scrollIntoView = vi.fn();
     secondHeading!.scrollIntoView = vi.fn();
 
-    fireEvent.click(screen.getByRole("button", { name: "第1問「設問1」を編集" }));
+    fireEvent.click(screen.getByRole("button", { name: "第1問「設問1」を編集する" }));
     expect(selectedFocus).toHaveBeenCalledWith({ preventScroll: true });
-    fireEvent.click(screen.getByRole("button", { name: "第2問「設問2」を編集" }));
+    fireEvent.click(screen.getByRole("button", { name: "第2問「設問2」を編集する" }));
     expect(unansweredFocus).toHaveBeenCalledWith({ preventScroll: true });
   });
 
@@ -390,7 +390,7 @@ describe("QuizRunner remaining coverage states", () => {
     (heading as HTMLElement).scrollIntoView = vi.fn();
     const headingFocus = vi.spyOn(heading as HTMLElement, "focus");
 
-    fireEvent.click(screen.getByRole("button", { name: "第1問「設問1」を編集" }));
+    fireEvent.click(screen.getByRole("button", { name: "第1問「設問1」を編集する" }));
 
     expect(headingFocus).toHaveBeenCalledWith({ preventScroll: true });
   });

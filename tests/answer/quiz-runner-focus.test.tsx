@@ -345,7 +345,7 @@ describe("QuizRunner batch answer sheet", () => {
       }),
     );
     const { rerender } = render(<RunnerPage />);
-    const questionLink = screen.getByRole("link", { name: "第1問へ移動、回答済み" });
+    const questionLink = screen.getByRole("link", { name: "第1問へ移動、✓ 済" });
     questionLink.focus();
     expect(document.activeElement).toBe(questionLink);
 
@@ -385,7 +385,7 @@ describe("QuizRunner batch answer sheet", () => {
     });
     await waitFor(() => expect(document.activeElement).toBe(finalCheckHeading));
 
-    const questionLink = screen.getByRole("link", { name: "第1問へ移動、回答済み" });
+    const questionLink = screen.getByRole("link", { name: "第1問へ移動、✓ 済" });
     questionLink.focus();
     expect(document.activeElement).toBe(questionLink);
     finalCheckHeading.focus();
@@ -464,7 +464,7 @@ describe("QuizRunner batch answer sheet", () => {
 
     currentPhase = { kind: "answering" };
     rerender(<RunnerPage />);
-    const questionLink = screen.getByRole("link", { name: "第1問へ移動、回答済み" });
+    const questionLink = screen.getByRole("link", { name: "第1問へ移動、✓ 済" });
     questionLink.focus();
     expect(document.activeElement).toBe(questionLink);
 

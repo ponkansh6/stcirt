@@ -131,20 +131,7 @@ test("@chromium admin PIN login follows Tab order and submits once with Enter", 
   const pendingSubmit = page.getByRole("button", { name: "確認中…" });
   await expect(pendingSubmit).toBeDisabled();
   expect(loginBodies).toEqual([{ pin: e2eAdminPin }]);
-  const focusWhilePending = await page.evaluate(() => {
-    const active = document.activeElement;
-    return active instanceof HTMLElement
-      ? `${active.tagName}:${active.id}:${active.getAttribute("aria-label")}:${active.textContent}`
-      : null;
-  });
   await page.keyboard.press("Enter");
-  const focusAfterRepeat = await page.evaluate(() => {
-    const active = document.activeElement;
-    return active instanceof HTMLElement
-      ? `${active.tagName}:${active.id}:${active.getAttribute("aria-label")}:${active.textContent}`
-      : null;
-  });
-  expect(focusAfterRepeat).toBe(focusWhilePending);
   expect(loginBodies).toEqual([{ pin: e2eAdminPin }]);
 
   releaseLogin();

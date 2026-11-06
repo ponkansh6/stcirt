@@ -45,6 +45,7 @@ test("@chromium silently refreshes on tab return without showing a manual reload
   await expect(page.getByRole("link", { name: "回答完了画面へ戻る" })).toBeVisible();
   await expect(page.getByRole("button", { name: "結果を再読み込み" })).toHaveCount(0);
   expect(requests).toBe(0);
+  await expect(page.locator('[data-results-visibility-listener-ready="true"]')).toBeAttached();
 
   await page.evaluate(() => {
     Object.defineProperty(document, "visibilityState", {

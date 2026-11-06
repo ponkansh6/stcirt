@@ -1144,7 +1144,7 @@ export default function QuizRunner() {
                       event.preventDefault();
                       jumpToQuestion(question.id);
                     }}
-                    aria-label={`第${index + 1}問へ移動、${answered ? "回答済み" : "未回答"}`}
+                    aria-label={`第${index + 1}問へ移動、${answered ? "✓ 済" : "未回答"}`}
                     className={`flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${answered ? "border-primary bg-primary text-on-primary" : "border-control-border bg-surface-2 text-muted"}`}
                   >
                     <span>第{index + 1}問</span>
@@ -1397,7 +1397,7 @@ export default function QuizRunner() {
                     <button
                       type="button"
                       onClick={() => jumpToQuestion(question.id, true)}
-                      aria-label={`第${index + 1}問「${question.question}」を編集`}
+                      aria-label={`第${index + 1}問「${question.question}」を編集する`}
                       className="min-h-11 shrink-0 rounded-md px-3 text-sm font-semibold text-primary underline decoration-1 underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                     >
                       編集する
