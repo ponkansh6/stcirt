@@ -297,7 +297,7 @@ The participant interface MUST support the documented responsive layout, keyboar
 - WHEN an answer submission is pending
 - THEN its small 16 CSS px spinner uses a 2 CSS px border that inherits the button text color, remains visible while decorative and hidden from assistive technology, and stops rotating when reduced motion is requested
 
-- Use a restrained exam-paper visual style with the existing beige, navy, and gold palette, light surfaces, ink text, and subtle decorative framing; keep spacing consistent and align the answering navigation with the answer content width. Do not use medals, pass/fail imagery, or certificate visuals.
+- Use a restrained exam-paper visual style with the existing beige, navy, and gold palette, light surfaces, ink text, and subtle decorative framing; use a restrained green accent for question numbers displayed in the answer screen and the selected answer state. Keep navigation's current and answered states distinct. Keep spacing consistent and align the answering navigation with the answer content width. Do not use medals, pass/fail imagery, or certificate visuals.
 - Always use the light color palette regardless of the operating system's color-scheme preference.
 - Provide readable contrast, visible keyboard focus, native radio semantics, live status updates, and textual progress labels so color is not the sole signal. Choice rows and the primary confirmation action have at least 44 CSS px of interaction height.
 - During ordinary answering, announce answer progress through one concise polite header live region; keep the descriptive status and final-review count visible but non-live. Keep a polite live status while submitting or refreshing, and keep recovery errors assertive.

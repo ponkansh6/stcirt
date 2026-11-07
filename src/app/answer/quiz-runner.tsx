@@ -1238,7 +1238,7 @@ export default function QuizRunner() {
                 aria-labelledby={questionTitleId}
               >
                 <p className="mb-2 text-sm font-semibold">
-                  <span className="text-accent">第{index + 1}問</span>{" "}
+                  <span className="text-answer-accent">第{index + 1}問</span>{" "}
                   <span className="font-medium tracking-normal text-muted">/ 全5問</span>
                 </p>
                 <h2
