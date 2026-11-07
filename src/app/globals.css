@@ -1,22 +1,92 @@
+/* Hallmark · redesign: full · scope: app · theme: existing ink and gold on exam paper · posture: restrained · signature: problem and result content set clearly · shape: settled (/answer, /results, /admin/presentation, /admin/presentation/reference-participants, /shared-results/[token]); stage (/presentation) · keeps: content, wiring, states, routes, Geist · no waivers */
+/* Hallmark critique · answer and result screens keep their reading sequence; admin keeps current state before actions; projection keeps certificate and rank colors by meaning. */
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #f7f5f0;
+  --color-bg: #f7f7f1;
   --color-text: #253746;
-  --color-surface: #fffefa;
-  --color-surface-2: #eeeae1;
+  --color-surface: #fdfdf8;
+  --color-surface-2: #eeefe7;
   --color-muted: #59626b;
-  --color-border: #938d81;
-  --color-border-subtle: #d5cfc3;
-  --color-control-border: #817969;
-  --color-selection: #f1e9d6;
+  --color-border: #858d7f;
+  --color-border-subtle: #d7dacf;
+  --color-control-border: #7d8578;
+  --color-selection: #ede8d4;
   --color-primary: #253746;
   --color-primary-hover: #192b39;
-  --color-on-primary: #ffffff;
+  --color-on-primary: #f7f7f1;
   --color-accent: #74520d;
   --color-success: #2b664b;
   --color-error: #9b3129;
   --color-warning: #74520d;
+  --color-focus: #74520d;
+  --spacing-projection-block-1: clamp(4px, 0.8cqh, 12px);
+  --spacing-projection-block-2: clamp(8px, 1.5cqh, 22px);
+  --spacing-projection-block-3: clamp(16px, 2.5cqh, 32px);
+  --spacing-projection-block-4: clamp(20px, 4cqh, 44px);
+  --spacing-projection-inline-1: clamp(6px, 0.6cqw, 10px);
+  --spacing-projection-inline-2: clamp(8px, 1.1cqw, 18px);
+  --spacing-projection-inline-3: clamp(12px, 1.8cqw, 28px);
+  --spacing-projection-inline-4: clamp(24px, 3cqw, 44px);
+  --spacing-projection-frame-block: clamp(22px, 4cqh, 44px);
+  --spacing-projection-frame-inline: clamp(28px, 4.5cqw, 72px);
+  --color-presentation-0e2b1c: #0e2b1c;
+  --color-presentation-173e27: #173e27;
+  --color-presentation-176b43: #176b43;
+  --color-presentation-252a2f: #252a2f;
+  --color-presentation-24343d: #24343d;
+  --color-presentation-354b56: #354b56;
+  --color-presentation-37424c: #37424c;
+  --color-presentation-46515b: #46515b;
+  --color-presentation-4b5560: #4b5560;
+  --color-presentation-505b66: #505b66;
+  --color-presentation-51432b: #51432b;
+  --color-presentation-56616a: #56616a;
+  --color-presentation-59636d: #59636d;
+  --color-presentation-66717a: #66717a;
+  --color-presentation-71603d: #71603d;
+  --color-presentation-88919a: #88919a;
+  --color-presentation-8e6e31: #8e6e31;
+  --color-presentation-9e7d3c: #9e7d3c;
+  --color-presentation-9f7728: #9f7728;
+  --color-presentation-9f916d: #9f916d;
+  --color-presentation-a52e32: #a52e32;
+  --color-presentation-a88c55: #a88c55;
+  --color-presentation-b58b35: #b58b35;
+  --color-presentation-b6a16d: #b6a16d;
+  --color-presentation-b8954c: #b8954c;
+  --color-presentation-b9a46c: #b9a46c;
+  --color-presentation-b9ad8d: #b9ad8d;
+  --color-presentation-c7ad6a: #c7ad6a;
+  --color-presentation-c9c0aa: #c9c0aa;
+  --color-presentation-cbd0d5: #cbd0d5;
+  --color-presentation-d8bb70: #d8bb70;
+  --color-presentation-d9c184: #d9c184;
+  --color-presentation-d9cba8: #d9cba8;
+  --color-presentation-e3d5b3: #e3d5b3;
+  --color-presentation-e3d6b6: #e3d6b6;
+  --color-presentation-e5ce91: #e5ce91;
+  --color-presentation-e7c87a: #e7c87a;
+  --color-presentation-e9dec6: #e9dec6;
+  --color-presentation-ead9aa: #ead9aa;
+  --color-presentation-eee6d2: #eee6d2;
+  --color-presentation-f0e2b8: #f0e2b8;
+  --color-presentation-f3df9d: #f3df9d;
+  --color-presentation-f5e5b0: #f5e5b0;
+  --color-presentation-f5efdf: #f5efdf;
+  --color-presentation-f8e5a8: #f8e5a8;
+  --color-presentation-fff1b8: #fff1b8;
+  --color-presentation-fff9e5: #fff9e5;
+  --color-presentation-fff9e7: #fff9e7;
+  --color-presentation-fffdf5: #fffdf5;
+  --color-presentation-fffef8: #fffef8;
+  --color-presentation-shadow: rgb(0 0 0 / 22%);
+  --color-presentation-certificate-shadow: rgb(116 88 37 / 22%);
+  --color-presentation-medal-shadow: rgb(142 110 49 / 30%);
+  --color-presentation-glint: rgb(181 139 53 / 78%);
+  --color-presentation-glow: rgb(243 223 157 / 26%);
+  --color-presentation-white-96: rgb(253 253 248 / 96%);
+  --color-presentation-white-98: rgb(253 253 248 / 98%);
 
   --shadow-card: 0 4px 12px -2px oklch(0 0 0 / 0.05), 0 2px 6px -1px oklch(0 0 0 / 0.03);
   --shadow-raise: 0 10px 25px -5px oklch(0 0 0 / 0.08), 0 8px 10px -6px oklch(0 0 0 / 0.05);
@@ -106,8 +176,22 @@
 
 /* Keep keyboard focus distinct from the control edge. */
 :focus-visible {
-  outline: 3px solid var(--color-accent) !important;
+  outline: 3px solid var(--color-focus) !important;
   outline-offset: 3px;
+}
+
+html,
+body {
+  overflow-x: clip;
+}
+
+::selection {
+  background: var(--color-selection);
+  color: var(--color-text);
+}
+
+html {
+  scrollbar-color: var(--color-border) var(--color-bg);
 }
 
 body {

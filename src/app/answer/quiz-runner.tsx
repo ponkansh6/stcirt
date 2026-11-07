@@ -635,10 +635,10 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">
             {ui.primaryAction === "reauthenticate" ? ui.status : "代理回答"}
           </h1>
+          <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
           <p className="mt-4 max-w-xl leading-relaxed text-muted">{ui.message}</p>
           <AssistedParticipantForm
             onSubmit={startAssisted}
@@ -717,8 +717,8 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{ui.status}</h1>
+          <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
           <p className="mt-4 text-muted" role={ui.statusRole}>
             {ui.message}
           </p>
@@ -736,8 +736,8 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{ui.status}</h1>
+          <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
           <p className="mt-4 text-muted" role={ui.statusRole}>
             {ui.message}
           </p>
@@ -753,8 +753,8 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{ui.status}</h1>
+          <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
           <p className="mt-4 text-muted" role={ui.statusRole}>
             {ui.message}
           </p>
@@ -827,8 +827,8 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{ui.status}</h1>
+          <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
           <p className="mt-4 text-muted">{ui.message}</p>
         </ParticipantCard>
       </main>
@@ -840,8 +840,8 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1 className="text-3xl font-bold tracking-tight">{ui.status}</h1>
+          <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
           <p className="mt-4 text-muted" role={ui.statusRole}>
             {ui.message}
           </p>
@@ -932,7 +932,6 @@ export default function QuizRunner() {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
         <ParticipantCard>
-          <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
           <h1
             ref={completionHeadingRef}
             tabIndex={-1}
@@ -940,6 +939,7 @@ export default function QuizRunner() {
           >
             {saveConfirmed && !restoreError ? ui.status : "回答状態の確認が必要です"}
           </h1>
+          <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
           <AnswererNameField
             answerMode={answerMode}
             ownerName={ownerName}

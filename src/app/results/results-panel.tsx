@@ -153,15 +153,15 @@ export default function ResultsPanel({
   return (
     <main
       ref={resultsRootRef}
-      className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12"
+      className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-10 sm:py-16"
     >
-      <section className="rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10">
-        <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
+      <section className="rounded-2xl border border-border-subtle bg-surface p-5 shadow-card sm:p-8">
         {!authorized ? (
           <>
             <h1 className="text-3xl font-bold tracking-tight text-balance">
               参加者セッションを確認できません
             </h1>
+            <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
             <p className="mt-4 text-muted text-pretty">回答画面からもう一度参加してください。</p>
             <Link className="mt-8 inline-flex font-semibold text-primary underline" href="/answer">
               回答完了画面へ戻る
@@ -172,6 +172,7 @@ export default function ResultsPanel({
             <h1 className="text-3xl font-bold tracking-tight text-balance">
               {scope === "assisted" ? "代理回答の結果" : "あなたの結果"}
             </h1>
+            <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
             <ParticipantResultDetails result={result} name={participantName} />
             <Link className="mt-8 inline-flex font-semibold text-primary underline" href="/answer">
               回答完了画面へ戻る
@@ -180,6 +181,7 @@ export default function ResultsPanel({
         ) : result.state === "waiting" ? null : (
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-balance">結果を確認できません</h1>
+            <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
             <p className="mt-4 rounded-xl border border-border bg-surface-2 p-4 text-sm text-muted text-pretty">
               あなたの結果を確認できません。時間をおいて再読み込みしてください。
             </p>

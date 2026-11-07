@@ -1,0 +1,167 @@
+[
+  {
+    "viewport": {
+      "width": 320,
+      "height": 800
+    },
+    "captureKind": "latest direct supplemental E2E capture; not native Hallmark render",
+    "state": "信州牛専門店\nすき亭ギフト",
+    "fitScale": 0.529,
+    "canvas": {
+      "width": 320,
+      "height": 180
+    },
+    "description": {
+      "cssFontSizePx": 27,
+      "renderedFontSizePx": 14.3
+    },
+    "imagesAndContentRetained": true,
+    "horizontalOverflow": false
+  },
+  {
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "state": "信州牛専門店\nすき亭ギフト",
+    "scale": "0.8855234260614934",
+    "canvas": {
+      "x": 0,
+      "y": 40,
+      "width": 1280,
+      "height": 720
+    },
+    "naturalLayer": {
+      "box": {
+        "x": 124.2,
+        "y": 97.6,
+        "width": 1031.5,
+        "height": 604.7
+      },
+      "offsetWidth": 1165,
+      "offsetHeight": 683,
+      "scrollWidth": 1165,
+      "scrollHeight": 683
+    },
+    "title": {
+      "text": "信州牛専門店\nすき亭ギフト",
+      "box": {
+        "x": 294.4,
+        "y": 172.8,
+        "width": 690.9,
+        "height": 115.9
+      },
+      "fontSize": "79.36px"
+    },
+    "description": {
+      "text": "りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
+      "box": {
+        "x": 294.4,
+        "y": 306.5,
+        "width": 690.9,
+        "height": 32.2
+      },
+      "fontSize": "26px"
+    },
+    "images": [
+      {
+        "alt": "和牛の写真",
+        "box": {
+          "x": 136.6,
+          "y": 352.7,
+          "width": 667,
+          "height": 335.6
+        },
+        "fontSize": "16px",
+        "opacity": "1",
+        "loaded": true
+      },
+      {
+        "alt": "和牛カタログの表紙",
+        "box": {
+          "x": 831.9,
+          "y": 349.3,
+          "width": 311.2,
+          "height": 342.4
+        },
+        "fontSize": "16px",
+        "opacity": "1",
+        "loaded": true
+      }
+    ],
+    "horizontalOverflow": false
+  },
+  {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "state": "信州牛専門店\nすき亭ギフト",
+    "scale": "0.9249492900608519",
+    "canvas": {
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080
+    },
+    "naturalLayer": {
+      "box": {
+        "x": 149.7,
+        "y": 84,
+        "width": 1620.5,
+        "height": 911.8
+      },
+      "offsetWidth": 1752,
+      "offsetHeight": 986,
+      "scrollWidth": 1752,
+      "scrollHeight": 986
+    },
+    "title": {
+      "text": "信州牛専門店\nすき亭ギフト",
+      "box": {
+        "x": 599.1,
+        "y": 191.1,
+        "width": 721.7,
+        "height": 170.9
+      },
+      "fontSize": "112px"
+    },
+    "description": {
+      "text": "りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
+      "box": {
+        "x": 599.1,
+        "y": 387,
+        "width": 721.7,
+        "height": 33.7
+      },
+      "fontSize": "26px"
+    },
+    "images": [
+      {
+        "alt": "和牛の写真",
+        "box": {
+          "x": 166.4,
+          "y": 441.1,
+          "width": 1062,
+          "height": 534.3
+        },
+        "fontSize": "16px",
+        "opacity": "1",
+        "loaded": true
+      },
+      {
+        "alt": "和牛カタログの表紙",
+        "box": {
+          "x": 1258,
+          "y": 435.6,
+          "width": 495.6,
+          "height": 545.2
+        },
+        "fontSize": "16px",
+        "opacity": "1",
+        "loaded": true
+      }
+    ],
+    "horizontalOverflow": false
+  }
+]

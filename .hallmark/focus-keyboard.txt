@@ -1,0 +1,6 @@
+Playwright keyboard traversal on /answer, viewport 320×800; no field values entered and no form submitted.
+Tab 1: <input> name=name; :focus-visible=true
+Tab 2: <input> name=pin; :focus-visible=true
+Tab 3: <button> text="はじめる"; :focus-visible=true
+Captured targets: answer-name-320.png, answer-pin-320.png, answer-start-320.png
+Screenshots show the visible focus treatment for targets that matched :focus-visible.

@@ -1,0 +1,172 @@
+/answer · 320px · Participant state error and login form
+  text 6.08:1 (4.5:1 target): <p> 披露宴までに回答を完了させてください。自身で入力が難しい方の為の代理回答は自分の回答完了後に行え · rgb(89, 98, 107) over rgb(253 253 248)
+  text 7.18:1 (4.5:1 target): <p> 参加状態を確認できませんでした。お名前とPINを入力してください。 · rgb(155, 49, 41) over rgb(253 253 248)
+  text 11.40:1 (4.5:1 target): <button> はじめる · rgb(247, 247, 241) over rgb(37 55 70)
+  text 12.01:1 (4.5:1 target): <p> 令和八年度第一回 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (3:1 target): <p> しゅんたま検定 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 受験者氏名 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 受験コード · rgb(37, 55, 70) over rgb(253 253 248)
+  control edge 3.74:1: name · rgb(125, 133, 120)
+  control edge 3.74:1: pin · rgb(125, 133, 120)
+  control edge 12.01:1: はじめる · rgb(247, 247, 241)
+  keyboard focus 12.01:1: <input> name · rgb(37, 55, 70)
+
+/answer · 1280px · Participant state error and login form
+  text 6.08:1 (4.5:1 target): <p> 披露宴までに回答を完了させてください。自身で入力が難しい方の為の代理回答は自分の回答完了後に行え · rgb(89, 98, 107) over rgb(253 253 248)
+  text 7.18:1 (4.5:1 target): <p> 参加状態を確認できませんでした。お名前とPINを入力してください。 · rgb(155, 49, 41) over rgb(253 253 248)
+  text 11.40:1 (4.5:1 target): <button> はじめる · rgb(247, 247, 241) over rgb(37 55 70)
+  text 12.01:1 (4.5:1 target): <p> 令和八年度第一回 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (3:1 target): <p> しゅんたま検定 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 受験者氏名 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 受験コード · rgb(37, 55, 70) over rgb(253 253 248)
+  control edge 3.74:1: name · rgb(125, 133, 120)
+  control edge 3.74:1: pin · rgb(125, 133, 120)
+  control edge 12.01:1: はじめる · rgb(247, 247, 241)
+  keyboard focus 11.83:1: <input> name · rgb(40, 56, 68)
+
+/answer · 1920px · Participant state error and login form
+  text 6.08:1 (4.5:1 target): <p> 披露宴までに回答を完了させてください。自身で入力が難しい方の為の代理回答は自分の回答完了後に行え · rgb(89, 98, 107) over rgb(253 253 248)
+  text 7.18:1 (4.5:1 target): <p> 参加状態を確認できませんでした。お名前とPINを入力してください。 · rgb(155, 49, 41) over rgb(253 253 248)
+  text 11.40:1 (4.5:1 target): <button> はじめる · rgb(247, 247, 241) over rgb(37 55 70)
+  text 12.01:1 (4.5:1 target): <p> 令和八年度第一回 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (3:1 target): <p> しゅんたま検定 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 受験者氏名 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 受験コード · rgb(37, 55, 70) over rgb(253 253 248)
+  control edge 3.74:1: name · rgb(125, 133, 120)
+  control edge 3.74:1: pin · rgb(125, 133, 120)
+  control edge 12.01:1: はじめる · rgb(247, 247, 241)
+  keyboard focus 11.83:1: <input> name · rgb(40, 56, 68)
+
+/results · 320px · Results session recovery
+  text 6.08:1 (4.5:1 target): <p> しゅんたま検定 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 回答画面からもう一度参加してください。 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 12.01:1 (3:1 target): <h1> 参加者セッションを確認できません · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <a> 回答完了画面へ戻る · rgb(37, 55, 70) over rgb(253 253 248)
+  keyboard focus 6.96:1: <a> 回答完了画面へ戻る · rgb(116, 82, 13)
+
+/results · 1280px · Results session recovery
+  text 6.08:1 (4.5:1 target): <p> しゅんたま検定 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 回答画面からもう一度参加してください。 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 12.01:1 (3:1 target): <h1> 参加者セッションを確認できません · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <a> 回答完了画面へ戻る · rgb(37, 55, 70) over rgb(253 253 248)
+  keyboard focus 6.96:1: <a> 回答完了画面へ戻る · rgb(116, 82, 13)
+
+/results · 1920px · Results session recovery
+  text 6.08:1 (4.5:1 target): <p> しゅんたま検定 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 回答画面からもう一度参加してください。 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 12.01:1 (3:1 target): <h1> 参加者セッションを確認できません · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <a> 回答完了画面へ戻る · rgb(37, 55, 70) over rgb(253 253 248)
+  keyboard focus 6.96:1: <a> 回答完了画面へ戻る · rgb(116, 82, 13)
+
+/presentation · 320px · Current award slide
+  text 5.98:1 (3:1 target): <p> 1位の景品 · rgb(113, 96, 61) over rgb(253 253 248)
+  text 10.06:1 (4.5:1 target): <p> りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します · rgb(55, 66, 76) over rgb(253 253 248)
+  text 11.40:1 (4.5:1 target): <p> 1位の景品、信州牛専門店すき亭ギフトを紹介します · rgb(37, 55, 70) over rgb(247 247 241)
+  text 11.73:1 (3:1 target): <h1> 信州牛専門店 すき亭ギフト · rgb(23, 62, 39) over rgb(253 253 248)
+  keyboard focus 6.61:1: <main> プレゼンテーションスライド · rgb(116, 82, 13)
+
+/presentation · 1280px · Current award slide
+  text 5.98:1 (3:1 target): <p> 1位の景品 · rgb(113, 96, 61) over rgb(253 253 248)
+  text 10.06:1 (3:1 target): <p> りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します · rgb(55, 66, 76) over rgb(253 253 248)
+  text 11.40:1 (4.5:1 target): <p> 1位の景品、信州牛専門店すき亭ギフトを紹介します · rgb(37, 55, 70) over rgb(247 247 241)
+  text 11.73:1 (3:1 target): <h1> 信州牛専門店 すき亭ギフト · rgb(23, 62, 39) over rgb(253 253 248)
+  keyboard focus 6.61:1: <main> プレゼンテーションスライド · rgb(116, 82, 13)
+
+/presentation · 1920px · Current award slide
+  text 5.98:1 (3:1 target): <p> 1位の景品 · rgb(113, 96, 61) over rgb(253 253 248)
+  text 10.06:1 (3:1 target): <p> りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します · rgb(55, 66, 76) over rgb(253 253 248)
+  text 11.40:1 (4.5:1 target): <p> 1位の景品、信州牛専門店すき亭ギフトを紹介します · rgb(37, 55, 70) over rgb(247 247 241)
+  text 11.73:1 (3:1 target): <h1> 信州牛専門店 すき亭ギフト · rgb(23, 62, 39) over rgb(253 253 248)
+  keyboard focus 6.61:1: <main> プレゼンテーションスライド · rgb(116, 82, 13)
+
+/admin/presentation · 320px · Admin PIN recovery
+  text 4.66:1 (4.5:1 target): <button> 管理ページにログイン · rgb(247, 247, 241) over rgb(37 55 70)
+  text 6.08:1 (4.5:1 target): <p> 司会者用 PIN を入力して、発表を管理します。 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 認証後もこの管理ページに留まります。 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.96:1 (4.5:1 target): <p> HOST CONSOLE · rgb(116, 82, 13) over rgb(253 253 248)
+  text 7.18:1 (4.5:1 target): <p> 管理者セッションの有効期限が切れました。PIN を入力してください。 · rgb(155, 49, 41) over rgb(253 253 248)
+  text 12.01:1 (3:1 target): <h1> 披露宴 発表操作 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 管理者 PIN · rgb(37, 55, 70) over rgb(253 253 248)
+  control edge 3.74:1: unnamed · rgb(125, 133, 120)
+  control edge 12.01:1: 管理ページにログイン · rgb(37, 55, 70)
+  keyboard focus 6.96:1: <input>  · rgb(116, 82, 13)
+
+/admin/presentation · 1280px · Admin PIN recovery
+  text 4.66:1 (4.5:1 target): <button> 管理ページにログイン · rgb(247, 247, 241) over rgb(37 55 70)
+  text 6.08:1 (4.5:1 target): <p> 司会者用 PIN を入力して、発表を管理します。 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 認証後もこの管理ページに留まります。 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.96:1 (4.5:1 target): <p> HOST CONSOLE · rgb(116, 82, 13) over rgb(253 253 248)
+  text 7.18:1 (4.5:1 target): <p> 管理者セッションの有効期限が切れました。PIN を入力してください。 · rgb(155, 49, 41) over rgb(253 253 248)
+  text 12.01:1 (3:1 target): <h1> 披露宴 発表操作 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 管理者 PIN · rgb(37, 55, 70) over rgb(253 253 248)
+  control edge 3.74:1: unnamed · rgb(125, 133, 120)
+  control edge 12.01:1: 管理ページにログイン · rgb(37, 55, 70)
+  keyboard focus 6.96:1: <input>  · rgb(116, 82, 13)
+
+/admin/presentation · 1920px · Admin PIN recovery
+  text 4.66:1 (4.5:1 target): <button> 管理ページにログイン · rgb(247, 247, 241) over rgb(37 55 70)
+  text 6.08:1 (4.5:1 target): <p> 司会者用 PIN を入力して、発表を管理します。 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 認証後もこの管理ページに留まります。 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.96:1 (4.5:1 target): <p> HOST CONSOLE · rgb(116, 82, 13) over rgb(253 253 248)
+  text 7.18:1 (4.5:1 target): <p> 管理者セッションの有効期限が切れました。PIN を入力してください。 · rgb(155, 49, 41) over rgb(253 253 248)
+  text 12.01:1 (3:1 target): <h1> 披露宴 発表操作 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 管理者 PIN · rgb(37, 55, 70) over rgb(253 253 248)
+  control edge 3.74:1: unnamed · rgb(125, 133, 120)
+  control edge 12.01:1: 管理ページにログイン · rgb(37, 55, 70)
+  keyboard focus 6.96:1: <input>  · rgb(116, 82, 13)
+
+/admin/presentation/reference-participants · 320px · Reference settings
+  text 6.08:1 (4.5:1 target): <p> 1行に1名ずつ入力します。参加者の表示名と完全一致した有効な提出者は、通常順位と表彰から除外され · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 前後の空白を含め、入力した名前は加工せず照合します。空行と空白だけの行は無視されます。最大500 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 保存後、管理画面へ戻って「集計」を実行すると保存済みの氏名一覧が反映されます。入力を変更しただけ · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.96:1 (4.5:1 target): <p> HOST CONSOLE · rgb(116, 82, 13) over rgb(253 253 248)
+  text 7.18:1 (4.5:1 target): <p> Unauthorized · rgb(155, 49, 41) over rgb(253 253 248)
+  text 11.40:1 (4.5:1 target): <button> 氏名一覧を保存 · rgb(247, 247, 241) over rgb(37 55 70)
+  text 12.01:1 (3:1 target): <h1> 参考対象氏名 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 参考対象の表示名（改行区切り） · rgb(37, 55, 70) over rgb(253 253 248)
+  control edge 3.74:1: unnamed · rgb(125, 133, 120)
+  control edge 12.01:1: 氏名一覧を保存 · rgb(37, 55, 70)
+  keyboard focus 6.96:1: <textarea>  · rgb(116, 82, 13)
+
+/admin/presentation/reference-participants · 1280px · Reference settings
+  text 6.08:1 (4.5:1 target): <p> 1行に1名ずつ入力します。参加者の表示名と完全一致した有効な提出者は、通常順位と表彰から除外され · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 前後の空白を含め、入力した名前は加工せず照合します。空行と空白だけの行は無視されます。最大500 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 保存後、管理画面へ戻って「集計」を実行すると保存済みの氏名一覧が反映されます。入力を変更しただけ · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.96:1 (4.5:1 target): <p> HOST CONSOLE · rgb(116, 82, 13) over rgb(253 253 248)
+  text 7.18:1 (4.5:1 target): <p> Unauthorized · rgb(155, 49, 41) over rgb(253 253 248)
+  text 11.40:1 (4.5:1 target): <button> 氏名一覧を保存 · rgb(247, 247, 241) over rgb(37 55 70)
+  text 12.01:1 (3:1 target): <h1> 参考対象氏名 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 参考対象の表示名（改行区切り） · rgb(37, 55, 70) over rgb(253 253 248)
+  control edge 3.74:1: unnamed · rgb(125, 133, 120)
+  control edge 12.01:1: 氏名一覧を保存 · rgb(37, 55, 70)
+  keyboard focus 6.96:1: <textarea>  · rgb(116, 82, 13)
+
+/admin/presentation/reference-participants · 1920px · Reference settings
+  text 6.08:1 (4.5:1 target): <p> 1行に1名ずつ入力します。参加者の表示名と完全一致した有効な提出者は、通常順位と表彰から除外され · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 前後の空白を含め、入力した名前は加工せず照合します。空行と空白だけの行は無視されます。最大500 · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.08:1 (4.5:1 target): <p> 保存後、管理画面へ戻って「集計」を実行すると保存済みの氏名一覧が反映されます。入力を変更しただけ · rgb(89, 98, 107) over rgb(253 253 248)
+  text 6.96:1 (4.5:1 target): <p> HOST CONSOLE · rgb(116, 82, 13) over rgb(253 253 248)
+  text 7.18:1 (4.5:1 target): <p> Unauthorized · rgb(155, 49, 41) over rgb(253 253 248)
+  text 11.40:1 (4.5:1 target): <button> 氏名一覧を保存 · rgb(247, 247, 241) over rgb(37 55 70)
+  text 12.01:1 (3:1 target): <h1> 参考対象氏名 · rgb(37, 55, 70) over rgb(253 253 248)
+  text 12.01:1 (4.5:1 target): <label> 参考対象の表示名（改行区切り） · rgb(37, 55, 70) over rgb(253 253 248)
+  control edge 3.74:1: unnamed · rgb(125, 133, 120)
+  control edge 12.01:1: 氏名一覧を保存 · rgb(37, 55, 70)
+  keyboard focus 6.96:1: <textarea>  · rgb(116, 82, 13)
+
+/shared-results/plan113 · 320px · Invalid share token
+  text 21.00:1 (3:1 target): <h1> 404 · rgb(0, 0, 0) over rgb(255 255 255)
+  text 21.00:1 (4.5:1 target): <h2> This page could not be found. · rgb(0, 0, 0) over rgb(255 255 255)
+  keyboard focus 4.61:1: <nextjs-portal>  · rgb(117, 117, 117)
+
+/shared-results/plan113 · 1280px · Invalid share token
+  text 21.00:1 (3:1 target): <h1> 404 · rgb(0, 0, 0) over rgb(255 255 255)
+  text 21.00:1 (4.5:1 target): <h2> This page could not be found. · rgb(0, 0, 0) over rgb(255 255 255)
+  keyboard focus 4.61:1: <nextjs-portal>  · rgb(117, 117, 117)
+
+/shared-results/plan113 · 1920px · Invalid share token
+  text 21.00:1 (3:1 target): <h1> 404 · rgb(0, 0, 0) over rgb(255 255 255)
+  text 21.00:1 (4.5:1 target): <h2> This page could not be found. · rgb(0, 0, 0) over rgb(255 255 255)
+  keyboard focus 4.61:1: <nextjs-portal>  · rgb(117, 117, 117)
+
+Method: browser computed foreground and ancestor-composited solid CSS background colors at each visible element. Opacity is composited against that background. CSS images/pseudo-element pixels are not sampled; the formal sloplint pixel probe did not run. Only the rendered state per route was present, not every transient state.

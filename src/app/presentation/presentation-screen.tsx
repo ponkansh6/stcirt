@@ -1581,13 +1581,13 @@ export default function PresentationScreen({
                             tabIndex={0}
                           >
                             <ExamStamp className={styles.rankStamp} />
-                            <div className={styles.rankHeader}>
-                              <span className={styles.certificateLabel}>認定証</span>
+                            <figure className={styles.rankHeader}>
+                              <figcaption className={styles.certificateLabel}>認定証</figcaption>
                               <div className={styles.rankHeading}>
                                 <span className={styles.rankOrnament} aria-hidden="true" />
                                 <h1 className={styles.rank}>{rankTitle[state]}</h1>
                               </div>
-                            </div>
+                            </figure>
                             <WinnerReveal
                               anticipationEligible={
                                 state === "first" && winnerGroups.some(({ rank }) => rank === 1)

@@ -1,3 +1,5 @@
+/* Hallmark · redesign: full · scope: app · theme: paper, navy ink and gold · posture: restrained · shape: settled · keeps: content and operations */
+/* Hallmark critique · current state precedes the next available admin action. */
 .shell {
   position: fixed;
   z-index: 30;
@@ -6,34 +8,34 @@
   place-items: center;
   overflow: auto;
   padding: 24px;
-  color: #263741;
-  background: radial-gradient(ellipse at 5% 0%, rgb(212 184 120 / 15%), transparent 34rem), #f4f1e9;
-  font-family: Meiryo, メイリオ, sans-serif;
+  color: var(--color-text);
+  background: var(--color-bg);
 }
 
 .loginCard {
   width: min(100%, 480px);
   padding: clamp(24px, 5vw, 44px);
-  border: 1px solid #d9d4c9;
-  border-radius: 16px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-card);
   background: var(--color-surface);
-  box-shadow: 0 14px 42px rgb(50 48 38 / 8%);
+  box-shadow: var(--shadow-card);
 }
 
 .console {
   width: min(100%, 620px);
   padding: clamp(24px, 5vw, 44px);
-  border: 1px solid #d9d4c9;
-  border-radius: 16px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-card);
   background: var(--color-surface);
-  box-shadow: 0 14px 42px rgb(50 48 38 / 8%);
+  box-shadow: var(--shadow-card);
 }
 
 .eyebrow {
   margin: 0;
-  color: #79653e;
-  font-size: 0.68rem;
+  color: var(--color-accent);
+  font-size: 0.75rem;
   font-weight: 800;
+  letter-spacing: normal;
 }
 
 .loginCard h1,
@@ -42,22 +44,23 @@
   font-size: clamp(1.55rem, 5vw, 2rem);
   line-height: 1.25;
   letter-spacing: -0.035em;
+  text-wrap: balance;
 }
 
 .loginIntro,
 .loginFoot {
-  color: #59676b;
+  color: var(--color-muted);
   font-size: 0.92rem;
   line-height: 1.7;
 }
 
 .loginIntro {
-  margin: 18px 0 24px;
+  margin: 16px 0 24px;
 }
 
 .loginForm {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .loginForm label {
@@ -68,29 +71,29 @@
 .loginForm input {
   width: 100%;
   min-height: 48px;
-  padding: 0 13px;
-  border: 1px solid #c9c3b7;
+  padding: 0 12px;
+  border: 1px solid var(--color-control-border);
   border-radius: 8px;
-  background: white;
-  color: #263741;
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
   font-size: 1.05rem;
 }
 
 .loginForm input:focus-visible,
 .primaryButton:focus-visible {
-  outline: 3px solid #bb9147;
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
 
 .primaryButton {
   min-height: 48px;
   margin-top: 8px;
-  padding: 0 18px;
-  border: 1px solid #365b4a;
+  padding: 0 16px;
+  border: 1px solid var(--color-primary);
   border-radius: 8px;
-  background: #365b4a;
-  color: white;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
   font: inherit;
   font-size: 0.9rem;
   font-weight: 800;
@@ -98,7 +101,7 @@
 }
 
 .primaryButton:hover:not(:disabled) {
-  background: #294738;
+  background: var(--color-primary-hover);
 }
 
 .primaryButton:disabled {
@@ -108,24 +111,24 @@
 
 .state {
   margin: 20px 0 0;
-  padding: 12px 14px;
+  padding: 12px 16px;
   border-radius: 8px;
-  background: #f1efe8;
-  color: #263741;
+  background: var(--color-surface-2);
+  color: var(--color-text);
   font-size: 1.05rem;
   font-weight: 800;
 }
 
 .detail {
   margin: 8px 0 0;
-  color: #59676b;
+  color: var(--color-muted);
   font-size: 0.9rem;
 }
 
 .actions {
   display: grid;
-  gap: 10px;
-  margin-top: 22px;
+  gap: 12px;
+  margin-top: 24px;
 }
 
 .settingsLink {
@@ -133,11 +136,11 @@
   min-height: 42px;
   align-items: center;
   justify-content: center;
-  margin-top: 18px;
-  padding: 0 14px;
-  border: 1px solid #8d9a90;
+  margin-top: 16px;
+  padding: 0 16px;
+  border: 1px solid var(--color-control-border);
   border-radius: 8px;
-  color: #365b4a;
+  color: var(--color-primary);
   font-size: 0.88rem;
   font-weight: 750;
   text-align: center;
@@ -145,33 +148,39 @@
 }
 
 .settingsLink:hover {
-  background: #f0f3ef;
+  background: var(--color-selection);
 }
 
 .settingsLink:focus-visible {
-  outline: 3px solid #bb9147;
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
 
 .secondaryButton {
   min-height: 46px;
   padding: 0 16px;
-  border: 1px solid #8d9a90;
+  border: 1px solid var(--color-control-border);
   border-radius: 8px;
-  background: #fffefa;
-  color: #365b4a;
+  background: var(--color-surface);
+  color: var(--color-primary);
   font: inherit;
   font-weight: 750;
   cursor: pointer;
 }
 
 .secondaryButton:hover:not(:disabled) {
-  background: #f0f3ef;
+  background: var(--color-selection);
 }
 
 .secondaryButton:focus-visible {
-  outline: 3px solid #bb9147;
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
+}
+
+.primaryButton:active:not(:disabled),
+.secondaryButton:active:not(:disabled),
+.settingsLink:active {
+  transform: translateY(1px);
 }
 
 .secondaryButton:disabled {
@@ -181,17 +190,17 @@
 
 .success {
   margin: 0;
-  color: #365b4a;
+  color: var(--color-success);
   font-weight: 800;
 }
 
 .aggregateSummary {
-  margin-top: 14px;
-  padding: 12px 14px;
-  border: 1px solid #c9d8cb;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--color-success);
   border-radius: 8px;
-  background: #f1f6f0;
-  color: #30483a;
+  background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface));
+  color: var(--color-success);
   font-size: 0.84rem;
   line-height: 1.6;
 }
@@ -209,9 +218,9 @@
 }
 
 .aggregateNotUpdated {
-  border-color: #dfcc9c;
-  background: #faf5e8;
-  color: #5c4b27;
+  border-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface));
+  color: var(--color-warning);
 }
 
 .aggregateCounts {
@@ -220,8 +229,8 @@
 }
 
 .error {
-  margin: 14px 0 0;
-  color: #9b4237;
+  margin: 16px 0 0;
+  color: var(--color-error);
   font-size: 0.86rem;
   line-height: 1.5;
 }

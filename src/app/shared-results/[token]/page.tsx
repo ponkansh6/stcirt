@@ -24,7 +24,7 @@ export default async function SharedResultPage({ params }: PageProps<"/shared-re
   } catch {
     return (
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-        <section className="rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10">
+        <section className="rounded-2xl border border-border-subtle bg-surface p-5 shadow-card sm:p-8">
           <h1 className="text-3xl font-bold">結果を確認できません</h1>
           <p className="mt-4 text-muted">時間をおいて再読み込みしてください。</p>
         </section>

@@ -67,10 +67,10 @@ export default function SharedResultPanel({
   }, [refresh]);
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-12">
-      <section className="rounded-2xl border border-border bg-surface p-7 shadow-sm sm:p-10">
-        <p className="mb-3 text-sm font-semibold tracking-widest text-primary">しゅんたま検定</p>
-        <h1 className="text-3xl font-bold tracking-tight">共有された代理回答の結果</h1>
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-10 sm:py-16">
+      <section className="rounded-2xl border border-border-subtle bg-surface p-5 shadow-card sm:p-8">
+        <h1 className="text-3xl font-bold tracking-tight text-balance">共有された代理回答の結果</h1>
+        <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
         <p className="mt-3 text-sm text-muted">このページはログイン不要の閲覧専用です。</p>
         {revoked || result === null ? (
           <p className="mt-6 rounded-xl bg-surface-2 p-4 text-muted">

@@ -90,8 +90,8 @@ export default function ReferenceParticipantsSettings() {
   return (
     <main className={styles.shell}>
       <section className={styles.card} aria-labelledby="reference-title">
-        <p className={styles.eyebrow}>HOST CONSOLE</p>
         <h1 id="reference-title">参考対象氏名</h1>
+        <p className={styles.eyebrow}>HOST CONSOLE</p>
         <p className={styles.intro}>
           1行に1名ずつ入力します。参加者の表示名と完全一致した有効な提出者は、通常順位と表彰から除外され、本人の結果に「位相当」を表示します。
         </p>

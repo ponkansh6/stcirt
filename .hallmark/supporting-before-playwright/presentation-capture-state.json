@@ -1,0 +1,195 @@
+{
+  "route": "/presentation",
+  "protocol": "domcontentloaded + document.fonts.ready + actual current first-prize images loaded at opacity >= 0.99; no state forced",
+  "states": [
+    {
+      "width": 320,
+      "waitForFontsAndFirstPrizeImagesSettledMs": 2221,
+      "heading": "信州牛専門店\nすき亭ギフト",
+      "visibleHeadings": ["信州牛専門店\nすき亭ギフト"],
+      "slideText": "画面にフォーカスして、左右矢印キーで前後のスライドへ移動できます。Enter または Space キーでも次へ進めます。\n\n1位の景品、信州牛専門店すき亭ギフトを紹介します\n\n1位の景品\n\n信州牛専門店\nすき亭ギフト\n\nりんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
+      "certificate": null,
+      "slide": "プレゼンテーションスライド",
+      "firstPrizePresent": true,
+      "canvas": {
+        "x": 0,
+        "y": 310,
+        "width": 320,
+        "height": 180
+      },
+      "fitViewport": {
+        "x": 16,
+        "y": 326,
+        "width": 288,
+        "height": 148
+      },
+      "naturalContent": {
+        "box": {
+          "x": 128.3,
+          "y": 326,
+          "width": 63.4,
+          "height": 148
+        },
+        "scrollWidth": 290,
+        "scrollHeight": 672
+      },
+      "fitScale": "0.22023809523809523",
+      "images": [
+        {
+          "alt": "和牛の写真",
+          "src": "/_next/image?url=%2F%E5%92%8C%E7%89%9B.png&w=3840&q=75",
+          "loaded": true,
+          "naturalWidth": 192,
+          "opacity": "0.999853",
+          "box": {
+            "x": 127.9,
+            "y": 407.1,
+            "width": 42.3,
+            "height": 21.3
+          },
+          "hidden": false
+        },
+        {
+          "alt": "和牛カタログの表紙",
+          "src": "/_next/image?url=%2F%E5%92%8C%E7%89%9B%E3%82%AB%E3%82%BF%E3%83%AD%E3%82%B0.jpg&w=3840&q=75",
+          "loaded": true,
+          "naturalWidth": 87,
+          "opacity": "0.99125",
+          "box": {
+            "x": 172.8,
+            "y": 407.1,
+            "width": 19.3,
+            "height": 21.2
+          },
+          "hidden": false
+        }
+      ]
+    },
+    {
+      "width": 1280,
+      "waitForFontsAndFirstPrizeImagesSettledMs": 1434,
+      "heading": "信州牛専門店\nすき亭ギフト",
+      "visibleHeadings": ["信州牛専門店\nすき亭ギフト"],
+      "slideText": "画面にフォーカスして、左右矢印キーで前後のスライドへ移動できます。Enter または Space キーでも次へ進めます。\n\n1位の景品、信州牛専門店すき亭ギフトを紹介します\n\n1位の景品\n\n信州牛専門店\nすき亭ギフト\n\nりんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
+      "certificate": null,
+      "slide": "プレゼンテーションスライド",
+      "firstPrizePresent": true,
+      "canvas": {
+        "x": 0,
+        "y": 40,
+        "width": 1280,
+        "height": 720
+      },
+      "fitViewport": {
+        "x": 57.6,
+        "y": 97.6,
+        "width": 1164.8,
+        "height": 604.8
+      },
+      "naturalContent": {
+        "box": {
+          "x": 118.8,
+          "y": 97.6,
+          "width": 1042.1,
+          "height": 602.1
+        },
+        "scrollWidth": 1165,
+        "scrollHeight": 673
+      },
+      "fitScale": "0.8946930473372781",
+      "images": [
+        {
+          "alt": "和牛の写真",
+          "src": "/_next/image?url=%2F%E5%92%8C%E7%89%9B.png&w=3840&q=75",
+          "loaded": true,
+          "naturalWidth": 593,
+          "opacity": "0.999854",
+          "box": {
+            "x": 134.8,
+            "y": 348.2,
+            "width": 669.2,
+            "height": 336.7
+          },
+          "hidden": false
+        },
+        {
+          "alt": "和牛カタログの表紙",
+          "src": "/_next/image?url=%2F%E5%92%8C%E7%89%9B%E3%82%AB%E3%82%BF%E3%83%AD%E3%82%B0.jpg&w=3840&q=75",
+          "loaded": true,
+          "naturalWidth": 233,
+          "opacity": "0.991261",
+          "box": {
+            "x": 832.7,
+            "y": 344.9,
+            "width": 312.3,
+            "height": 343.5
+          },
+          "hidden": false
+        }
+      ]
+    },
+    {
+      "width": 1920,
+      "waitForFontsAndFirstPrizeImagesSettledMs": 1436,
+      "heading": "信州牛専門店\nすき亭ギフト",
+      "visibleHeadings": ["信州牛専門店\nすき亭ギフト"],
+      "slideText": "画面にフォーカスして、左右矢印キーで前後のスライドへ移動できます。Enter または Space キーでも次へ進めます。\n\n1位の景品、信州牛専門店すき亭ギフトを紹介します\n\n1位の景品\n\n信州牛専門店\nすき亭ギフト\n\nりんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
+      "certificate": null,
+      "slide": "プレゼンテーションスライド",
+      "firstPrizePresent": true,
+      "canvas": {
+        "x": 0,
+        "y": 0,
+        "width": 1920,
+        "height": 1080
+      },
+      "fitViewport": {
+        "x": 84,
+        "y": 84,
+        "width": 1752,
+        "height": 912
+      },
+      "naturalContent": {
+        "box": {
+          "x": 138.1,
+          "y": 84,
+          "width": 1643.9,
+          "height": 911.8
+        },
+        "scrollWidth": 1752,
+        "scrollHeight": 972
+      },
+      "fitScale": "0.9382716049382716",
+      "images": [
+        {
+          "alt": "和牛の写真",
+          "src": "/_next/image?url=%2F%E5%92%8C%E7%89%9B.png&w=3840&q=75",
+          "loaded": true,
+          "naturalWidth": 614,
+          "opacity": "0.999855",
+          "box": {
+            "x": 160.6,
+            "y": 436,
+            "width": 1069.6,
+            "height": 538.2
+          },
+          "hidden": false
+        },
+        {
+          "alt": "和牛カタログの表紙",
+          "src": "/_next/image?url=%2F%E5%92%8C%E7%89%9B%E3%82%AB%E3%82%BF%E3%83%AD%E3%82%B0.jpg&w=3840&q=75",
+          "loaded": true,
+          "naturalWidth": 209,
+          "opacity": "0.991263",
+          "box": {
+            "x": 1260.2,
+            "y": 430.7,
+            "width": 499.2,
+            "height": 549.1
+          },
+          "hidden": false
+        }
+      ]
+    }
+  ]
+}

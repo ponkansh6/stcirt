@@ -25,7 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ja" className={geist.variable}>
       <body className="min-h-dvh flex flex-col">
         <GlobalHeader />
-        <div className="w-full max-w-2xl mx-auto px-4 flex-1 flex flex-col">{children}</div>
+        <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col">{children}</div>
       </body>
     </html>
   );

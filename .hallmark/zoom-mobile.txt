@@ -1,0 +1,4 @@
+Browser zoom shortcut attempt (headless Chromium, desktop viewport 1280×800): before={"innerWidth":1280,"innerHeight":800,"devicePixelRatio":1,"visualViewportScale":1}; after={"innerWidth":1280,"innerHeight":800,"devicePixelRatio":1,"visualViewportScale":1}; shortcut=Control+Equal; browser chrome itself is not exposed to Playwright.
+CDP page-scale emulation at factor 2 (pinch/visual scale, not desktop browser zoom): {"innerWidth":1280,"innerHeight":800,"devicePixelRatio":1,"visualViewportScale":2}; layout reflow equivalence is not claimed.
+Mobile emulation/focused input (not an OS keyboard): {"isMobileViewport":true,"virtualKeyboardApi":true,"activeElement":"name","innerHeight":844,"visualViewportHeight":844,"visualViewportScale":1}.
+Headless Playwright cannot display an operating-system virtual keyboard; any viewport/keyboard behavior from this context would be an emulation only.

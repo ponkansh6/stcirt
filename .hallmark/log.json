@@ -1,0 +1,49 @@
+{
+  "mode": "redesign",
+  "depth": "full",
+  "scope": "app",
+  "shape": "settled surfaces across six routes; stage on /presentation",
+  "theme": "existing brand tokens on #F7F7F1 paper",
+  "axes": ["exam paper", "navy ink", "gold detail", "semantic award colors"],
+  "hero": "existing question, result, or state heading remains the first hierarchy; no hero or copy added",
+  "nav": "existing participant navigation retained; no global navigation added",
+  "footer": "none added",
+  "imagery": "existing presentation award image retained; no new imagery",
+  "photos": [],
+  "entry": "six existing routes; / redirects to /answer",
+  "fingerprint": "paper background, dark ink, light surfaces, measured controls, preserved 16:9 presentation",
+  "sections": [
+    "answer flow",
+    "results",
+    "presentation",
+    "presentation admin",
+    "reference participants",
+    "shared results"
+  ],
+  "signature": "existing exam question/result content and staged presentation award",
+  "waived": [],
+  "prompt": "Full Hallmark redesign of the existing Japanese exam participant, result, projection, and admin screens; preserve content, state and wiring.",
+  "before": "Playwright supporting screenshots: .hallmark/supporting-before-playwright (18 PNG files); 320/1280/1920 across six routes. /answer waits for both name and PIN fields and captures the participant-state error. The initial 320px presentation before showed opening/wait and was replaced. Presentation images were refreshed from HEAD with the same settled-reveal protocol as after; all show first-prize すき亭. `.hallmark/supporting-before-playwright/presentation-capture-state.json` stores identical slide text, both images loaded/non-hidden at opacity >=0.99, and baseline fit scale by width. Native baseline screenshots are in .hallmark/before. Valid-token shared-results Playwright supplemental captures at 320/1280/1920 use isolated SQLite, keep the token only in memory, and use safe screenshot filenames; they are not native Hallmark captures.",
+  "after": "Native Hallmark render screenshots: .hallmark/shots contains 25 captures across /answer, /results, /presentation, /admin/presentation, and /admin/presentation/reference-participants (folds at 1280x800, 1440x900, 1920x1080; full-page at 1440px and 375px). The native Hallmark compare is .hallmark/compare.html. The first six-URL native attempt included invalid /shared-results/plan113 and returned HTTP 404; it is not counted as a pass. No valid share token was sent to sloplint because issued tokens are bearer capabilities and the tool persists the URL in slug/findings output.",
+  "kept": {
+    "links": "6/6",
+    "fields": "4/4",
+    "handlers": "45/45",
+    "testHooks": "6/6",
+    "headings": "3/4"
+  },
+  "hallmark": {
+    "floor": "Final static Floor after the max-width:480px firstPrize min-height override: 0 FAIL, 0 REFLEX, 0 WARN across 24 app files.",
+    "static": "Final full static after the max-width:480px firstPrize min-height override: 0 FAIL, 0 REFLEX, 0 WARN across 24 app files.",
+    "reflex": "0 findings; 0 waivers.",
+    "finish": "Hallmark protocol Finish review ran in-thread; verdict: fix. Findings: (1) reference-participant mobile save/return row fixed at max-width 480px with textarea height 160px/minimum 144px; both actions show in native 375px after. (2) presentation mobile smallness resolved against 14.3px rendered-description target while retaining 320x180 canvas, full content and no overflow. (3) settled supplemental before/after logs confirm matched first-prize heading/content/images. Native heading WARN is dismissed as before wait/error versus after first-prize state mismatch. Valid-share/database native states, rank visual, true zoom, OS keyboard and physical projection remain unverified.",
+    "renderKept": "Final native --render --kept completed on five route families against an original HEAD source export (no git worktree; temporary export removed). Across 24 files: 0 FAIL, 0 REFLEX, 1 WARN; 25 screenshots; kept links 6/6, fields 4/4, handlers 45/45, test hooks 6/6, headings 3/4. The sole heading WARN compares native before wait/error with after first-prize. Settled matched supplemental before/after logs confirm the same first-prize state, so dismiss this warning as a state mismatch. Earlier six-URL attempt used invalid /shared-results/plan113 and returned HTTP 404, so it is excluded. Valid /shared-results/[token] native rendering remains unrun; valid-token supplemental Playwright captures exist at 320/1280/1920. Native compare is .hallmark/compare.html.",
+    "compare": "Native Hallmark compare generated at .hallmark/compare.html.",
+    "contrast": "18 route/width computed foreground and ancestor-composited background samples (320/1280/1920): min text 4.66:1, control boundary 3.74:1, focus 4.61:1; 0 sampled failures. Existing accent text HOST CONSOLE is 6.96:1 against sampled light surface. The render finding was eyebrow size (10.9px), not contrast; both labels are now 12px and the native render reports one heading warning due to before wait/error versus after first-prize state mismatch; settled matched supplemental captures support dismissing it."
+  },
+  "contrast": "18 route/width computed foreground and ancestor-composited background samples (320/1280/1920): min text 4.66:1, control boundary 3.74:1, focus 4.61:1; 0 sampled failures. Media pixels and uncaptured states are outside the sample.",
+  "presentation320Fit": "Latest direct supplemental E2E capture: .hallmark/shots/presentation-320.png; 320x180 canvas, fitScale 0.529, description 27px CSS × 0.529 = 14.3px rendered, both images and content retained, no horizontal overflow. This is not a Hallmark native render. The latest supplemental valid-token shared-results Playwright captures at 320/1280/1920 are separate from native captures. Historical earlier scale values 0.220/0.503 and 7px copy are superseded. Final mobile gap uses --spacing-projection-block-1. Full E2E after typography change passed 84/86 (84 passed, 2 skipped, 0 failed); the subsequent spacing-token-only change passed targeted first-prize reduced-motion on Chromium and Mobile Chrome (2/2).",
+  "spec": "R1/R2/R5/R6/R7/R8/R9 reviewed; visual-only changes; no spec change required.",
+  "accessibilityReview": "Reduced-motion capture completed for answer 320px and presentation 320/1920px; all report prefers-reduced-motion: reduce and zero running Web Animations at capture time. Keyboard traversal on /answer at 320px reached name, PIN and start button; all three matched :focus-visible and have screenshots under .hallmark/focus/. Browser-level 200% zoom shortcut had no effect in headless Chromium; CDP page-scale 2 is visual/pinch emulation without layout reflow. Mobile emulation focused the name field and exposes VirtualKeyboard API, but no OS keyboard can be rendered. Physical projector-distance/ambient-light checks unavailable.",
+  "projectGates": "After installing puppeteer-core 25.16.0 as a devDependency (Chrome already existed at /usr/bin/google-chrome; no browser download), scripts/check-lockfile-sync.sh passed. Project gates passed: pnpm format:check; pnpm lint:fast (exit 0 with warnings); pnpm type-check; pnpm test:coverage (81/81 files, 1550/1550 tests, 100% statements/branches/functions/lines); scripts/check-spec-refs.sh; scripts/check-security.sh (production clean, development dependencies one high and two moderate advisories, secretlint pass); pnpm build. Full E2E after the 27px mobile typography adjustment passed 84/86 (84 passed, 2 skipped, 0 failed); after the final spacing-token-only change, targeted first-prize reduced-motion passed 2/2 on Chromium and Mobile Chrome. Native five-route render produced 0 FAIL / 0 REFLEX / 1 WARN across 24 files and 25 captures; kept links 6/6, fields 4/4, handlers 45/45, test hooks 6/6, headings 3/4. The sole heading WARN compares native before wait/error with after first-prize; settled matched supplemental captures show the same intended first-prize state and support dismissing the warning as a state mismatch. The first six-URL attempt used invalid /shared-results/plan113 and returned HTTP 404; it is not counted. Valid share token native rendering remains unrun. Supplemental Playwright/E2E captures separately cover valid shared result (isolated SQLite; token only in memory; safe filenames), authenticated /results (synthetic fixture/mock), and first-prize (API-mocked fixture) at 320/1280/1920; these are not native Hallmark captures. Native compare is .hallmark/compare.html; Hallmark protocol Finish review verdict is fix (two fix findings resolved, one native state-mismatch WARN dismissed); valid-share/database native states, rank visual, true zoom, OS keyboard, and physical projection remain unverified. Remaining limitations: native render covers 5/6 route families; valid-share native route, true browser 200% zoom, OS keyboard, remaining transient states, and physical projector-distance/ambient-light remain unverified. Pre-implementation Oracle design review was missed; retrospective review only. No production/app database or real participant data was touched. A temporary isolated SQLite file with one synthetic presentation_sessions(state=first_prize) row was used only for native capture and was removed afterward; no .env.local values were displayed. Plan remains partial. Server stopped after capture; 127.0.0.1:3001 confirmed free."
+}
