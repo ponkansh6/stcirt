@@ -1281,7 +1281,7 @@ export default function QuizRunner() {
                         onChange={(event) =>
                           setFreeResponse(question.id, event.currentTarget.value)
                         }
-                        className={`min-h-36 w-full resize-y rounded-lg border border-control-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 ${styles.freeText}`}
+                        className={`answer-free-text min-h-36 w-full resize-y rounded-lg border border-control-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-answer-accent focus-visible:ring-2 focus-visible:ring-answer-accent/30 ${styles.freeText}`}
                         disabled={isLocked}
                       />
                     </div>
@@ -1308,10 +1308,10 @@ export default function QuizRunner() {
         </div>
 
         <section
-          className="mt-7 rounded-2xl border border-border-subtle border-l-4 border-l-accent bg-surface p-5 shadow-card sm:p-7"
+          className="mt-7 rounded-2xl border border-border-subtle border-l-4 border-l-answer-accent bg-surface p-5 shadow-card sm:p-7"
           aria-labelledby="final-check-title"
         >
-          <p className="text-sm font-semibold text-accent">最終確認</p>
+          <p className="text-sm font-semibold text-answer-accent">最終確認</p>
           {visibilityUnknown && !publishedLock && (
             <p className="mt-3 text-sm text-muted" role="status" aria-live="polite">
               公開状態を確認できません。確認できるまで編集はできません。

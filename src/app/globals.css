@@ -182,6 +182,10 @@
   outline-offset: 3px;
 }
 
+.answer-free-text:focus-visible {
+  outline-color: var(--color-answer-accent) !important;
+}
+
 html,
 body {
   overflow-x: clip;
