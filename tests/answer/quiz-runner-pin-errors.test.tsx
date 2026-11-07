@@ -134,15 +134,39 @@ describe("QuizRunner batch answer sheet", () => {
     expect(pin).toHaveValue("");
   });
 
-  it("shows an authentication lookup message before any local form error", () => {
-    mockUseQuizSession.mockReturnValue(
-      session(
-        { kind: "ready" },
-        { access: { kind: "login", message: "参加状態を確認できませんでした。" } },
-      ),
+  it("shows communication lookup guidance, then prioritizes a local PIN error", async () => {
+    let currentSession = session(
+      { kind: "ready" },
+      {
+        access: {
+          kind: "login",
+          message: "参加状態を確認できませんでした。通信状態を確認してから再読み込みしてください。",
+        },
+      },
     );
-    render(<RunnerPage />);
-    expect(screen.getByRole("alert")).toHaveTextContent("参加状態を確認できませんでした。");
+    const login = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ApiError({
+          status: 401,
+          message: "名前またはPINが違います。",
+          code: null,
+          retryAt: null,
+        }),
+      )
+      .mockImplementationOnce(async () => {
+        currentSession = session(
+          { kind: "answering" },
+          { access: { kind: "ready", participant: { id: 7, name: "田中" } } },
+        );
+        return 7;
+      });
+    currentSession = { ...currentSession, login };
+    mockUseQuizSession.mockImplementation(() => currentSession);
+    const { rerender } = render(<RunnerPage />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "通信状態を確認してから再読み込みしてください。",
+    );
     expect(screen.getByLabelText("受験者氏名")).toHaveAttribute(
       "aria-describedby",
       "participant-form-message",
@@ -151,6 +175,47 @@ describe("QuizRunner batch answer sheet", () => {
       "aria-describedby",
       "participant-pin-hint participant-form-message",
     );
+    const pin = screen.getByLabelText("受験コード");
+    fireEvent.change(screen.getByLabelText("受験者氏名"), { target: { value: "田中" } });
+    fireEvent.change(pin, { target: { value: "0000" } });
+    fireEvent.click(screen.getByRole("button", { name: "はじめる" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("名前またはPINが違います。"),
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent("通信状態を確認してから再読み込み");
+    expect(pin).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.change(pin, { target: { value: "1234" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "はじめる" }));
+      await Promise.resolve();
+    });
+    expect(login).toHaveBeenNthCalledWith(1, "田中", "0000");
+    expect(login).toHaveBeenNthCalledWith(2, "田中", "1234");
+
+    rerender(<RunnerPage />);
+    expect(
+      await screen.findByRole("heading", { level: 3, name: "Question 1?" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("通信状態を確認してから再読み込みしてください。"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("名前またはPINが違います。")).not.toBeInTheDocument();
+  });
+
+  it("renders a normal initial login form without alert or error attributes", () => {
+    mockUseQuizSession.mockReturnValue(session({ kind: "ready" }, { access: { kind: "login" } }));
+    render(<RunnerPage />);
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("受験者氏名")).not.toHaveAttribute("aria-describedby");
+    expect(screen.getByLabelText("受験コード")).toHaveAttribute(
+      "aria-describedby",
+      "participant-pin-hint",
+    );
+    expect(screen.getByLabelText("受験コード")).not.toHaveAttribute("aria-invalid");
   });
 
   it("shows API errors without retry times and falls back for non-Error login failures", async () => {

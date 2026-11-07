@@ -1238,6 +1238,24 @@ describe("useQuizSession hook", () => {
     });
   });
 
+  it("shows a quiet login form when a 401 bootstrap's session lookup succeeds without a participant", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(
+      new ApiError({ status: 401, message: "Session expired", code: null, retryAt: null }),
+    );
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "/api/participants/session") {
+        return { ok: true, json: async () => ({ participant: null }) };
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.access).toEqual({ kind: "login" }));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("does not turn a failed bootstrap into a new attempt", async () => {
     vi.mocked(fetchAnswerBootstrap).mockRejectedValueOnce(new Error("invalid bootstrap"));
     const fetchMock = setupFetch();

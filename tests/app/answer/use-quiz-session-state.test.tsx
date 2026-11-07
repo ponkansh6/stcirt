@@ -2881,10 +2881,54 @@ describe("useQuizSession state transitions", () => {
 
     expect(hook.result.current.answerMode).toBe("owner");
     expect(hook.result.current.assistedScreen).toBe("closed");
+    expect(hook.result.current.access).toEqual({ kind: "login" });
     expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
     expect(api.fetchAssistedParticipant).not.toHaveBeenCalled();
   });
+
+  it.each([401, 403])(
+    "shows a quiet login form when a %i bootstrap failure is followed by a successful null session lookup",
+    async (status) => {
+      api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(status, "bootstrap failure"));
+      api.fetchParticipantSession.mockResolvedValueOnce(null);
+
+      const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(hook.result.current.access).toEqual({ kind: "login" }));
+    },
+  );
+
+  it.each([401, 403])(
+    "shows the communication guidance when a %i bootstrap's session lookup rejects with a non-Error value",
+    async (status) => {
+      api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(status, "bootstrap failure"));
+      api.fetchParticipantSession.mockRejectedValueOnce("offline");
+
+      const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
+
+      expect(hook.result.current.access).toEqual({
+        kind: "login",
+        message: "参加状態を確認できませんでした。通信状態を確認してから再読み込みしてください。",
+      });
+    },
+  );
+
+  it.each([401, 403])(
+    "preserves the authentication response for participant-session lookup %i",
+    async (lookupStatus) => {
+      api.fetchAnswerBootstrap.mockRejectedValueOnce(apiError(401, "bootstrap expired"));
+      api.fetchParticipantSession.mockRejectedValueOnce(apiError(lookupStatus, "session rejected"));
+
+      const hook = renderHook(() => useQuizSession());
+      await waitFor(() => expect(hook.result.current.access.kind).toBe("login"));
+
+      expect(hook.result.current.access).toEqual({
+        kind: "login",
+        message: "参加状態を確認できませんでした。お名前とPINを入力してください。",
+      });
+    },
+  );
 
   it("keeps an assisted draft and shows a retry message when non-auth recovery cannot verify the session", async () => {
     const draft = makeCurrentAssistedDraft();
@@ -2898,7 +2942,7 @@ describe("useQuizSession state transitions", () => {
 
     expect(hook.result.current.access).toMatchObject({
       kind: "login",
-      message: expect.stringContaining("通信状態"),
+      message: "参加状態を確認できませんでした。通信状態を確認してから再読み込みしてください。",
     });
     expect(hook.result.current.answerMode).toBe("assisted");
     expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBe("assisted");

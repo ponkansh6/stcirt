@@ -666,10 +666,14 @@ export function useQuizSession() {
             setAssistedScreen("closed");
             setAssistedParticipant(null);
             assistedParticipantIdRef.current = null;
-            setAccess({
-              kind: "login",
-              message: "参加状態を確認できませんでした。お名前とPINを入力してください。",
-            });
+            setAccess(
+              authRejected
+                ? {
+                    kind: "login",
+                    message: "参加状態を確認できませんでした。お名前とPINを入力してください。",
+                  }
+                : { kind: "login" },
+            );
             return;
           }
 
