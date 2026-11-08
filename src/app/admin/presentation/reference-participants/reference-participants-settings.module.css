@@ -21,16 +21,8 @@
   box-shadow: var(--shadow-card);
 }
 
-.eyebrow {
-  margin: 0;
-  color: var(--color-accent);
-  font-size: 0.75rem;
-  font-weight: 800;
-  letter-spacing: normal;
-}
-
 .card h1 {
-  margin: 8px 0 0;
+  margin: 0;
   font-size: clamp(1.55rem, 5vw, 2rem);
   line-height: 1.25;
   letter-spacing: -0.035em;
@@ -92,6 +84,21 @@
   margin-top: 20px;
 }
 
+.guidance {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.guidance .error {
+  margin: 0;
+}
+
+.recoveryActions {
+  display: grid;
+  gap: 12px;
+}
+
 .primaryButton,
 .secondaryButton {
   display: inline-flex;
@@ -119,7 +126,9 @@
   color: var(--color-primary);
 }
 
-.primaryButton:disabled {
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.secondaryButton[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -148,6 +157,10 @@
 
 @media (min-width: 560px) {
   .actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .recoveryActions {
     grid-template-columns: 1fr 1fr;
   }
 }

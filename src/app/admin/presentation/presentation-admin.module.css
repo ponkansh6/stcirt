@@ -30,14 +30,6 @@
   box-shadow: var(--shadow-card);
 }
 
-.eyebrow {
-  margin: 0;
-  color: var(--color-accent);
-  font-size: 0.75rem;
-  font-weight: 800;
-  letter-spacing: normal;
-}
-
 .loginCard h1,
 .console h1 {
   margin: 8px 0 0;
