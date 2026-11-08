@@ -416,7 +416,11 @@ describe("QuizRunner remaining coverage states", () => {
     );
     render(<QuizRunner />);
 
-    expect(screen.getByText("未回答 4問", { exact: true })).toBeInTheDocument();
+    const finalReview = document.querySelector<HTMLElement>(
+      '[aria-labelledby="final-check-title"]',
+    );
+    expect(finalReview).not.toBeNull();
+    expect(within(finalReview as HTMLElement).queryByText("未回答 4問")).not.toBeInTheDocument();
     const submit = screen.getByRole("button", { name: "未回答の設問に回答してください" });
     expect(submit).toBeDisabled();
     expect(document.getElementById("answer-1-0")).toBeChecked();

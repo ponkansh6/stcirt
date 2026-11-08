@@ -1097,11 +1097,6 @@ export default function QuizRunner() {
   const hasSavedAnswers =
     Object.keys(savedSelections).length ===
     quizzes.filter(({ question }) => question.answerType === "selected").length;
-  const answerer = resolveAnswererDisplay(
-    answerMode,
-    ownerName,
-    assistedParticipant?.participant?.name,
-  );
   const canRunRecoveryAction = access.kind === "ready";
   const canSubmit =
     canRunRecoveryAction && (ui.primaryAction === "submit" || ui.primaryAction === "retry-submit");
@@ -1325,25 +1320,10 @@ export default function QuizRunner() {
           >
             回答内容を確認してください
           </h2>
-          <p className="mt-3 text-sm leading-relaxed text-muted">保存すると回答完了になります。</p>
-          <dl className="mt-4 rounded-lg border border-border-subtle bg-surface-2 p-4">
-            <dt className="text-sm text-muted">回答先</dt>
-            <dd className="mt-1 break-words font-semibold">
-              {answerer.name}さん（{answerer.kind}）
-            </dd>
-          </dl>
-          <p className="mt-4 font-semibold">
-            {unanswered.length === 0 ? "全5問に回答しました。" : `未回答 ${unanswered.length}問`}
-          </p>
-          {ui.statusRole === "status" && !ui.busy && !authExpired && (
-            <p className="mt-1 text-sm leading-relaxed text-muted">{ui.message}</p>
-          )}
+          {unanswered.length === 0 && <p className="mt-3 font-semibold">全5問に回答しました。</p>}
           {unanswered.length > 0 && (
-            <div className="mt-2" role="group" aria-labelledby="unanswered-heading">
-              <p id="unanswered-heading" className="text-sm text-muted">
-                未回答の設問へ移動できます：
-              </p>
-              <ul className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-4" role="group" aria-label="未回答の設問">
+              <ul className="flex flex-wrap gap-2">
                 {unanswered.map(({ question }) => {
                   const questionIndex = quizzes.findIndex(
                     (quiz) => quiz.question.id === question.id,

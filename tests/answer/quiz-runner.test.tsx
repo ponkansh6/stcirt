@@ -99,7 +99,14 @@ describe("QuizRunner batch answer sheet", () => {
       '[aria-labelledby="final-check-title"]',
     );
     expect(finalReview).not.toBeNull();
-    expect(within(finalReview as HTMLElement).getByText("未回答 5問")).toBeInTheDocument();
+    expect(within(finalReview as HTMLElement).queryByText(/未回答 \d+問/)).not.toBeInTheDocument();
+    expect(
+      within(finalReview as HTMLElement).queryByText("保存すると回答完了になります。"),
+    ).not.toBeInTheDocument();
+    expect(within(finalReview as HTMLElement).queryByText("回答先")).not.toBeInTheDocument();
+    expect(
+      within(finalReview as HTMLElement).getByRole("group", { name: "未回答の設問" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
   });
 
@@ -117,16 +124,14 @@ describe("QuizRunner batch answer sheet", () => {
 
     const finalReview = main.querySelector<HTMLElement>('[aria-labelledby="final-check-title"]');
     expect(finalReview).not.toBeNull();
-    const ordinaryStatus = within(finalReview as HTMLElement)
-      .getByText("未回答の設問へ移動して回答してください。回答は最後にまとめて確定します。")
-      .closest("p");
-    expect(ordinaryStatus).not.toHaveAttribute("role");
-    expect(ordinaryStatus).not.toHaveAttribute("aria-live");
     expect(
-      within(finalReview as HTMLElement)
-        .getByText("未回答 4問")
-        .closest("p"),
-    ).not.toHaveAttribute("aria-live");
+      within(finalReview as HTMLElement).queryByText(
+        "未回答の設問へ移動して回答してください。回答は最後にまとめて確定します。",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      within(finalReview as HTMLElement).getByRole("group", { name: "未回答の設問" }),
+    ).toBeInTheDocument();
   });
 
   it("uses the same answered status in navigation and final review", () => {
@@ -157,12 +162,10 @@ describe("QuizRunner batch answer sheet", () => {
       '[aria-labelledby="final-check-title"]',
     );
     expect(finalReview).not.toBeNull();
-    expect(within(finalReview as HTMLElement).getByText("未回答 4問")).toBeInTheDocument();
+    expect(within(finalReview as HTMLElement).queryByText("未回答 4問")).not.toBeInTheDocument();
     expect(
-      within(finalReview as HTMLElement)
-        .getByText("未回答 4問")
-        .closest("p"),
-    ).not.toHaveAttribute("aria-live");
+      within(finalReview as HTMLElement).getByRole("group", { name: "未回答の設問" }),
+    ).toBeInTheDocument();
   });
 
   it("renders the fifth-question free-response field, max length, and legacy guidance", () => {

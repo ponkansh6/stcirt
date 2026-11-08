@@ -1430,6 +1430,22 @@ test("@chromium returns to owner completion after an assisted save and opens tar
       name: "Question 1?",
     }),
   ).toBeVisible();
+  const assistedFinalReview = page.locator('section[aria-labelledby="final-check-title"]');
+  await expect(assistedFinalReview).toBeVisible();
+  await expect(assistedFinalReview.getByText("保存すると回答完了になります。")).toHaveCount(0);
+  await expect(assistedFinalReview.getByText("回答先", { exact: true })).toHaveCount(0);
+  await expect(
+    assistedFinalReview.getByText("代理回答者さん（代理回答）", { exact: true }),
+  ).toHaveCount(0);
+  await expect(assistedFinalReview.getByText(/^未回答 \d+問$/)).toHaveCount(0);
+  await expect(
+    assistedFinalReview.getByText("未回答の設問へ移動できます：", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    assistedFinalReview.getByText(
+      "未回答の設問へ移動して回答してください。回答は最後にまとめて確定します。",
+    ),
+  ).toHaveCount(0);
   const assistedActivationBootstraps = requestTrace
     .slice(assistedBootstrapStart)
     .filter((request) => request.path === "/api/answers/bootstrap?mode=assisted");
