@@ -31,15 +31,11 @@ export default function ReferenceParticipantsSettings() {
   const hasChanges = text !== savedText;
   const canEdit = access === "ready" && !busy;
 
-  const loadSettings = useCallback(async (recovery?: "auth" | "load-error") => {
-    if (getInFlight.current) return;
-
+  const loadSettings = useCallback(async (recovery: "auth" | "load-error") => {
     getInFlight.current = true;
-    if (recovery) {
-      setRecoveryFrom(recovery);
-      setAccess("loading");
-      setMessage(null);
-    }
+    setRecoveryFrom(recovery);
+    setAccess("loading");
+    setMessage(null);
     const sequence = ++requestSequence.current;
     const controller = new AbortController();
     getController.current = controller;
@@ -155,12 +151,10 @@ export default function ReferenceParticipantsSettings() {
 
         setAccess("ready");
         setMessage(null);
-        if (!hasInitializedDraft.current) {
-          const loaded = payload.names.join("\n");
-          setText(loaded);
-          setSavedText(loaded);
-          hasInitializedDraft.current = true;
-        }
+        const loaded = payload.names.join("\n");
+        setText(loaded);
+        setSavedText(loaded);
+        hasInitializedDraft.current = true;
       } catch {
         if (!controller.signal.aborted && sequence === requestSequence.current) {
           setAccess("load-error");
@@ -180,7 +174,7 @@ export default function ReferenceParticipantsSettings() {
 
     return () => {
       requestSequence.current += 1;
-      controller.abort();
+      getController.current?.abort();
       getController.current = null;
       getInFlight.current = false;
     };
@@ -248,8 +242,6 @@ export default function ReferenceParticipantsSettings() {
 
   const recoveryKind =
     access === "unauthenticated" ? "auth" : access === "load-error" ? "load-error" : recoveryFrom;
-  const showRecovery = recoveryKind !== null;
-
   return (
     <main className={styles.shell}>
       <section className={styles.card} aria-labelledby="reference-title">
@@ -278,11 +270,11 @@ export default function ReferenceParticipantsSettings() {
         <p id="reference-guidance" className={styles.note}>
           保存後、管理画面へ戻って「集計」を実行すると保存済みの氏名一覧が反映されます。入力を変更しただけでは公開結果は変わりません。
         </p>
-        {access === "loading" && !showRecovery ? (
+        {access === "loading" && recoveryKind === null ? (
           <p className={styles.note} role="status" aria-live="polite">
             設定を読み込んでいます…
           </p>
-        ) : showRecovery ? (
+        ) : recoveryKind !== null ? (
           <div className={styles.guidance}>
             {access === "loading" ? (
               <p className={styles.note} role="status" aria-live="polite">
@@ -292,11 +284,7 @@ export default function ReferenceParticipantsSettings() {
               </p>
             ) : (
               <p className={styles.error} role="alert">
-                {recoveryKind === "auth"
-                  ? authenticationMessage
-                  : message?.kind === "error"
-                    ? message.text
-                    : "設定を読み込めませんでした。"}
+                {recoveryKind === "auth" ? authenticationMessage : message?.text}
               </p>
             )}
             <div className={styles.recoveryActions}>
@@ -304,10 +292,10 @@ export default function ReferenceParticipantsSettings() {
                 className={styles.secondaryButton}
                 type="button"
                 ref={recoveryButtonRef}
-                aria-disabled={busy || access === "loading"}
+                aria-disabled={access === "loading"}
                 onClick={() => {
-                  if (busy || getInFlight.current) return;
-                  void loadSettings(recoveryKind ?? "load-error");
+                  if (getInFlight.current) return;
+                  void loadSettings(recoveryKind);
                 }}
               >
                 {recoveryKind === "auth" ? "認証状態を再確認" : "設定を再読み込み"}
@@ -333,7 +321,8 @@ export default function ReferenceParticipantsSettings() {
           <button
             className={styles.primaryButton}
             type="button"
-            disabled={!canEdit}
+            aria-disabled={!canEdit}
+            tabIndex={!canEdit ? -1 : undefined}
             onClick={() => void save()}
           >
             {busy ? "保存しています…" : "氏名一覧を保存"}

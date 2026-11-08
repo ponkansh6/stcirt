@@ -86,7 +86,7 @@ describe("reference participants settings", () => {
     expect(await screen.findByText("設定の形式を確認できませんでした。")).toBeInTheDocument();
   });
 
-  it("uses a generic Japanese fallback when a GET error omits its message", async () => {
+  it("shows the retryable message for a GET server error and prevents PUT", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       response(503, {}),
     );
@@ -97,9 +97,8 @@ describe("reference participants settings", () => {
       await screen.findByText("設定を読み込めませんでした。時間をおいて再試行してください。"),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("参考対象の表示名（改行区切り）")).toBeDisabled();
-    const save = screen.getByRole("button", { name: "氏名一覧を保存" }) as HTMLButtonElement;
-    expect(save).toBeDisabled();
-    save.disabled = false;
+    const save = screen.getByRole("button", { name: "氏名一覧を保存" });
+    expect(save).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(save);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "設定を再読み込み" })).toBeEnabled();
@@ -114,23 +113,27 @@ describe("reference participants settings", () => {
       await screen.findByText("設定を読み込めませんでした。通信状態を確認して再試行してください。"),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("参考対象の表示名（改行区切り）")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "氏名一覧を保存" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "氏名一覧を保存" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("ignores a load rejection after the page unmounts", async () => {
     let rejectLoad!: (reason: unknown) => void;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        () =>
-          new Promise<Response>((_resolve, reject) => {
-            rejectLoad = reject;
-          }),
-      ),
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((_resolve, reject) => {
+          rejectLoad = reject;
+        }),
     );
+    vi.stubGlobal("fetch", fetchMock);
     const { unmount } = render(<ReferenceParticipantsSettings />);
     expect(screen.getByRole("status")).toHaveTextContent("設定を読み込んでいます…");
-    expect(screen.getByRole("button", { name: "氏名一覧を保存" })).toBeDisabled();
+    const save = screen.getByRole("button", { name: "氏名一覧を保存" });
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(save);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     unmount();
     rejectLoad(new Error("late failure"));
     await Promise.resolve();
@@ -147,7 +150,10 @@ describe("reference participants settings", () => {
     expect(await screen.findByText("設定の形式を確認できませんでした。")).toBeInTheDocument();
     const textarea = screen.getByLabelText("参考対象の表示名（改行区切り）");
     expect(textarea).toBeDisabled();
-    expect(screen.getByRole("button", { name: "氏名一覧を保存" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "氏名一覧を保存" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     await user.click(screen.getByRole("button", { name: "設定を再読み込み" }));
     expect(await screen.findByText("設定の形式を確認できませんでした。")).toBeInTheDocument();
   });
@@ -162,7 +168,10 @@ describe("reference participants settings", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("管理者認証が必要です。");
     expect(json).not.toHaveBeenCalled();
     expect(screen.getByLabelText("参考対象の表示名（改行区切り）")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "氏名一覧を保存" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "氏名一覧を保存" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(screen.getByRole("link", { name: "管理画面でPIN認証" })).toHaveAttribute(
       "target",
       "_blank",
@@ -207,6 +216,34 @@ describe("reference participants settings", () => {
     expect(textarea).toBeDisabled();
     expect(fetchMock).toHaveBeenCalledTimes(5);
     expect(putCount).toBe(2);
+  });
+
+  it("preserves the draft when a recheck rejects after authentication loss", async () => {
+    const user = userEvent.setup();
+    let loadCount = 0;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method) return response(401, {});
+      loadCount += 1;
+      if (loadCount === 1) return response(200, { names: ["server name"] });
+      if (loadCount === 2) throw new Error("offline");
+      return response(401, {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ReferenceParticipantsSettings />);
+
+    const textarea = await screen.findByLabelText("参考対象の表示名（改行区切り）");
+    await user.clear(textarea);
+    await user.type(textarea, "unsaved draft");
+    await user.click(screen.getByRole("button", { name: "氏名一覧を保存" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("管理者認証が必要です。");
+
+    await user.click(screen.getByRole("button", { name: "認証状態を再確認" }));
+    expect(
+      await screen.findByText("設定を読み込めませんでした。通信状態を確認して再試行してください。"),
+    ).toBeInTheDocument();
+    expect(textarea).toHaveValue("unsaved draft");
+    expect(textarea).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("keeps a PUT 401 draft and never resubmits it automatically", async () => {
@@ -259,6 +296,8 @@ describe("reference participants settings", () => {
     expect(screen.getByRole("button", { name: "認証状態を再確認" })).toBe(recheck);
     expect(recheck).toHaveAttribute("aria-disabled", "true");
     expect(recheck).toHaveFocus();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fireEvent.click(recheck);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     resolveRecheck(response(200, { names: ["server"] }));
     await screen.findByRole("button", { name: "氏名一覧を保存" });
@@ -324,6 +363,120 @@ describe("reference participants settings", () => {
     expect(textarea).toHaveValue("current server value");
   });
 
+  it("ignores initial settings JSON that resolves after unmount", async () => {
+    let resolvePayload!: (value: { names: string[] }) => void;
+    const pendingPayload = new Promise<{ names: string[] }>((resolve) => {
+      resolvePayload = resolve;
+    });
+    const initialResponse = response(200, {});
+    const json = vi.spyOn(initialResponse, "json").mockReturnValue(pendingPayload);
+    const fetchMock = vi.fn(async () => initialResponse);
+    vi.stubGlobal("fetch", fetchMock);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { unmount } = render(<ReferenceParticipantsSettings />);
+
+    await waitFor(() => expect(json).toHaveBeenCalledTimes(1));
+    unmount();
+    resolvePayload({ names: ["late initial value"] });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(screen.queryByText("late initial value")).not.toBeInTheDocument();
+  });
+
+  it("aborts a pending recheck on unmount and ignores its response", async () => {
+    const user = userEvent.setup();
+    let resolveRecheck!: (value: Response) => void;
+    const pendingRecheck = new Promise<Response>((resolve) => {
+      resolveRecheck = resolve;
+    });
+    let getCount = 0;
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+        getCount += 1;
+        return getCount === 1 ? response(401, {}) : pendingRecheck;
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { unmount } = render(<ReferenceParticipantsSettings />);
+
+    await user.click(await screen.findByRole("button", { name: "認証状態を再確認" }));
+    const recheckSignal = fetchMock.mock.calls[1]?.[1]?.signal as AbortSignal;
+    const lateResponse = response(200, { names: ["late value"] });
+    const json = vi.spyOn(lateResponse, "json");
+    unmount();
+    expect(recheckSignal.aborted).toBe(true);
+
+    resolveRecheck(lateResponse);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(json).not.toHaveBeenCalled();
+  });
+
+  it("ignores an aborted recheck rejection after unmount", async () => {
+    const user = userEvent.setup();
+    let rejectRecheck!: (reason: unknown) => void;
+    const pendingRecheck = new Promise<Response>((_resolve, reject) => {
+      rejectRecheck = reject;
+    });
+    let getCount = 0;
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+        getCount += 1;
+        return getCount === 1 ? response(401, {}) : pendingRecheck;
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { unmount } = render(<ReferenceParticipantsSettings />);
+
+    await user.click(await screen.findByRole("button", { name: "認証状態を再確認" }));
+    const recheckSignal = fetchMock.mock.calls[1]?.[1]?.signal;
+    unmount();
+    expect(recheckSignal?.aborted).toBe(true);
+
+    rejectRecheck(new Error("aborted fetch"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText("設定を読み込めませんでした。通信状態を確認して再試行してください。"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ignores a recheck payload whose JSON finishes after unmount", async () => {
+    const user = userEvent.setup();
+    let resolveRecheck!: (value: Response) => void;
+    const pendingRecheck = new Promise<Response>((resolve) => {
+      resolveRecheck = resolve;
+    });
+    let resolvePayload!: (value: { names: string[] }) => void;
+    const pendingPayload = new Promise<{ names: string[] }>((resolve) => {
+      resolvePayload = resolve;
+    });
+    let getCount = 0;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      getCount += 1;
+      return getCount === 1 ? response(401, {}) : pendingRecheck;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { unmount } = render(<ReferenceParticipantsSettings />);
+
+    await user.click(await screen.findByRole("button", { name: "認証状態を再確認" }));
+    const responseWithPendingJson = response(200, {});
+    const json = vi.spyOn(responseWithPendingJson, "json").mockReturnValue(pendingPayload);
+    resolveRecheck(responseWithPendingJson);
+    await waitFor(() => expect(json).toHaveBeenCalledTimes(1));
+    const recheckSignal = fetchMock.mock.calls[1]?.[1]?.signal;
+    unmount();
+    expect(recheckSignal?.aborted).toBe(true);
+
+    resolvePayload({ names: ["late payload"] });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
   it("reports invalid save responses and non-Error save failures", async () => {
     const user = userEvent.setup();
     let putCount = 0;
@@ -346,6 +499,30 @@ describe("reference participants settings", () => {
     expect(await screen.findByText("設定を保存できませんでした。")).toBeInTheDocument();
   });
 
+  it("reports malformed JSON from a successful save response", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method ? new Response("invalid json", { status: 200 }) : response(200, { names: [] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ReferenceParticipantsSettings />);
+
+    await user.click(await screen.findByRole("button", { name: "氏名一覧を保存" }));
+    expect(await screen.findByText("保存結果の形式を確認できませんでした。")).toBeInTheDocument();
+  });
+
+  it("uses the fallback message when a save error omits its message", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method ? response(503, {}) : response(200, { names: [] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ReferenceParticipantsSettings />);
+
+    await user.click(await screen.findByRole("button", { name: "氏名一覧を保存" }));
+    expect(await screen.findByText("設定を保存できませんでした。")).toBeInTheDocument();
+  });
+
   it("shows a busy label while a save is pending and accepts confirmed return", async () => {
     const user = userEvent.setup();
     let resolveSave!: (value: Response) => void;
@@ -362,7 +539,10 @@ describe("reference participants settings", () => {
     const textarea = await screen.findByLabelText("参考対象の表示名（改行区切り）");
     await user.type(textarea, "B");
     await user.click(screen.getByRole("button", { name: "氏名一覧を保存" }));
-    expect(await screen.findByRole("button", { name: "保存しています…" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "保存しています…" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     resolveSave(response(200, { names: ["B"] }));
     await screen.findByText(/保存しました/);
 

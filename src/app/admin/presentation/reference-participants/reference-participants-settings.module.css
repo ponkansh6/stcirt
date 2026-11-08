@@ -127,6 +127,7 @@
 }
 
 .primaryButton:disabled,
+.primaryButton[aria-disabled="true"],
 .secondaryButton:disabled,
 .secondaryButton[aria-disabled="true"] {
   cursor: not-allowed;
