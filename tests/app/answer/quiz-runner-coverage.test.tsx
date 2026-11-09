@@ -348,6 +348,146 @@ describe("QuizRunner remaining coverage states", () => {
     expect(setFreeResponse).toHaveBeenCalledWith(5, "入力中の回答");
   });
 
+  it("tracks the question at the sticky header line and recalculates on scroll and header resize", async () => {
+    const header = document.createElement("div");
+    header.id = "answer-global-header";
+    const portal = document.createElement("div");
+    portal.id = "global-header-navigation";
+    header.append(portal);
+    document.body.append(header);
+
+    const questionBounds = new Map<number, { top: number; bottom: number }>([
+      [1, { top: 200, bottom: 300 }],
+      [2, { top: 320, bottom: 420 }],
+      [3, { top: 440, bottom: 540 }],
+      [4, { top: 560, bottom: 660 }],
+      [5, { top: 680, bottom: 780 }],
+    ]);
+    const headerRect = vi
+      .spyOn(header, "getBoundingClientRect")
+      .mockReturnValue({ height: 100 } as DOMRect);
+
+    let frameId = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frameId += 1;
+      frames.set(frameId, callback);
+      return frameId;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    const flushFrames = () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback(0);
+    };
+
+    let resizeHeader!: () => void;
+    const observeMock = vi.fn();
+    const disconnectMock = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeHeader = () => callback([], this as unknown as ResizeObserver);
+        }
+        observe(element: Element) {
+          observeMock(element);
+        }
+        disconnect() {
+          disconnectMock();
+        }
+      },
+    );
+    mockUseQuizSession.mockReturnValue(session({ kind: "answering" }));
+
+    try {
+      const view = render(<QuizRunner />);
+      await waitFor(() =>
+        expect(screen.getByRole("navigation", { name: "設問へ移動" })).toBeInTheDocument(),
+      );
+      for (const [id, bounds] of questionBounds) {
+        vi.spyOn(
+          document.getElementById(`question-${id}`)!,
+          "getBoundingClientRect",
+        ).mockImplementation(() => {
+          const currentBounds = questionBounds.get(id) ?? bounds;
+          return {
+            ...currentBounds,
+            height: currentBounds.bottom - currentBounds.top,
+          } as DOMRect;
+        });
+      }
+      expect(observeMock).toHaveBeenCalledWith(header);
+
+      act(flushFrames);
+      expect(screen.getByRole("link", { name: "第1問未回答へ移動" })).toHaveAttribute(
+        "aria-current",
+        "location",
+      );
+
+      questionBounds.set(1, { top: -20, bottom: 80 });
+      questionBounds.set(2, { top: 80, bottom: 180 });
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+        flushFrames();
+      });
+      expect(screen.getByRole("link", { name: "第2問未回答へ移動" })).toHaveAttribute(
+        "aria-current",
+        "location",
+      );
+
+      headerRect.mockReturnValue({ height: 150 } as DOMRect);
+      questionBounds.set(2, { top: 80, bottom: 140 });
+      questionBounds.set(3, { top: 140, bottom: 280 });
+      act(() => {
+        resizeHeader();
+        flushFrames();
+      });
+      expect(screen.getByRole("link", { name: "第3問未回答へ移動" })).toHaveAttribute(
+        "aria-current",
+        "location",
+      );
+
+      for (const id of questionBounds.keys()) questionBounds.set(id, { top: -300, bottom: -200 });
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+        flushFrames();
+      });
+      expect(screen.getByRole("link", { name: "第5問未回答へ移動" })).toHaveAttribute(
+        "aria-current",
+        "location",
+      );
+
+      for (const id of questionBounds.keys()) questionBounds.set(id, { top: 250, bottom: 350 });
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+        flushFrames();
+      });
+      expect(screen.getByRole("link", { name: "第1問未回答へ移動" })).toHaveAttribute(
+        "aria-current",
+        "location",
+      );
+
+      document.body.append(portal);
+      header.remove();
+      for (const id of questionBounds.keys()) questionBounds.set(id, { top: -100, bottom: -50 });
+      questionBounds.set(1, { top: -1, bottom: 1 });
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+        flushFrames();
+      });
+      expect(screen.getByRole("link", { name: "第1問未回答へ移動" })).toHaveAttribute(
+        "aria-current",
+        "location",
+      );
+
+      view.unmount();
+      expect(disconnectMock).toHaveBeenCalledOnce();
+    } finally {
+      header.remove();
+    }
+  });
+
   it("focuses the selected answer or the first available answer from final review", () => {
     mockUseQuizSession.mockReturnValue(
       session({ kind: "answering" }, { selections: { 1: 2 }, answeredCount: 1 }),
