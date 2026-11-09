@@ -375,6 +375,7 @@ export default function QuizRunner() {
   const finalCheckHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const completionHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const completionReauthenticationHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const [currentQuestionId, setCurrentQuestionId] = useState<number | null>(null);
   const previousPhaseKind = useRef(phase.kind);
   const shouldFocusSubmissionRef = useRef(false);
   const shouldFocusCompletion = useRef(false);
@@ -534,6 +535,54 @@ export default function QuizRunner() {
   const unanswered = quizzes.filter(
     ({ question }) => !hasAnswer(question, selections, freeResponses),
   );
+  useEffect(() => {
+    if (quizzes.length === 0) return;
+
+    const questionElements = quizzes
+      .map(({ question }) => ({
+        id: question.id,
+        element: document.getElementById(`question-${question.id}`),
+      }))
+      .filter(
+        (item): item is { id: number; element: HTMLElement } => item.element instanceof HTMLElement,
+      );
+    if (questionElements.length === 0) return;
+
+    let frame = 0;
+    const updateCurrentQuestion = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const stickyHeaderOffset =
+          document.getElementById("answer-global-header")?.getBoundingClientRect().height ?? 0;
+        const current = questionElements.find(({ element }) => {
+          const bounds = element.getBoundingClientRect();
+          return bounds.top <= stickyHeaderOffset && bounds.bottom > stickyHeaderOffset;
+        });
+        const nextId =
+          current?.id ??
+          (questionElements[0].element.getBoundingClientRect().top > stickyHeaderOffset
+            ? questionElements[0].id
+            : questionElements.at(-1)!.id);
+        setCurrentQuestionId((previousId) => (previousId === nextId ? previousId : nextId));
+      });
+    };
+
+    updateCurrentQuestion();
+    const stickyHeader = document.getElementById("answer-global-header");
+    const headerResizeObserver =
+      stickyHeader && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(updateCurrentQuestion)
+        : null;
+    if (stickyHeader && headerResizeObserver) headerResizeObserver.observe(stickyHeader);
+    window.addEventListener("scroll", updateCurrentQuestion, { passive: true });
+    window.addEventListener("resize", updateCurrentQuestion);
+    return () => {
+      cancelAnimationFrame(frame);
+      headerResizeObserver?.disconnect();
+      window.removeEventListener("scroll", updateCurrentQuestion);
+      window.removeEventListener("resize", updateCurrentQuestion);
+    };
+  }, [quizzes]);
   const ui = deriveAnswerUi({
     access,
     assistedScreen,
@@ -1127,10 +1176,11 @@ export default function QuizRunner() {
   return (
     <>
       <HeaderPortal>
-        <nav aria-label="設問へ移動">
+        <nav aria-label="設問へ移動" className={styles.progressNav}>
           <ol className="grid grid-cols-5 gap-2">
             {quizzes.map(({ question }, index) => {
               const answered = hasAnswer(question, selections, freeResponses);
+              const current = currentQuestionId === question.id;
               return (
                 <li key={question.id}>
                   <a
@@ -1140,7 +1190,8 @@ export default function QuizRunner() {
                       jumpToQuestion(question.id);
                     }}
                     aria-label={`第${index + 1}問${answered ? "✓ 済" : "未回答"}へ移動`}
-                    className={`flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${answered ? "border-primary bg-primary text-on-primary" : "border-control-border bg-surface-2 text-muted"}`}
+                    aria-current={current ? "location" : undefined}
+                    className={`${styles.progressLink} flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${answered ? styles.progressAnswered : "border-control-border bg-surface-2 text-muted"} ${current ? styles.progressCurrent : ""}`}
                   >
                     <span>第{index + 1}問</span>
                     {answered ? "✓ 済" : "未回答"}
@@ -1152,7 +1203,7 @@ export default function QuizRunner() {
         </nav>
       </HeaderPortal>
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-7 sm:py-10">
-        <header className="mb-7 border-b border-border-subtle pb-6">
+        <header className={`${styles.examHeader} mb-7 pb-6`}>
           <div className="mt-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
             <div>
               <h1 className="text-3xl font-bold tracking-tight">しゅんたま検定</h1>
@@ -1221,7 +1272,7 @@ export default function QuizRunner() {
           </section>
         )}
 
-        <div className="space-y-5">
+        <div className={styles.questionList}>
           {quizzes.map(({ question, shuffled }, index) => {
             const selectedIndex = selections[question.id];
             const questionTitleId = `question-title-${question.id}`;
@@ -1229,10 +1280,10 @@ export default function QuizRunner() {
               <section
                 key={question.id}
                 id={`question-${question.id}`}
-                className="rounded-2xl border border-border-subtle bg-surface p-4 shadow-card sm:p-7"
+                className={styles.question}
                 aria-labelledby={questionTitleId}
               >
-                <p className="mb-2 text-sm font-semibold">
+                <p className={`${styles.questionMeta} mb-2 text-sm font-semibold`}>
                   <span className="text-answer-accent">第{index + 1}問</span>{" "}
                   <span className="font-medium tracking-normal text-muted">/ 全5問</span>
                 </p>
@@ -1242,7 +1293,7 @@ export default function QuizRunner() {
                     questionRefs.current[question.id] = node;
                   }}
                   tabIndex={-1}
-                  className="mb-6 scroll-mt-20 break-words text-xl font-bold leading-relaxed tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4 sm:text-2xl"
+                  className={`${styles.questionTitle} mb-6 scroll-mt-20 break-words text-xl font-bold leading-relaxed tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4 sm:text-2xl`}
                 >
                   {question.question}
                 </h2>
@@ -1293,6 +1344,7 @@ export default function QuizRunner() {
                         checked={selectedIndex === choiceIndex}
                         onChange={() => select(question.id, choiceIndex)}
                         disabled={isLocked}
+                        className={styles.choiceOption}
                       />
                     ))
                   )}

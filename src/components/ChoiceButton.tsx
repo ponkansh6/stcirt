@@ -10,6 +10,7 @@ interface ChoiceButtonProps {
   checked: boolean;
   onChange?: () => void;
   disabled?: boolean;
+  className?: string;
 }
 
 export default function ChoiceButton({
@@ -22,6 +23,7 @@ export default function ChoiceButton({
   checked,
   onChange,
   disabled,
+  className = "",
 }: ChoiceButtonProps) {
   const getStyles = () => {
     switch (variant) {
@@ -42,7 +44,7 @@ export default function ChoiceButton({
   return (
     <label
       htmlFor={id}
-      className={`flex w-full min-h-14 cursor-pointer items-center gap-3 rounded-card border p-3 text-left transition duration-200 ease-[var(--ease-out-soft)] motion-reduce:duration-0 focus-within:outline-none focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 ${disabled ? "cursor-not-allowed" : ""} ${getStyles()}`}
+      className={`flex w-full min-h-14 cursor-pointer items-center gap-3 rounded-card border p-3 text-left transition duration-200 ease-[var(--ease-out-soft)] motion-reduce:duration-0 focus-within:outline-none focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 ${disabled ? "cursor-not-allowed" : ""} ${getStyles()} ${className}`}
     >
       <input
         id={id}
