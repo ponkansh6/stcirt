@@ -348,7 +348,7 @@ describe("QuizRunner remaining coverage states", () => {
     expect(setFreeResponse).toHaveBeenCalledWith(5, "入力中の回答");
   });
 
-  it("tracks the question at the sticky header line and recalculates on scroll and header resize", async () => {
+  it("tracks the question at the visible reading midpoint and recalculates on scroll and header resize", async () => {
     const header = document.createElement("div");
     header.id = "answer-global-header";
     const portal = document.createElement("div");
@@ -357,11 +357,11 @@ describe("QuizRunner remaining coverage states", () => {
     document.body.append(header);
 
     const questionBounds = new Map<number, { top: number; bottom: number }>([
-      [1, { top: 200, bottom: 300 }],
-      [2, { top: 320, bottom: 420 }],
-      [3, { top: 440, bottom: 540 }],
-      [4, { top: 560, bottom: 660 }],
-      [5, { top: 680, bottom: 780 }],
+      [1, { top: 200, bottom: 500 }],
+      [2, { top: 500, bottom: 650 }],
+      [3, { top: 650, bottom: 800 }],
+      [4, { top: 800, bottom: 950 }],
+      [5, { top: 950, bottom: 1100 }],
     ]);
     const headerRect = vi
       .spyOn(header, "getBoundingClientRect")
@@ -426,7 +426,8 @@ describe("QuizRunner remaining coverage states", () => {
       );
 
       questionBounds.set(1, { top: -20, bottom: 80 });
-      questionBounds.set(2, { top: 80, bottom: 180 });
+      questionBounds.set(2, { top: 80, bottom: 500 });
+      questionBounds.set(3, { top: 500, bottom: 700 });
       act(() => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
@@ -437,8 +438,11 @@ describe("QuizRunner remaining coverage states", () => {
       );
 
       headerRect.mockReturnValue({ height: 150 } as DOMRect);
-      questionBounds.set(2, { top: 80, bottom: 140 });
-      questionBounds.set(3, { top: 140, bottom: 280 });
+      questionBounds.set(1, { top: -500, bottom: -200 });
+      questionBounds.set(2, { top: -200, bottom: 140 });
+      questionBounds.set(3, { top: 140, bottom: 500 });
+      questionBounds.set(4, { top: 500, bottom: 650 });
+      questionBounds.set(5, { top: 650, bottom: 800 });
       act(() => {
         resizeHeader();
         flushFrames();
@@ -448,7 +452,28 @@ describe("QuizRunner remaining coverage states", () => {
         "location",
       );
 
-      for (const id of questionBounds.keys()) questionBounds.set(id, { top: -300, bottom: -200 });
+      // The sticky line still intersects question 3, but question 4 occupies
+      // most of the visible reading area, so its midpoint is the active item.
+      const viewportHeight = window.innerHeight;
+      questionBounds.set(1, { top: -500, bottom: -300 });
+      questionBounds.set(2, { top: -200, bottom: 80 });
+      questionBounds.set(3, { top: 80, bottom: 250 });
+      questionBounds.set(4, { top: 250, bottom: viewportHeight });
+      questionBounds.set(5, { top: viewportHeight, bottom: viewportHeight + 250 });
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+        flushFrames();
+      });
+      expect(screen.getByRole("link", { name: "第4問未回答へ移動" })).toHaveAttribute(
+        "aria-current",
+        "location",
+      );
+
+      questionBounds.set(1, { top: -600, bottom: -500 });
+      questionBounds.set(2, { top: -500, bottom: -400 });
+      questionBounds.set(3, { top: -400, bottom: -300 });
+      questionBounds.set(4, { top: -300, bottom: -200 });
+      questionBounds.set(5, { top: -200, bottom: -100 });
       act(() => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
@@ -458,7 +483,11 @@ describe("QuizRunner remaining coverage states", () => {
         "location",
       );
 
-      for (const id of questionBounds.keys()) questionBounds.set(id, { top: 250, bottom: 350 });
+      questionBounds.set(1, { top: 500, bottom: 600 });
+      questionBounds.set(2, { top: 600, bottom: 700 });
+      questionBounds.set(3, { top: 700, bottom: 800 });
+      questionBounds.set(4, { top: 800, bottom: 900 });
+      questionBounds.set(5, { top: 900, bottom: 1000 });
       act(() => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
@@ -470,8 +499,11 @@ describe("QuizRunner remaining coverage states", () => {
 
       document.body.append(portal);
       header.remove();
-      for (const id of questionBounds.keys()) questionBounds.set(id, { top: -100, bottom: -50 });
-      questionBounds.set(1, { top: -1, bottom: 1 });
+      questionBounds.set(1, { top: 500, bottom: 600 });
+      questionBounds.set(2, { top: 600, bottom: 700 });
+      questionBounds.set(3, { top: 700, bottom: 800 });
+      questionBounds.set(4, { top: 800, bottom: 900 });
+      questionBounds.set(5, { top: 900, bottom: 1000 });
       act(() => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();

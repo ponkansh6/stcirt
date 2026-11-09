@@ -14,6 +14,7 @@
 
 .progressLink {
   position: relative;
+  border-width: 2px;
   transition:
     background-color 140ms var(--ease-out-soft),
     border-color 140ms var(--ease-out-soft),
@@ -27,7 +28,6 @@
 }
 
 .progressCurrent {
-  border-width: 2px;
   border-color: var(--color-answer-accent);
   background: color-mix(in srgb, var(--color-answer-accent) 11%, var(--color-surface));
   color: var(--color-answer-accent);

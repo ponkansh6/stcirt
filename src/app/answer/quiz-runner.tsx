@@ -552,17 +552,19 @@ export default function QuizRunner() {
     const updateCurrentQuestion = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const stickyHeaderOffset =
+        const stickyHeaderHeight =
           document.getElementById("answer-global-header")?.getBoundingClientRect().height ?? 0;
-        const current = questionElements.find(({ element }) => {
-          const bounds = element.getBoundingClientRect();
-          return bounds.top <= stickyHeaderOffset && bounds.bottom > stickyHeaderOffset;
-        });
-        const nextId =
-          current?.id ??
-          (questionElements[0].element.getBoundingClientRect().top > stickyHeaderOffset
-            ? questionElements[0].id
-            : questionElements.at(-1)!.id);
+        const readingPosition = stickyHeaderHeight + (window.innerHeight - stickyHeaderHeight) / 2;
+        const current = questionElements.reduce<{ id: number; top: number } | null>(
+          (latest, item) => {
+            const top = item.element.getBoundingClientRect().top;
+            return top <= readingPosition && (!latest || top > latest.top)
+              ? { id: item.id, top }
+              : latest;
+          },
+          null,
+        );
+        const nextId = current?.id ?? questionElements[0].id;
         setCurrentQuestionId((previousId) => (previousId === nextId ? previousId : nextId));
       });
     };
@@ -1191,7 +1193,7 @@ export default function QuizRunner() {
                     }}
                     aria-label={`第${index + 1}問${answered ? "✓ 済" : "未回答"}へ移動`}
                     aria-current={current ? "location" : undefined}
-                    className={`${styles.progressLink} flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${answered ? styles.progressAnswered : "border-control-border bg-surface-2 text-muted"} ${current ? styles.progressCurrent : ""}`}
+                    className={`${styles.progressLink} flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight ${answered ? styles.progressAnswered : "border-control-border bg-surface-2 text-muted"} ${current ? styles.progressCurrent : ""}`}
                   >
                     <span>第{index + 1}問</span>
                     {answered ? "✓ 済" : "未回答"}
