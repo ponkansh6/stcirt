@@ -74,7 +74,7 @@
 }
 
 .choiceOption {
-  transition: transform 120ms var(--ease-out-soft);
+  transition: transform 200ms var(--ease-out-soft);
 }
 
 .choiceOption:not(:has(input:disabled)):active {
