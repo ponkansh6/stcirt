@@ -2189,6 +2189,18 @@ test("@chromium first-prize entrance survives same-stage polling and replays on 
   mock.setPresentationPosition("first_prize");
   await reentryPoll;
   await expect(title).toBeVisible();
+  await expect
+    .poll(() =>
+      title.evaluate((element) => {
+        const entrance = element
+          .getAnimations()
+          .find((animation) =>
+            (animation as CSSAnimation).animationName.includes("firstPrizeTitle"),
+          );
+        return typeof entrance?.startTime === "number";
+      }),
+    )
+    .toBe(true);
   const replayedStartTime = await title.evaluate((element) => {
     const entrance = element
       .getAnimations()
