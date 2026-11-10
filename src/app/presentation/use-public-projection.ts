@@ -12,6 +12,8 @@ export type State =
   | "third"
   | "second"
   | "first"
+  | "third_prize"
+  | "second_prize"
   | "first_prize"
   | "finished";
 
@@ -113,6 +115,8 @@ export function isProjectionData(payload: unknown): payload is ProjectionData {
       "third",
       "second",
       "first",
+      "third_prize",
+      "second_prize",
       "first_prize",
       "finished",
     ].includes(value.state)

@@ -14,7 +14,15 @@ type DeckProjectionFixture =
   | { state: "question" | "answer"; question?: unknown }
   | { state: "third" | "second" | "first"; winners: WinnerFixture[] }
   | {
-      state: "standby" | "not_started" | "opening" | "podium_preview" | "first_prize" | "finished";
+      state:
+        | "standby"
+        | "not_started"
+        | "opening"
+        | "podium_preview"
+        | "third_prize"
+        | "second_prize"
+        | "first_prize"
+        | "finished";
       winners?: WinnerFixture[];
     };
 type DeckSlideFixture = {
@@ -2959,7 +2967,7 @@ describe("PresentationScreen", () => {
     expect(api.actions).toHaveLength(0);
   });
 
-  it("moves backward from finished to the first-prize slide when first place exists", async () => {
+  it("moves backward from finished to the last announced rank when first place exists", async () => {
     const api = installApi({
       projection: { state: "finished" },
       admin: controls({ state: "finished", questionCount: 0 }),
@@ -2987,11 +2995,43 @@ describe("PresentationScreen", () => {
     expect(api.actions).toHaveLength(1);
     expect(api.actions[0]).toMatchObject({
       action: "position",
-      state: "first_prize",
+      state: "first",
       questionIndex: 0,
     });
-    expect(await screen.findByRole("img", { name: "和牛カタログの表紙" })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "和牛の写真" })).toBeInTheDocument();
+    const rankSlide = await screen.findByRole("region", { name: "第一位の勝者一覧" });
+    expect(rankSlide).toHaveTextContent("悠");
+  });
+
+  it("returns from finished to podium preview when the deck has no announced ranks", async () => {
+    const api = installApi({
+      projection: { state: "finished" },
+      admin: controls({ state: "finished", questionCount: 0 }),
+      deckResponse: async () =>
+        response({
+          snapshotRevision: 1,
+          questionCount: 0,
+          questionIndex: 0,
+          slides: [
+            deckSlide("podium_preview", 0, { state: "podium_preview" }),
+            deckSlide("finished", 0, { state: "finished" }),
+          ],
+        }),
+    });
+    render(<PresentationScreen presenterRequested />);
+    await flush();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowLeft" });
+    await flush();
+
+    expect(api.actions).toHaveLength(1);
+    expect(api.actions[0]).toMatchObject({
+      action: "position",
+      state: "podium_preview",
+      questionIndex: 0,
+    });
+    expect(
+      await screen.findByRole("heading", { name: "いよいよ、結果発表です" }),
+    ).toBeInTheDocument();
   });
 
   it("shares the first-prize slide between presenter navigation and the public projection", async () => {

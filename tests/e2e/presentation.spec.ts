@@ -63,6 +63,8 @@ type PresentationState =
   | "third"
   | "second"
   | "first"
+  | "third_prize"
+  | "second_prize"
   | "first_prize"
   | "finished";
 
@@ -176,6 +178,8 @@ async function installAdminApiMock(
       ...(options.skipEmptyRanks && !winnerEntries.some((entry) => entry.rank === 1)
         ? []
         : (["first"] as const)),
+      ...(winnerEntries.some((entry) => entry.rank === 3) ? (["third_prize"] as const) : []),
+      ...(winnerEntries.some((entry) => entry.rank === 2) ? (["second_prize"] as const) : []),
       ...(winnerEntries.some((entry) => entry.rank === 1) ? (["first_prize"] as const) : []),
       "finished",
     ] as PresentationState[];
@@ -651,6 +655,10 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
       return page.getByRole("region", { name: "第二位の勝者一覧" });
     case "first":
       return page.getByRole("region", { name: "第一位の勝者一覧" });
+    case "third_prize":
+      return page.getByRole("heading", { name: "天守石垣サブレ" });
+    case "second_prize":
+      return page.getByRole("heading", { name: "長野県ギフト" });
     case "first_prize":
       return page.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ });
     case "finished":
@@ -970,6 +978,8 @@ async function advanceTo(page: import("@playwright/test").Page, target: Presenta
     "third",
     "second",
     "first",
+    "third_prize",
+    "second_prize",
     "first_prize",
     "finished",
   ];
@@ -1272,11 +1282,7 @@ test("@chromium generic slide entrances honor their stage", async ({ page }) => 
             ? "answer"
             : state === "podium_preview"
               ? "third"
-              : state === "first"
-                ? "first_prize"
-                : state === "first_prize"
-                  ? "finished"
-                  : "finished";
+              : "finished";
       await advancePresenterTo(page, nextState);
       if (nextState === "answer") {
         const answerReveal = page.locator("[class*='answerReveal']");
@@ -1302,6 +1308,7 @@ test("@chromium generic slide entrances honor their stage", async ({ page }) => 
           true,
         );
         await expect(naturalLayer.locator(":scope > div > div")).toHaveCSS("opacity", "1");
+        await advancePresenterTo(page, "second_prize");
         await advancePresenterTo(page, "first_prize");
         await advancePresenterTo(page, "finished");
       }
@@ -1704,6 +1711,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
     { state: "third", text: ["該当する受賞者はいません", "第三位"] },
     { state: "second", text: ["太郎", "0.00 ポイント", "第二位"] },
     { state: "first", text: ["花子", "1.00 ポイント", "第一位"] },
+    { state: "second_prize", text: ["2位の景品", "長野県ギフト", "カタログギフト"] },
     {
       state: "first_prize",
       text: [
@@ -1738,6 +1746,20 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
       expect(inspection.outOfBounds).toBe(0);
       expect(inspection.pageCanScroll).toBe(false);
     }
+    if (stage.state === "third_prize" || stage.state === "second_prize") {
+      const image = page.getByRole("img", {
+        name: stage.state === "third_prize" ? "天守石垣サブレ" : "長野県ギフトカタログ",
+      });
+      await expect(image).toBeVisible();
+      await expect
+        .poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth))
+        .toBeGreaterThan(0);
+      await expect(image).toHaveAttribute("width", stage.state === "third_prize" ? "800" : "664");
+      await expect(image).toHaveAttribute("height", stage.state === "third_prize" ? "800" : "349");
+      await expect(image).toHaveCSS("object-fit", "contain");
+      expect(inspection.outOfBounds).toBe(0);
+      expect(inspection.pageCanScroll).toBe(false);
+    }
     if (stage.state === "question" || stage.state === "answer") {
       if (stage.state === "answer") {
         await expect
@@ -1769,6 +1791,10 @@ test("@chromium first-prize position is shared with the public projection and su
   await openPresenter(page);
 
   let mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "second_prize")).toBeVisible();
+  await mutation;
+  mutation = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "first_prize")).toBeVisible();
   await mutation;
@@ -1815,9 +1841,9 @@ test("@chromium first-prize position is shared with the public projection and su
 
   mutation = nextAdminMutation(page);
   await page.locator("main").press("ArrowLeft");
-  await expect(slideFor(page, "first")).toBeVisible();
+  await expect(slideFor(page, "second_prize")).toBeVisible();
   await mutation;
-  await expect(publicPage.getByRole("region", { name: "第一位の勝者一覧" })).toBeVisible();
+  await expect(publicPage.getByRole("heading", { name: "長野県ギフト" })).toBeVisible();
   mutation = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "first_prize")).toBeVisible();
@@ -1843,6 +1869,60 @@ test("@chromium first-prize position is shared with the public projection and su
   await expect(slideFor(publicPage, "opening")).toBeVisible();
   expect(mock.getPresentationState().state).toBe("opening");
   await adminPage.close();
+  await publicPage.close();
+});
+
+test("@chromium third-prize updates both screens and wraps within a narrow mobile canvas", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const mock = await installAdminApiMock(page, { skipEmptyRanks: true });
+  mock.setWinnerEntries([{ displayName: "三位の受賞者", score: 8, rank: 3 }]);
+  mock.setPresentationPosition("third");
+  await signIn(page);
+  await openPresenter(page);
+
+  const publicPage = await page.context().newPage();
+  await publicPage.setViewportSize({ width: 390, height: 844 });
+  await publicPage.goto("/presentation");
+  await expect(publicPage.getByRole("region", { name: "第三位の勝者一覧" })).toBeVisible();
+
+  const mutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "third_prize")).toBeVisible();
+  await mutation;
+
+  const description = "長野県松本市の老舗洋菓子店「マサムラ」の人気スイーツを贈呈します";
+  await expect(page.getByText(description)).toBeVisible();
+  await expect(publicPage.getByRole("heading", { name: "天守石垣サブレ" })).toBeVisible();
+  await expect(publicPage.getByText(description)).toBeVisible();
+  const image = page.getByRole("img", { name: "天守石垣サブレ" });
+  await expect(image).toBeVisible();
+  await expect
+    .poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  await expect(image).toHaveAttribute("width", "800");
+  await expect(image).toHaveAttribute("height", "800");
+  await expect(image).toHaveCSS("object-fit", "contain");
+  const descriptionLayout = await page
+    .locator("[class*='additionalPrizeDescription']")
+    .evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const bounds = document
+        .querySelector('[data-testid="presentation-fit-viewport"]')!
+        .getBoundingClientRect();
+      const descriptionBounds = element.getBoundingClientRect();
+      return {
+        lineCount: range.getClientRects().length,
+        outOfBounds: descriptionBounds.left < bounds.left || descriptionBounds.right > bounds.right,
+        canScroll: document.documentElement.scrollWidth > innerWidth,
+      };
+    });
+  expect(descriptionLayout.lineCount).toBeGreaterThan(1);
+  expect(descriptionLayout.outOfBounds).toBe(false);
+  expect(descriptionLayout.canScroll).toBe(false);
   await publicPage.close();
 });
 
@@ -2159,7 +2239,8 @@ test("@chromium rank reveal can advance into first prize while its automatic ani
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await installAdminApiMock(page);
+  const mock = await installAdminApiMock(page);
+  mock.setWinnerEntries([{ displayName: "花子", score: 1, rank: 1 }]);
   await signIn(page);
   const mockPosition = nextAdminMutation(page);
   await page.evaluate(async () => {
@@ -2174,7 +2255,7 @@ test("@chromium rank reveal can advance into first prize while its automatic ani
       body: JSON.stringify({
         operationId: crypto.randomUUID(),
         action: "position",
-        state: "second",
+        state: "first",
         questionIndex: 0,
         expectedSnapshotRevision: controls.snapshotRevision,
         expectedSessionVersion: controls.version,
@@ -2184,11 +2265,7 @@ test("@chromium rank reveal can advance into first prize while its automatic ani
   });
   await mockPosition;
   await openPresenter(page);
-
-  let mutation = nextAdminMutation(page);
-  await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "first")).toBeVisible();
-  await mutation;
   const winnerContent = rankRegionFor(page, "first").locator("[class*='winnerContent']");
   await expect
     .poll(() =>
@@ -2204,7 +2281,7 @@ test("@chromium rank reveal can advance into first prize while its automatic ani
     )
     .toBe(true);
 
-  mutation = nextAdminMutation(page);
+  let mutation = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "first_prize")).toBeVisible();
   await mutation;
@@ -2348,6 +2425,11 @@ test("@chromium finished results are published only from admin and publication d
   page,
 }) => {
   const mock = await installAdminApiMock(page);
+  mock.setWinnerEntries([
+    { displayName: "三位", score: 0.5, rank: 3 },
+    { displayName: "太郎", score: 0, rank: 2 },
+    { displayName: "花子", score: 1, rank: 1 },
+  ]);
   await signIn(page);
   await startPresentation(page);
   await openPresenter(page);

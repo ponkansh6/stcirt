@@ -17,6 +17,8 @@ export type PresentationState =
   | "third"
   | "second"
   | "first"
+  | "third_prize"
+  | "second_prize"
   | "first_prize"
   | "finished";
 export type PresentationAction =
@@ -799,17 +801,22 @@ export async function getAdminPresentationDeck() {
         });
       }
     }
-    if (admin.entries.some((entry) => entry.rank === 1)) {
-      slides.push({
-        state: "first_prize",
-        questionIndex: terminalQuestionIndex,
-        projection: buildPublicProjection(
-          admin,
-          "first_prize",
-          terminalQuestionIndex,
-          sourceQuestions,
-        ),
-      });
+    for (const [state, rank] of [
+      ["third_prize", 3],
+      ["second_prize", 2],
+      ["first_prize", 1],
+    ] as const) {
+      if (
+        admin.entries.some(
+          (entry) => entry.isAggregationTarget && !entry.isReference && entry.rank === rank,
+        )
+      ) {
+        slides.push({
+          state,
+          questionIndex: terminalQuestionIndex,
+          projection: buildPublicProjection(admin, state, terminalQuestionIndex, sourceQuestions),
+        });
+      }
     }
     slides.push({
       state: "finished",

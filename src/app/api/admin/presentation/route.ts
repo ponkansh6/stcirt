@@ -92,6 +92,8 @@ export async function POST(request: Request) {
           "third",
           "second",
           "first",
+          "third_prize",
+          "second_prize",
           "first_prize",
           "finished",
         ].includes(value.state) ||

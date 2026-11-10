@@ -27,7 +27,15 @@ type DeckProjectionFixture =
   | { state: "question" | "answer"; question?: unknown }
   | { state: "third" | "second" | "first"; winners: WinnerFixture[] }
   | {
-      state: "standby" | "not_started" | "opening" | "podium_preview" | "first_prize" | "finished";
+      state:
+        | "standby"
+        | "not_started"
+        | "opening"
+        | "podium_preview"
+        | "third_prize"
+        | "second_prize"
+        | "first_prize"
+        | "finished";
       winners?: WinnerFixture[];
     };
 type DeckSlideFixture = {
@@ -72,6 +80,7 @@ function setup(
     controlsGetter?: () => Promise<Response>;
     deckGetter?: () => Promise<Response>;
     deckSlides?: DeckSlideFixture[];
+    deckOrder?: DeckSlideFixture[];
   } = {},
 ) {
   let projection = options.projection ?? {
@@ -140,6 +149,9 @@ function setup(
     deckSlide("third", Number(admin.questionIndex ?? 0), slideProjection("third")),
     deckSlide("second", Number(admin.questionIndex ?? 0), slideProjection("second")),
     deckSlide("first", Number(admin.questionIndex ?? 0), slideProjection("first")),
+    deckSlide("third_prize", Number(admin.questionIndex ?? 0), slideProjection("third_prize")),
+    deckSlide("second_prize", Number(admin.questionIndex ?? 0), slideProjection("second_prize")),
+    deckSlide("first_prize", Number(admin.questionIndex ?? 0), slideProjection("first_prize")),
     deckSlide("finished", Number(admin.questionIndex ?? 0), slideProjection("finished")),
   ];
   const slideIndex = deckSlides.findIndex(
@@ -165,6 +177,7 @@ function setup(
     if (existing >= 0) deckSlides[existing] = slide;
     else deckSlides.push(slide);
   }
+  if (options.deckOrder) deckSlides = options.deckOrder;
   const calls: { path: string; init?: RequestInit }[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
@@ -800,6 +813,8 @@ describe("presentation projection and presenter progression", () => {
       { state: "first", winners: [{ displayName: "悠", score: 10, rank: 1 }] },
       ["第一位", "10.00 ポイント", "悠"],
     ],
+    ["third_prize", { state: "third_prize" }, ["3位の景品", "天守石垣サブレ", "マサムラ"]],
+    ["second_prize", { state: "second_prize" }, ["2位の景品", "長野県ギフト", "カタログギフト"]],
     ["first_prize", { state: "first_prize" }, ["1位の景品"]],
     ["finished", { state: "finished" }, ["ご参加", "ありがとうございました"]],
   ] as const)(
@@ -810,7 +825,18 @@ describe("presentation projection and presenter progression", () => {
 
       const slide = await screen.findByRole("region", { name: "現在のスライド" });
       for (const content of contents) expect(slide).toHaveTextContent(content);
+      if (projection.state === "third_prize") {
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "3位の景品、天守石垣サブレを紹介します",
+        );
+      }
+      if (projection.state === "second_prize") {
+        expect(screen.getByRole("status")).toHaveTextContent("2位の景品、長野県ギフトを紹介します");
+      }
       if (projection.state === "first_prize") {
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "1位の景品、信州牛専門店すき亭ギフトを紹介します",
+        );
         const prizeTitle = slide.querySelector("#first-prize-title");
         expect(prizeTitle?.textContent).toBe("信州牛専門店すき亭ギフト");
         expect(prizeTitle).toHaveAttribute("aria-label", "信州牛専門店　すき亭ギフト");
@@ -822,6 +848,10 @@ describe("presentation projection and presenter progression", () => {
         expect(decodeURIComponent(catalog.getAttribute("src") ?? "")).toContain(
           "/和牛カタログ.jpg",
         );
+        expect(beef).toHaveAttribute("width", "640");
+        expect(beef).toHaveAttribute("height", "322");
+        expect(catalog).toHaveAttribute("width", "250");
+        expect(catalog).toHaveAttribute("height", "275");
         expect(slide.querySelectorAll("img")).toHaveLength(2);
         const stylesheet = readFileSync(
           join(process.cwd(), "src/app/presentation/presentation-screen.module.css"),
@@ -831,6 +861,36 @@ describe("presentation projection and presenter progression", () => {
         expect(stylesheet).toMatch(/\.firstPrizeCatalog\s*\{[^}]*object-fit:\s*contain/s);
         expect(stylesheet).toMatch(/\.firstPrizeLabel\s*\{[^}]*display:\s*block/s);
         expect(stylesheet).toMatch(/\.canvas\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9/s);
+      }
+      if (projection.state === "third_prize" || projection.state === "second_prize") {
+        const prizeImage = within(slide).getByRole("img");
+        expect(slide).toHaveTextContent(
+          projection.state === "third_prize"
+            ? "長野県松本市の老舗洋菓子店「マサムラ」の人気スイーツを贈呈します"
+            : "長野県の蕎麦やフルーツなどが選べるカタログギフトを贈呈します",
+        );
+        expect(decodeURIComponent(prizeImage.getAttribute("src") ?? "")).toContain(
+          projection.state === "third_prize" ? "/tenshuishigaki.jpg" : "/naganofift.jpg",
+        );
+        expect(prizeImage).toHaveAttribute(
+          "alt",
+          projection.state === "third_prize" ? "天守石垣サブレ" : "長野県ギフトカタログ",
+        );
+        expect(prizeImage).toHaveAttribute(
+          "width",
+          projection.state === "third_prize" ? "800" : "664",
+        );
+        expect(prizeImage).toHaveAttribute(
+          "height",
+          projection.state === "third_prize" ? "800" : "349",
+        );
+        expect(prizeImage).toHaveAttribute("sizes", "(max-width: 900px) 80vw, 55vw");
+        expect(prizeImage.className).toMatch(/additionalPrizeImage/);
+        const stylesheet = readFileSync(
+          join(process.cwd(), "src/app/presentation/presentation-screen.module.css"),
+          "utf8",
+        );
+        expect(stylesheet).toMatch(/\.additionalPrizeImage\s*\{[^}]*object-fit:\s*contain/s);
       }
       if (projection.state === "answer") {
         const correctChoice = screen.getByText("正解").closest("li");
@@ -2279,6 +2339,50 @@ describe("presentation projection and presenter progression", () => {
       ),
     ).toHaveLength(3);
     expect(screen.getByRole("heading", { name: "思い出の場所は？" })).toBeInTheDocument();
+  });
+
+  it("returns from finished to the last announced rank and navigates prize slides in rank order", async () => {
+    const index = 0;
+    const rankSlide = (state: "third" | "second") =>
+      deckSlide(state, index, { state, winners: [] });
+    const prizeSlide = (state: "third_prize" | "second_prize") =>
+      deckSlide(state, index, { state });
+    const api = setup({
+      projection: { state: "finished" },
+      admin: { state: "finished", questionIndex: index, questionCount: 0 },
+      deckOrder: [
+        deckSlide("podium_preview", index, { state: "podium_preview" }),
+        rankSlide("third"),
+        rankSlide("second"),
+        prizeSlide("third_prize"),
+        prizeSlide("second_prize"),
+        deckSlide("finished", index, { state: "finished" }),
+      ],
+    });
+    render(<PresentationScreen presenterRequested />);
+    await settled();
+
+    const main = screen.getByRole("main");
+    fireEvent.keyDown(main, { key: "ArrowLeft" });
+    await settled();
+    expect(screen.getByRole("region", { name: "第二位の勝者一覧" })).toBeInTheDocument();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await settled();
+    expect(screen.getByRole("heading", { name: "天守石垣サブレ" })).toBeInTheDocument();
+    fireEvent.keyDown(main, { key: "ArrowRight" });
+    await settled();
+    expect(screen.getByRole("heading", { name: "長野県ギフト" })).toBeInTheDocument();
+    fireEvent.keyDown(main, { key: "ArrowLeft" });
+    await settled();
+    expect(screen.getByRole("heading", { name: "天守石垣サブレ" })).toBeInTheDocument();
+    fireEvent.keyDown(main, { key: "ArrowLeft" });
+    await settled();
+    expect(screen.getByRole("region", { name: "第二位の勝者一覧" })).toBeInTheDocument();
+
+    const positions = api.calls
+      .filter(({ path, init }) => path === "/api/admin/presentation" && init?.method === "POST")
+      .map(({ init }) => JSON.parse(String(init?.body)).state);
+    expect(positions).toEqual(["second", "third_prize", "second_prize", "third_prize", "second"]);
   });
 
   it("removes presenter progression immediately after a protected API returns 401", async () => {

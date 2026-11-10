@@ -36,6 +36,8 @@ type AdminState = Extract<
   | "third"
   | "second"
   | "first"
+  | "third_prize"
+  | "second_prize"
   | "first_prize"
   | "finished"
 >;
@@ -56,9 +58,149 @@ const adminStates: AdminState[] = [
   "third",
   "second",
   "first",
+  "third_prize",
+  "second_prize",
   "first_prize",
   "finished",
 ];
+
+type PrizeState = Extract<State, "third_prize" | "second_prize" | "first_prize">;
+type PrizeImage = {
+  src: string;
+  width: number;
+  height: number;
+  alt: string;
+  sizes: string;
+  className: string;
+};
+type PrizeSlideConfig = {
+  sectionClassName: string;
+  headerClassName: string;
+  descriptionClassName: string;
+  headingId: string;
+  label: string;
+  title: string;
+  description: string;
+  headingAriaLabel?: string;
+  titleParts?: { text: string; className: string }[];
+  imageContainerClassName?: string;
+  images: PrizeImage[];
+};
+
+const prizeSlideConfigs: Record<PrizeState, PrizeSlideConfig> = {
+  third_prize: {
+    sectionClassName: styles.additionalPrize,
+    headerClassName: styles.additionalPrizeHeader,
+    descriptionClassName: styles.additionalPrizeDescription,
+    headingId: "additional-prize-title",
+    label: "3位の景品",
+    title: "天守石垣サブレ",
+    description: "長野県松本市の老舗洋菓子店「マサムラ」の人気スイーツを贈呈します",
+    images: [
+      {
+        src: "/tenshuishigaki.jpg",
+        width: 800,
+        height: 800,
+        alt: "天守石垣サブレ",
+        sizes: "(max-width: 900px) 80vw, 55vw",
+        className: styles.additionalPrizeImage,
+      },
+    ],
+  },
+  second_prize: {
+    sectionClassName: styles.additionalPrize,
+    headerClassName: styles.additionalPrizeHeader,
+    descriptionClassName: styles.additionalPrizeDescription,
+    headingId: "additional-prize-title",
+    label: "2位の景品",
+    title: "長野県ギフト",
+    description: "長野県の蕎麦やフルーツなどが選べるカタログギフトを贈呈します",
+    images: [
+      {
+        src: "/naganofift.jpg",
+        width: 664,
+        height: 349,
+        alt: "長野県ギフトカタログ",
+        sizes: "(max-width: 900px) 80vw, 55vw",
+        className: styles.additionalPrizeImage,
+      },
+    ],
+  },
+  first_prize: {
+    sectionClassName: styles.firstPrize,
+    headerClassName: styles.firstPrizeHeader,
+    descriptionClassName: styles.firstPrizeDescription,
+    headingId: "first-prize-title",
+    label: "1位の景品",
+    title: "信州牛専門店すき亭ギフト",
+    description: "りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します",
+    headingAriaLabel: "信州牛専門店　すき亭ギフト",
+    titleParts: [
+      { text: "信州牛専門店", className: styles.firstPrizeLabel },
+      { text: "すき亭ギフト", className: styles.firstPrizeBrand },
+    ],
+    imageContainerClassName: styles.firstPrizeImages,
+    images: [
+      {
+        src: "/和牛.png",
+        width: 640,
+        height: 322,
+        alt: "和牛の写真",
+        sizes: "(max-width: 2000px) 60vw, 1200px",
+        className: styles.firstPrizeBeef,
+      },
+      {
+        src: "/和牛カタログ.jpg",
+        width: 250,
+        height: 275,
+        alt: "和牛カタログの表紙",
+        sizes: "(max-width: 2143px) 28vw, 600px",
+        className: styles.firstPrizeCatalog,
+      },
+    ],
+  },
+};
+
+function PrizeSlide({ state }: { state: PrizeState }) {
+  const config = prizeSlideConfigs[state];
+  const content = (
+    <>
+      <header className={config.headerClassName}>
+        <p>{config.label}</p>
+        <h1
+          id={config.headingId}
+          {...(config.headingAriaLabel ? { "aria-label": config.headingAriaLabel } : {})}
+        >
+          {config.titleParts
+            ? config.titleParts.map((part) => (
+                <span className={part.className} key={part.text}>
+                  {part.text}
+                </span>
+              ))
+            : config.title}
+        </h1>
+        <p className={config.descriptionClassName}>{config.description}</p>
+      </header>
+      {config.imageContainerClassName ? (
+        <div className={config.imageContainerClassName}>
+          {config.images.map((image) => (
+            <Image {...image} key={image.src} loading="eager" draggable={false} />
+          ))}
+        </div>
+      ) : (
+        config.images.map((image) => (
+          <Image {...image} key={image.src} loading="eager" draggable={false} />
+        ))
+      )}
+    </>
+  );
+
+  return (
+    <section className={config.sectionClassName} aria-labelledby={config.headingId}>
+      {content}
+    </section>
+  );
+}
 
 function parseAdminControls(payload: unknown): AdminControls | null {
   if (typeof payload !== "object" || payload === null) return null;
@@ -946,7 +1088,14 @@ export default function PresentationScreen({
       const currentSlideIndex = currentDeck.slides.findIndex(
         (slide) => slide === slideForControl(currentDeck, currentControls),
       );
-      const targetSlide = currentDeck.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
+      const targetSlide =
+        action === "previous" && currentControls.state === "finished"
+          ? ([...currentDeck.slides]
+              .slice(0, currentSlideIndex)
+              .reverse()
+              .find((slide) => ["third", "second", "first"].includes(slide.state)) ??
+            currentDeck.slides.find((slide) => slide.state === "podium_preview"))
+          : currentDeck.slides[currentSlideIndex + (action === "advance" ? 1 : -1)];
       if (!targetSlide) return;
       adminSequence.current += 1;
       presenterIntentGeneration.current += 1;
@@ -1228,6 +1377,8 @@ export default function PresentationScreen({
     if (data.state === "answer") return `第${data.question.ordinal}問の解説`;
     if (data.state === "third" || data.state === "second" || data.state === "first")
       return `${rankTitle[data.state]}を発表します`;
+    if (data.state === "third_prize") return "3位の景品、天守石垣サブレを紹介します";
+    if (data.state === "second_prize") return "2位の景品、長野県ギフトを紹介します";
     if (data.state === "first_prize") return "1位の景品、信州牛専門店すき亭ギフトを紹介します";
     if (data.state === "standby") return "休憩中";
     if (data.state === "opening") return "発表を開始しました";
@@ -1341,6 +1492,8 @@ export default function PresentationScreen({
       state === "third" ||
       state === "second" ||
       state === "first" ||
+      state === "third_prize" ||
+      state === "second_prize" ||
       state === "first_prize" ||
       state === "finished"
     ) {
@@ -1531,45 +1684,9 @@ export default function PresentationScreen({
                           </section>
                         )}
 
-                        {state === "first_prize" && (
-                          <section
-                            className={styles.firstPrize}
-                            aria-labelledby="first-prize-title"
-                          >
-                            <header className={styles.firstPrizeHeader}>
-                              <p>1位の景品</p>
-                              <h1 id="first-prize-title" aria-label="信州牛専門店　すき亭ギフト">
-                                <span className={styles.firstPrizeLabel}>信州牛専門店</span>
-                                <span className={styles.firstPrizeBrand}>すき亭ギフト</span>
-                              </h1>
-                              <p className={styles.firstPrizeDescription}>
-                                りんごで育った信州牛のお肉が選べるカタログギフトを贈呈します
-                              </p>
-                            </header>
-                            <div className={styles.firstPrizeImages}>
-                              <Image
-                                className={styles.firstPrizeBeef}
-                                src="/和牛.png"
-                                width={640}
-                                height={322}
-                                alt="和牛の写真"
-                                sizes="(max-width: 2000px) 60vw, 1200px"
-                                loading="eager"
-                                draggable={false}
-                              />
-                              <Image
-                                className={styles.firstPrizeCatalog}
-                                src="/和牛カタログ.jpg"
-                                width={250}
-                                height={275}
-                                alt="和牛カタログの表紙"
-                                sizes="(max-width: 2143px) 28vw, 600px"
-                                loading="eager"
-                                draggable={false}
-                              />
-                            </div>
-                          </section>
-                        )}
+                        {(state === "third_prize" ||
+                          state === "second_prize" ||
+                          state === "first_prize") && <PrizeSlide state={state} />}
 
                         {(state === "third" || state === "second" || state === "first") && (
                           <section

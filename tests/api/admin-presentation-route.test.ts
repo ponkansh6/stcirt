@@ -300,6 +300,28 @@ describe("/api/admin/presentation route", () => {
     expect(operatePresentationControls).not.toHaveBeenCalled();
   });
 
+  it.each(["third_prize", "second_prize"] as const)(
+    "forwards the %s position through the existing admin route",
+    async (state) => {
+      const response = await POST(
+        request("POST", {
+          body: {
+            operationId,
+            action: "position",
+            state,
+            questionIndex: 0,
+            expectedSnapshotRevision: 3,
+            expectedSessionVersion: 7,
+          },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(setPresentationPosition).toHaveBeenCalledWith(operationId, state, 0, 3, 7);
+      expect(operatePresentationControls).not.toHaveBeenCalled();
+    },
+  );
+
   it("returns state conflicts as 409", async () => {
     vi.mocked(operatePresentationControls).mockRejectedValueOnce(
       new PresentationConflictError("Presentation is already at its first state"),
