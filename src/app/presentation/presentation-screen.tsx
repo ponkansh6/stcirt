@@ -98,7 +98,7 @@ const prizeSlideConfigs: Record<PrizeState, PrizeSlideConfig> = {
     description: "長野県松本市の老舗洋菓子店「マサムラ」の人気スイーツを贈呈します",
     images: [
       {
-        src: "/tenshuishigaki.jpg",
+        src: "/tenshuishigaki_2.jpg",
         width: 800,
         height: 800,
         alt: "天守石垣サブレ",

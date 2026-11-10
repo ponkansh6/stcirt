@@ -870,7 +870,7 @@ describe("presentation projection and presenter progression", () => {
             : "長野県の蕎麦やフルーツなどが選べるカタログギフトを贈呈します",
         );
         expect(decodeURIComponent(prizeImage.getAttribute("src") ?? "")).toContain(
-          projection.state === "third_prize" ? "/tenshuishigaki.jpg" : "/naganofift.jpg",
+          projection.state === "third_prize" ? "/tenshuishigaki_2.jpg" : "/naganofift.jpg",
         );
         expect(prizeImage).toHaveAttribute(
           "alt",
