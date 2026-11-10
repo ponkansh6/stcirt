@@ -467,8 +467,9 @@ Public presentation responses MUST disclose only the data permitted for the curr
 
 - WHEN the shared presentation state is any prize state
 - THEN the public API returns only `{ state }` and the public screen renders the matching prize page without winner details; `third_prize` renders 3位の景品 / 天守石垣サブレ with the specified Masamura description and `/tenshuishigaki.jpg`, `second_prize` renders 2位の景品 / 長野県ギフト with the specified catalog description and `/naganofift.jpg`, and `first_prize` retains the existing first-place page and description
-- AND first-prize title, description, beef image, and catalog image enter once in sequence over about one second when that slide mounts; same-stage polls do not restart the entrance, and leaving and re-entering the stage plays it again
-- AND reduced motion shows the title, full description, and both images immediately, without changing image placement or blocking presentation controls
+- AND third-prize label, title, description, and image enter in a restrained sequence; second-prize content follows the same sequence with a slightly longer title and image reveal; first-prize label, title, description, beef image, and catalog image form the final, most prominent reveal over about 1.3 seconds
+- AND each prize reveal plays once when its slide mounts, same-stage polls do not restart it, and leaving and re-entering the stage plays it again
+- AND reduced motion shows every prize label, title, full description, and image immediately, without changing image placement or blocking presentation controls
 - AND the presenter deck includes one prize slide for each populated rank after all rank announcements, in 3rd → 2nd → 1st order, independent of tied-winner count
 - AND each prize slide is omitted when its corresponding rank is empty; no prize slides appear when all ranks are empty
 

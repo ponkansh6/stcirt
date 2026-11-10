@@ -89,7 +89,7 @@ type PrizeSlideConfig = {
 
 const prizeSlideConfigs: Record<PrizeState, PrizeSlideConfig> = {
   third_prize: {
-    sectionClassName: styles.additionalPrize,
+    sectionClassName: `${styles.additionalPrize} ${styles.thirdPrize}`,
     headerClassName: styles.additionalPrizeHeader,
     descriptionClassName: styles.additionalPrizeDescription,
     headingId: "additional-prize-title",
@@ -108,7 +108,7 @@ const prizeSlideConfigs: Record<PrizeState, PrizeSlideConfig> = {
     ],
   },
   second_prize: {
-    sectionClassName: styles.additionalPrize,
+    sectionClassName: `${styles.additionalPrize} ${styles.secondPrize}`,
     headerClassName: styles.additionalPrizeHeader,
     descriptionClassName: styles.additionalPrizeDescription,
     headingId: "additional-prize-title",

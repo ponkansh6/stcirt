@@ -705,6 +705,88 @@
   text-align: center;
 }
 
+.thirdPrize,
+.secondPrize {
+  --prize-reveal-ease: cubic-bezier(0.2, 0.75, 0.25, 1);
+  --prize-label-duration: 420ms;
+  --prize-title-duration: 520ms;
+  --prize-description-duration: 420ms;
+  --prize-image-duration: 600ms;
+  --prize-label-delay: 0ms;
+  --prize-title-delay: 100ms;
+  --prize-description-delay: 220ms;
+  --prize-image-delay: 300ms;
+}
+
+.secondPrize {
+  --prize-label-duration: 460ms;
+  --prize-title-duration: 600ms;
+  --prize-image-duration: 680ms;
+  --prize-title-delay: 120ms;
+  --prize-description-delay: 280ms;
+  --prize-image-delay: 360ms;
+}
+
+.thirdPrize .additionalPrizeHeader > p:first-child,
+.secondPrize .additionalPrizeHeader > p:first-child {
+  animation: prizeLabelReveal var(--prize-label-duration) var(--prize-reveal-ease)
+    var(--prize-label-delay) both;
+}
+
+.thirdPrize .additionalPrizeHeader h1,
+.secondPrize .additionalPrizeHeader h1 {
+  animation: prizeTitleReveal var(--prize-title-duration) var(--prize-reveal-ease)
+    var(--prize-title-delay) both;
+}
+
+.thirdPrize .additionalPrizeDescription,
+.secondPrize .additionalPrizeDescription {
+  animation: prizeContentReveal var(--prize-description-duration) var(--prize-reveal-ease)
+    var(--prize-description-delay) both;
+}
+
+.thirdPrize .additionalPrizeImage,
+.secondPrize .additionalPrizeImage {
+  animation: prizeContentReveal var(--prize-image-duration) var(--prize-reveal-ease)
+    var(--prize-image-delay) both;
+}
+
+@keyframes prizeLabelReveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes prizeTitleReveal {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes prizeContentReveal {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .additionalPrizeHeader > p:first-child {
   margin: 0 0 var(--spacing-projection-block-1);
   color: var(--color-presentation-71603d);
@@ -742,14 +824,16 @@
 }
 
 .firstPrize {
-  --first-prize-title-delay: 0ms;
-  --first-prize-title-duration: 640ms;
-  --first-prize-description-delay: 180ms;
-  --first-prize-description-duration: 500ms;
-  --first-prize-beef-delay: 360ms;
-  --first-prize-beef-duration: 540ms;
-  --first-prize-catalog-delay: 460ms;
-  --first-prize-catalog-duration: 540ms;
+  --first-prize-label-delay: 0ms;
+  --first-prize-label-duration: 420ms;
+  --first-prize-title-delay: 100ms;
+  --first-prize-title-duration: 700ms;
+  --first-prize-description-delay: 300ms;
+  --first-prize-description-duration: 520ms;
+  --first-prize-beef-delay: 500ms;
+  --first-prize-beef-duration: 620ms;
+  --first-prize-catalog-delay: 680ms;
+  --first-prize-catalog-duration: 620ms;
   --first-prize-ease: cubic-bezier(0.2, 0.75, 0.25, 1);
   box-sizing: border-box;
   display: flex;
@@ -769,6 +853,8 @@
   font-size: clamp(1.5rem, 3.2cqw, 3.5rem);
   font-weight: 700;
   letter-spacing: 0.14em;
+  animation: prizeLabelReveal var(--first-prize-label-duration) var(--first-prize-ease)
+    var(--first-prize-label-delay) both;
 }
 
 .firstPrizeHeader h1 {
@@ -864,7 +950,16 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .thirdPrize .additionalPrizeHeader > p:first-child,
+  .secondPrize .additionalPrizeHeader > p:first-child,
+  .thirdPrize .additionalPrizeHeader h1,
+  .secondPrize .additionalPrizeHeader h1,
+  .thirdPrize .additionalPrizeDescription,
+  .secondPrize .additionalPrizeDescription,
+  .thirdPrize .additionalPrizeImage,
+  .secondPrize .additionalPrizeImage,
   .firstPrizeHeader h1,
+  .firstPrizeHeader > p:not(.firstPrizeDescription),
   .firstPrizeDescription,
   .firstPrizeBeef,
   .firstPrizeCatalog {
