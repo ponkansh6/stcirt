@@ -330,7 +330,7 @@ const JS_EXPR_KW = new Set(['return', 'yield', 'await', 'case', 'default', 'else
 const CLASS_FNS = new Set(['cn', 'clsx', 'classNames', 'classnames', 'twMerge', 'twJoin', 'cva', 'cx', 'tv']);
 function jsxPseudo(src) {
   const n = src.length;
-  const out = new Array(n);
+  const out = Array.from({ length: n });
   for (let k = 0; k < n; k++) out[k] = src[k] === '\n' ? '\n' : ' ';
   const classes = [];
   const calls = [];
@@ -835,7 +835,7 @@ function tierOf(gate) {
 function fontFamilyCount(ctx) {
   const fams = new Set();
   for (const [prop, val] of Object.entries(ctx.tokens || {})) {
-    if (/^--font-/.test(prop)) fams.add(famKey(firstFamily(resolveVars(val, ctx.tokens))));
+    if (prop.startsWith('--font-')) fams.add(famKey(firstFamily(resolveVars(val, ctx.tokens))));
   }
   return fams.size;
 }
@@ -1555,7 +1555,7 @@ function check24(ctx) {
 function check24a(ctx) {
   const spaceVals = new Map();
   for (const [k, v] of Object.entries(ctx.tokens)) {
-    if (!/^--space-/.test(k)) continue;
+    if (!k.startsWith('--space-')) continue;
     const px = pxOf(resolveVars(v, ctx.tokens));
     if (px != null && px > 0) spaceVals.set(px, k);
   }
@@ -1633,8 +1633,8 @@ function check27(ctx) {
   const tw = twGroup(ctx);
   const moves = (r) => r.decls.some((d) => /^(transform|translate|scale|rotate)$/.test(d.prop) && !/^none\b/.test(d.value.trim()));
   const hasMotion = ctx.rules.some((r) => r.keyframes)
-    || ctx.rules.some((r) => r.decls.some((d) => /^transition/.test(d.prop) && /transform/.test(d.value)))
-    || (ctx.rules.some((r) => r.decls.some((d) => /^transition/.test(d.prop) && /(^|[\s,])all\b/.test(d.value))) && ctx.rules.some((r) => /:(hover|active|focus)/.test(r.selector) && moves(r)));
+    || ctx.rules.some((r) => r.decls.some((d) => d.prop.startsWith('transition') && /transform/.test(d.value)))
+    || (ctx.rules.some((r) => r.decls.some((d) => d.prop.startsWith('transition') && /(^|[\s,])all\b/.test(d.value))) && ctx.rules.some((r) => /:(hover|active|focus)/.test(r.selector) && moves(r)));
   if (!hasMotion && !tw.motion) return;
   const hasPRM = ctx.rules.some((r) => r.media && /prefers-reduced-motion/i.test(r.media))
     || ctx.cssFiles.some((f) => /prefers-reduced-motion/i.test(stripComments(f.raw)))
@@ -1804,8 +1804,8 @@ function check37(ctx) {
   for (const r of ctx.rules) {
     if (r.selector === '@font-face') continue;
     for (const d of r.decls) {
-      if (d.prop !== 'font-family' && !/^--font-/.test(d.prop)) continue;
-      if (/^--font-/.test(d.prop) && !isTokenRule(r)) continue;
+      if (d.prop !== 'font-family' && !d.prop.startsWith('--font-')) continue;
+      if (d.prop.startsWith('--font-') && !isTokenRule(r)) continue;
       const fam = firstFamily(resolveVars(d.value, ctx.tokens));
       if (!fam || generic.has(fam) || fam.startsWith('var(')) continue;
       if (![...families.keys()].some((k) => famKey(k) === famKey(fam))) families.set(fam, { file: r.file, line: d.line });
@@ -1849,7 +1849,7 @@ function check39(ctx) {
   if (!hasInputs) return;
   const inputSel = /(^|[\s,>+~])(input|textarea|select)\b|__input|__field|\.(input|field)\b/;
   const widthOf = (v) => { const m = /(\d+(?:\.\d+)?)px/.exec(v); return m ? parseFloat(m[1]) : null; };
-  let baseW = null, baseWhere = null;
+  let baseW = null;
   for (const r of ctx.rules) {
     if (!inputSel.test(r.selector) || /:hover|:focus|:active|:disabled|\[|:checked/.test(r.selector)) {
       continue;
@@ -1857,7 +1857,7 @@ function check39(ctx) {
     for (const d of r.decls) {
       if (d.prop === 'border' || d.prop === 'border-width') {
         const w = widthOf(d.value);
-        if (w != null && baseW == null) { baseW = w; baseWhere = { file: r.file, line: d.line }; }
+        if (w != null && baseW == null) baseW = w;
       }
     }
   }
@@ -1875,7 +1875,7 @@ function check39(ctx) {
     }
     if (/:focus/.test(r.selector)) {
       const setsBorder = r.decls.some((d) => /^border(-color)?$/.test(d.prop));
-      const setsOutline = r.decls.some((d) => /^outline/.test(d.prop));
+      const setsOutline = r.decls.some((d) => d.prop.startsWith('outline'));
       if (setsBorder && !setsOutline) {
         report('39a', 'FAIL', r.file, r.line, `focus state via border on ${r.selector}`, 'Focus ring via outline, not border');
       }
@@ -2071,7 +2071,7 @@ function check48(ctx) {
   for (const [prop, val] of Object.entries(ctx.tokens)) {
     if (/^--(font|color)-/.test(prop) && /FILL ME/i.test(val)) {
       const tr = ctx.rules.find((r) => isTokenRule(r) && r.decls.some((d) => d.prop === prop));
-      report(48, 'FAIL', tr ? tr.file : ctx.cssFiles[0]?.file || ctx.docs[0]?.file, tr ? tr.decls.find((d) => d.prop === prop)?.line : 1, `${prop} is still the scaffold placeholder "FILL ME"`, /^--font-/.test(prop) ? 'Fill the face from the theme tokens (scaffold) or fonts.md on a custom run before building' : 'Fill the colour from the theme tokens (scaffold) or direction.md on a custom run before building');
+      report(48, 'FAIL', tr ? tr.file : ctx.cssFiles[0]?.file || ctx.docs[0]?.file, tr ? tr.decls.find((d) => d.prop === prop)?.line : 1, `${prop} is still the scaffold placeholder "FILL ME"`, prop.startsWith('--font-') ? 'Fill the face from the theme tokens (scaffold) or fonts.md on a custom run before building' : 'Fill the colour from the theme tokens (scaffold) or direction.md on a custom run before building');
     }
   }
   for (const r of ctx.rules) {
@@ -2110,7 +2110,6 @@ function check48(ctx) {
     while ((m = re.exec(doc.src))) {
       const lit = /#[0-9a-fA-F]{3,8}\b|oklch\([^)]*\)|rgba?\([^)]*\)|hsla?\([^)]*\)/.exec(m[1]);
       if (lit && parseColor(lit[0])) {
-        const isOklch = lit[0].toLowerCase().startsWith('oklch');
         const ev = `inline-style colour literal ${trunc(lit[0], 30)}`;
         report(48, 'FAIL', doc.file, doc.lineOf(m.index), ev, 'Lift the value into the token block');
       }
@@ -3269,7 +3268,7 @@ function check15Fade(ctx) {
       const set = focusProps.get(base) || new Set();
       for (const d of r.decls) {
         if (d.prop === 'box-shadow') set.add('box-shadow');
-        if (/^outline/.test(d.prop)) set.add('outline');
+        if (d.prop.startsWith('outline')) set.add('outline');
       }
       focusProps.set(base, set);
     }
@@ -3492,8 +3491,8 @@ function twInfo(ctx, toks, tw) {
     }
     if (/^(?:scale|translate|rotate|skew)-/.test(b)) {
       f.transform = true;
-      if (hover && /^scale-/.test(b) && !/^scale-(?:[xy]-)?100$/.test(b)) f.hScale = f.hScale || tok;
-      if (hover && /^rotate-/.test(b) && b !== 'rotate-0') f.hRotate = f.hRotate || tok;
+      if (hover && b.startsWith('scale-') && !/^scale-(?:[xy]-)?100$/.test(b)) f.hScale = f.hScale || tok;
+      if (hover && b.startsWith('rotate-') && b !== 'rotate-0') f.hRotate = f.hRotate || tok;
       continue;
     }
     if (/^bg-(?:gradient-to-|linear-|radial|conic)|^bg-\[(?:repeating-)?(?:linear|radial|conic)-gradient/.test(b) || /^\[background(?:-image)?:[^\]]*gradient\(/.test(b)) f.grad = true;
@@ -4030,7 +4029,7 @@ function shareProjects(contexts) {
       Object.assign(tokens, c.tokens);
       const tv = twGroup(c).variants;
       const sel = (re) => c.rules.some((r) => re.test(r.selector));
-      shared.focus = shared.focus || sel(/:focus/) || [...tv].some((v) => /^focus/.test(v));
+      shared.focus = shared.focus || sel(/:focus/) || [...tv].some((v) => v.startsWith('focus'));
       shared.active = shared.active || sel(/:active/) || tv.has('active');
       shared.disabled = shared.disabled || sel(/:disabled|\[disabled\]|aria-disabled/) || tv.has('disabled') || tv.has('aria-disabled');
       shared.prm = shared.prm || /prefers-reduced-motion/i.test(stripComments(c.allCss)) || tv.has('motion-reduce') || tv.has('motion-safe');
@@ -4318,7 +4317,7 @@ if (opts.kept) {
         for (const x of bf.controls || []) if (!(af.controls || []).includes(x) && !(!x.includes('[name=') && (af.controls || []).some((y) => y.startsWith(`${x}[name=`))) && !allowed.some((t) => x.toLowerCase().includes(t) && t.length >= 4)) hard.forms.add(`${x} in ${bf.key} (${k})`);
       }
     }
-    for (const x of [...hard.fields]) if ([...hard.fields].some((y) => y.startsWith(`${x} in `))) hard.fields.delete(x);
+    for (const x of hard.fields) if ([...hard.fields].some((y) => y.startsWith(`${x} in `))) hard.fields.delete(x);
     for (const [k, set] of Object.entries(hard)) if (set.size) report('kept', 'FAIL', SNAP, 1, k === 'script hooks' ? `a script still queries what its page no longer has: ${list(set)}` : k === 'forms' ? `a form lost what it had before: ${list(set)}` : `${k} the page had before and no longer has: ${list(set)}`, k === 'script hooks' ? 'Keep the ids, classes and attributes scripts query, or change the script with the markup' : fix);
     for (const [k, set] of Object.entries(soft)) if (set.size) report('kept', 'WARN', SNAP, 1, `${k} gone or reworded since the before record: ${list(set)}`, 'Restore it, or record it in the stamp: /* Hallmark · reworded "<old>" to "<new>" · <the gate that named it> */ or dropped <item> · <the reason>');
     if (wordsWas > 80 && wordsNow < wordsWas * 0.6) report('kept', 'WARN', SNAP, 1, `the pages hold ${wordsNow} words where they held ${wordsWas}`, 'Check that no section of content was dropped');

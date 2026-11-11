@@ -14,7 +14,7 @@
 // ready <img> for a data-slot. --selector captures one element (a panel, a chart, a dialog) instead
 // of the viewport; --full captures the whole scroll height. It never draws a browser bar or a device
 // frame: the page frames the picture in the theme's material.
-import { mkdirSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
@@ -108,12 +108,11 @@ try {
       await p.bringToFront();
       const slug = route === '/' ? 'home' : route.replace(/^\/|\/$/g, '').replace(/[^\w-]+/g, '-');
       const file = join(out, `${name}-${slug}-${size}${selector ? '-part' : ''}.png`);
-      let shot;
       if (selector) {
         const el = await p.$(selector);
         if (!el) { console.log(`skip ${route} at ${size}: no element matches ${selector}`); await p.close(); continue; }
-        shot = await el.screenshot({ path: file });
-      } else shot = await p.screenshot({ path: file, fullPage: has('full') });
+        await el.screenshot({ path: file });
+      } else await p.screenshot({ path: file, fullPage: has('full') });
       const dims = await p.evaluate((full) => [innerWidth, full ? document.documentElement.scrollHeight : innerHeight], has('full'));
       const box = selector ? await (await p.$(selector)).boundingBox() : { width: dims[0], height: dims[1] };
       made.push({ file, w: Math.round(box.width * scale), h: Math.round(box.height * scale), route, size });

@@ -414,7 +414,7 @@ async function photos() {
         let res;
         for (let t = 0; t < 4; t++) { res = await fetch(url, { headers: { 'User-Agent': 'Hallmark/2.0 (https://github.com/Nutlope/hallmark; theme.mjs photos --save)' }, signal: AbortSignal.timeout(60000) }); if (res.status !== 429) break; await new Promise((ok) => setTimeout(ok, 10000 * (t + 1))); }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        if (!/^image\//.test(res.headers.get('content-type') || '')) throw new Error(`not an image (${res.headers.get('content-type') || 'no content-type'})`);
+        if (!(res.headers.get('content-type') || '').startsWith('image/')) throw new Error(`not an image (${res.headers.get('content-type') || 'no content-type'})`);
         writeFileSync(file, Buffer.from(await res.arrayBuffer())); p.saved = file;
       } catch (e) { p.saved = null; p.error = String(e.message || e); }
     }

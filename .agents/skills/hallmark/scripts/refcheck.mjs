@@ -249,7 +249,7 @@ while (queue.length) {
   for (const n of names) for (const c of BY_BASE.get(n) || []) if (!reach.has(c)) { reach.add(c); if (c.endsWith('.md')) queue.push(c); }
 }
 for (const f of themeFiles) reach.add(f);
-for (const f of [...reach]) {
+for (const f of Array.from(reach)) {
   if (!f.endsWith('.md')) continue;
   for (const m of read(f).matchAll(/([\w-]+)\/<[\w-]+>\.md/g)) for (const c of MD) if (basename(dirname(c)) === m[1]) reach.add(c);
 }

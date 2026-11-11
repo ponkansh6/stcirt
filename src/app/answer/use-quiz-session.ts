@@ -23,12 +23,18 @@ import {
   submitAnswerBatch,
 } from "@/lib/api/client";
 import type { QuizQuestion } from "@/types/quiz";
-import { shuffleChoices, type ShuffledChoices } from "@/lib/shuffle";
-import { QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
+import { shuffleChoices } from "@/lib/shuffle";
+import { EXAM_QUESTION_COUNT, QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
+import {
+  clearAssistedDraft,
+  readAssistedDraft,
+  writeAssistedDraft,
+  type AssistedDraft,
+  type LoadedQuiz,
+} from "./assisted-draft";
 
-const EXAM_SIZE = 5;
+export type { LoadedQuiz } from "./assisted-draft";
 
-export type LoadedQuiz = { question: QuizQuestion; shuffled: ShuffledChoices };
 export type Phase =
   | { kind: "ready" }
   | { kind: "checking-submission" }
@@ -75,9 +81,6 @@ export type AnswerMode = AnswerScope;
 export type AssistedScreen = "closed" | "login" | "active";
 
 const ASSISTED_MODE_KEY = "stcirt-answer-scope";
-const ASSISTED_DRAFT_KEY = "stcirt-assisted-answer-draft";
-const ASSISTED_DRAFT_SCHEMA_VERSION = 1;
-const ASSISTED_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 
 type BatchAnswer =
   | { questionId: number; selectedIndex: number }
@@ -98,8 +101,8 @@ function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
   const integrity = submission.restoreIntegrity;
   if (
     integrity?.status !== "complete" ||
-    integrity.questions.length !== EXAM_SIZE ||
-    submission.answers.length !== EXAM_SIZE
+    integrity.questions.length !== EXAM_QUESTION_COUNT ||
+    submission.answers.length !== EXAM_QUESTION_COUNT
   ) {
     return false;
   }
@@ -107,8 +110,8 @@ function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
   const questionIds = questions.map(({ id }) => id);
   const answerIds = submission.answers.map(({ questionId }) => questionId);
   if (
-    new Set(questionIds).size !== EXAM_SIZE ||
-    new Set(answerIds).size !== EXAM_SIZE ||
+    new Set(questionIds).size !== EXAM_QUESTION_COUNT ||
+    new Set(answerIds).size !== EXAM_QUESTION_COUNT ||
     questions.some(({ id }, index) => index > 0 && id <= questions[index - 1]!.id) ||
     questions.some(({ answerType, choiceCount }) =>
       answerType === "freeText"
@@ -135,7 +138,7 @@ function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
     }
     if (answer.answerKind === "legacy") {
       return (
-        index === EXAM_SIZE - 1 &&
+        index === EXAM_QUESTION_COUNT - 1 &&
         Number.isInteger(answer.selectedIndex) &&
         answer.selectedIndex! >= 0 &&
         answer.selectedIndex! < QUIZ_CHOICES_PER_QUESTION &&
@@ -200,8 +203,8 @@ function restoreSavedAnswers(
   try {
     if (
       (expectedSubmissionId !== undefined && submission.submissionId !== expectedSubmissionId) ||
-      submission.answers.length !== EXAM_SIZE ||
-      quizzes.length !== EXAM_SIZE
+      submission.answers.length !== EXAM_QUESTION_COUNT ||
+      quizzes.length !== EXAM_QUESTION_COUNT
     ) {
       throw new Error("submission identity or shape mismatch");
     }
@@ -263,135 +266,6 @@ function restoreSavedAnswers(
     };
   } catch {
     throw new InvalidSavedSubmissionError();
-  }
-}
-
-type AssistedDraft = {
-  schemaVersion: number;
-  expiresAt: number;
-  participantId: number;
-  quizzes: LoadedQuiz[];
-  selections: Record<number, number>;
-  freeResponses: Record<number, string>;
-  legacyAnswerIds: number[];
-  submissionId: string;
-  revision: number;
-};
-
-function clearAssistedDraft() {
-  try {
-    window.sessionStorage.removeItem(ASSISTED_DRAFT_KEY);
-  } catch {
-    // Storage may be unavailable; the draft then cannot be resumed.
-  }
-}
-
-function readAssistedDraft(expectedParticipantId: number): AssistedDraft | null {
-  try {
-    const raw = window.sessionStorage.getItem(ASSISTED_DRAFT_KEY);
-    if (raw === null) return null;
-    const value: unknown = JSON.parse(raw);
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      clearAssistedDraft();
-      return null;
-    }
-    const draft = value as Partial<AssistedDraft>;
-    if (
-      draft.schemaVersion !== ASSISTED_DRAFT_SCHEMA_VERSION ||
-      !Number.isFinite(draft.expiresAt) ||
-      draft.expiresAt! <= Date.now() ||
-      !Number.isInteger(draft.participantId) ||
-      draft.participantId !== expectedParticipantId ||
-      !Array.isArray(draft.quizzes) ||
-      draft.quizzes.length !== EXAM_SIZE ||
-      !draft.selections ||
-      typeof draft.selections !== "object" ||
-      Array.isArray(draft.selections) ||
-      !draft.freeResponses ||
-      typeof draft.freeResponses !== "object" ||
-      Array.isArray(draft.freeResponses) ||
-      (draft.legacyAnswerIds !== undefined &&
-        (!Array.isArray(draft.legacyAnswerIds) ||
-          draft.legacyAnswerIds.some((id) => !Number.isInteger(id) || id <= 0))) ||
-      typeof draft.submissionId !== "string" ||
-      draft.submissionId.length === 0 ||
-      !Number.isInteger(draft.revision) ||
-      draft.revision! < 0
-    ) {
-      clearAssistedDraft();
-      return null;
-    }
-    const ids = draft.quizzes.map(({ question }) => question.id);
-    if (
-      new Set(ids).size !== EXAM_SIZE ||
-      ids.some((id, index) => index > 0 && id <= ids[index - 1]!) ||
-      draft.quizzes.some(
-        ({ question, shuffled }) =>
-          !Number.isInteger(question.id) ||
-          question.id <= 0 ||
-          typeof question.question !== "string" ||
-          !Array.isArray(question.choices) ||
-          question.choices.some((choice) => typeof choice !== "string") ||
-          (question.answerType !== "selected" && question.answerType !== "freeText") ||
-          (question.answerType === "selected" && question.choices.length === 0) ||
-          (question.answerType === "freeText" && question.choices.length !== 0) ||
-          !shuffled ||
-          !Array.isArray(shuffled.choices) ||
-          shuffled.choices.length !== question.choices.length ||
-          shuffled.choices.some((choice) => typeof choice !== "string") ||
-          new Set(question.choices).size !== question.choices.length ||
-          new Set(shuffled.choices).size !== shuffled.choices.length ||
-          !question.choices.every((choice) => shuffled.choices.includes(choice)) ||
-          !Array.isArray(shuffled.choiceIndices) ||
-          shuffled.choiceIndices.length !== question.choices.length ||
-          new Set(shuffled.choiceIndices).size !== shuffled.choiceIndices.length ||
-          shuffled.choiceIndices.some(
-            (index, displayIndex) =>
-              !Number.isInteger(index) ||
-              index < 0 ||
-              index >= question.choices.length ||
-              shuffled.choices[displayIndex] !== question.choices[index],
-          ),
-      ) ||
-      Object.entries(draft.selections).some(([questionId, index]) => {
-        const quiz = draft.quizzes!.find(({ question }) => question.id === Number(questionId));
-        return (
-          !quiz ||
-          !Number.isInteger(index) ||
-          index < 0 ||
-          index >= quiz.shuffled.choiceIndices.length
-        );
-      }) ||
-      Object.entries(draft.freeResponses).some(
-        ([questionId, response]) =>
-          !ids.includes(Number(questionId)) ||
-          typeof response !== "string" ||
-          response.length > 1000,
-      ) ||
-      (draft.legacyAnswerIds ?? []).some((id) => !ids.includes(id))
-    ) {
-      clearAssistedDraft();
-      return null;
-    }
-    return { ...draft, legacyAnswerIds: draft.legacyAnswerIds ?? [] } as AssistedDraft;
-  } catch {
-    clearAssistedDraft();
-    return null;
-  }
-}
-
-function writeAssistedDraft(draft: Omit<AssistedDraft, "schemaVersion" | "expiresAt">) {
-  try {
-    window.sessionStorage.setItem(
-      ASSISTED_DRAFT_KEY,
-      JSON.stringify({
-        ...draft,
-        schemaVersion: ASSISTED_DRAFT_SCHEMA_VERSION,
-        expiresAt: Date.now() + ASSISTED_DRAFT_TTL_MS,
-      } satisfies AssistedDraft),
-    );
-  } catch {
-    // Storage may be unavailable; in-memory answers remain usable for this visit.
   }
 }
 
@@ -783,8 +657,8 @@ export function useQuizSession() {
       const questions = await fetchExamQuestions();
       if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return null;
       if (
-        questions.length !== EXAM_SIZE ||
-        new Set(questions.map(({ id }) => id)).size !== EXAM_SIZE ||
+        questions.length !== EXAM_QUESTION_COUNT ||
+        new Set(questions.map(({ id }) => id)).size !== EXAM_QUESTION_COUNT ||
         questions.some(({ id }, index) => index > 0 && id <= questions[index - 1]!.id)
       ) {
         throw new Error("Invalid exam question batch");
@@ -1082,7 +956,8 @@ export function useQuizSession() {
 
   const persistAssistedDraft = useCallback(
     (selections = selectionsRef.current, freeResponses = freeResponsesRef.current) => {
-      if (answerModeRef.current !== "assisted" || quizzesRef.current.length !== EXAM_SIZE) return;
+      if (answerModeRef.current !== "assisted" || quizzesRef.current.length !== EXAM_QUESTION_COUNT)
+        return;
       const participantId = assistedParticipantIdRef.current;
       const currentSubmissionId = submissionIdRef.current;
       /* v8 ignore if -- Five editable assisted questions are reached only after both IDs are initialized. */
@@ -1415,7 +1290,7 @@ export function useQuizSession() {
               bootstrap.owner.id === participant.id &&
               failedAttemptRef.current !== null &&
               submissionIdRef.current !== null &&
-              quizzesRef.current.length === EXAM_SIZE &&
+              quizzesRef.current.length === EXAM_QUESTION_COUNT &&
               (mode === "owner" || assistedParticipantIdRef.current === target.id);
             if (pendingAttemptMatchesScope) {
               reloadedAssistedRef.current = false;
@@ -1458,7 +1333,7 @@ export function useQuizSession() {
 
           const localSubmissionId = submissionIdRef.current;
           const localRevision = revisionRef.current;
-          const hasLocalCorrectionDraft = quizzesRef.current.length === EXAM_SIZE;
+          const hasLocalCorrectionDraft = quizzesRef.current.length === EXAM_QUESTION_COUNT;
           savedSubmissionRef.current = submission;
           if (
             resumedSameParticipant &&
@@ -1765,7 +1640,7 @@ export function useQuizSession() {
     const currentQuizzes = quizzesRef.current;
     const currentSelections = selectionsRef.current;
     if (
-      currentQuizzes.length !== EXAM_SIZE ||
+      currentQuizzes.length !== EXAM_QUESTION_COUNT ||
       currentQuizzes.some(({ question }) =>
         question.answerType === "freeText"
           ? !freeResponsesRef.current[question.id]?.trim() ||
@@ -2077,7 +1952,7 @@ export function useQuizSession() {
       try {
         let loaded = quizzesRef.current;
         const questionsMatchManifest = (items: LoadedQuiz[]) =>
-          items.length === EXAM_SIZE &&
+          items.length === EXAM_QUESTION_COUNT &&
           items.every(({ question }, index) => {
             const expected = integrity.questions[index]!;
             return (
@@ -2089,8 +1964,8 @@ export function useQuizSession() {
         if (!questionsMatchManifest(loaded)) {
           const questions = await fetchExamQuestions();
           if (
-            questions.length !== EXAM_SIZE ||
-            new Set(questions.map(({ id }) => id)).size !== EXAM_SIZE ||
+            questions.length !== EXAM_QUESTION_COUNT ||
+            new Set(questions.map(({ id }) => id)).size !== EXAM_QUESTION_COUNT ||
             questions.some(({ id }, index) => index > 0 && id <= questions[index - 1]!.id)
           ) {
             throw new Error("設問データを確認できませんでした。");

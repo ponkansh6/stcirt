@@ -91,7 +91,7 @@ async function shoot(page, file, tag, fullPage) {
 
 export async function renderCheck(htmlFiles, metaIn) {
   const failed = [];
-  const meta = { genre: null, postureByFile: {}, heroPostureByFile: {}, photoShapeByFile: {}, jobByFile: {}, stage: 'page', scope: 'page', before: false, ...(metaIn || {}) };
+  const meta = { genre: null, postureByFile: {}, heroPostureByFile: {}, photoShapeByFile: {}, jobByFile: {}, stage: 'page', scope: 'page', before: false, ...metaIn };
   const heroOnly = meta.stage === 'hero';
   SHOT_DIR = meta.before ? 'before' : 'shots';
   const inventories = {};
@@ -186,7 +186,7 @@ export async function renderCheck(htmlFiles, metaIn) {
             if (real >= f.threshold - 0.05) f.drop = true;
             else f.evidence = f.evidence.replace(/computed contrast [\d.]+:1/, `contrast ${real.toFixed(2)}:1 against the pixels behind`).replace(/\([\d.]+:1\)$/, `(${real.toFixed(2)}:1)`);
           }
-          for (const f of res) if (!f.drop) { const { probe, fg, threshold, drop, ...rest } = f; findings.push({ ...rest, file, line: 1, evidence: `[${width}px] ${f.evidence}` }); }
+          for (const f of res) if (!f.drop) { const { probe: _probe, fg: _fg, threshold: _threshold, drop: _drop, ...rest } = f; findings.push({ ...rest, file, line: 1, evidence: `[${width}px] ${f.evidence}` }); }
         }
         for (const [w, h] of [[1440, 900], [1920, 1080]]) {
           await page.setViewport({ width: w, height: h });
@@ -448,7 +448,7 @@ async function pixelsAroundRing(page, ring) {
 function observe(checkFold, meta) {
   meta = meta || { genre: null, posture: 'restrained' };
   const out = [];
-  const push = (gate, grade, evidence, fix, extra) => out.push({ gate: String(gate), grade, evidence, fix, ...(extra || {}) });
+  const push = (gate, grade, evidence, fix, extra) => out.push({ gate: String(gate), grade, evidence, fix, ...extra });
   const describe = (el) => {
     const cls = (el.className && typeof el.className === 'string') ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
     return el.tagName.toLowerCase() + cls;
@@ -665,7 +665,7 @@ function observe(checkFold, meta) {
         const x1 = Math.min(COLS - 1, Math.floor((Math.min(r.right, innerWidth) - 1) / CW));
         const y0 = Math.max(0, Math.floor(r.top / CW));
         const y1 = Math.min(ROWS - 1, Math.floor((Math.min(r.bottom, 800) - 1) / CW));
-        const turned = cs.transform !== 'none' && !/^matrix\(1, 0, 0, 1, /.test(cs.transform);
+        const turned = cs.transform !== 'none' && !cs.transform.startsWith('matrix(1, 0, 0, 1, ');
         for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
           if (turned) { const hit = document.elementFromPoint(x * CW + CW / 2, y * CW + CW / 2); if (!hit || !(hit === el || el.contains(hit))) continue; }
           grid[y * COLS + x] = 1;
