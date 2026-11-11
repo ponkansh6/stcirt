@@ -67,11 +67,13 @@ export default function SharedResultPanel({
   }, [refresh]);
 
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-10 sm:py-16">
-      <section className="rounded-2xl border border-border-subtle bg-surface p-5 shadow-card sm:p-8">
+    <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col justify-start px-4 py-8 sm:px-8 sm:py-12">
+      <section className="border-t-4 border-primary bg-surface px-1 pb-8 pt-6 sm:px-5 sm:pt-8">
         <h1 className="text-3xl font-bold tracking-tight text-balance">共有された代理回答の結果</h1>
         <p className="mt-3 text-sm font-semibold text-muted">しゅんたま検定</p>
-        <p className="mt-3 text-sm text-muted">このページはログイン不要の閲覧専用です。</p>
+        <p className="mt-3 inline-flex border-l-2 border-primary/50 pl-3 text-sm text-muted">
+          このページはログイン不要の閲覧専用です。
+        </p>
         {revoked || result === null ? (
           <p className="mt-6 rounded-xl bg-surface-2 p-4 text-muted">
             この共有URLは無効か、期限が切れています。

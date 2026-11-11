@@ -153,9 +153,9 @@ export default function ResultsPanel({
   return (
     <main
       ref={resultsRootRef}
-      className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-10 sm:py-16"
+      className="mx-auto flex w-full max-w-4xl flex-1 flex-col justify-start px-4 py-8 sm:px-8 sm:py-12"
     >
-      <section className="rounded-2xl border border-border-subtle bg-surface p-5 shadow-card sm:p-8">
+      <section className="border-t-4 border-primary bg-surface px-1 pb-8 pt-6 sm:px-5 sm:pt-8">
         {!authorized ? (
           <>
             <h1 className="text-3xl font-bold tracking-tight text-balance">

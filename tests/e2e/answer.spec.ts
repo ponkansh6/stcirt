@@ -89,22 +89,25 @@ test("@chromium answer login controls meet the selected target geometry at 1280p
   );
 });
 
-test("@chromium disables the answer glass header for stronger contrast and reduced transparency", async ({
+test("@chromium keeps the answer header opaque for stronger contrast and reduced transparency", async ({
   page,
 }) => {
   await mockParticipantSession(page);
   await mockQuestions(page);
   await page.goto("/answer");
 
-  const glassHeader = page.locator("header.glass-header");
-  await expect(glassHeader).toHaveCount(1);
-  await expect(glassHeader).toHaveCSS("backdrop-filter", /blur/);
+  const header = page.locator("#answer-global-header");
+  await expect(header).toHaveCount(1);
+  await expect(header).toHaveCSS("background-color", "rgb(247, 247, 241)");
+  await expect(header).toHaveCSS("backdrop-filter", "none");
 
   await page.emulateMedia({ contrast: "more" });
-  await expect(glassHeader).toHaveCSS("backdrop-filter", "none");
+  await expect(header).toHaveCSS("background-color", "rgb(247, 247, 241)");
+  await expect(header).toHaveCSS("backdrop-filter", "none");
 
   await page.emulateMedia({ contrast: "no-preference" });
-  await expect(glassHeader).toHaveCSS("backdrop-filter", /blur/);
+  await expect(header).toHaveCSS("background-color", "rgb(247, 247, 241)");
+  await expect(header).toHaveCSS("backdrop-filter", "none");
 
   const cdpSession = await page.context().newCDPSession(page);
   try {
@@ -114,7 +117,8 @@ test("@chromium disables the answer glass header for stronger contrast and reduc
     expect(
       await page.evaluate(() => matchMedia("(prefers-reduced-transparency: reduce)").matches),
     ).toBe(true);
-    await expect(glassHeader).toHaveCSS("backdrop-filter", "none");
+    await expect(header).toHaveCSS("background-color", "rgb(247, 247, 241)");
+    await expect(header).toHaveCSS("backdrop-filter", "none");
   } finally {
     await cdpSession.detach();
   }

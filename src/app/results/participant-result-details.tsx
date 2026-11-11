@@ -12,16 +12,16 @@ export default function ParticipantResultDetails({
 }) {
   return (
     <>
-      <dl className="mt-8 grid grid-cols-2 gap-2 sm:gap-4">
+      <dl className="mt-8 grid grid-cols-2 border-y border-border sm:grid-cols-[1fr_1fr]">
         {name !== undefined ? (
-          <div className="col-span-2 min-w-0 rounded-xl bg-surface-2 p-1.5 sm:p-5">
+          <div className="col-span-2 min-w-0 border-b border-border px-1 py-4 sm:px-3">
             <dt className="text-sm text-muted text-balance">名前</dt>
             <dd className="mt-1 min-w-0 break-words text-lg font-semibold [overflow-wrap:anywhere]">
               {name}
             </dd>
           </div>
         ) : null}
-        <div className="rounded-xl bg-surface-2 p-1.5 sm:p-5">
+        <div className="min-w-0 border-r border-border px-2 py-4 sm:px-3 sm:py-6">
           <dt className="text-sm text-muted text-balance">順位</dt>
           <dd className="mt-1 flex min-h-10 flex-wrap items-baseline gap-2">
             {result.isReference && result.equivalentRank !== null ? (
@@ -47,11 +47,15 @@ export default function ParticipantResultDetails({
             ) : null}
           </dd>
         </div>
-        <div className="rounded-xl bg-surface-2 p-1.5 sm:p-5">
+        <div className="min-w-0 px-2 py-4 sm:px-3 sm:py-6">
           <dt className="text-sm text-muted text-balance">得点</dt>
-          <dd className="mt-1 flex min-h-10 flex-nowrap items-baseline gap-1 whitespace-nowrap sm:gap-2">
-            <span className={`${scoreAndRankTextSize} font-bold`}>{result.score.toFixed(2)}点</span>
-            <span className="text-[clamp(0.5625rem,2.8vw,0.875rem)] font-medium text-muted">
+          <dd className="mt-1 flex min-h-10 min-w-0 flex-wrap items-baseline gap-x-1 gap-y-0.5 sm:gap-x-2">
+            <span
+              className={`${scoreAndRankTextSize} min-w-0 max-w-full font-bold [overflow-wrap:anywhere]`}
+            >
+              {result.score.toFixed(2)}点
+            </span>
+            <span className="min-w-0 max-w-full text-[clamp(0.5625rem,2.8vw,0.875rem)] font-medium text-muted [overflow-wrap:anywhere]">
               / {result.maxScore}点
             </span>
           </dd>
@@ -61,19 +65,16 @@ export default function ParticipantResultDetails({
         <h2 id="answer-details-heading" className="text-xl font-bold tracking-tight text-balance">
           回答明細
         </h2>
-        <ol className="mt-4 space-y-3">
+        <ol className="mt-4 divide-y divide-border border-y border-border">
           {result.questions.map((item) => (
-            <li
-              key={item.position}
-              className="min-w-0 rounded-xl border border-border bg-surface-2 p-4 sm:p-5"
-            >
-              <p className="break-words text-sm font-semibold text-muted [overflow-wrap:anywhere]">
-                問題 {item.position + 1}
+            <li key={item.position} className="min-w-0 py-5 sm:py-6">
+              <p className="break-words text-xs font-bold tracking-[0.12em] text-muted [overflow-wrap:anywhere]">
+                QUESTION {String(item.position + 1).padStart(2, "0")}
               </p>
               <p className="mt-2 whitespace-pre-wrap break-words font-medium [overflow-wrap:anywhere]">
                 {item.question}
               </p>
-              <div className="mt-4 border-t border-border/70 pt-3">
+              <div className="mt-4 border-l-2 border-primary/30 pl-4 pt-1">
                 {item.answer.kind === "selected" ? (
                   <>
                     <p className="text-xs font-semibold text-muted">あなたの回答</p>

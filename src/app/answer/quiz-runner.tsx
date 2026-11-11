@@ -1219,7 +1219,7 @@ export default function QuizRunner() {
               )}
             </div>
             <p
-              className="rounded-full border border-border-subtle bg-surface-2 px-3 py-1 text-sm font-bold"
+              className="border-l-2 border-answer-accent pl-3 text-sm font-bold tabular-nums"
               aria-live="polite"
             >
               回答済み {answeredCount}/5
