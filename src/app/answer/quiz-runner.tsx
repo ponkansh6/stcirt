@@ -1282,16 +1282,10 @@ export default function QuizRunner() {
                     }}
                     aria-label={`第${index + 1}問${answered ? "✓ 済" : "未回答"}へ移動`}
                     aria-current={current ? "location" : undefined}
-                    className={`${styles.progressLink} ${answered ? styles.progressAnswered : ""} ${current ? styles.progressCurrent : ""}`}
+                    className={`${styles.progressLink} flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight ${answered ? styles.progressAnswered : "border-control-border bg-surface-2 text-muted"} ${current ? styles.progressCurrent : ""}`}
                   >
-                    <span className={styles.progressNumber}>{index + 1}</span>
-                    <span
-                      aria-hidden="true"
-                      className={`${styles.progressStatus} ${answered ? styles.progressStatusAnswered : ""}`}
-                    >
-                      {answered ? "✓" : ""}
-                    </span>
-                    <span className="sr-only">{answered ? "回答済み" : "未回答"}</span>
+                    <span>第{index + 1}問</span>
+                    {answered ? "✓ 済" : "未回答"}
                   </a>
                 </li>
               );

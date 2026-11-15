@@ -14,16 +14,9 @@
 
 .progressLink {
   position: relative;
-  display: flex;
   min-height: 2.75rem;
-  min-width: 2.75rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 999px;
-  background: var(--color-surface-2);
-  color: var(--color-muted);
-  text-decoration: none;
+  border-width: 1px;
+  border-radius: 0.45rem;
   transition:
     background-color 140ms var(--ease-out-soft),
     border-color 140ms var(--ease-out-soft),
@@ -37,39 +30,9 @@
 }
 
 .progressCurrent {
-  border-width: 2px;
-  border-color: var(--color-answer-accent);
-  color: var(--color-text);
-}
-
-.progressNumber {
-  font-size: 1rem;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.progressStatus {
-  position: absolute;
-  top: -0.1rem;
-  right: -0.1rem;
-  display: flex;
-  width: 0.85rem;
-  height: 0.85rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 999px;
-  background: var(--color-bg);
-  color: var(--color-answer-accent);
-  font-size: 0.58rem;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.progressStatusAnswered {
-  border-color: var(--color-answer-accent);
-  background: var(--color-answer-selection);
+  outline: 2px solid var(--color-answer-accent);
+  outline-offset: 1px;
+  font-weight: 800;
 }
 
 .questionList {
@@ -293,10 +256,6 @@
 }
 
 @media (max-width: 420px) {
-  .progressLink {
-    min-width: 2.75rem;
-  }
-
   .timelineEntry {
     grid-template-columns: minmax(4.75rem, 0.38fr) minmax(0, 1fr);
     gap: 0.5rem;
