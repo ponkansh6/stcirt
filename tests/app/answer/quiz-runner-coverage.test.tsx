@@ -274,6 +274,149 @@ describe("QuizRunner remaining coverage states", () => {
     );
   });
 
+  it("groups a valid fifth-question itinerary and keeps saved A/B answers connected", () => {
+    const itinerary = [
+      "香港旅行の旅程です。AとBに回答してください。",
+      "",
+      "2/27 昼 到着",
+      "2/28 朝 A",
+      "2/28 午前 街歩き",
+      "",
+      "3/1 早朝（6:30）B",
+      "3/1 昼〜夜 ディズニー",
+    ].join("\n");
+    const quizzes = selectedQuizzes.map((quiz, index) =>
+      index === 4
+        ? {
+            ...quiz,
+            question: {
+              ...quiz.question,
+              question: itinerary,
+              answerType: "freeText" as const,
+              choices: [],
+            },
+          }
+        : quiz,
+    );
+    const setFreeResponsePart = vi.fn();
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        {
+          quizzes,
+          freeResponseParts: { 5: { a: "保存済みA", b: "保存済みB" } },
+          setFreeResponsePart,
+        },
+      ),
+    );
+
+    render(<QuizRunner />);
+
+    const question = document.getElementById("question-5");
+    expect(question).not.toBeNull();
+    expect(within(question as HTMLElement).getByRole("heading", { level: 2 })).toHaveTextContent(
+      "香港旅行の旅程です。",
+    );
+    expect(
+      within(question as HTMLElement).getByText("AとBに回答してください。"),
+    ).toBeInTheDocument();
+    expect(
+      within(question as HTMLElement)
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["2/27", "2/28", "3/1"]);
+    expect(within(question as HTMLElement).getByText("街歩き")).toBeInTheDocument();
+    expect(within(question as HTMLElement).getByText("ディズニー")).toBeInTheDocument();
+
+    const answerA = within(question as HTMLElement).getByRole("textbox", {
+      name: "A. 2/28 朝の食事",
+    });
+    const answerB = within(question as HTMLElement).getByRole("textbox", {
+      name: "B. 3/1 早朝（6:30）の食事",
+    });
+    expect(answerA).toHaveValue("保存済みA");
+    expect(answerB).toHaveValue("保存済みB");
+    fireEvent.change(answerA, { target: { value: "更新したA" } });
+    fireEvent.change(answerB, { target: { value: "更新したB" } });
+    expect(setFreeResponsePart).toHaveBeenNthCalledWith(1, 5, "a", "更新したA");
+    expect(setFreeResponsePart).toHaveBeenNthCalledWith(2, 5, "b", "更新したB");
+  });
+
+  it("renders empty inline A/B fields when no saved free-response parts are available", () => {
+    const quizzes = selectedQuizzes.map((quiz, index) =>
+      index === 4
+        ? {
+            ...quiz,
+            question: {
+              ...quiz.question,
+              question: "香港旅行の旅程です。\n2/28 朝 A\n3/1 早朝（6:30）B",
+              answerType: "freeText" as const,
+              choices: [],
+            },
+          }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(session({ kind: "answering" }, { quizzes }));
+
+    render(<QuizRunner />);
+
+    const question = document.getElementById("question-5");
+    expect(question).not.toBeNull();
+    expect(
+      within(question as HTMLElement).getByRole("textbox", { name: "A. 2/28 朝の食事" }),
+    ).toHaveValue("");
+    expect(
+      within(question as HTMLElement).getByRole("textbox", {
+        name: "B. 3/1 早朝（6:30）の食事",
+      }),
+    ).toHaveValue("");
+  });
+
+  it("falls back to the full fifth-question text when any itinerary line is invalid", () => {
+    const itinerary = [
+      "香港旅行の旅程です。AとBに回答してください。",
+      "2/28 朝 A",
+      "形式に合わない行は残します。",
+      "3/1 早朝（6:30）B",
+    ].join("\n");
+    const quizzes = selectedQuizzes.map((quiz, index) =>
+      index === 4
+        ? {
+            ...quiz,
+            question: {
+              ...quiz.question,
+              question: itinerary,
+              answerType: "freeText" as const,
+              choices: [],
+            },
+          }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(session({ kind: "answering" }, { quizzes }));
+
+    render(<QuizRunner />);
+
+    const question = document.getElementById("question-5");
+    expect(question).not.toBeNull();
+    const displayedQuestion =
+      within(question as HTMLElement)
+        .getByRole("heading", { level: 2 })
+        .textContent?.replace(/\s+/g, " ")
+        .trim() ?? "";
+    expect(displayedQuestion).toBe(itinerary.replace(/\s+/g, " ").trim());
+    expect(
+      within(question as HTMLElement).queryByRole("heading", { level: 3 }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(question as HTMLElement).getByRole("textbox", { name: "A. 2/28 朝の食事" }),
+    ).toHaveProperty("tagName", "TEXTAREA");
+    expect(
+      within(question as HTMLElement).getByRole("textbox", {
+        name: "B. 3/1 早朝（6:30）の食事",
+      }),
+    ).toHaveProperty("tagName", "TEXTAREA");
+  });
+
   it("reviews all five selected and free-text answers and reflects an edited selection", () => {
     const quizzes = selectedQuizzes.map((quiz, index) =>
       index === 1 || index === 3
