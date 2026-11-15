@@ -27,7 +27,59 @@ export type BatchAnswer =
   | { questionId: number; freeText: string }
   | { questionId: number; freeTextParts: { a: string; b: string } };
 
+export type NormalizedSelection = { indices: number[]; multiple: boolean };
+
+/** Shared selection-shape normalization for submission validation and immutable presentation snapshots. */
+export function normalizeSelectedChoiceIndices(input: {
+  selectionMode: "single" | "multiple" | null;
+  choiceCount: number;
+  selectedIndex: unknown;
+  selectedIndices: unknown;
+}): NormalizedSelection | null {
+  const { selectionMode, choiceCount, selectedIndex, selectedIndices } = input;
+  if (selectionMode !== null && selectionMode !== "single" && selectionMode !== "multiple")
+    return null;
+  const noIndexArray = selectedIndices === undefined || selectedIndices === null;
+  const multiple =
+    selectionMode === "multiple" ||
+    (selectionMode === null && Array.isArray(selectedIndices) && selectedIndex === null);
+  if (multiple) {
+    if (
+      selectedIndex !== null ||
+      !Array.isArray(selectedIndices) ||
+      selectedIndices.length !== 2 ||
+      new Set(selectedIndices).size !== 2 ||
+      selectedIndices.some((index) => !Number.isInteger(index) || index < 0 || index >= choiceCount)
+    )
+      return null;
+    return { indices: selectedIndices as number[], multiple: true };
+  }
+  if (
+    (selectionMode === null && !noIndexArray) ||
+    (selectedIndices !== undefined && selectedIndices !== null) ||
+    !Number.isInteger(selectedIndex) ||
+    (selectedIndex as number) < 0 ||
+    (selectedIndex as number) >= choiceCount
+  )
+    return null;
+  return { indices: [selectedIndex as number], multiple: false };
+}
+
 type FreeTextParts = { a: string; b: string };
+
+export function isValidFreeTextParts(value: unknown): value is FreeTextParts {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (
+    !("a" in value) ||
+    !("b" in value) ||
+    typeof value.a !== "string" ||
+    typeof value.b !== "string"
+  )
+    return false;
+  const a = value.a.trim();
+  const b = value.b.trim();
+  return a.length > 0 && b.length > 0 && a.length <= 1000 && b.length <= 1000;
+}
 
 function encodeFreeTextParts(parts: FreeTextParts): string {
   return JSON.stringify({ a: parts.a.trim(), b: parts.b.trim() });
@@ -287,26 +339,17 @@ export async function getLatestAnswerSubmission(participantId: number) {
           answer.answerKind === "freeText" &&
           answer.selectedIndex === null &&
           parts !== null &&
-          Boolean(parts.a.trim()) &&
-          Boolean(parts.b.trim()) &&
-          parts.a.trim().length <= 1000 &&
-          parts.b.trim().length <= 1000
+          isValidFreeTextParts(parts)
         );
       }
       return (
         answer.answerKind === "selected" &&
-        (currentQuestion.selectionMode === "multiple"
-          ? Array.isArray(answer.selectedIndices) &&
-            answer.selectedIndices.length === 2 &&
-            answer.selectedIndex === null &&
-            answer.selectedIndices.every(
-              (index) =>
-                Number.isInteger(index) && index >= 0 && index < currentQuestion.choiceCount,
-            )
-          : answer.selectedIndices === null &&
-            Number.isInteger(answer.selectedIndex) &&
-            answer.selectedIndex! >= 0 &&
-            answer.selectedIndex! < currentQuestion.choiceCount) &&
+        normalizeSelectedChoiceIndices({
+          selectionMode: currentQuestion.selectionMode,
+          choiceCount: currentQuestion.choiceCount,
+          selectedIndex: answer.selectedIndex,
+          selectedIndices: answer.selectedIndices,
+        }) !== null &&
         answer.freeText === null
       );
     });
@@ -462,24 +505,20 @@ async function saveAnswerSubmissionOnce(
           const text = "freeTextParts" in answer ? encodeFreeTextParts(answer.freeTextParts) : "";
           return (
             !("freeTextParts" in answer) ||
-            !answer.freeTextParts.a.trim() ||
-            !answer.freeTextParts.b.trim() ||
-            answer.freeTextParts.a.trim().length > 1000 ||
-            answer.freeTextParts.b.trim().length > 1000 ||
+            !isValidFreeTextParts(answer.freeTextParts) ||
             text.length > 2200
           );
         }
-        return question.selectionMode === "multiple"
-          ? !("selectedIndices" in answer) ||
-              answer.selectedIndices.length !== 2 ||
-              new Set(answer.selectedIndices).size !== 2 ||
-              answer.selectedIndices.some(
-                (index) =>
-                  !Number.isInteger(index) || index < 0 || index >= question.choices.length,
-              )
-          : !("selectedIndex" in answer) ||
-              answer.selectedIndex < 0 ||
-              answer.selectedIndex >= question.choices.length;
+        const normalizedSelection = normalizeSelectedChoiceIndices({
+          selectionMode: question.selectionMode === "multiple" ? "multiple" : "single",
+          choiceCount: question.choices.length,
+          selectedIndex: "selectedIndex" in answer ? answer.selectedIndex : null,
+          selectedIndices: "selectedIndices" in answer ? answer.selectedIndices : null,
+        });
+        return (
+          normalizedSelection === null ||
+          (question.selectionMode === "multiple") !== normalizedSelection.multiple
+        );
       })
     ) {
       throw new BatchSubmissionError("Answer type does not match its question", 400);

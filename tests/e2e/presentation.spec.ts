@@ -59,6 +59,7 @@ type PresentationState =
   | "opening"
   | "question"
   | "answer"
+  | "statistics"
   | "podium_preview"
   | "third"
   | "second"
@@ -167,7 +168,7 @@ async function installAdminApiMock(
     [
       "not_started",
       "opening",
-      ...(questionCount === 0 ? [] : (["question", "answer"] as const)),
+      ...(questionCount === 0 ? [] : (["question", "answer", "statistics"] as const)),
       "podium_preview",
       ...(options.skipEmptyRanks && !winnerEntries.some((entry) => entry.rank === 3)
         ? []
@@ -210,7 +211,7 @@ async function installAdminApiMock(
       .filter((slideState) => slideState !== "not_started")
       .map((slideState) => {
         let projection: Record<string, unknown>;
-        if (slideState === "question" || slideState === "answer") {
+        if (slideState === "question" || slideState === "answer" || slideState === "statistics") {
           projection = {
             state: slideState,
             question: {
@@ -239,6 +240,49 @@ async function installAdminApiMock(
                 : {}),
             },
           };
+          if (slideState === "statistics") {
+            projection = {
+              state: slideState,
+              question: {
+                id: 11,
+                ordinal: 1,
+                total: 1,
+                question: presentationQuestion.question,
+                choices: presentationQuestion.choices,
+                answerType: presentationQuestion.answerType ?? "selected",
+              },
+              statistics:
+                presentationQuestion.answerType === "freeText"
+                  ? {
+                      kind: "freeText",
+                      participantCount: winnerEntries.length,
+                      gradedCount: winnerEntries.length,
+                      ungradedCount: 0,
+                      uncountableCount: 0,
+                      ranges: [
+                        "0点",
+                        "0点超〜0.5点",
+                        "0.5点超〜1点",
+                        "1点超〜1.5点",
+                        "1.5点超〜2点",
+                      ].map((label, index) => ({
+                        label,
+                        count: index === 2 ? winnerEntries.length : 0,
+                      })),
+                    }
+                  : {
+                      kind: "selected",
+                      multiple: false,
+                      participantCount: winnerEntries.length,
+                      validRespondentCount: winnerEntries.length,
+                      uncountableCount: 0,
+                      choices: presentationQuestion.choices.map((label, index) => ({
+                        label,
+                        count: index === 0 ? winnerEntries.length : 0,
+                      })),
+                    },
+            };
+          }
         } else if (slideState === "third" || slideState === "second" || slideState === "first") {
           const rank = slideState === "third" ? 3 : slideState === "second" ? 2 : 1;
           projection = {
@@ -399,6 +443,49 @@ async function installAdminApiMock(
                   }
                 : {}),
             },
+          };
+        } else if (state === "statistics") {
+          const question = {
+            id: 11,
+            ordinal: 1,
+            total: 1,
+            question: presentationQuestion.question,
+            choices: presentationQuestion.choices,
+            answerType: presentationQuestion.answerType ?? "selected",
+          };
+          projection = {
+            state,
+            question,
+            statistics:
+              presentationQuestion.answerType === "freeText"
+                ? {
+                    kind: "freeText",
+                    participantCount: winnerEntries.length,
+                    gradedCount: winnerEntries.length,
+                    ungradedCount: 0,
+                    uncountableCount: 0,
+                    ranges: [
+                      "0点",
+                      "0点超〜0.5点",
+                      "0.5点超〜1点",
+                      "1点超〜1.5点",
+                      "1.5点超〜2点",
+                    ].map((label, index) => ({
+                      label,
+                      count: index === 2 ? winnerEntries.length : 0,
+                    })),
+                  }
+                : {
+                    kind: "selected",
+                    multiple: false,
+                    participantCount: winnerEntries.length,
+                    validRespondentCount: winnerEntries.length,
+                    uncountableCount: 0,
+                    choices: presentationQuestion.choices.map((label, index) => ({
+                      label,
+                      count: index === 0 ? winnerEntries.length : 0,
+                    })),
+                  },
           };
         } else if (state === "third" || state === "second" || state === "first") {
           const rank = state === "third" ? 3 : state === "second" ? 2 : 1;
@@ -647,6 +734,8 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
       return page.getByRole("heading", { name: questions[0].question });
     case "answer":
       return page.locator("[class*='answerReview']");
+    case "statistics":
+      return page.getByRole("heading", { name: "回答統計" });
     case "podium_preview":
       return page.getByRole("heading", { name: "いよいよ、結果発表です" });
     case "third":
@@ -974,6 +1063,7 @@ async function advanceTo(page: import("@playwright/test").Page, target: Presenta
   const stages: PresentationState[] = [
     "question",
     "answer",
+    "statistics",
     "podium_preview",
     "third",
     "second",
@@ -1404,6 +1494,7 @@ test("@chromium rapid presenter navigation settles on the latest slide after exi
   await page.locator("main").evaluate((element) => {
     element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
     element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
   });
 
   mock.releasePausedMutation();
@@ -1567,7 +1658,7 @@ test("@chromium presenter can leave and advance stages during an active answer r
   ).toBe(0);
   const advanceDuringReveal = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
-  await expect(slideFor(page, "podium_preview")).toBeVisible();
+  await expect(slideFor(page, "statistics")).toBeVisible();
   await advanceDuringReveal;
 });
 
@@ -1707,6 +1798,10 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
       state: "answer",
       text: [questions[0].question, ...questions[0].choices, "正解", questions[0].explanation],
     },
+    {
+      state: "statistics",
+      text: [questions[0].question, "回答統計", "全参加者 2 人", "カフェ", "2 人"],
+    },
     { state: "podium_preview", text: ["いよいよ、結果発表です", "どうぞお楽しみに"] },
     { state: "third", text: ["該当する受賞者はいません", "第三位"] },
     { state: "second", text: ["太郎", "0.00 ポイント", "第二位"] },
@@ -1760,7 +1855,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
       expect(inspection.outOfBounds).toBe(0);
       expect(inspection.pageCanScroll).toBe(false);
     }
-    if (stage.state === "question" || stage.state === "answer") {
+    if (stage.state === "question" || stage.state === "answer" || stage.state === "statistics") {
       if (stage.state === "answer") {
         await expect
           .poll(() => page.evaluate(() => window.__answerRevealAnimationEnds.length))
@@ -1778,6 +1873,38 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
     await expect(slideFor(page, nextStage.state)).toBeVisible();
     await adminRefresh;
   }
+});
+
+test("@chromium statistics direct position is shared with the public projection", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const mock = await installAdminApiMock(page);
+  mock.setPresentationPosition("statistics");
+  await signIn(page);
+  await openPresenter(page);
+
+  await expect(slideFor(page, "statistics")).toBeVisible();
+  await expect(page.getByText("全参加者 2 人")).toBeVisible();
+  await expect(page.getByText("2 人").first()).toBeVisible();
+  const layout = await page.evaluate(() => {
+    const canvas = document.querySelector('[data-testid="presentation-canvas"]');
+    if (!canvas) throw new Error("Presentation canvas is missing");
+    const bounds = canvas.getBoundingClientRect();
+    return {
+      canvasOutOfBounds: bounds.left < -1 || bounds.right > window.innerWidth + 1,
+      pageCanScroll: document.documentElement.scrollWidth > window.innerWidth,
+    };
+  });
+  expect(layout.canvasOutOfBounds).toBe(false);
+  expect(layout.pageCanScroll).toBe(false);
+
+  const publicPage = await page.context().newPage();
+  await publicPage.setViewportSize({ width: 390, height: 844 });
+  await publicPage.goto("/presentation");
+  await expect(publicPage.getByRole("heading", { name: "回答統計" })).toBeVisible();
+  await expect(publicPage.getByText("全参加者 2 人")).toBeVisible();
 });
 
 test("@chromium first-prize position is shared with the public projection and survives reload", async ({

@@ -300,7 +300,7 @@ describe("/api/admin/presentation route", () => {
     expect(operatePresentationControls).not.toHaveBeenCalled();
   });
 
-  it.each(["third_prize", "second_prize"] as const)(
+  it.each(["statistics", "third_prize", "second_prize"] as const)(
     "forwards the %s position through the existing admin route",
     async (state) => {
       const response = await POST(

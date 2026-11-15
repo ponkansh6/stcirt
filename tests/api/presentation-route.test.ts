@@ -24,6 +24,21 @@ const responseBoundaryCases = [
       expectedAnswer: "模範回答",
     },
   },
+  {
+    state: "statistics" as const,
+    question: { id: 1, ordinal: 1, total: 1, question: "選択問題", choices: ["A", "B"] },
+    statistics: {
+      kind: "selected" as const,
+      multiple: true,
+      participantCount: 4,
+      validRespondentCount: 3,
+      uncountableCount: 0,
+      choices: [
+        { label: "A", count: 2 },
+        { label: "B", count: 3 },
+      ],
+    },
+  },
   { state: "standby" as const },
 ] satisfies Awaited<ReturnType<typeof getPublicPresentation>>[];
 
@@ -131,6 +146,11 @@ describe("GET /api/presentation", () => {
 
       expect(payload).toEqual(projection);
       if (payload.state === "answer") expect(payload.question).not.toHaveProperty("responses");
+      if (payload.state === "statistics") {
+        expect(JSON.stringify(payload)).not.toContain("rawScore");
+        expect(JSON.stringify(payload)).not.toContain("displayName");
+        expect(JSON.stringify(payload)).not.toContain("answers");
+      }
       if (payload.state === "standby") expect(Object.keys(payload)).toEqual(["state"]);
     },
   );

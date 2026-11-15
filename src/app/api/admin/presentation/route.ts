@@ -88,6 +88,7 @@ export async function POST(request: Request) {
           "opening",
           "question",
           "answer",
+          "statistics",
           "podium_preview",
           "third",
           "second",

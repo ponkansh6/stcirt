@@ -619,6 +619,7 @@ describe("presentation repository", () => {
     await addQuestions();
     await startWithAggregate("free-text-question-stage");
     await operatePresentation("free-text-answer-one", "advance");
+    await operatePresentation("free-text-statistics-one", "advance");
     await operatePresentation("free-text-question-two", "advance");
 
     const admin = await getAdminPresentation();
@@ -773,6 +774,118 @@ describe("presentation repository", () => {
     });
   });
 
+  it("supports direct positioning on a one-question statistics slide", async () => {
+    await addQ5OnlyQuestion();
+    await op("aggregate", "one-question-statistics-aggregate");
+    await op("start", "one-question-statistics-start");
+    const controls = await getAdminPresentationControls();
+
+    const positioned = await setPresentationPosition(
+      "one-question-statistics-position",
+      "statistics",
+      0,
+      controls.snapshotRevision,
+      controls.version,
+    );
+    expect(positioned).toMatchObject({ state: "statistics", questionIndex: 0, questionCount: 1 });
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      question: { ordinal: 1, question: "Question 5", choices: [] },
+      statistics: {
+        kind: "freeText",
+        participantCount: 0,
+        gradedCount: 0,
+        ungradedCount: 0,
+        uncountableCount: 0,
+        ranges: [
+          { label: "0点", count: 0 },
+          { label: "0点超〜0.5点", count: 0 },
+          { label: "0.5点超〜1点", count: 0 },
+          { label: "1点超〜1.5点", count: 0 },
+          { label: "1.5点超〜2点", count: 0 },
+        ],
+      },
+    });
+  });
+
+  it("keeps the multiple-choice note unknown for legacy snapshots with only unanswered entries", async () => {
+    await addQuestions();
+    await addParticipant("legacy-only-unanswered");
+    await startWithAggregate("legacy-unanswered-statistics");
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ selectionMode: null })
+      .where(eq(schema.presentationQuestions.position, 0));
+    const controls = await getAdminPresentationControls();
+    await setPresentationPosition(
+      "legacy-unanswered-statistics-position",
+      "statistics",
+      0,
+      controls.snapshotRevision,
+      controls.version,
+    );
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      statistics: {
+        kind: "selected",
+        multiple: null,
+        participantCount: 1,
+        validRespondentCount: 0,
+        uncountableCount: 0,
+        choices: [{ count: 0 }, { count: 0 }],
+      },
+    });
+  });
+
+  it("infers a legacy selection mode only from normalized selected answers", async () => {
+    await addQuestions();
+    const multipleId = await addParticipant("legacy-valid-multiple");
+    const malformedId = await addParticipant("legacy-malformed-unanswered");
+    await startWithAggregate("legacy-valid-mode-statistics");
+    const entries = await testDb.db.select().from(schema.presentationEntries);
+    for (const entry of entries) {
+      await testDb.db
+        .update(schema.presentationEntries)
+        .set({
+          answers: entry.answers.map((answer) => {
+            if (answer.questionId !== 1) return answer;
+            if (entry.participantId === multipleId)
+              return {
+                ...answer,
+                answerKind: "selected" as const,
+                selectedIndex: null,
+                selectedIndices: [0, 1],
+                freeText: null,
+                rawScore: null,
+                normalizedScore: null,
+              };
+            return { ...answer, answerKind: "unanswered" as const, selectedIndex: 0 };
+          }),
+        })
+        .where(eq(schema.presentationEntries.participantId, entry.participantId));
+    }
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ selectionMode: null })
+      .where(eq(schema.presentationQuestions.position, 0));
+    await operatePresentation("legacy-valid-mode-answer", "advance");
+    await operatePresentation("legacy-valid-mode-enter", "advance");
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      statistics: {
+        kind: "selected",
+        multiple: true,
+        participantCount: 2,
+        validRespondentCount: 1,
+        uncountableCount: 1,
+        choices: [{ count: 1 }, { count: 1 }],
+      },
+    });
+    expect(malformedId).not.toBe(multipleId);
+  });
+
   it("moves backward from an empty podium preview to opening", async () => {
     await addQuestions();
     await op("aggregate", "empty-preview-aggregate");
@@ -809,6 +922,7 @@ describe("presentation repository", () => {
       sessionId: 1,
       position: 0,
       sourceQuestionId: 105,
+      sourceQuestionKey: sourceKey ?? null,
       question: "Free-text question",
       choices: [],
       correctIndex: 0,
@@ -982,7 +1096,7 @@ describe("presentation repository", () => {
     await op("aggregate", "finished-reset-aggregate");
     await setParticipantResultsVisible(true);
     await operatePresentation("finished-reset-start", "start");
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < 8; index += 1) {
       await operatePresentation(`finished-reset-advance-${index}`, "advance");
     }
     await operatePresentation("finished-reset-hide", "hide");
@@ -990,7 +1104,7 @@ describe("presentation repository", () => {
     expect(beforeReset).toMatchObject({
       state: "finished",
       questionIndex: 1,
-      version: 9,
+      version: 11,
       snapshotRevision: 1,
       projectionHidden: true,
       participantResultsVisible: true,
@@ -1474,7 +1588,7 @@ describe("presentation repository", () => {
       rankParticipantCount: 0,
     });
 
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       await op("advance", `all-reference-question-${index}`);
     }
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "podium_preview" });
@@ -1509,9 +1623,11 @@ describe("presentation repository", () => {
     await op("advance", "a2");
     await op("advance", "a3");
     await op("advance", "a4");
+    await op("advance", "a5");
+    await op("advance", "a6");
 
     await expect(getPublicPresentation()).resolves.toEqual({ state: "podium_preview" });
-    await op("advance", "a5");
+    await op("advance", "a7");
     await expect(getPublicPresentation()).resolves.toEqual({
       state: "third",
       winners: [
@@ -1542,6 +1658,218 @@ describe("presentation repository", () => {
     });
   });
 
+  it("publishes anonymous choice counts from every snapshotted entry on the statistics stage", async () => {
+    await addQuestions();
+    const answered = await addParticipant("Counted target");
+    const unanswered = await addParticipant("Non-target");
+    await addSubmission(answered, [0, 0]);
+    await startWithAggregate("statistics-population");
+    await testDb.db
+      .update(schema.examSubmissionAnswers)
+      .set({ selectedIndex: 1 })
+      .where(
+        and(
+          eq(schema.examSubmissionAnswers.submissionId, `submission-${answered}-latest`),
+          eq(schema.examSubmissionAnswers.questionId, 1),
+        ),
+      );
+    await operatePresentation("statistics-answer", "advance");
+    await operatePresentation("statistics-enter", "advance");
+
+    const projection = await getPublicPresentation();
+    expect(projection).toMatchObject({
+      state: "statistics",
+      question: { ordinal: 1, question: "Question 1" },
+      statistics: {
+        kind: "selected",
+        multiple: false,
+        participantCount: 2,
+        validRespondentCount: 1,
+        uncountableCount: 0,
+        choices: [
+          { label: "Correct 1", count: 1 },
+          { label: "Wrong 1", count: 0 },
+        ],
+      },
+    });
+    expect(JSON.stringify(projection)).not.toContain("Counted target");
+    expect(JSON.stringify(projection)).not.toContain("Non-target");
+    expect(JSON.stringify(projection)).not.toContain("rawScore");
+    expect(JSON.stringify(projection)).not.toContain("unansweredCount");
+    expect(unanswered).not.toBe(answered);
+
+    await op("aggregate", "statistics-refresh-snapshot");
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      statistics: {
+        choices: [
+          { label: "Correct 1", count: 0 },
+          { label: "Wrong 1", count: 1 },
+        ],
+      },
+    });
+  });
+
+  it("counts multiple selections independently and discards a whole malformed response", async () => {
+    await addQuestions();
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ selectionMode: "multiple", correctIndices: [0] })
+      .where(eq(schema.examQuestions.id, 1));
+    const validParticipant = await addParticipant("multiple-valid");
+    const invalidParticipant = await addParticipant("multiple-invalid");
+    await startWithAggregate("multiple-statistics");
+    const snapshotEntries = await testDb.db.select().from(schema.presentationEntries);
+    for (const [index, entry] of snapshotEntries.entries()) {
+      await testDb.db
+        .update(schema.presentationEntries)
+        .set({
+          answers: entry.answers.map((answer) =>
+            answer.questionId !== 1
+              ? answer
+              : {
+                  ...answer,
+                  answerKind: "selected" as const,
+                  selectedIndex: null,
+                  selectedIndices: index === 0 ? [0, 1] : [0, 99],
+                  freeText: null,
+                  rawScore: null,
+                  normalizedScore: null,
+                },
+          ),
+        })
+        .where(eq(schema.presentationEntries.participantId, entry.participantId));
+    }
+    expect(snapshotEntries.map((entry) => entry.participantId).sort()).toEqual(
+      [validParticipant, invalidParticipant].sort(),
+    );
+    await operatePresentation("multiple-statistics-answer", "advance");
+    await operatePresentation("multiple-statistics-enter", "advance");
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      statistics: {
+        kind: "selected",
+        multiple: true,
+        participantCount: 2,
+        validRespondentCount: 1,
+        uncountableCount: 1,
+        choices: [
+          { label: "Correct 1", count: 1 },
+          { label: "Wrong 1", count: 1 },
+        ],
+      },
+    });
+  });
+
+  it("keeps legacy unknown mode unresolved when stored answer shapes conflict", async () => {
+    await addQuestions();
+    const participants = await Promise.all([
+      addParticipant("legacy-single"),
+      addParticipant("legacy-multiple"),
+      addParticipant("legacy-malformed-unanswered"),
+    ]);
+    await startWithAggregate("legacy-mode-statistics");
+    const snapshotEntries = await testDb.db.select().from(schema.presentationEntries);
+    for (const [index, entry] of snapshotEntries.entries()) {
+      await testDb.db
+        .update(schema.presentationEntries)
+        .set({
+          answers: entry.answers.map((answer) =>
+            answer.questionId !== 1
+              ? answer
+              : index === 2
+                ? { ...answer, answerKind: "unanswered" as const, selectedIndex: 0 }
+                : {
+                    ...answer,
+                    answerKind: "selected" as const,
+                    selectedIndex: index === 0 ? 0 : null,
+                    ...(index === 1 ? { selectedIndices: [0, 1] } : {}),
+                    freeText: null,
+                    rawScore: null,
+                    normalizedScore: null,
+                  },
+          ),
+        })
+        .where(eq(schema.presentationEntries.participantId, entry.participantId));
+    }
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ selectionMode: null })
+      .where(eq(schema.presentationQuestions.position, 0));
+    await operatePresentation("legacy-mode-statistics-answer", "advance");
+    await operatePresentation("legacy-mode-statistics-enter", "advance");
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      statistics: {
+        kind: "selected",
+        multiple: null,
+        participantCount: 3,
+        validRespondentCount: 0,
+        uncountableCount: 3,
+        choices: [{ count: 0 }, { count: 0 }],
+      },
+    });
+  });
+
+  it("classifies mixed unanswered, selected and legacy answer shapes as uncountable", async () => {
+    await addQuestions();
+    const participants = await Promise.all([
+      addParticipant("malformed-unanswered"),
+      addParticipant("malformed-selected"),
+      addParticipant("malformed-legacy"),
+    ]);
+    for (const [index, participantId] of participants.entries()) {
+      await addSubmission(participantId, [0, 0], 1, `malformed-${index}`);
+    }
+    await startWithAggregate("malformed-answer-statistics");
+    const entries = await testDb.db.select().from(schema.presentationEntries);
+    for (const [index, entry] of entries.entries()) {
+      await testDb.db
+        .update(schema.presentationEntries)
+        .set({
+          answers: entry.answers.map((answer) => {
+            if (answer.questionId !== 1) return answer;
+            if (index === 0)
+              return { ...answer, answerKind: "unanswered" as const, selectedIndex: 0 };
+            if (index === 1)
+              return {
+                ...answer,
+                answerKind: "selected" as const,
+                freeText: "should not be a choice",
+                rawScore: 2,
+                normalizedScore: 1,
+              };
+            return { ...answer, answerKind: "legacy" as const };
+          }),
+        })
+        .where(eq(schema.presentationEntries.participantId, entry.participantId));
+    }
+    const controls = await getAdminPresentationControls();
+    await setPresentationPosition(
+      "malformed-answer-statistics-position",
+      "statistics",
+      0,
+      controls.snapshotRevision,
+      controls.version,
+    );
+
+    const projection = await getPublicPresentation();
+    expect(projection).toMatchObject({
+      state: "statistics",
+      statistics: {
+        kind: "selected",
+        participantCount: 3,
+        validRespondentCount: 0,
+        uncountableCount: 3,
+        choices: [{ count: 0 }, { count: 0 }],
+      },
+    });
+    expect(JSON.stringify(projection)).not.toContain("should not be a choice");
+    expect(JSON.stringify(projection)).not.toContain("rawScore");
+  });
+
   it("limits Drizzle SELECT-call counts to the public data required by each stage", async () => {
     await addRankFixture();
     await startWithAggregate("stage-read-counts");
@@ -1569,6 +1897,11 @@ describe("presentation repository", () => {
       entries: 0,
       sourceQuestions: 1,
     });
+    expect(await tableSelectCalls("statistics")).toEqual({
+      questions: 1,
+      entries: 1,
+      sourceQuestions: 0,
+    });
     expect(await tableSelectCalls("podium_preview")).toEqual({
       questions: 0,
       entries: 0,
@@ -1577,7 +1910,7 @@ describe("presentation repository", () => {
     expect(await tableSelectCalls("third")).toEqual({
       questions: 1,
       entries: 1,
-      sourceQuestions: 1,
+      sourceQuestions: 0,
     });
     expect(await tableSelectCalls("answer", true)).toEqual({
       questions: 0,
@@ -1598,7 +1931,7 @@ describe("presentation repository", () => {
     expect(secondAnswer.selectCalls.get(schema.presentationEntries) ?? 0).toBe(0);
   });
 
-  it("reads free-text response entries only when the current question permits publishing them", async () => {
+  it("reads free-text response entries only when the snapshot question permits publishing them", async () => {
     await addFreeTextProjectionFixture("presentation-free-text");
     const ordinary = await countTableSelectCalls(getPublicPresentation);
     expect(ordinary.value).toMatchObject({
@@ -1678,6 +2011,18 @@ describe("presentation repository", () => {
     expect(result.selectCalls.get(schema.presentationEntries) ?? 0).toBe(0);
   });
 
+  it("fails closed when a statistics projection has no snapshot question", async () => {
+    await testDb.db.insert(schema.presentationSessions).values({
+      id: 1,
+      state: "statistics",
+      version: 1,
+      questionIndex: 0,
+      questionCount: 1,
+    });
+
+    await expect(getPublicPresentation()).resolves.toEqual({ state: "statistics" });
+  });
+
   it("preloads every question, answer, podium and completion slide into the presenter deck", async () => {
     await addRankFixture();
     await startWithAggregate("deck-start");
@@ -1689,8 +2034,10 @@ describe("presentation repository", () => {
       ["opening", 0],
       ["question", 0],
       ["answer", 0],
+      ["statistics", 0],
       ["question", 1],
       ["answer", 1],
+      ["statistics", 1],
       ["podium_preview", 1],
       ["third", 1],
       ["first", 1],
@@ -1707,6 +2054,22 @@ describe("presentation repository", () => {
       state: "answer",
       question: { correctAnswer: "Correct 1", explanation: "Explanation 1" },
     });
+    expect(deck.slides[3]?.projection).toMatchObject({
+      state: "statistics",
+      question: { ordinal: 1, question: "Question 1" },
+      statistics: {
+        kind: "selected",
+        participantCount: 4,
+        validRespondentCount: 3,
+        uncountableCount: 0,
+        choices: [
+          { label: "Correct 1", count: 3 },
+          { label: "Wrong 1", count: 0 },
+        ],
+      },
+    });
+    expect(JSON.stringify(deck.slides[3]?.projection)).not.toContain("displayName");
+    expect(JSON.stringify(deck.slides[3]?.projection)).not.toContain("rawScore");
     expect(deck.slides.find(({ state }) => state === "third")?.projection).toMatchObject({
       state: "third",
       winners: [
@@ -1796,7 +2159,7 @@ describe("presentation repository", () => {
     expect(deck.slides.filter(({ state }) => state === "second_prize")).toHaveLength(1);
     expect(deck.slides.map(({ state }) => state)).not.toContain("first_prize");
 
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       await operatePresentation(`third-second-prizes-to-preview-${index}`, "advance");
     }
     await expect(
@@ -1892,7 +2255,7 @@ describe("presentation repository", () => {
     await addSubmission(first, [0, 1]);
     await addSubmission(second, [1, 0]);
     await startWithAggregate("tie-answer-start");
-    for (let index = 0; index < 5; index += 1)
+    for (let index = 0; index < 7; index += 1)
       await operatePresentation(`tie-answer-forward-${index}`, "advance");
 
     const projection = await getPublicPresentation();
@@ -1982,7 +2345,7 @@ describe("presentation repository", () => {
     const participantId = await addParticipant("Answer states");
     await addSubmission(participantId, [0, 0]);
     await startWithAggregate("answer-states-start");
-    for (let index = 0; index < 5; index += 1)
+    for (let index = 0; index < 7; index += 1)
       await operatePresentation(`answer-states-forward-${index}`, "advance");
     const [entry] = await testDb.db
       .select()
@@ -2060,7 +2423,7 @@ describe("presentation repository", () => {
     const participantId = await addParticipant("Malformed multi-select result");
     await addSubmission(participantId, [0, 0], 1, "multi", 1, [1, 4]);
     await startWithAggregate("malformed-multi-select-start");
-    for (let index = 0; index < 11; index += 1)
+    for (let index = 0; index < 16; index += 1)
       await operatePresentation(`malformed-multi-select-forward-${index}`, "advance");
 
     const [entry] = await testDb.db
@@ -2232,25 +2595,15 @@ describe("presentation repository", () => {
     });
   });
 
-  it("keeps responses when the snapshot source question row is missing", async () => {
+  it("omits responses when the snapshot source question key is unknown", async () => {
     await addFreeTextProjectionFixture();
 
     const projection = await getPublicPresentation();
     expect(projection).toMatchObject({
       state: "answer",
-      question: {
-        expectedAnswer: "Model answer",
-        responses: [
-          {
-            displayName: "Private Name",
-            answer: "Private response",
-            answerKind: "freeText",
-            similarity: 1,
-            score: 0.5,
-          },
-        ],
-      },
+      question: { expectedAnswer: "Model answer" },
     });
+    expect(projection).not.toHaveProperty("question.responses");
   });
 
   it("uses the unanswered response fallback when a snapshot answer is absent", async () => {
@@ -2373,7 +2726,7 @@ describe("presentation repository", () => {
     await addSubmission(first, [0, 0]);
     await addSubmission(second, [0, 1]);
     await startWithAggregate("start");
-    for (let index = 0; index < 4; index += 1) await op("advance", `advance-${index}`);
+    for (let index = 0; index < 6; index += 1) await op("advance", `advance-${index}`);
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "podium_preview" });
     await op("advance", "advance-to-second");
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "second" });
@@ -2399,8 +2752,8 @@ describe("presentation repository", () => {
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "second" });
     await op("previous", "back-to-runner-up");
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "podium_preview" });
-    await op("previous", "back-to-last-question-answer");
-    await expect(getAdminPresentation()).resolves.toMatchObject({ state: "answer" });
+    await op("previous", "back-to-last-question-statistics");
+    await expect(getAdminPresentation()).resolves.toMatchObject({ state: "statistics" });
   });
 
   it("rejects previous at the first state and makes action retries idempotent", async () => {
@@ -2931,7 +3284,7 @@ describe("presentation repository", () => {
       questionIndex: 1,
     });
     await expect(op("previous", "terminal-deck-third-back")).resolves.toMatchObject({
-      state: "answer",
+      state: "statistics",
       questionIndex: 1,
     });
   });
@@ -3542,6 +3895,7 @@ describe("presentation repository", () => {
         { state: "opening", projection: { state: "opening" } },
         { state: "question", projection: { state: "question" } },
         { state: "answer", projection: { state: "answer" } },
+        { state: "statistics", projection: { state: "statistics" } },
         { state: "podium_preview", projection: { state: "podium_preview" } },
         { state: "finished", projection: { state: "finished" } },
       ],
@@ -3591,8 +3945,10 @@ describe("presentation repository", () => {
     await setParticipantResultsVisible(true);
     await operatePresentation("cursor-start", "start");
     await operatePresentation("cursor-answer-1", "advance");
+    await operatePresentation("cursor-statistics-1", "advance");
     await operatePresentation("cursor-question-2", "advance");
     await operatePresentation("cursor-answer-2", "advance");
+    await operatePresentation("cursor-statistics-2", "advance");
 
     await setParticipantResultsVisible(false);
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 1));
@@ -3615,7 +3971,7 @@ describe("presentation repository", () => {
       state: "question",
       questionIndex: 0,
       questionCount: 1,
-      version: 6,
+      version: 8,
       snapshotRevision: 2,
     });
 
@@ -3630,7 +3986,7 @@ describe("presentation repository", () => {
       state: "question",
       questionIndex: 0,
       questionCount: 1,
-      version: 6,
+      version: 8,
       snapshotRevision: 2,
     });
   });
@@ -4369,26 +4725,33 @@ describe("presentation repository", () => {
     await addQuestions();
     await startWithAggregate("previous-states-start");
     await operatePresentation("previous-states-to-answer", "advance");
+    await operatePresentation("previous-states-statistics-one", "advance");
     await operatePresentation("previous-states-question-two", "advance");
     await operatePresentation("previous-states-answer-two", "advance");
+    await operatePresentation("previous-states-statistics-two", "advance");
     await operatePresentation("previous-states-preview", "advance");
     await expect(
       operatePresentation("previous-states-preview-back", "previous"),
+    ).resolves.toMatchObject({ state: "statistics", questionIndex: 1 });
+    await expect(
+      operatePresentation("previous-states-statistics-back", "previous"),
     ).resolves.toMatchObject({ state: "answer", questionIndex: 1 });
     await expect(
       operatePresentation("previous-states-answer-back", "previous"),
     ).resolves.toMatchObject({ state: "question", questionIndex: 1 });
     await expect(
       operatePresentation("previous-states-question-back", "previous"),
-    ).resolves.toMatchObject({ state: "answer", questionIndex: 0 });
+    ).resolves.toMatchObject({ state: "statistics", questionIndex: 0 });
   });
 
   it("returns to the podium preview when the third-place stage is reversed", async () => {
     await addRankFixture();
     await startWithAggregate("third-place-start");
     await operatePresentation("third-place-answer-1", "advance");
+    await operatePresentation("third-place-statistics-1", "advance");
     await operatePresentation("third-place-question-2", "advance");
     await operatePresentation("third-place-answer-2", "advance");
+    await operatePresentation("third-place-statistics-2", "advance");
     await operatePresentation("third-place-preview", "advance");
     await expect(operatePresentation("third-place-stage", "advance")).resolves.toMatchObject({
       state: "third",
@@ -4408,6 +4771,7 @@ describe("presentation repository", () => {
     expect(deck.slides.map(({ state }) => state)).not.toContain("first_prize");
 
     await operatePresentation("empty-finished-answer", "advance");
+    await operatePresentation("empty-finished-statistics", "advance");
     await operatePresentation("empty-finished-preview", "advance");
     await expect(operatePresentation("empty-finished-end", "advance")).resolves.toMatchObject({
       state: "finished",
@@ -4434,7 +4798,7 @@ describe("presentation repository", () => {
     const deck = await getAdminPresentationDeck();
     expect(deck.slides.map(({ state }) => state)).not.toContain("first_prize");
 
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       await operatePresentation(`no-first-finished-to-preview-${index}`, "advance");
     }
     await expect(
@@ -4454,7 +4818,7 @@ describe("presentation repository", () => {
   it("still shows available lower-rank prizes when first-place entries disappear", async () => {
     await addRankFixture();
     await startWithAggregate("first-prize-disappeared-start");
-    for (let index = 0; index < 6; index += 1) {
+    for (let index = 0; index < 8; index += 1) {
       await operatePresentation(`first-prize-disappeared-to-first-${index}`, "advance");
     }
     await expect(getAdminPresentation()).resolves.toMatchObject({ state: "first" });

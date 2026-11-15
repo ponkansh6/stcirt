@@ -131,6 +131,7 @@ const supportedPresentationStates = new Set<PresentationState>([
   "opening",
   "question",
   "answer",
+  "statistics",
   "podium_preview",
   "third",
   "second",
@@ -544,10 +545,12 @@ async function ensurePresentationSnapshot(
       sessionId: 1,
       position,
       sourceQuestionId: question.id,
+      sourceQuestionKey: question.key,
       question: question.question,
       choices: question.choices,
       correctIndex: question.correctIndex,
       correctIndices: question.correctIndices,
+      selectionMode: question.selectionMode,
       explanation: question.explanation,
     })),
   );
@@ -692,6 +695,9 @@ async function advanceState(
   }
   if (state === "question") return { state: "answer" as const, questionIndex };
   if (state === "answer") {
+    return { state: "statistics" as const, questionIndex };
+  }
+  if (state === "statistics") {
     if (questionIndex + 1 < questionCount) {
       return { state: "question" as const, questionIndex: questionIndex + 1 };
     }
@@ -723,12 +729,14 @@ async function previousState(
     case "question":
       return questionIndex === 0
         ? { state: "opening", questionIndex: 0 }
-        : { state: "answer", questionIndex: questionIndex - 1 };
+        : { state: "statistics", questionIndex: questionIndex - 1 };
     case "answer":
       return { state: "question", questionIndex };
+    case "statistics":
+      return { state: "answer", questionIndex };
     case "podium_preview":
       return questionCount > 0
-        ? { state: "answer", questionIndex: questionCount - 1 }
+        ? { state: "statistics", questionIndex: questionCount - 1 }
         : { state: "opening", questionIndex: 0 };
     case "third":
       return { state: "podium_preview", questionIndex };
@@ -781,6 +789,7 @@ async function isValidPresentationPosition(
     "opening",
     "question",
     "answer",
+    "statistics",
     "podium_preview",
     "third",
     "second",
@@ -792,7 +801,7 @@ async function isValidPresentationPosition(
   ];
   if (!knownStates.includes(state) || !Number.isInteger(questionIndex)) return false;
   if (state === "opening") return questionIndex === 0;
-  if (state === "question" || state === "answer") {
+  if (state === "question" || state === "answer" || state === "statistics") {
     return questionIndex >= 0 && questionIndex < session.questionCount;
   }
   if (questionIndex !== Math.max(session.questionCount - 1, 0)) return false;

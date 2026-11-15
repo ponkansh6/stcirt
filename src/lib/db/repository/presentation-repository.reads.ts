@@ -1,5 +1,6 @@
 import { and, asc, count, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { isValidFreeTextParts, normalizeSelectedChoiceIndices } from "./answer-repository";
 import {
   examQuestions,
   presentationEntries,
@@ -13,6 +14,7 @@ export type PresentationState =
   | "opening"
   | "question"
   | "answer"
+  | "statistics"
   | "podium_preview"
   | "third"
   | "second"
@@ -41,10 +43,12 @@ type AdminPresentation = {
   participantResultsReady: boolean;
   questions: {
     id: number;
+    sourceQuestionKey: string | null;
     question: string;
     choices: string[];
     correctIndex: number;
     correctIndices: number[] | null;
+    selectionMode: "single" | "multiple" | null;
     correctAnswer: string;
     explanation: string | null;
     answerType: "selected" | "freeText";
@@ -69,8 +73,7 @@ type AdminPresentation = {
 };
 
 function isQ5TextParts(value: unknown): value is { a: string; b: string } {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  return "a" in value && "b" in value && typeof value.a === "string" && typeof value.b === "string";
+  return isValidFreeTextParts(value);
 }
 
 export type AdminPresentationControls = Pick<
@@ -177,10 +180,12 @@ export async function readAdminPresentation(
       (session.questionCount > 0 || session.state !== "not_started"),
     questions: questions.map((question) => ({
       id: question.sourceQuestionId,
+      sourceQuestionKey: question.sourceQuestionKey,
       question: question.question,
       choices: question.choices,
       correctIndex: question.correctIndex,
       correctIndices: question.correctIndices,
+      selectionMode: question.selectionMode,
       correctAnswer: (question.correctIndices ?? [question.correctIndex])
         .map((i) => question.choices[i])
         .filter(Boolean)
@@ -577,9 +582,14 @@ export async function readAdminPresentationControls(
 type PublicProjection =
   | { state: "question"; question?: PublicProjectedQuestion }
   | { state: "answer"; question?: PublicProjectedQuestion }
+  | { state: "statistics"; question?: PublicProjectedQuestion; statistics: PresentationStatistics }
+  | { state: "statistics" }
   | { state: "third" | "second" | "first"; winners: Winner[]; question?: PublicProjectedQuestion }
   | {
-      state: Exclude<PresentationState, "question" | "answer" | "third" | "second" | "first">;
+      state: Exclude<
+        PresentationState,
+        "question" | "answer" | "statistics" | "third" | "second" | "first"
+      >;
       question?: PublicProjectedQuestion;
     };
 
@@ -630,7 +640,7 @@ function buildPublicProjection(
   >,
   state: PresentationState,
   questionIndex: number,
-  sourceQuestions: Map<number, { key: string; explanation: string | null }>,
+  sourceQuestions: Map<number, { explanation: string | null }>,
   currentQuestion?: AdminPresentation["questions"][number],
 ): PublicProjection {
   if (state === "question" || state === "answer") {
@@ -649,7 +659,7 @@ function buildPublicProjection(
         ? row.answerType === "freeText"
           ? {
               expectedAnswer: explanation,
-              ...(sourceQuestion?.key === "it-literacy-005"
+              ...(row.sourceQuestionKey === null || row.sourceQuestionKey === "it-literacy-005"
                 ? {}
                 : {
                     responses: admin.entries.map((entry) => {
@@ -673,6 +683,26 @@ function buildPublicProjection(
         : {}),
     };
     return { state, question };
+  }
+  if (state === "statistics") {
+    const row = currentQuestion ?? admin.questions[questionIndex];
+    if (!row) return { state };
+    return {
+      state,
+      question: {
+        id: row.id,
+        ordinal: questionIndex + 1,
+        total: admin.questionCount,
+        question: row.question,
+        choices: row.choices,
+        answerType: row.answerType,
+      },
+      statistics: buildPresentationStatistics(
+        row,
+        admin.entries,
+        row.sourceQuestionKey === "it-literacy-005",
+      ),
+    };
   }
   const rank = rankForStage(state);
   if (rank !== null) {
@@ -740,7 +770,7 @@ function buildPublicProjection(
             };
           }
           if (answer.answerKind === "freeText") {
-            const isFifthQuestion = sourceQuestions.get(question.id)?.key === "it-literacy-005";
+            const isFifthQuestion = question.sourceQuestionKey === "it-literacy-005";
             const score = answer.normalizedScore;
             const validScore =
               score === null || (Number.isFinite(score) && score >= 0 && score <= 2);
@@ -786,8 +816,243 @@ function buildPublicProjection(
   return {
     state: state as Exclude<
       PresentationState,
-      "question" | "answer" | "third" | "second" | "first"
+      "question" | "answer" | "statistics" | "third" | "second" | "first"
     >,
+  };
+}
+
+export type PresentationStatistics =
+  | {
+      kind: "selected";
+      multiple: boolean | null;
+      participantCount: number;
+      validRespondentCount: number;
+      uncountableCount: number;
+      choices: { label: string; count: number }[];
+    }
+  | {
+      kind: "freeText";
+      participantCount: number;
+      gradedCount: number;
+      ungradedCount: number;
+      uncountableCount: number;
+      ranges: { label: string; count: number }[];
+    };
+
+type NormalizedStatisticsAnswer =
+  | { kind: "unanswered" }
+  | { kind: "selected"; indices: number[]; multiple: boolean }
+  | { kind: "freeText"; score: number | null }
+  | { kind: "unavailable" };
+
+function normalizeStatisticsAnswer(
+  value: unknown,
+  isQ5: boolean,
+  question: Pick<
+    AdminPresentation["questions"][number],
+    "id" | "choices" | "selectionMode" | "answerType"
+  >,
+): NormalizedStatisticsAnswer {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return { kind: "unavailable" };
+  const answer = value as Record<string, unknown>;
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(answer, key);
+  if (
+    answer.questionId !== question.id ||
+    Object.keys(answer).some(
+      (key) =>
+        ![
+          "questionId",
+          "answerKind",
+          "selectedIndex",
+          "selectedIndices",
+          "freeText",
+          "freeTextParts",
+          "rawScore",
+          "normalizedScore",
+        ].includes(key),
+    ) ||
+    !["answerKind", "selectedIndex", "freeText", "rawScore", "normalizedScore"].every(has) ||
+    !(
+      answer.selectedIndices === undefined ||
+      answer.selectedIndices === null ||
+      Array.isArray(answer.selectedIndices)
+    )
+  )
+    return { kind: "unavailable" };
+
+  const selectedIndexIsEmpty = answer.selectedIndex === null;
+  const selectedIndicesAreEmpty =
+    answer.selectedIndices === undefined || answer.selectedIndices === null;
+  if (answer.answerKind === "unanswered") {
+    return selectedIndexIsEmpty &&
+      selectedIndicesAreEmpty &&
+      answer.freeText === null &&
+      answer.rawScore === null &&
+      answer.normalizedScore === null &&
+      !has("freeTextParts")
+      ? { kind: "unanswered" }
+      : { kind: "unavailable" };
+  }
+
+  if (answer.answerKind === "selected" && question.answerType === "selected") {
+    const commonFieldsValid =
+      answer.freeText === null &&
+      answer.rawScore === null &&
+      answer.normalizedScore === null &&
+      !has("freeTextParts");
+    if (!commonFieldsValid) return { kind: "unavailable" };
+    const selection = normalizeSelectedChoiceIndices({
+      selectionMode: question.selectionMode,
+      choiceCount: question.choices.length,
+      selectedIndex: answer.selectedIndex,
+      selectedIndices: answer.selectedIndices,
+    });
+    return selection ? { kind: "selected", ...selection } : { kind: "unavailable" };
+  }
+
+  if (answer.answerKind === "freeText" && question.answerType === "freeText") {
+    const rawScoreValid =
+      answer.rawScore === null ||
+      (typeof answer.rawScore === "number" &&
+        Number.isFinite(answer.rawScore) &&
+        answer.rawScore >= 0 &&
+        answer.rawScore <= 9);
+    const scoreValid =
+      answer.normalizedScore === null ||
+      (typeof answer.normalizedScore === "number" &&
+        Number.isFinite(answer.normalizedScore) &&
+        answer.normalizedScore >= 0 &&
+        answer.normalizedScore <= 2);
+    const partsValid = has("freeTextParts")
+      ? isQ5 && isValidFreeTextParts(answer.freeTextParts)
+      : !isQ5;
+    const freeTextValid =
+      typeof answer.freeText === "string" &&
+      (isQ5
+        ? partsValid &&
+          answer.freeText ===
+            `A: ${(answer.freeTextParts as { a: string }).a.trim()}\nB: ${(answer.freeTextParts as { b: string }).b.trim()}`
+        : answer.freeText.trim().length > 0 && answer.freeText.trim().length <= 1000);
+    if (
+      answer.selectedIndex !== null ||
+      !selectedIndicesAreEmpty ||
+      !freeTextValid ||
+      !rawScoreValid ||
+      !scoreValid ||
+      !partsValid
+    ) {
+      return { kind: "unavailable" };
+    }
+    return { kind: "freeText", score: answer.normalizedScore as number | null };
+  }
+
+  return { kind: "unavailable" };
+}
+
+function buildPresentationStatistics(
+  question: Pick<
+    AdminPresentation["questions"][number],
+    "id" | "choices" | "correctIndices" | "selectionMode" | "answerType"
+  >,
+  entries: { answers?: unknown[] }[],
+  isQ5 = false,
+): PresentationStatistics {
+  const participantCount = entries.length;
+  const normalizedRecords = entries.map((entry) => {
+    const matches = (entry.answers ?? []).filter(
+      (answer) =>
+        typeof answer === "object" &&
+        answer !== null &&
+        !Array.isArray(answer) &&
+        "questionId" in answer &&
+        answer.questionId === question.id,
+    );
+    return {
+      answer:
+        matches.length === 1
+          ? normalizeStatisticsAnswer(matches[0], isQ5, question)
+          : { kind: "unavailable" as const },
+    };
+  });
+  const normalized = normalizedRecords.map(({ answer }) => answer);
+  if (question.answerType === "selected") {
+    const counts = question.choices.map(() => 0);
+    let validRespondentCount = 0;
+    let uncountableCount = 0;
+    let unansweredCount = 0;
+    const observedModes = new Set<boolean>();
+    for (const { answer } of normalizedRecords) {
+      if (answer.kind === "selected") observedModes.add(answer.multiple);
+    }
+    const legacyModeConflict = question.selectionMode === null && observedModes.size > 1;
+    const multiple =
+      question.selectionMode === "multiple"
+        ? true
+        : question.selectionMode === "single"
+          ? false
+          : legacyModeConflict || observedModes.size === 0
+            ? null
+            : observedModes.has(true);
+    for (const answer of normalized) {
+      if (answer.kind === "unanswered") {
+        unansweredCount += 1;
+        continue;
+      }
+      if (answer.kind !== "selected" || legacyModeConflict) {
+        uncountableCount += 1;
+        continue;
+      }
+      if (answer.indices.some((index) => index < 0 || index >= counts.length)) {
+        uncountableCount += 1;
+        continue;
+      }
+      validRespondentCount += 1;
+      for (const index of answer.indices) counts[index] = counts[index]! + 1;
+    }
+    if (validRespondentCount + uncountableCount + unansweredCount !== participantCount)
+      throw new Error("Presentation statistics categories do not match the participant count");
+    return {
+      kind: "selected",
+      multiple,
+      participantCount,
+      validRespondentCount,
+      uncountableCount,
+      choices: question.choices.map((label, index) => ({ label, count: counts[index]! })),
+    };
+  }
+
+  const labels = ["0点", "0点超〜0.5点", "0.5点超〜1点", "1点超〜1.5点", "1.5点超〜2点"];
+  const ranges = labels.map((label) => ({ label, count: 0 }));
+  let ungradedCount = 0;
+  let uncountableCount = 0;
+  let unansweredCount = 0;
+  for (const answer of normalized) {
+    if (answer.kind === "unanswered") {
+      unansweredCount += 1;
+      continue;
+    }
+    if (answer.kind !== "freeText") {
+      uncountableCount += 1;
+      continue;
+    }
+    if (answer.score === null) {
+      ungradedCount += 1;
+      continue;
+    }
+    const bucket = answer.score === 0 ? 0 : Math.ceil(answer.score * 2);
+    ranges[bucket]!.count += 1;
+  }
+  const gradedCount = ranges.reduce((sum, range) => sum + range.count, 0);
+  if (gradedCount + ungradedCount + uncountableCount + unansweredCount !== participantCount)
+    throw new Error("Presentation statistics categories do not match the participant count");
+  return {
+    kind: "freeText",
+    participantCount,
+    gradedCount,
+    ungradedCount,
+    uncountableCount,
+    ranges,
   };
 }
 
@@ -799,14 +1064,14 @@ export async function getAdminPresentationDeck() {
       ? await tx
           .select({
             id: examQuestions.id,
-            key: examQuestions.key,
             explanation: examQuestions.explanation,
           })
           .from(examQuestions)
           .where(inArray(examQuestions.id, questionIds))
       : [];
+    const currentExplanations = new Map(sourceRows.map(({ id, explanation }) => [id, explanation]));
     const sourceQuestions = new Map(
-      sourceRows.map(({ id, key, explanation }) => [id, { key, explanation }]),
+      admin.questions.map(({ id }) => [id, { explanation: currentExplanations.get(id) ?? null }]),
     );
     const slides: {
       state: PresentationState;
@@ -830,6 +1095,11 @@ export async function getAdminPresentationDeck() {
           state: "answer",
           questionIndex: index,
           projection: buildPublicProjection(admin, "answer", index, sourceQuestions),
+        },
+        {
+          state: "statistics",
+          questionIndex: index,
+          projection: buildPublicProjection(admin, "statistics", index, sourceQuestions),
         },
       );
     }
@@ -905,16 +1175,18 @@ export async function getPublicPresentation(): Promise<
     const questionIndex = session?.questionIndex ?? 0;
     const questionCount = session?.questionCount ?? 0;
     const rank = rankForStage(state);
-    const activeQuestion = state === "question" || state === "answer";
+    const activeQuestion = state === "question" || state === "answer" || state === "statistics";
     let questions: AdminPresentation["questions"];
-    if (state === "answer") {
+    if (state === "answer" || state === "statistics") {
       const rows = await tx
         .select({
           sourceQuestionId: presentationQuestions.sourceQuestionId,
+          sourceQuestionKey: presentationQuestions.sourceQuestionKey,
           question: presentationQuestions.question,
           choices: presentationQuestions.choices,
           correctIndex: presentationQuestions.correctIndex,
           correctIndices: presentationQuestions.correctIndices,
+          selectionMode: presentationQuestions.selectionMode,
           explanation: presentationQuestions.explanation,
         })
         .from(presentationQuestions)
@@ -926,10 +1198,12 @@ export async function getPublicPresentation(): Promise<
         );
       questions = rows.map((row) => ({
         id: row.sourceQuestionId,
+        sourceQuestionKey: row.sourceQuestionKey,
         question: row.question,
         choices: row.choices,
         correctIndex: row.correctIndex,
         correctIndices: row.correctIndices,
+        selectionMode: row.selectionMode,
         correctAnswer: (row.correctIndices ?? [row.correctIndex])
           .map((i) => row.choices[i])
           .filter(Boolean)
@@ -941,6 +1215,7 @@ export async function getPublicPresentation(): Promise<
       const rows = await tx
         .select({
           sourceQuestionId: presentationQuestions.sourceQuestionId,
+          sourceQuestionKey: presentationQuestions.sourceQuestionKey,
           question: presentationQuestions.question,
           choices: presentationQuestions.choices,
         })
@@ -953,10 +1228,12 @@ export async function getPublicPresentation(): Promise<
         );
       questions = rows.map((row) => ({
         id: row.sourceQuestionId,
+        sourceQuestionKey: row.sourceQuestionKey,
         question: row.question,
         choices: row.choices,
         correctIndex: 0,
         correctIndices: null,
+        selectionMode: null,
         correctAnswer: row.choices[0] ?? "",
         explanation: null,
         answerType: row.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
@@ -965,20 +1242,24 @@ export async function getPublicPresentation(): Promise<
       const rows = await tx
         .select({
           sourceQuestionId: presentationQuestions.sourceQuestionId,
+          sourceQuestionKey: presentationQuestions.sourceQuestionKey,
           question: presentationQuestions.question,
           choices: presentationQuestions.choices,
           correctIndex: presentationQuestions.correctIndex,
           correctIndices: presentationQuestions.correctIndices,
+          selectionMode: presentationQuestions.selectionMode,
         })
         .from(presentationQuestions)
         .where(eq(presentationQuestions.sessionId, 1))
         .orderBy(asc(presentationQuestions.position));
       questions = rows.map((row) => ({
         id: row.sourceQuestionId,
+        sourceQuestionKey: row.sourceQuestionKey,
         question: row.question,
         choices: row.choices,
         correctIndex: row.correctIndex,
         correctIndices: row.correctIndices,
+        selectionMode: row.selectionMode,
         correctAnswer: (row.correctIndices ?? [row.correctIndex])
           .map((i) => row.choices[i])
           .filter(Boolean)
@@ -996,45 +1277,42 @@ export async function getPublicPresentation(): Promise<
       questions: activeQuestion ? [] : questions,
       entries: [] as AdminPresentation["entries"],
     };
-    let sourceQuestions = new Map<number, { key: string; explanation: string | null }>();
-    if ((state === "answer" || rank !== null) && questions.length > 0) {
-      // Snapshot IDs are not foreign-keyed. Resolve only this stage's questions
-      // for legacy explanation fallback, Q5 privacy, and winner score identity.
-      if (state === "answer") {
-        const rows = await tx
-          .select({
-            id: examQuestions.id,
-            key: examQuestions.key,
-            explanation: examQuestions.explanation,
-          })
-          .from(examQuestions)
-          .where(
-            inArray(
-              examQuestions.id,
-              questions.map(({ id }) => id),
-            ),
-          );
-        sourceQuestions = new Map(
-          rows.map(({ id, key, explanation }) => [id, { key, explanation }]),
+    let sourceQuestions = new Map<number, { explanation: string | null }>();
+    if (state === "answer" && questions.length > 0) {
+      // Only legacy explanation fallback is resolved from the current source row.
+      const rows = await tx
+        .select({
+          id: examQuestions.id,
+          explanation: examQuestions.explanation,
+        })
+        .from(examQuestions)
+        .where(
+          inArray(
+            examQuestions.id,
+            questions.map(({ id }) => id),
+          ),
         );
-      } else {
-        const rows = await tx
-          .select({ id: examQuestions.id, key: examQuestions.key })
-          .from(examQuestions)
-          .where(
-            inArray(
-              examQuestions.id,
-              questions.map(({ id }) => id),
-            ),
-          );
-        sourceQuestions = new Map(rows.map(({ id, key }) => [id, { key, explanation: null }]));
-      }
+      sourceQuestions = new Map(rows.map(({ id, explanation }) => [id, { explanation }]));
     }
     const currentQuestion = activeQuestion ? questions[0] : undefined;
-    if (
+    if (state === "statistics") {
+      const entryRows = await tx
+        .select({ answers: presentationEntries.answers })
+        .from(presentationEntries)
+        .where(eq(presentationEntries.sessionId, 1));
+      admin.entries = entryRows.map((entry) => ({
+        ...entry,
+        displayName: "",
+        score: 0,
+        rank: null,
+        isAggregationTarget: false,
+        isReference: false,
+      }));
+    } else if (
       state === "answer" &&
       currentQuestion?.answerType === "freeText" &&
-      sourceQuestions.get(currentQuestion.id)?.key !== "it-literacy-005"
+      currentQuestion.sourceQuestionKey !== null &&
+      currentQuestion.sourceQuestionKey !== "it-literacy-005"
     ) {
       const entryRows = await tx
         .select({

@@ -16,6 +16,7 @@ vi.mock("@/lib/db", async (importOriginal) => {
 });
 
 import {
+  getAdminPresentationDeck,
   getPublicPresentation,
   operatePresentation,
   PresentationConflictError,
@@ -120,7 +121,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         normalizedScore: 1.5,
       }),
     );
-    for (let index = 0; index < 12; index += 1)
+    for (let index = 0; index < 17; index += 1)
       await operatePresentation(`fraction-rank-forward-${index}`, "advance");
     let winnerProjection = await getPublicPresentation();
     expect(winnerProjection).toMatchObject({
@@ -148,7 +149,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     await addFreeTextSubmission(participantId, 0, "zero");
     await addFreeTextSubmission(maximumParticipantId, 2, "maximum");
     await startWithAggregate("zero-score-start");
-    for (let index = 0; index < 12; index += 1)
+    for (let index = 0; index < 17; index += 1)
       await operatePresentation(`zero-score-forward-${index}`, "advance");
 
     let projection = await getPublicPresentation();
@@ -188,11 +189,188 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     });
   });
 
-  it("suppresses responses only when the source key still identifies question five", async () => {
+  it("bins free-text scores at every inclusive half-point boundary without exposing unanswered counts", async () => {
+    const values = [0, 0.5, 0.51, 1, 1.5, 2];
+    const participants = await Promise.all(
+      values.map((_, index) => addParticipant(`range-${index}`)),
+    );
+    const ungradedParticipant = await addParticipant("ungraded");
+    await addParticipant("unanswered");
+    for (let index = 0; index < values.length; index += 1) {
+      await addFreeTextSubmission(participants[index]!, values[index]!, `range-${index}`);
+    }
+    await addFreeTextSubmission(ungradedParticipant, 1, "ungraded");
+    await startWithAggregate("range-boundary-start");
+    const [ungradedEntry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, ungradedParticipant));
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({
+        answers: ungradedEntry!.answers.map((answer) =>
+          answer.questionId === 5 ? { ...answer, normalizedScore: null } : answer,
+        ),
+      })
+      .where(eq(schema.presentationEntries.participantId, ungradedParticipant));
+    for (let index = 0; index < 15; index += 1)
+      await operatePresentation(`range-boundary-forward-${index}`, "advance");
+
+    const projection = await getPublicPresentation();
+    expect(projection).toMatchObject({
+      state: "statistics",
+      question: { ordinal: 5 },
+      statistics: {
+        kind: "freeText",
+        participantCount: 8,
+        gradedCount: 6,
+        ungradedCount: 1,
+        uncountableCount: 0,
+        ranges: [
+          { label: "0点", count: 1 },
+          { label: "0点超〜0.5点", count: 1 },
+          { label: "0.5点超〜1点", count: 2 },
+          { label: "1点超〜1.5点", count: 1 },
+          { label: "1.5点超〜2点", count: 1 },
+        ],
+      },
+    });
+    expect(JSON.stringify(projection)).not.toContain("unanswered");
+    expect(JSON.stringify(projection)).not.toContain("rawScore");
+    expect(JSON.stringify(projection)).not.toContain("range-0");
+  });
+
+  it("classifies malformed free-text content with a zero score as uncountable", async () => {
+    const participantId = await addParticipant("malformed-q5-content");
+    await addFreeTextSubmission(participantId, 0, "malformed-content");
+    await startWithAggregate("malformed-q5-content-start");
+    const [entry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({
+        answers: entry!.answers.map((answer) =>
+          answer.questionId === 5
+            ? {
+                ...answer,
+                freeText: "A:  \nB: valid",
+                freeTextParts: { a: "  ", b: "valid" },
+                normalizedScore: 0,
+              }
+            : answer,
+        ),
+      })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    for (let index = 0; index < 15; index += 1)
+      await operatePresentation(`malformed-q5-content-forward-${index}`, "advance");
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      statistics: {
+        kind: "freeText",
+        participantCount: 1,
+        gradedCount: 0,
+        ungradedCount: 0,
+        uncountableCount: 1,
+        ranges: [
+          { label: "0点", count: 0 },
+          { label: "0点超〜0.5点", count: 0 },
+          { label: "0.5点超〜1点", count: 0 },
+          { label: "1点超〜1.5点", count: 0 },
+          { label: "1.5点超〜2点", count: 0 },
+        ],
+      },
+    });
+  });
+
+  it("classifies valid Q5 parts with a mismatched formatted text as uncountable", async () => {
+    const participantId = await addParticipant("mismatched-q5-content");
+    await addFreeTextSubmission(participantId, 0, "mismatched-content");
+    await startWithAggregate("mismatched-q5-content-start");
+    const [entry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({
+        answers: entry!.answers.map((answer) =>
+          answer.questionId === 5
+            ? { ...answer, freeText: "A: different\nB: different", normalizedScore: 0 }
+            : answer,
+        ),
+      })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    for (let index = 0; index < 15; index += 1)
+      await operatePresentation(`mismatched-q5-content-forward-${index}`, "advance");
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      statistics: {
+        kind: "freeText",
+        participantCount: 1,
+        gradedCount: 0,
+        ungradedCount: 0,
+        uncountableCount: 1,
+        ranges: [
+          { label: "0点", count: 0 },
+          { label: "0点超〜0.5点", count: 0 },
+          { label: "0.5点超〜1点", count: 0 },
+          { label: "1点超〜1.5点", count: 0 },
+          { label: "1.5点超〜2点", count: 0 },
+        ],
+      },
+    });
+  });
+
+  it("keeps Q5 statistics fixed when the source question key changes after aggregation", async () => {
+    const participantId = await addParticipant("snapshot-q5-key");
+    await addFreeTextSubmission(participantId, 1, "snapshot-key");
+    await startWithAggregate("snapshot-q5-key-start");
+    for (let index = 0; index < 15; index += 1)
+      await operatePresentation(`snapshot-q5-key-forward-${index}`, "advance");
+    const before = await getPublicPresentation();
+    expect(before).toMatchObject({
+      state: "statistics",
+      statistics: { kind: "freeText", gradedCount: 1, uncountableCount: 0 },
+    });
+    const deckBefore = await getAdminPresentationDeck();
+    const q5StatisticsBefore = deckBefore.slides.find(
+      (slide) => slide.state === "statistics" && slide.questionIndex === 4,
+    )?.projection;
+    const q5AnswerBefore = deckBefore.slides.find(
+      (slide) => slide.state === "answer" && slide.questionIndex === 4,
+    )?.projection;
+    expect(q5StatisticsBefore).toMatchObject({
+      state: "statistics",
+      statistics: { kind: "freeText", gradedCount: 1, uncountableCount: 0 },
+    });
+    expect(q5AnswerBefore).not.toHaveProperty("question.responses");
+
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ key: "renamed-after-aggregate" })
+      .where(eq(schema.examQuestions.id, 5));
+
+    await expect(getPublicPresentation()).resolves.toEqual(before);
+    const deckAfter = await getAdminPresentationDeck();
+    const q5StatisticsAfter = deckAfter.slides.find(
+      (slide) => slide.state === "statistics" && slide.questionIndex === 4,
+    )?.projection;
+    const q5AnswerAfter = deckAfter.slides.find(
+      (slide) => slide.state === "answer" && slide.questionIndex === 4,
+    )?.projection;
+    expect(q5StatisticsAfter).toEqual(q5StatisticsBefore);
+    expect(q5AnswerAfter).toEqual(q5AnswerBefore);
+  });
+
+  it("keeps Q5 response privacy and score identity fixed by the question snapshot", async () => {
     const participantId = await addParticipant("question-five-identity");
     await addFreeTextSubmission(participantId, 1, "identity");
     await startWithAggregate("question-five-identity-start");
-    for (let index = 0; index < 10; index += 1)
+    for (let index = 0; index < 14; index += 1)
       await operatePresentation(`question-five-identity-forward-${index}`, "advance");
     const fifthAnswer = await getPublicPresentation();
     expect(fifthAnswer).toMatchObject({ state: "answer", question: { ordinal: 5 } });
@@ -205,35 +383,33 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       .where(eq(schema.examQuestions.id, 5));
     const renamedAnswer = await getPublicPresentation();
     const renamedQuestion = renamedAnswer.state === "answer" ? renamedAnswer.question : undefined;
-    expect(renamedQuestion).toHaveProperty("responses");
-    if (renamedQuestion && "responses" in renamedQuestion)
-      expect(renamedQuestion.responses).toHaveLength(1);
+    expect(renamedQuestion).not.toHaveProperty("responses");
     await operatePresentation("question-five-identity-rank-forward-1", "advance");
     await operatePresentation("question-five-identity-rank-forward-2", "advance");
+    await operatePresentation("question-five-identity-rank-forward-3", "advance");
     const renamedWinner = await getPublicPresentation();
     const fifthResult =
       renamedWinner.state === "first" ? renamedWinner.winners[0]?.questionResults[4] : undefined;
     expect(fifthResult).toMatchObject({
       answer: { kind: "freeText", value: "A: answer identity\nB: answer identity" },
-      scoreStatus: "unavailable",
+      normalizedScore: 1,
     });
-    expect(fifthResult).not.toHaveProperty("normalizedScore");
   });
 
-  it("retains fifth-question responses when the source row is missing", async () => {
+  it("keeps Q5 response privacy when the source row is missing", async () => {
     const participantId = await addParticipant("missing-source");
     await addFreeTextSubmission(participantId, 1, "missing-source");
     await startWithAggregate("missing-source-start");
-    for (let index = 0; index < 10; index += 1)
+    for (let index = 0; index < 14; index += 1)
       await operatePresentation(`missing-source-forward-${index}`, "advance");
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 5));
 
     const projection = await getPublicPresentation();
     const question = projection.state === "answer" ? projection.question : undefined;
-    expect(question).toHaveProperty("responses");
-    if (question && "responses" in question) expect(question.responses).toHaveLength(1);
+    expect(question).not.toHaveProperty("responses");
     await operatePresentation("missing-source-rank-forward-1", "advance");
     await operatePresentation("missing-source-rank-forward-2", "advance");
+    await operatePresentation("missing-source-rank-forward-3", "advance");
     const winnerProjection = await getPublicPresentation();
     const fifthResult =
       winnerProjection.state === "first"
@@ -241,9 +417,8 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         : undefined;
     expect(fifthResult).toMatchObject({
       answer: { kind: "freeText", value: "A: answer missing-source\nB: answer missing-source" },
-      scoreStatus: "unavailable",
+      normalizedScore: 1,
     });
-    expect(fifthResult).not.toHaveProperty("normalizedScore");
   });
 
   it("keeps response data for an unrelated free-text answer stage", async () => {
@@ -254,7 +429,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       .update(schema.presentationQuestions)
       .set({ choices: [] })
       .where(eq(schema.presentationQuestions.position, 2));
-    for (let index = 0; index < 6; index += 1)
+    for (let index = 0; index < 8; index += 1)
       await operatePresentation(`other-free-text-forward-${index}`, "advance");
 
     const projection = await getPublicPresentation();

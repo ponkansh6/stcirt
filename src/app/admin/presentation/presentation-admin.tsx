@@ -189,6 +189,7 @@ const stateLabels: Record<string, string> = {
   opening: "進行中：オープニング",
   question: "進行中：問題",
   answer: "進行中：解答",
+  statistics: "進行中：回答統計",
   podium_preview: "進行中：結果発表前",
   third: "進行中：第3位",
   second: "進行中：第2位",
@@ -549,7 +550,9 @@ export default function PresentationAdmin() {
                 ? `集計済み（第 ${adminState.snapshotRevision} 世代）`
                 : "質問がないため、参加者結果を公開できません。"}
           </p>
-          {adminState.state === "question" || adminState.state === "answer" ? (
+          {adminState.state === "question" ||
+          adminState.state === "answer" ||
+          adminState.state === "statistics" ? (
             <p className={styles.detail}>
               問題 {adminState.questionIndex + 1} / {adminState.questionCount}
             </p>

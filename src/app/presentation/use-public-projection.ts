@@ -8,6 +8,7 @@ export type State =
   | "opening"
   | "question"
   | "answer"
+  | "statistics"
   | "podium_preview"
   | "third"
   | "second"
@@ -39,6 +40,23 @@ export type PublicAnswerQuestion = PublicQuestion & {
     score: number | null;
   }[];
 };
+export type PublicStatistics =
+  | {
+      kind: "selected";
+      multiple: boolean | null;
+      participantCount: number;
+      validRespondentCount: number;
+      uncountableCount: number;
+      choices: { label: string; count: number }[];
+    }
+  | {
+      kind: "freeText";
+      participantCount: number;
+      gradedCount: number;
+      ungradedCount: number;
+      uncountableCount: number;
+      ranges: { label: string; count: number }[];
+    };
 
 export type WinnerQuestionResult = {
   position: number;
@@ -62,7 +80,8 @@ export type Winner = {
 export type ProjectionData =
   | { state: "question"; question: PublicQuestion }
   | { state: "answer"; question: PublicAnswerQuestion }
-  | { state: Exclude<State, "question" | "answer">; winners?: Winner[] };
+  | { state: "statistics"; question: PublicQuestion; statistics: PublicStatistics }
+  | { state: Exclude<State, "question" | "answer" | "statistics">; winners?: Winner[] };
 
 const POLL_TIMEOUT_MS = 8_000;
 
@@ -96,7 +115,7 @@ export function isMissingQuestionPayload(payload: unknown): boolean {
   if (typeof payload !== "object" || payload === null) return false;
   const value = payload as Record<string, unknown>;
   return (
-    (value.state === "question" || value.state === "answer") &&
+    (value.state === "question" || value.state === "answer" || value.state === "statistics") &&
     (!("question" in value) || value.question === null)
   );
 }
@@ -112,6 +131,7 @@ export function isProjectionData(payload: unknown): payload is ProjectionData {
       "opening",
       "question",
       "answer",
+      "statistics",
       "podium_preview",
       "third",
       "second",
@@ -133,6 +153,56 @@ export function isProjectionData(payload: unknown): payload is ProjectionData {
       typeof question.question === "string" &&
       Array.isArray(question.choices) &&
       question.choices.every((choice) => typeof choice === "string")
+    );
+  }
+  if (value.state === "statistics") {
+    if (
+      typeof value.question !== "object" ||
+      value.question === null ||
+      typeof value.statistics !== "object" ||
+      value.statistics === null
+    )
+      return false;
+    const question = value.question as Record<string, unknown>;
+    const stats = value.statistics as Record<string, unknown>;
+    if (
+      !(
+        (typeof question.id === "number" || typeof question.id === "string") &&
+        Number.isInteger(question.ordinal) &&
+        Number.isInteger(question.total) &&
+        typeof question.question === "string" &&
+        Array.isArray(question.choices) &&
+        question.choices.every((choice) => typeof choice === "string")
+      )
+    )
+      return false;
+    if (!Number.isInteger(stats.participantCount) || (stats.participantCount as number) < 0)
+      return false;
+    const summaryKeys =
+      stats.kind === "selected"
+        ? ["validRespondentCount", "uncountableCount"]
+        : stats.kind === "freeText"
+          ? ["gradedCount", "ungradedCount", "uncountableCount"]
+          : [];
+    if (
+      summaryKeys.length === 0 ||
+      summaryKeys.some((key) => !Number.isInteger(stats[key]) || (stats[key] as number) < 0)
+    )
+      return false;
+    if (stats.kind === "selected" && stats.multiple !== null && typeof stats.multiple !== "boolean")
+      return false;
+    const counts =
+      stats.kind === "selected" ? stats.choices : stats.kind === "freeText" ? stats.ranges : null;
+    return (
+      Array.isArray(counts) &&
+      counts.every(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          typeof (item as Record<string, unknown>).label === "string" &&
+          Number.isInteger((item as Record<string, unknown>).count) &&
+          ((item as Record<string, unknown>).count as number) >= 0,
+      )
     );
   }
   if (["third", "second", "first"].includes(value.state) && value.winners !== undefined) {

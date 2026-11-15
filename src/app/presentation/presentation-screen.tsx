@@ -21,6 +21,7 @@ import {
   type ProjectionData,
   type PublicAnswerQuestion,
   type PublicQuestion,
+  type PublicStatistics,
   type State,
   type Winner,
   type WinnerQuestionResult,
@@ -32,6 +33,7 @@ type AdminState = Extract<
   | "opening"
   | "question"
   | "answer"
+  | "statistics"
   | "podium_preview"
   | "third"
   | "second"
@@ -54,6 +56,7 @@ const adminStates: AdminState[] = [
   "opening",
   "question",
   "answer",
+  "statistics",
   "podium_preview",
   "third",
   "second",
@@ -379,7 +382,8 @@ function slideForControl(
   deck: PresenterDeck,
   controls: AdminControls,
 ): PresenterDeck["slides"][number] | undefined {
-  const questionStage = controls.state === "question" || controls.state === "answer";
+  const questionStage =
+    controls.state === "question" || controls.state === "answer" || controls.state === "statistics";
   return deck.slides.find(
     (candidate) =>
       candidate.state === controls.state &&
@@ -611,6 +615,59 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
           </div>
         )}
       </div>
+    </section>
+  );
+}
+
+function StatisticsSlide({
+  question,
+  statistics,
+}: {
+  question: PublicQuestion;
+  statistics: PublicStatistics;
+}) {
+  const rows = statistics.kind === "selected" ? statistics.choices : statistics.ranges;
+  const maxCount = Math.max(1, ...rows.map((row) => row.count));
+  return (
+    <section className={styles.statistics} aria-labelledby="statistics-title">
+      <p className={styles.ordinal}>
+        問 <strong>{question.ordinal}</strong>
+      </p>
+      <h1 id="statistics-title">{question.question}</h1>
+      <h2>回答統計</h2>
+      <p className={styles.statisticsPopulation}>全参加者 {statistics.participantCount} 人</p>
+      <ol
+        className={styles.statisticsRows}
+        aria-label={statistics.kind === "selected" ? "選択肢ごとの回答人数" : "得点区間ごとの人数"}
+      >
+        {rows.map((row, index) => (
+          <li className={styles.statisticsRow} key={`${index}-${row.label}`}>
+            <span className={styles.statisticsLabel}>{row.label}</span>
+            <span className={styles.statisticsBarTrack} aria-hidden="true">
+              <span
+                className={styles.statisticsBar}
+                style={{ width: `${(row.count / maxCount) * 100}%` }}
+              />
+            </span>
+            <span className={styles.statisticsCount}>{row.count} 人</span>
+          </li>
+        ))}
+      </ol>
+      {statistics.kind === "selected" ? (
+        <p className={styles.statisticsFootnote}>
+          有効回答 {statistics.validRespondentCount} 人・集計不可 {statistics.uncountableCount} 人
+          {statistics.multiple === true
+            ? "。複数選択では、棒の合計が回答者数を超える場合があります。"
+            : statistics.multiple === null
+              ? "。旧形式の集計データのため、選択形式を判定できません。"
+              : null}
+        </p>
+      ) : (
+        <p className={styles.statisticsFootnote}>
+          採点済み {statistics.gradedCount} 人・未採点 {statistics.ungradedCount} 人・集計不可{" "}
+          {statistics.uncountableCount} 人
+        </p>
+      )}
     </section>
   );
 }
@@ -1375,6 +1432,7 @@ export default function PresentationScreen({
     if (loadingPresenterDeck || !data) return "";
     if (data.state === "question") return `第${data.question.ordinal}問`;
     if (data.state === "answer") return `第${data.question.ordinal}問の解説`;
+    if (data.state === "statistics") return `第${data.question.ordinal}問の回答統計`;
     if (data.state === "third" || data.state === "second" || data.state === "first")
       return `${rankTitle[data.state]}を発表します`;
     if (data.state === "third_prize") return "3位の景品、天守石垣サブレを紹介します";
@@ -1481,6 +1539,9 @@ export default function PresentationScreen({
     if (state === "question" || state === "answer") {
       /* v8 ignore next -- missing question payloads are reset before apply; this remains defensive for internal callers. */
       return data.question ? { key: `${state}:${String(data.question.id)}` } : null;
+    }
+    if (state === "statistics") {
+      return data.question ? { key: `statistics:${String(data.question.id)}` } : null;
     }
     if (state === "not_started") {
       return loadingPresenterDeck ? null : { key: "stage:not_started" };
@@ -1670,6 +1731,9 @@ export default function PresentationScreen({
                             key={`answer:${String(data.question.id)}`}
                             question={data.question}
                           />
+                        )}
+                        {state === "statistics" && data?.state === "statistics" && (
+                          <StatisticsSlide question={data.question} statistics={data.statistics} />
                         )}
 
                         {state === "podium_preview" && (
