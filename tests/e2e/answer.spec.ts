@@ -126,14 +126,23 @@ test("@chromium keeps the answer header opaque for stronger contrast and reduced
 
 type BatchAnswer =
   | { questionId: number; selectedIndex: number }
-  | { questionId: number; freeText: string };
+  | { questionId: number; freeText: string }
+  | { questionId: number; freeTextParts: { a: string; b: string } };
 type SavedBatchAnswer =
   | { questionId: number; answerKind: "selected"; selectedIndex: number; freeText: null }
+  | {
+      questionId: number;
+      answerKind: "freeText";
+      selectedIndex: null;
+      freeText: null;
+      freeTextParts: { a: string; b: string };
+    }
   | {
       questionId: number;
       answerKind: "freeText" | "legacy";
       selectedIndex: number | null;
       freeText: string | null;
+      freeTextParts?: never;
     };
 type RestoreIntegrity = {
   status: "complete";
@@ -486,7 +495,8 @@ test("@chromium result navigation keeps completion visible with link pending unt
         questionId: 5,
         answerKind: "freeText",
         selectedIndex: null,
-        freeText: "保存済み回答",
+        freeText: null,
+        freeTextParts: { a: "保存済み回答 A", b: "保存済み回答 B" },
       },
     ];
     await mockParticipantSession(
@@ -505,9 +515,12 @@ test("@chromium result navigation keeps completion visible with link pending unt
         body: JSON.stringify({
           state: "visible",
           rank: 1,
+          isReference: false,
+          equivalentRank: null,
           participantCount: 1,
+          rankParticipantCount: 1,
           isAggregationTarget: true,
-          maxScore: 5,
+          maxScore: 6,
           score: 0,
           questions: [1, 2, 3, 4, 5].map((position) => ({
             position: position - 1,
@@ -672,7 +685,10 @@ async function expectCenteredHitTest(locator: Locator, name: string) {
 
 async function answerQuestion(page: Page, id: number, choice: string) {
   if (id === 5) {
-    await page.getByRole("textbox", { name: "回答" }).fill(`自由記載${choice}`);
+    await page.getByRole("textbox", { name: "A. 2/28 朝の食事" }).fill(`自由記載${choice}`);
+    await page
+      .getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })
+      .fill(`自由記載${choice}`);
   } else {
     await selectRadio(page, new RegExp(`Option ${id}${choice}`));
   }
@@ -770,7 +786,8 @@ test("@chromium saved revisit defers one question batch until correction starts"
         questionId: 5,
         answerKind: "freeText",
         selectedIndex: null,
-        freeText: "保存済みの自由記述",
+        freeText: null,
+        freeTextParts: { a: "保存済みの自由記述 A", b: "保存済みの自由記述 B" },
       },
     ],
   });
@@ -929,7 +946,10 @@ test("@chromium root-to-answer flow keeps choices local, blocks an incomplete ba
     submitted[0].body.answers.map((answer: { questionId: number }) => answer.questionId),
   ).toEqual([1, 2, 3, 4, 5]);
   expect(submitted[0].body.answers.filter((answer) => "selectedIndex" in answer)).toHaveLength(4);
-  expect(submitted[0].body.answers[4]).toMatchObject({ questionId: 5, freeText: "自由記載B" });
+  expect(submitted[0].body.answers[4]).toMatchObject({
+    questionId: 5,
+    freeTextParts: { a: "自由記載B", b: "自由記載B" },
+  });
   expect(submitted[0].cookie).toContain("stcirt_participant_session=mock-session");
 });
 
@@ -985,7 +1005,7 @@ test("@chromium pending batch preserves accessible motion behavior and locks the
     await signIn(page, "Aki");
     await startQuiz(page);
     for (let id = 1; id <= 4; id += 1) await answerQuestion(page, id, "B");
-    await page.getByRole("textbox", { name: "回答" }).fill("pending animation state");
+    await answerQuestion(page, 5, "pending animation state");
     await page.getByRole("button", { name: "5問の回答を確定する" }).click();
     await postStarted;
 
@@ -1092,7 +1112,8 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   await expect(longOptionRadios).toHaveCount(4);
   const radios = page.getByRole("radio");
   await expect(radios).toHaveCount(16);
-  await expect(page.getByRole("textbox", { name: "回答" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "A. 2/28 朝の食事" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })).toBeVisible();
   const firstRadio = group.getByRole("radio", { name: /長文の選択肢Aです/ });
   await page.evaluate(() => document.fonts.ready);
   await expectCenteredHitTest(
@@ -1172,7 +1193,7 @@ test("@mobile reviews and edits an answer at 320px with a hittable review target
   await startQuiz(page);
 
   for (let id = 1; id <= 4; id += 1) await answerQuestion(page, id, "B");
-  await page.getByRole("textbox", { name: "回答" }).fill("小画面で編集する回答です。");
+  await answerQuestion(page, 5, "小画面で編集する回答です。");
   await page
     .getByRole("navigation", { name: "設問へ移動" })
     .getByRole("link", { name: "第5問✓ 済へ移動" })
@@ -1217,7 +1238,13 @@ test("@chromium returns to owner completion after an assisted save and opens tar
     { questionId: 2, answerKind: "selected", selectedIndex: 0, freeText: null },
     { questionId: 3, answerKind: "selected", selectedIndex: 0, freeText: null },
     { questionId: 4, answerKind: "selected", selectedIndex: 0, freeText: null },
-    { questionId: 5, answerKind: "freeText", selectedIndex: null, freeText: "本人の回答" },
+    {
+      questionId: 5,
+      answerKind: "freeText",
+      selectedIndex: null,
+      freeText: null,
+      freeTextParts: { a: "本人の回答 A", b: "本人の回答 B" },
+    },
   ];
   const ownerSubmission = {
     submissionId: "00000000-0000-4000-8000-000000000041",
@@ -1366,23 +1393,15 @@ test("@chromium returns to owner completion after an assisted save and opens tar
       submissionId: body.submissionId,
       revision: body.expectedRevision + 1,
       answers: body.answers.map((answer) =>
-        "freeText" in answer
+        "freeTextParts" in answer
           ? {
               questionId: answer.questionId,
               answerKind: "freeText",
               selectedIndex: null,
-              freeText: answer.freeText,
-            }
-          : {
-              questionId: answer.questionId,
-              answerKind: "selected",
-              selectedIndex: answer.selectedIndex,
               freeText: null,
-            },
-      ),
-      restoreIntegrity: restoreIntegrity(
-        body.answers.map((answer) =>
-          "freeText" in answer
+              freeTextParts: answer.freeTextParts,
+            }
+          : "freeText" in answer
             ? {
                 questionId: answer.questionId,
                 answerKind: "freeText",
@@ -1395,6 +1414,30 @@ test("@chromium returns to owner completion after an assisted save and opens tar
                 selectedIndex: answer.selectedIndex,
                 freeText: null,
               },
+      ),
+      restoreIntegrity: restoreIntegrity(
+        body.answers.map((answer) =>
+          "freeTextParts" in answer
+            ? {
+                questionId: answer.questionId,
+                answerKind: "freeText",
+                selectedIndex: null,
+                freeText: null,
+                freeTextParts: answer.freeTextParts,
+              }
+            : "freeText" in answer
+              ? {
+                  questionId: answer.questionId,
+                  answerKind: "freeText",
+                  selectedIndex: null,
+                  freeText: answer.freeText,
+                }
+              : {
+                  questionId: answer.questionId,
+                  answerKind: "selected",
+                  selectedIndex: answer.selectedIndex,
+                  freeText: null,
+                },
         ),
       ),
     };
@@ -1599,7 +1642,8 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
       questionId: 5,
       answerKind: "freeText",
       selectedIndex: null,
-      freeText: "保存済み revision 1",
+      freeText: null,
+      freeTextParts: { a: "保存済み A revision 1", b: "保存済み B revision 1" },
     },
   ];
   await mockParticipantSession(page, "Shared Participant", {
@@ -1648,11 +1692,19 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
       canonical = {
         submissionId,
         revision: canonical.revision + 1,
-        answers: body.answers.map((answer) =>
-          "freeText" in answer
+        answers: body.answers.map((answer) => {
+          if ("freeTextParts" in answer) {
+            return {
+              ...answer,
+              answerKind: "freeText" as const,
+              selectedIndex: null,
+              freeText: null,
+            };
+          }
+          return "freeText" in answer
             ? { ...answer, answerKind: "freeText" as const, selectedIndex: null }
-            : { ...answer, answerKind: "selected" as const, freeText: null },
-        ),
+            : { ...answer, answerKind: "selected" as const, freeText: null };
+        }),
       };
       await route.fulfill({
         status: 200,
@@ -1702,9 +1754,15 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
   expect(canonicalReads).toHaveLength(0);
 
   await answerQuestion(secondTab, 1, "D");
-  await secondTab.getByRole("textbox", { name: "回答" }).fill("Bタブの未保存案");
+  await secondTab.getByRole("textbox", { name: "A. 2/28 朝の食事" }).fill("Bタブの未保存案 A");
+  await secondTab
+    .getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })
+    .fill("Bタブの未保存案 B");
   await answerQuestion(page, 1, "B");
-  await page.getByRole("textbox", { name: "回答" }).fill("Aタブで保存した回答");
+  await page.getByRole("textbox", { name: "A. 2/28 朝の食事" }).fill("Aタブで保存した回答 A");
+  await page
+    .getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })
+    .fill("Aタブで保存した回答 B");
   await page.getByRole("button", { name: "修正内容を確定する" }).click();
   await expectResultsWaiting(page);
   expect(canonical.revision).toBe(2);
@@ -1715,7 +1773,12 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
   ).toContainText("回答案は保持しています。内容を確認して、もう一度確定してください。");
   expect(canonicalReads).toEqual([{ revision: 2, answers: canonical.answers }]);
   await expect(secondTab.getByRole("radio", { name: /Option 1D/ })).toBeChecked();
-  await expect(secondTab.getByRole("textbox", { name: "回答" })).toHaveValue("Bタブの未保存案");
+  await expect(secondTab.getByRole("textbox", { name: "A. 2/28 朝の食事" })).toHaveValue(
+    "Bタブの未保存案 A",
+  );
+  await expect(secondTab.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })).toHaveValue(
+    "Bタブの未保存案 B",
+  );
 
   const savedQuestionOne = canonical.answers.find((answer) => answer.questionId === 1);
   const localQuestionOne = writes[1]?.answers.find((answer) => answer.questionId === 1);
@@ -1730,12 +1793,12 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
     savedQuestionOne.answerKind !== "selected" ||
     !("selectedIndex" in localQuestionOne) ||
     savedQuestionFive.answerKind !== "freeText" ||
-    !("freeText" in localQuestionFive)
+    !("freeTextParts" in localQuestionFive)
   ) {
     throw new Error("Expected matching answer kinds for the saved and local drafts");
   }
   expect(localQuestionOne.selectedIndex).not.toBe(savedQuestionOne.selectedIndex);
-  expect(localQuestionFive.freeText).not.toBe(savedQuestionFive.freeText);
+  expect(localQuestionFive.freeTextParts).not.toEqual(savedQuestionFive.freeTextParts);
   expect(canonicalReads).toHaveLength(1);
   expect(writes).toHaveLength(2);
   expect(writes[0]).toMatchObject({ submissionId, expectedRevision: 1 });
