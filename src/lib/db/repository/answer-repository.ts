@@ -91,7 +91,7 @@ function restoreSubmissionAnswers(
           },
         ];
     }
-    if (answer.answerKind === "freeText")
+    if (answer.answerKind === "freeText") {
       return [
         {
           questionId,
@@ -100,6 +100,7 @@ function restoreSubmissionAnswers(
           freeText: answer.freeText,
         },
       ];
+    }
     return [
       {
         questionId,
@@ -290,21 +291,6 @@ export async function getLatestAnswerSubmission(participantId: number) {
           Boolean(parts.b.trim()) &&
           parts.a.trim().length <= 1000 &&
           parts.b.trim().length <= 1000
-        );
-      }
-      if (currentQuestion.answerType === "freeText") {
-        return (
-          (answer.answerKind === "freeText" &&
-            answer.selectedIndex === null &&
-            typeof answer.freeText === "string" &&
-            Boolean(answer.freeText.trim()) &&
-            answer.freeText.trim().length <= 1000) ||
-          (answer.answerKind === "legacy" &&
-            answer.questionId === currentIds[4] &&
-            Number.isInteger(answer.selectedIndex) &&
-            answer.selectedIndex! >= 0 &&
-            answer.selectedIndex! < QUIZ_CHOICES_PER_QUESTION &&
-            answer.freeText === null)
         );
       }
       return (
@@ -619,23 +605,13 @@ async function saveAnswerSubmissionOnce(
               selectedIndex: "selectedIndex" in answer ? answer.selectedIndex : null,
               selectedIndices: "selectedIndices" in answer ? answer.selectedIndices : null,
               freeText:
-                "freeTextParts" in answer
-                  ? encodeFreeTextParts(answer.freeTextParts)
-                  : "freeText" in answer
-                    ? answer.freeText.trim()
-                    : null,
-              answerKind:
-                "freeText" in answer || "freeTextParts" in answer ? "freeText" : "selected",
+                "freeTextParts" in answer ? encodeFreeTextParts(answer.freeTextParts) : null,
+              answerKind: "freeTextParts" in answer ? "freeText" : "selected",
             })),
           );
-          const freeResponse = canonicalAnswers.find(
-            (answer) => "freeText" in answer || "freeTextParts" in answer,
-          );
-          if (freeResponse && ("freeText" in freeResponse || "freeTextParts" in freeResponse)) {
-            const answerText =
-              "freeTextParts" in freeResponse
-                ? encodeFreeTextParts(freeResponse.freeTextParts)
-                : freeResponse.freeText.trim();
+          const freeResponse = canonicalAnswers.find((answer) => "freeTextParts" in answer);
+          if (freeResponse && "freeTextParts" in freeResponse) {
+            const answerText = encodeFreeTextParts(freeResponse.freeTextParts);
             await tx
               .insert(examAnswerAssessments)
               .values({

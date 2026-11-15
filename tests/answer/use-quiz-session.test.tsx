@@ -22,19 +22,33 @@ describe("useQuizSession hook", () => {
     choices: ["A", "B", "C", "D"],
     answerType: "selected" as const,
   });
-  const batchQuestions = (freeTextFifth = false) =>
+  const batchQuestions = (
+    freeTextFifth = false,
+    multipleQuestionTwo = false,
+    freeTextFourth = false,
+  ) =>
     [1, 2, 3, 4, 5].map((id) =>
-      id === 5 && freeTextFifth
+      (id === 5 && freeTextFifth) || (id === 4 && freeTextFourth)
         ? { ...question(id), choices: [], answerType: "freeText" as const }
-        : question(id),
+        : id === 2 && multipleQuestionTwo
+          ? { ...question(id), selectionMode: "multiple" as const }
+          : question(id),
     );
   const submissionId = "00000000-0000-4000-8000-000000000001";
-  const restoreIntegrity = (freeTextFifth = false) => ({
+  const restoreIntegrity = (
+    freeTextFifth = false,
+    multipleQuestionTwo = false,
+    freeTextFourth = false,
+  ) => ({
     status: "complete" as const,
     questions: [1, 2, 3, 4, 5].map((id) => ({
       id,
-      answerType: id === 5 && freeTextFifth ? ("freeText" as const) : ("selected" as const),
-      choiceCount: id === 5 && freeTextFifth ? 0 : 4,
+      answerType:
+        (id === 5 && freeTextFifth) || (id === 4 && freeTextFourth)
+          ? ("freeText" as const)
+          : ("selected" as const),
+      choiceCount: (id === 5 && freeTextFifth) || (id === 4 && freeTextFourth) ? 0 : 4,
+      ...(id === 2 && multipleQuestionTwo ? { selectionMode: "multiple" as const } : {}),
     })),
   });
   const failedCompletionSnapshot = (id: string, revision: number) => ({
@@ -53,6 +67,8 @@ describe("useQuizSession hook", () => {
     mode: "owner" | "assisted" = "owner",
     submission: NonNullable<Awaited<ReturnType<typeof fetchLatestAnswerSubmission>>> | null = null,
     freeTextFifth = false,
+    multipleQuestionTwo = false,
+    freeTextFourth = false,
   ) =>
     ({
       mode,
@@ -74,7 +90,9 @@ describe("useQuizSession hook", () => {
               resultsState: null,
               resultsVisible: null,
             },
-      ...(submission === null ? { questions: batchQuestions(freeTextFifth) } : {}),
+      ...(submission === null
+        ? { questions: batchQuestions(freeTextFifth, multipleQuestionTwo, freeTextFourth) }
+        : {}),
     }) as Awaited<ReturnType<typeof fetchAnswerBootstrap>>;
 
   beforeEach(() => {
@@ -94,6 +112,9 @@ describe("useQuizSession hook", () => {
       batch?: (body: Record<string, unknown>) => unknown | Promise<unknown>;
       getSubmission?: () => unknown | Promise<unknown>;
       freeTextFifth?: boolean;
+      multipleQuestionTwo?: boolean;
+      freeTextFourth?: boolean;
+      postStatus?: number;
     } = {},
   ) {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -113,7 +134,13 @@ describe("useQuizSession hook", () => {
       if (url === "/api/questions/batch") {
         return {
           ok: true,
-          json: async () => ({ questions: batchQuestions(overrides.freeTextFifth) }),
+          json: async () => ({
+            questions: batchQuestions(
+              overrides.freeTextFifth,
+              overrides.multipleQuestionTwo,
+              overrides.freeTextFourth,
+            ),
+          }),
         };
       }
       if (url.startsWith("/api/answers/batch") && !init?.method) {
@@ -121,6 +148,13 @@ describe("useQuizSession hook", () => {
         return { ok: true, json: async () => result };
       }
       if (url === "/api/answers/batch" && init?.method === "POST") {
+        if (overrides.postStatus) {
+          return {
+            ok: false,
+            status: overrides.postStatus,
+            json: async () => ({ message: "保存内容が更新されています" }),
+          };
+        }
         const body = JSON.parse(String(init.body)) as Record<string, unknown>;
         const rawResult = await overrides.batch?.(body);
         const result =
@@ -516,6 +550,37 @@ describe("useQuizSession hook", () => {
 
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
     expect(result.current.phase).toEqual({ kind: "complete", completionSnapshot });
+  });
+
+  it("restores an integrity-checked multiple-select answer from a saved bootstrap", async () => {
+    const savedSubmission = {
+      submissionId,
+      revision: 3,
+      restoreIntegrity: restoreIntegrity(false, true),
+      answers: [1, 2, 3, 4, 5].map((questionId) =>
+        questionId === 2
+          ? {
+              questionId,
+              answerKind: "selected" as const,
+              selectedIndex: null,
+              selectedIndices: [1, 3],
+              freeText: null,
+            }
+          : { questionId, answerKind: "selected" as const, selectedIndex: 1, freeText: null },
+      ),
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", savedSubmission, false, true),
+    );
+    setupFetch({ multipleQuestionTwo: true });
+    const { result } = renderHook(() => useQuizSession());
+
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+    await act(async () => result.current.editAnswers(() => true));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    expect(result.current.multiSelections[2]).toHaveLength(2);
+    expect(result.current.selections[2]).toBeUndefined();
+    expect(result.current.answeredCount).toBe(5);
   });
 
   it("does not seed a saved bootstrap whose restore integrity is invalid", async () => {
@@ -1317,6 +1382,243 @@ describe("useQuizSession hook", () => {
     expect(result.current.phase.kind).toBe("complete");
     expect(attempts).toHaveLength(2);
     expect(attempts[0]?.operationId).not.toBe(attempts[1]?.operationId);
+  });
+
+  it("counts two Q2 selections and both Q5 parts as one answered question", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", null, true, true, true),
+    );
+    setupFetch({ freeTextFifth: true, multipleQuestionTwo: true, freeTextFourth: true });
+    const { result } = await start();
+
+    act(() => result.current.select(1, 0));
+    act(() => result.current.setFreeResponse(4, "Q4 response"));
+    expect(result.current.answeredCount).toBe(2);
+    act(() => result.current.toggleMultiple(2, 1));
+    expect(result.current.answeredCount).toBe(2);
+    act(() => result.current.toggleMultiple(2, 3));
+    expect(result.current.answeredCount).toBe(3);
+    expect(result.current.multiSelections[2]).toHaveLength(2);
+    act(() => result.current.toggleMultiple(2, 0));
+    expect(result.current.multiSelections[2]).toEqual([1, 3]);
+    act(() => result.current.toggleMultiple(2, 1));
+    expect(result.current.multiSelections[2]).toEqual([3]);
+    expect(result.current.answeredCount).toBe(2);
+    act(() => result.current.toggleMultiple(2, 0));
+    act(() => result.current.setFreeResponsePart(5, "a", "朝飲茶"));
+    expect(result.current.answeredCount).toBe(3);
+    act(() => result.current.setFreeResponsePart(5, "b", "シーフード店"));
+    expect(result.current.answeredCount).toBe(4);
+    act(() => result.current.toggleMultiple(2, 0));
+    expect(result.current.multiSelections[2]).toEqual([3]);
+    expect(result.current.answeredCount).toBe(3);
+    act(() => result.current.toggleMultiple(2, 0));
+    expect(result.current.multiSelections[2]).toEqual([3, 0]);
+    expect(result.current.answeredCount).toBe(4);
+    act(() => result.current.setFreeResponse(4, "Updated Q4 response"));
+    expect(result.current.answeredCount).toBe(4);
+    act(() => result.current.select(3, 0));
+    expect(result.current.answeredCount).toBe(5);
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase.kind).toBe("complete");
+  });
+
+  it("ignores multiple-choice changes while an uncertain save requires retry", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("owner", null, false, true));
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/participants/session")
+        return { ok: true, json: async () => ({ participant }) };
+      if (url === "/api/questions/batch")
+        return {
+          ok: true,
+          json: async () => ({ questions: batchQuestions(false, true) }),
+        };
+      if (url === "/api/answers/batch" && init?.method === "POST")
+        throw new Error("network failure");
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = await start();
+
+    for (const quiz of result.current.quizzes) {
+      if (quiz.question.selectionMode === "multiple") {
+        act(() => result.current.toggleMultiple(quiz.question.id, 0));
+        act(() => result.current.toggleMultiple(quiz.question.id, 1));
+      } else {
+        act(() => result.current.select(quiz.question.id, 2));
+      }
+    }
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
+    const selectedIndices = result.current.multiSelections[2];
+    const answeredCount = result.current.answeredCount;
+
+    act(() => result.current.toggleMultiple(2, 3));
+
+    expect(result.current.multiSelections[2]).toEqual(selectedIndices);
+    expect(result.current.answeredCount).toBe(answeredCount);
+  });
+
+  it("does not submit when a required multiple-choice question has no selections", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("owner", null, false, true));
+    const fetchMock = setupFetch({ multipleQuestionTwo: true });
+    const { result } = await start();
+
+    for (const quiz of result.current.quizzes) {
+      if (quiz.question.selectionMode !== "multiple") {
+        act(() => result.current.select(quiz.question.id, 0));
+      }
+    }
+
+    await act(async () => result.current.saveAnswers());
+
+    expect(result.current.phase.kind).toBe("answering");
+    expect(result.current.multiSelections[2]).toBeUndefined();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) => url === "/api/answers/batch" && init?.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("restores Q2's canonical pair into its shuffled display positions after a conflict", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", null, true, true, true),
+    );
+    setupFetch({
+      freeTextFifth: true,
+      multipleQuestionTwo: true,
+      freeTextFourth: true,
+      postStatus: 409,
+      getSubmission: () => ({
+        submissionId,
+        revision: 4,
+        answers: [1, 2, 3, 4, 5].map((questionId) =>
+          questionId === 2
+            ? {
+                questionId,
+                answerKind: "selected",
+                selectedIndex: null,
+                selectedIndices: [1, 3],
+                freeText: null,
+              }
+            : questionId === 5
+              ? {
+                  questionId,
+                  answerKind: "freeText",
+                  selectedIndex: null,
+                  freeText: null,
+                  freeTextParts: { a: "朝飲茶", b: "シーフード店" },
+                }
+              : questionId === 4
+                ? {
+                    questionId,
+                    answerKind: "freeText",
+                    selectedIndex: null,
+                    freeText: "保存済み回答",
+                  }
+                : { questionId, answerKind: "selected", selectedIndex: 0, freeText: null },
+        ),
+      }),
+    });
+    const { result } = await start();
+
+    for (const quiz of result.current.quizzes) {
+      if (quiz.question.selectionMode === "multiple") {
+        act(() => result.current.toggleMultiple(quiz.question.id, 0));
+        act(() => result.current.toggleMultiple(quiz.question.id, 1));
+      } else if (quiz.question.answerType === "freeText") {
+        if (quiz.question.id === 4) {
+          act(() => result.current.setFreeResponse(quiz.question.id, "Q4 response"));
+        } else {
+          act(() => result.current.setFreeResponsePart(quiz.question.id, "a", "仮回答"));
+          act(() => result.current.setFreeResponsePart(quiz.question.id, "b", "仮回答"));
+        }
+      } else {
+        act(() => result.current.select(quiz.question.id, 0));
+      }
+    }
+    await act(async () => result.current.saveAnswers());
+
+    const q2 = result.current.quizzes.find(({ question: item }) => item.id === 2)!;
+    expect(result.current.phase.kind).toBe("answering");
+    expect(result.current.multiSelections[2]).toEqual(
+      [1, 3].map((index) => q2.shuffled.choiceIndices.indexOf(index)),
+    );
+    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.revision).toBe(4);
+  });
+
+  it("counts a restored Q2 pair after an explicit saved-answer refresh", async () => {
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", null, true, true, true),
+    );
+    let savedReadCount = 0;
+    setupFetch({
+      freeTextFifth: true,
+      multipleQuestionTwo: true,
+      freeTextFourth: true,
+      postStatus: 409,
+      getSubmission: () => {
+        savedReadCount += 1;
+        if (savedReadCount === 1) throw new Error("temporary read failure");
+        return {
+          submissionId,
+          revision: 4,
+          answers: [1, 2, 3, 4, 5].map((questionId) =>
+            questionId === 2
+              ? {
+                  questionId,
+                  answerKind: "selected",
+                  selectedIndex: null,
+                  selectedIndices: [1, 3],
+                  freeText: null,
+                }
+              : questionId === 5
+                ? {
+                    questionId,
+                    answerKind: "freeText",
+                    selectedIndex: null,
+                    freeText: null,
+                    freeTextParts: { a: "朝飲茶", b: "シーフード店" },
+                  }
+                : questionId === 4
+                  ? {
+                      questionId,
+                      answerKind: "freeText",
+                      selectedIndex: null,
+                      freeText: "保存済み回答",
+                    }
+                  : { questionId, answerKind: "selected", selectedIndex: 0, freeText: null },
+          ),
+        };
+      },
+    });
+    const { result } = await start();
+
+    for (const quiz of result.current.quizzes) {
+      if (quiz.question.selectionMode === "multiple") {
+        act(() => result.current.toggleMultiple(quiz.question.id, 0));
+        act(() => result.current.toggleMultiple(quiz.question.id, 1));
+      } else if (quiz.question.answerType === "freeText") {
+        if (quiz.question.id === 4) {
+          act(() => result.current.setFreeResponse(quiz.question.id, "Q4 response"));
+        } else {
+          act(() => result.current.setFreeResponsePart(quiz.question.id, "a", "仮回答"));
+          act(() => result.current.setFreeResponsePart(quiz.question.id, "b", "仮回答"));
+        }
+      } else {
+        act(() => result.current.select(quiz.question.id, 0));
+      }
+    }
+    await act(async () => result.current.saveAnswers());
+    expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
+
+    await act(async () => result.current.refreshSavedAnswers());
+
+    expect(result.current.multiSelections[2]).toHaveLength(2);
+    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.revision).toBe(4);
   });
 
   it("retains Q5 free text and resends the same operation after same-participant reauthentication", async () => {
@@ -2145,6 +2447,178 @@ describe("useQuizSession hook", () => {
     expect(result.current.phase).toEqual({ kind: "complete" });
   });
 
+  it.each([
+    {
+      name: "Q2 canonical index outside the choice list",
+      freeTextFifth: false,
+      multipleQuestionTwo: true,
+      freeTextFourth: false,
+      questionId: 2,
+      answer: {
+        questionId: 2,
+        answerKind: "selected",
+        selectedIndex: null,
+        selectedIndices: [1, 9],
+        freeText: null,
+      },
+    },
+    {
+      name: "Q5 with the wrong answer kind",
+      freeTextFifth: true,
+      multipleQuestionTwo: false,
+      freeTextFourth: false,
+      questionId: 5,
+      answer: {
+        questionId: 5,
+        answerKind: "selected",
+        selectedIndex: 1,
+        freeText: null,
+      },
+    },
+    {
+      name: "blank legacy free text in Q5",
+      freeTextFifth: true,
+      multipleQuestionTwo: false,
+      freeTextFourth: false,
+      questionId: 5,
+      answer: {
+        questionId: 5,
+        answerKind: "freeText",
+        selectedIndex: null,
+        freeText: "  ",
+      },
+    },
+    {
+      name: "blank free text in Q4",
+      freeTextFifth: false,
+      multipleQuestionTwo: false,
+      freeTextFourth: true,
+      questionId: 4,
+      answer: {
+        questionId: 4,
+        answerKind: "freeText",
+        selectedIndex: null,
+        freeText: "  ",
+      },
+    },
+    {
+      name: "Q2 with the wrong answer kind",
+      freeTextFifth: false,
+      multipleQuestionTwo: true,
+      freeTextFourth: false,
+      questionId: 2,
+      answer: {
+        questionId: 2,
+        answerKind: "freeText",
+        selectedIndex: null,
+        freeText: "unexpected",
+      },
+    },
+  ])("rejects malformed conflict recovery answers: $name", async (testCase) => {
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap(
+        "owner",
+        null,
+        testCase.freeTextFifth,
+        testCase.multipleQuestionTwo,
+        testCase.freeTextFourth,
+      ),
+    );
+    setupFetch({
+      freeTextFifth: testCase.freeTextFifth,
+      multipleQuestionTwo: testCase.multipleQuestionTwo,
+      freeTextFourth: testCase.freeTextFourth,
+      postStatus: 409,
+      getSubmission: () => ({
+        submissionId,
+        revision: 2,
+        answers: [1, 2, 3, 4, 5].map((questionId) => {
+          const answer =
+            questionId === 2 && testCase.multipleQuestionTwo
+              ? {
+                  questionId,
+                  answerKind: "selected",
+                  selectedIndex: null,
+                  selectedIndices: [1, 3],
+                  freeText: null,
+                }
+              : questionId === 5 && testCase.freeTextFifth
+                ? {
+                    questionId,
+                    answerKind: "freeText",
+                    selectedIndex: null,
+                    freeText: null,
+                    freeTextParts: { a: "朝飲茶", b: "シーフード店" },
+                  }
+                : questionId === 4 && testCase.freeTextFourth
+                  ? {
+                      questionId,
+                      answerKind: "freeText",
+                      selectedIndex: null,
+                      freeText: "保存済み回答",
+                    }
+                  : { questionId, answerKind: "selected", selectedIndex: 0, freeText: null };
+          return questionId === testCase.questionId ? testCase.answer : answer;
+        }),
+      }),
+    });
+    const { result } = await start();
+
+    for (const quiz of result.current.quizzes) {
+      if (quiz.question.selectionMode === "multiple") {
+        act(() => result.current.toggleMultiple(quiz.question.id, 0));
+        act(() => result.current.toggleMultiple(quiz.question.id, 1));
+      } else if (quiz.question.answerType === "freeText") {
+        if (quiz.question.id === 5) {
+          act(() => result.current.setFreeResponsePart(5, "a", "朝飲茶"));
+          act(() => result.current.setFreeResponsePart(5, "b", "シーフード店"));
+        } else {
+          act(() => result.current.setFreeResponse(quiz.question.id, "回答"));
+        }
+      } else {
+        act(() => result.current.select(quiz.question.id, 0));
+      }
+    }
+    await act(async () => result.current.saveAnswers());
+
+    expect(result.current.phase.kind).toBe("complete");
+    expect(result.current.restoreError).toContain("保存済み回答と現在の設問が一致しない");
+    expect(result.current.saveConfirmed).toBe(false);
+  });
+
+  it("rejects free-text parts attached to Q4 in the saved-answer integrity manifest", async () => {
+    const savedSubmission = {
+      submissionId,
+      revision: 2,
+      restoreIntegrity: restoreIntegrity(false, false, true),
+      answers: [1, 2, 3, 4, 5].map((questionId) =>
+        questionId === 4
+          ? {
+              questionId,
+              answerKind: "freeText" as const,
+              selectedIndex: null,
+              freeText: null,
+              freeTextParts: { a: "not allowed here", b: "also not allowed" },
+            }
+          : {
+              questionId,
+              answerKind: "selected" as const,
+              selectedIndex: 0,
+              freeText: null,
+            },
+      ),
+    };
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValue(
+      makeBootstrap("owner", savedSubmission as never, false, false, true),
+    );
+
+    const { result } = renderHook(() => useQuizSession());
+    await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
+
+    expect(result.current.restoreError).toContain("整合性を確認できません");
+    expect(result.current.saveConfirmed).toBe(false);
+  });
+
   it("requires reauthentication when conflict recovery and manual refresh return 401", async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/participants/session" && init?.method === "POST")
@@ -2710,6 +3184,131 @@ describe("useQuizSession hook", () => {
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
   });
 
+  it("restores multiple selections and Q5 parts from an assisted draft", async () => {
+    const draft = await createAssistedDraft();
+    const draftQuizzes = draft.quizzes as {
+      question: {
+        id: number;
+        question: string;
+        choices: string[];
+        answerType: "selected" | "freeText";
+        selectionMode?: "single" | "multiple";
+      };
+      shuffled: { choices: string[]; choiceIndices: number[] };
+    }[];
+    draftQuizzes[1]!.question.selectionMode = "multiple";
+    draftQuizzes[4]!.question = {
+      ...draftQuizzes[4]!.question,
+      answerType: "freeText" as const,
+      choices: [],
+    };
+    draftQuizzes[4]!.shuffled = { choices: [], choiceIndices: [] };
+    const expandedDraft = {
+      ...draft,
+      quizzes: draftQuizzes,
+      multiSelections: { 2: [0, 2] },
+      freeResponses: {},
+      freeResponseParts: { 5: { a: "朝飲茶", b: "シーフード店" } },
+    };
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(expandedDraft));
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(makeBootstrap("assisted"));
+    const { result } = await start();
+
+    expect(result.current.multiSelections[2]).toEqual([0, 2]);
+    expect(result.current.freeResponseParts[5]).toEqual({ a: "朝飲茶", b: "シーフード店" });
+    expect(result.current.answeredCount).toBe(3);
+
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce(null);
+    await act(async () => result.current.retrySubmissionCheck());
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    expect(result.current.answeredCount).toBe(3);
+
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce({
+      submissionId: draft.submissionId as string,
+      revision: draft.revision as number,
+      restoreIntegrity: restoreIntegrity(true, true),
+      answers: [1, 2, 3, 4, 5].map((questionId) =>
+        questionId === 2
+          ? {
+              questionId,
+              answerKind: "selected" as const,
+              selectedIndex: null,
+              selectedIndices: [1, 3],
+              freeText: null,
+            }
+          : questionId === 5
+            ? {
+                questionId,
+                answerKind: "freeText" as const,
+                selectedIndex: null,
+                freeText: null,
+                freeTextParts: { a: "朝飲茶", b: "シーフード店" },
+              }
+            : {
+                questionId,
+                answerKind: "selected" as const,
+                selectedIndex: 0,
+                freeText: null,
+              },
+      ),
+    });
+    await act(async () => result.current.retrySubmissionCheck());
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    expect(result.current.multiSelections[2]).toEqual([0, 2]);
+    expect(result.current.freeResponseParts[5]).toEqual({ a: "朝飲茶", b: "シーフード店" });
+    expect(result.current.answeredCount).toBe(3);
+  });
+
+  it("defaults missing optional maps across assisted draft restoration paths", async () => {
+    const draft = await createAssistedDraft();
+    delete draft.multiSelections;
+    delete draft.freeResponseParts;
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(draft));
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(makeBootstrap("assisted"));
+    const { result, unmount } = await start();
+
+    expect(result.current.multiSelections).toEqual({});
+    expect(result.current.freeResponseParts).toEqual({});
+    expect(result.current.answeredCount).toBe(1);
+
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce(null);
+    await act(async () => result.current.retrySubmissionCheck());
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    expect(result.current.multiSelections).toEqual({});
+    expect(result.current.freeResponseParts).toEqual({});
+
+    vi.mocked(fetchLatestAnswerSubmission).mockResolvedValueOnce({
+      submissionId: draft.submissionId as string,
+      revision: draft.revision as number,
+      restoreIntegrity: restoreIntegrity(),
+      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        questionId,
+        answerKind: "selected" as const,
+        selectedIndex: 0,
+        freeText: null,
+      })),
+    });
+    await act(async () => result.current.retrySubmissionCheck());
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+    expect(result.current.multiSelections).toEqual({});
+    expect(result.current.freeResponseParts).toEqual({});
+    expect(result.current.answeredCount).toBe(1);
+
+    unmount();
+    const reauth = await startAssistedReauthWithStoredDraft();
+    delete reauth.draft.multiSelections;
+    delete reauth.draft.freeResponseParts;
+    window.sessionStorage.setItem("stcirt-answer-scope", "assisted");
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(reauth.draft));
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(makeBootstrap("assisted"));
+    await act(async () => reauth.result.current.login("参加者", "1234"));
+    await waitFor(() => expect(reauth.result.current.phase.kind).toBe("answering"));
+    expect(reauth.result.current.multiSelections).toEqual({});
+    expect(reauth.result.current.freeResponseParts).toEqual({});
+    expect(reauth.result.current.answeredCount).toBe(1);
+  });
+
   it("keeps a matching assisted draft complete when bootstrap lacks restore integrity", async () => {
     const { result, draft, fetchMock, bootstrapCallsBeforeLogin } =
       await startAssistedReauthWithStoredDraft();
@@ -2805,6 +3404,71 @@ describe("useQuizSession hook", () => {
     expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
     expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
+  });
+
+  it("restores multiple choices and Q5 parts in the assisted login draft path", async () => {
+    const { result, draft } = await startAssistedReauthWithStoredDraft();
+    type DraftQuiz = {
+      question: Omit<ReturnType<typeof question>, "answerType"> & {
+        answerType: "selected" | "freeText";
+        selectionMode?: "single" | "multiple";
+      };
+      shuffled: { choices: string[]; choiceIndices: number[] };
+    };
+    const draftQuizzes = draft.quizzes as DraftQuiz[];
+    draftQuizzes[1]!.question.selectionMode = "multiple";
+    draftQuizzes[4]!.question = {
+      ...draftQuizzes[4]!.question,
+      answerType: "freeText",
+      choices: [],
+    };
+    draftQuizzes[4]!.shuffled = { choices: [], choiceIndices: [] };
+    const expandedDraft = {
+      ...draft,
+      quizzes: draftQuizzes,
+      multiSelections: { 2: [0, 2] },
+      freeResponses: {},
+      freeResponseParts: { 5: { a: "朝飲茶", b: "シーフード店" } },
+    };
+    window.sessionStorage.setItem("stcirt-assisted-answer-draft", JSON.stringify(expandedDraft));
+    vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(
+      makeBootstrap("assisted", {
+        submissionId: draft.submissionId as string,
+        revision: draft.revision as number,
+        restoreIntegrity: restoreIntegrity(true, true),
+        answers: [1, 2, 3, 4, 5].map((questionId) =>
+          questionId === 2
+            ? {
+                questionId,
+                answerKind: "selected" as const,
+                selectedIndex: null,
+                selectedIndices: [1, 3],
+                freeText: null,
+              }
+            : questionId === 5
+              ? {
+                  questionId,
+                  answerKind: "freeText" as const,
+                  selectedIndex: null,
+                  freeText: null,
+                  freeTextParts: { a: "朝飲茶", b: "シーフード店" },
+                }
+              : {
+                  questionId,
+                  answerKind: "selected" as const,
+                  selectedIndex: 0,
+                  freeText: null,
+                },
+        ),
+      }),
+    );
+
+    await act(async () => result.current.login("参加者", "1234"));
+    await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
+
+    expect(result.current.multiSelections[2]).toEqual([0, 2]);
+    expect(result.current.freeResponseParts[5]).toEqual({ a: "朝飲茶", b: "シーフード店" });
+    expect(result.current.answeredCount).toBe(3);
   });
 
   it("hydrates a valid saved owner submission after assisted reauthentication falls back", async () => {

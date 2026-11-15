@@ -90,10 +90,12 @@ async function getLatestWithRawAnswers(
   storedAnswers: Array<{
     questionId: number;
     selectedIndex: number | null;
+    selectedIndices?: number[] | null;
     freeText: string | null;
     answerKind: string;
   }>,
   freeTextQuestionId = questionIds[4],
+  multiSelectQuestionId?: number,
 ) {
   const originalDb = dbRef.db;
   const submission = { id: submissionId, participantId: 99, questionIds, revision: 1 };
@@ -101,6 +103,7 @@ async function getLatestWithRawAnswers(
     id,
     key: id === freeTextQuestionId ? "it-literacy-005" : `test-${id}`,
     choiceCount: id === freeTextQuestionId ? 0 : 4,
+    selectionMode: id === multiSelectQuestionId ? "multiple" : "single",
   }));
   const fakeDb = {
     transaction: async (callback: (tx: unknown) => Promise<unknown>) =>
@@ -113,7 +116,13 @@ async function getLatestWithRawAnswers(
               };
             }
             if (table === schema.examSubmissionAnswers) {
-              return { where: async () => storedAnswers };
+              return {
+                where: async () =>
+                  storedAnswers.map((answer) => ({
+                    ...answer,
+                    selectedIndices: answer.selectedIndices ?? null,
+                  })),
+              };
             }
             return { orderBy: () => ({ limit: async () => currentQuestions }) };
           },
@@ -612,6 +621,36 @@ describe("answer-repository", () => {
       expect(latest?.answers).toEqual([]);
     });
 
+    it("restores a complete current multi-select answer", async () => {
+      const questionIds = [1, 2, 3, 4, 5];
+      const rows = questionIds.map((questionId) => ({
+        questionId,
+        selectedIndex: questionId === 2 || questionId === 5 ? null : 0,
+        selectedIndices: questionId === 2 ? [1, 3] : null,
+        freeText: questionId === 5 ? JSON.stringify({ a: "朝飲茶", b: "シーフード店" }) : null,
+        answerKind: questionId === 5 ? "freeText" : "selected",
+      }));
+
+      await expect(
+        getLatestWithRawAnswers("complete-multi-select-latest", questionIds, rows, 5, 2),
+      ).resolves.toMatchObject({
+        answers: expect.arrayContaining([
+          expect.objectContaining({
+            questionId: 2,
+            answerKind: "selected",
+            selectedIndex: null,
+            selectedIndices: [1, 3],
+          }),
+          expect.objectContaining({
+            questionId: 5,
+            answerKind: "freeText",
+            freeTextParts: { a: "朝飲茶", b: "シーフード店" },
+          }),
+        ]),
+        restoreIntegrity: { status: "complete" },
+      });
+    });
+
     it.each([
       { label: "too few choices", choices: ["A"] },
       { label: "too many choices", choices: ["A", "B", "C", "D", "E"] },
@@ -678,6 +717,45 @@ describe("answer-repository", () => {
 
       await expect(
         getLatestWithRawAnswers("missing-free-text-latest", questionIds, rows),
+      ).resolves.toMatchObject({ answers: [], restoreIntegrity: { status: "invalid" } });
+    });
+
+    it.each([
+      ["malformed JSON", "not-json"],
+      ["missing B part", JSON.stringify({ a: "朝飲茶" })],
+      ["blank A part", JSON.stringify({ a: "  ", b: "シーフード" })],
+      ["blank B part", JSON.stringify({ a: "朝飲茶", b: "  " })],
+      ["A part over the limit", JSON.stringify({ a: "x".repeat(1001), b: "シーフード" })],
+      ["B part over the limit", JSON.stringify({ a: "朝飲茶", b: "x".repeat(1001) })],
+    ])("rejects Q5 restoration with %s", async (_label, freeText) => {
+      const questionIds = [1, 2, 3, 4, 5];
+      const rows = questionIds.map((questionId) => ({
+        questionId,
+        selectedIndex: questionId === 5 ? null : 0,
+        freeText: questionId === 5 ? freeText : null,
+        answerKind: questionId === 5 ? "freeText" : "selected",
+      }));
+
+      await expect(
+        getLatestWithRawAnswers("invalid-q5-parts", questionIds, rows),
+      ).resolves.toMatchObject({ answers: [], restoreIntegrity: { status: "invalid" } });
+    });
+
+    it.each([
+      { label: "uses a selected answer kind", answerKind: "selected", selectedIndex: 0 },
+      { label: "has a legacy answer kind", answerKind: "legacy", selectedIndex: 0 },
+      { label: "also has a selected index", answerKind: "freeText", selectedIndex: 0 },
+    ])("rejects Q5 parts when the row $label", async ({ answerKind, selectedIndex }) => {
+      const questionIds = [1, 2, 3, 4, 5];
+      const rows = questionIds.map((questionId) => ({
+        questionId,
+        selectedIndex: questionId === 5 ? selectedIndex : 0,
+        freeText: questionId === 5 ? JSON.stringify({ a: "朝飲茶", b: "シーフード" }) : null,
+        answerKind: questionId === 5 ? answerKind : "selected",
+      }));
+
+      await expect(
+        getLatestWithRawAnswers("invalid-q5-part-shape", questionIds, rows),
       ).resolves.toMatchObject({ answers: [], restoreIntegrity: { status: "invalid" } });
     });
 
@@ -872,6 +950,35 @@ describe("answer-repository", () => {
       ).resolves.toMatchObject({
         submissionId: "selected-submission",
         answers: [{ questionId, answerKind: "selected", selectedIndex: 1, freeText: null }],
+      });
+    });
+
+    it("preserves invalid Q5 free-text JSON when reading an older submission", async () => {
+      const questionIds = await insertFiveQuestions();
+      const questionId = questionIds[4]!;
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({ key: "it-literacy-005", choices: [] })
+        .where(eq(schema.examQuestions.id, questionId));
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "older-invalid-q5", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values({
+        submissionId: "older-invalid-q5",
+        questionId,
+        selectedIndex: null,
+        freeText: "not-json",
+        answerKind: "freeText",
+      });
+
+      await expect(getAnswerSubmission("older-invalid-q5", participantId)).resolves.toMatchObject({
+        answers: [
+          {
+            questionId,
+            answerKind: "freeText",
+            selectedIndex: null,
+            freeText: "not-json",
+          },
+        ],
       });
     });
   });

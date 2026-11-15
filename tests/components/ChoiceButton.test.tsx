@@ -44,6 +44,24 @@ describe("ChoiceButton", () => {
     expect(screen.getByRole("radio", { name: /A\..*Selected text/ })).toBeChecked();
   });
 
+  it("uses checkbox geometry for a multiple-select choice", () => {
+    render(
+      <ChoiceButton
+        id="choice-multiple"
+        name="answers"
+        value="1"
+        label="B."
+        text="Multiple choice"
+        variant="selected"
+        checked
+        inputType="checkbox"
+      />,
+    );
+
+    expect(screen.getByRole("checkbox", { name: /B\..*Multiple choice/ })).toBeChecked();
+    expect(screen.getByText("B.")).toHaveClass("rounded-md");
+  });
+
   it.each([
     ["correct", "border-success", "bg-success/15", "text-success"],
     ["selectedWrong", "border-error", "bg-error/15", "text-error"],

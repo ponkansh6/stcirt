@@ -1529,7 +1529,11 @@ describe("presentation repository", () => {
             {
               position: 1,
               question: "Question 5",
-              answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest" },
+              answer: {
+                kind: "freeText",
+                value: "A: Q5 latest\nB: Q5 latest",
+                parts: { a: "Q5 latest", b: "Q5 latest" },
+              },
               normalizedScore: 0,
             },
           ],
@@ -1908,6 +1912,69 @@ describe("presentation repository", () => {
       { answer: { kind: "selected", value: "Wrong 1" }, correctness: "incorrect" },
       { answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest" }, normalizedScore: 1 },
     ]);
+
+    const [firstEntry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, first));
+    const firstEntryAnswers = firstEntry!.answers;
+    const malformedQ5Parts: unknown[] = [
+      undefined,
+      null,
+      [],
+      { a: "only A" },
+      { a: 1, b: "B" },
+      { a: "A", b: 1 },
+    ];
+    for (const [index, parts] of malformedQ5Parts.entries()) {
+      const fallbackText = `unparsed Q5 ${index}`;
+      const answers = firstEntryAnswers.map((answer) =>
+        answer.questionId === 5
+          ? { ...answer, freeText: fallbackText, freeTextParts: parts as never }
+          : answer,
+      ) as typeof firstEntryAnswers;
+      await testDb.db
+        .update(schema.presentationEntries)
+        .set({ answers })
+        .where(eq(schema.presentationEntries.participantId, first));
+
+      const malformedProjection = await getPublicPresentation();
+      if (malformedProjection.state !== "first") throw new Error("Expected first-rank projection");
+      const firstWinner = malformedProjection.winners.find(
+        ({ displayName }) => displayName === "First tied",
+      );
+      expect(firstWinner?.questionResults[1]).toMatchObject({
+        answer: { kind: "freeText", value: fallbackText },
+      });
+      expect(firstWinner?.questionResults[1]).not.toHaveProperty("parts");
+    }
+  });
+
+  it("preserves malformed Q5 JSON as raw text in a newly aggregated snapshot", async () => {
+    await addCurrentFiveQuestions();
+    const participantId = await addParticipant("Malformed Q5 snapshot source");
+    await addSubmission(participantId, [0, 0]);
+    await testDb.db
+      .update(schema.examSubmissionAnswers)
+      .set({ freeText: "not-json" })
+      .where(
+        and(
+          eq(schema.examSubmissionAnswers.submissionId, `submission-${participantId}-latest`),
+          eq(schema.examSubmissionAnswers.questionId, 5),
+        ),
+      );
+
+    await startWithAggregate("malformed-q5-snapshot-start");
+    const [entry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    expect(entry?.answers[4]).toMatchObject({
+      questionId: 5,
+      answerKind: "freeText",
+      freeText: "not-json",
+    });
+    expect(entry?.answers[4]).not.toHaveProperty("freeTextParts");
   });
 
   it("keeps missing, invalid, unknown, unanswered and legacy answers distinct", async () => {
@@ -1943,6 +2010,19 @@ describe("presentation repository", () => {
     await testDb.db
       .update(schema.presentationEntries)
       .set({
+        answers: [{ ...answers[0]!, selectedIndex: null, selectedIndices: null }, answers[1]!],
+      })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    projection = await getPublicPresentation();
+    if (projection.state !== "first") throw new Error("Expected first-rank projection");
+    expect(projection.winners[0]?.questionResults[0]).toMatchObject({
+      answer: { kind: "selected", value: null },
+      correctness: "unavailable",
+    });
+
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({
         answers: [answers[0]!, { ...answers[1]!, answerKind: "unexpected" as never }],
       })
       .where(eq(schema.presentationEntries.participantId, participantId));
@@ -1965,6 +2045,76 @@ describe("presentation repository", () => {
     projection = await getPublicPresentation();
     if (projection.state !== "first") throw new Error("Expected first-rank projection");
     expect(projection.winners[0]?.questionResults[1]?.answer).toEqual({ kind: "unavailable" });
+  });
+
+  it("fails closed for malformed selected and correct multi-select indices in winner answers", async () => {
+    await addCurrentFiveQuestions();
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({
+        choices: ["A1", "B1", "C1", "D1", "E1", "F1", "G1", "H1"],
+        selectionMode: "multiple",
+        correctIndices: [1, 4],
+      })
+      .where(eq(schema.examQuestions.id, 2));
+    const participantId = await addParticipant("Malformed multi-select result");
+    await addSubmission(participantId, [0, 0], 1, "multi", 1, [1, 4]);
+    await startWithAggregate("malformed-multi-select-start");
+    for (let index = 0; index < 11; index += 1)
+      await operatePresentation(`malformed-multi-select-forward-${index}`, "advance");
+
+    const [entry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    const invalidSelection = entry!.answers.map((answer) =>
+      answer.questionId === 2 ? { ...answer, selectedIndices: [9, 4] } : answer,
+    );
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: invalidSelection })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    let projection = await getPublicPresentation();
+    if (projection.state !== "first") throw new Error("Expected first-rank projection");
+    expect(projection.winners[0]?.questionResults[1]).toMatchObject({
+      answer: { kind: "selected", value: null },
+      correctness: "unavailable",
+    });
+
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: entry!.answers })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ correctIndices: [1, 99] })
+      .where(eq(schema.presentationQuestions.sourceQuestionId, 2));
+    projection = await getPublicPresentation();
+    if (projection.state !== "first") throw new Error("Expected first-rank projection");
+    expect(projection.winners[0]?.questionResults[1]).toMatchObject({
+      answer: { kind: "selected", value: "B1、E1" },
+      correctness: "unavailable",
+    });
+  });
+
+  it("scores a multi-select question with no stored correct set as incorrect", async () => {
+    await addCurrentFiveQuestions();
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({
+        selectionMode: "multiple",
+        correctIndices: null,
+      })
+      .where(eq(schema.examQuestions.id, 2));
+    const participantId = await addParticipant("Missing multi-select answer key");
+    await addSubmission(participantId, [0, 0], 1, "missing-key", 1, [1, 0]);
+
+    await startWithAggregate("missing-multi-answer-key-start");
+    const [entry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    expect(entry?.score).toBe(4);
   });
 
   it("always includes answer explanations even when the legacy stored mode is short", async () => {
@@ -3868,6 +4018,30 @@ describe("presentation repository", () => {
     });
     expect(JSON.stringify(freeTextResult)).not.toContain("rawScore");
     expect(JSON.stringify(freeTextResult)).not.toContain("987");
+
+    const validQ5PartsSnapshot = freeTextSnapshot.map((answer) =>
+      answer.questionId === 5
+        ? { ...answer, freeText: JSON.stringify({ a: "ローカル朝飲茶", b: "シーフード店" }) }
+        : answer,
+    );
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: validQ5PartsSnapshot })
+      .where(eq(schema.presentationEntries.participantId, second));
+    await expect(getParticipantResult(second)).resolves.toMatchObject({
+      state: "visible",
+      questions: [
+        {},
+        {
+          answer: {
+            kind: "freeText",
+            value: "A: ローカル朝飲茶\nB: シーフード店",
+            parts: { a: "ローカル朝飲茶", b: "シーフード店" },
+          },
+        },
+      ],
+    });
+
     await testDb.db
       .update(schema.presentationEntries)
       .set({ score: 4 })

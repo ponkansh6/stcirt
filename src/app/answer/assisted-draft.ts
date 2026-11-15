@@ -10,12 +10,19 @@ export type AssistedDraft = {
   participantId: number;
   quizzes: LoadedQuiz[];
   selections: Record<number, number>;
-  multiSelections?: Record<number, number[]>;
+  multiSelections: Record<number, number[]>;
   freeResponses: Record<number, string>;
-  freeResponseParts?: Record<number, { a: string; b: string }>;
+  freeResponseParts: Record<number, { a: string; b: string }>;
   legacyAnswerIds: number[];
   submissionId: string;
   revision: number;
+};
+
+type UnvalidatedAssistedDraft = Partial<
+  Omit<AssistedDraft, "multiSelections" | "freeResponseParts">
+> & {
+  multiSelections?: Record<number, number[]>;
+  freeResponseParts?: Record<number, { a: string; b: string }>;
 };
 
 const ASSISTED_DRAFT_KEY = "stcirt-assisted-answer-draft";
@@ -39,7 +46,7 @@ export function readAssistedDraft(expectedParticipantId: number): AssistedDraft 
       clearAssistedDraft();
       return null;
     }
-    const draft = value as Partial<AssistedDraft>;
+    const draft = value as UnvalidatedAssistedDraft;
     if (
       draft.schemaVersion !== ASSISTED_DRAFT_SCHEMA_VERSION ||
       !Number.isFinite(draft.expiresAt) ||

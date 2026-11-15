@@ -117,6 +117,28 @@ describe("JEV score adapter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("records both model names when the independent part requests use different models", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
+    const responseFor = (model: string) =>
+      new Response(JSON.stringify({ ...envelope(), model }), { status: 200 });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(responseFor("jev-a"))
+        .mockResolvedValueOnce(responseFor("jev-b")),
+    );
+
+    await expect(
+      gradeFreeResponseParts(
+        { a: "朝食", b: "レストラン" },
+        JEV_QUESTION_VERSION,
+        JEV_RUBRIC_VERSION,
+      ),
+    ).resolves.toMatchObject({ model: "jev-a,jev-b" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("sends the original mixed Unicode answer to JEV without keyword normalization", async () => {
     vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
     respond(envelope());

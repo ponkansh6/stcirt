@@ -96,11 +96,21 @@ type SaveAttempt = {
   freeResponses: Record<number, string>;
   freeResponseParts: Record<number, { a: string; b: string }>;
 };
-type SelectedAnswer = AnswerSubmission["answers"][number] & {
-  answerKind: "selected";
-  selectedIndex: number | null;
-  selectedIndices?: number[] | null;
-};
+type SelectedAnswer =
+  | {
+      questionId: number;
+      answerKind: "selected";
+      selectedIndex: number;
+      selectedIndices?: number[] | null;
+      freeText: null;
+    }
+  | {
+      questionId: number;
+      answerKind: "selected";
+      selectedIndex: null;
+      selectedIndices: number[];
+      freeText: null;
+    };
 
 function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
   const integrity = submission.restoreIntegrity;
@@ -211,8 +221,8 @@ function restoreDisplaySelections(
   const restoredMultiple: Record<number, number[]> = {};
   for (const answer of answers) {
     const quiz = quizzes.find(({ question }) => question.id === answer.questionId)!;
-    if (quiz.question.selectionMode === "multiple") {
-      const displayIndices = (answer.selectedIndices ?? []).map((index) =>
+    if (answer.selectedIndex === null) {
+      const displayIndices = answer.selectedIndices.map((index) =>
         quiz.shuffled.choiceIndices.indexOf(index),
       );
       if (displayIndices.length !== 2 || displayIndices.some((index) => index < 0))
@@ -220,8 +230,6 @@ function restoreDisplaySelections(
       restoredMultiple[answer.questionId] = displayIndices;
       continue;
     }
-    if (answer.selectedIndex === null)
-      throw new Error("保存済み回答を問題に対応づけられませんでした。");
     const displayIndex = quiz.shuffled.choiceIndices.indexOf(answer.selectedIndex);
     if (displayIndex < 0) throw new Error("保存済み回答を問題に対応づけられませんでした。");
     restored[answer.questionId] = displayIndex;
@@ -307,7 +315,7 @@ function restoreSavedAnswers(
     const selectedAnswers = submission.answers.filter(
       (answer): answer is SelectedAnswer =>
         answer.answerKind === "selected" &&
-        (answer.selectedIndex !== null || (answer.selectedIndices?.length ?? 0) === 2),
+        (answer.selectedIndex !== null || answer.selectedIndices?.length === 2),
     );
     const restoredSelections = restoreDisplaySelections(selectedAnswers, quizzes);
     return {
@@ -476,22 +484,21 @@ export function useQuizSession() {
           setRevision(assistedDraft.revision);
           selectionsRef.current = assistedDraft.selections;
           setSelections(assistedDraft.selections);
-          multiSelectionsRef.current = assistedDraft.multiSelections ?? {};
-          setMultiSelections(assistedDraft.multiSelections ?? {});
+          multiSelectionsRef.current = assistedDraft.multiSelections;
+          setMultiSelections(assistedDraft.multiSelections);
           setSavedSelections({});
           freeResponsesRef.current = assistedDraft.freeResponses;
           setFreeResponses(assistedDraft.freeResponses);
-          freeResponsePartsRef.current = assistedDraft.freeResponseParts ?? {};
-          setFreeResponseParts(assistedDraft.freeResponseParts ?? {});
+          freeResponsePartsRef.current = assistedDraft.freeResponseParts;
+          setFreeResponseParts(assistedDraft.freeResponseParts);
           legacyAnswerIdsRef.current = assistedDraft.legacyAnswerIds;
           setLegacyAnswerIds(assistedDraft.legacyAnswerIds);
           setAnsweredCount(
             Object.keys(assistedDraft.selections).length +
-              Object.values(assistedDraft.multiSelections ?? {}).filter(
-                (indices) => indices.length === 2,
-              ).length +
+              Object.values(assistedDraft.multiSelections).filter((indices) => indices.length === 2)
+                .length +
               Object.values(assistedDraft.freeResponses).filter((value) => value.trim()).length +
-              Object.values(assistedDraft.freeResponseParts ?? {}).filter(
+              Object.values(assistedDraft.freeResponseParts).filter(
                 ({ a, b }) => a.trim() && b.trim(),
               ).length,
           );
@@ -852,22 +859,21 @@ export function useQuizSession() {
               setRevision(draft.revision);
               selectionsRef.current = draft.selections;
               setSelections(draft.selections);
-              multiSelectionsRef.current = draft.multiSelections ?? {};
-              setMultiSelections(draft.multiSelections ?? {});
+              multiSelectionsRef.current = draft.multiSelections;
+              setMultiSelections(draft.multiSelections);
               setSavedSelections({});
               freeResponsesRef.current = draft.freeResponses;
               setFreeResponses(draft.freeResponses);
-              freeResponsePartsRef.current = draft.freeResponseParts ?? {};
-              setFreeResponseParts(draft.freeResponseParts ?? {});
+              freeResponsePartsRef.current = draft.freeResponseParts;
+              setFreeResponseParts(draft.freeResponseParts);
               setLegacyAnswerIds(draft.legacyAnswerIds);
               const count =
                 Object.keys(draft.selections).length +
-                Object.values(draft.multiSelections ?? {}).filter((indices) => indices.length === 2)
+                Object.values(draft.multiSelections).filter((indices) => indices.length === 2)
                   .length +
                 Object.values(draft.freeResponses).filter((value) => value.trim()).length +
-                Object.values(draft.freeResponseParts ?? {}).filter(
-                  ({ a, b }) => a.trim() && b.trim(),
-                ).length;
+                Object.values(draft.freeResponseParts).filter(({ a, b }) => a.trim() && b.trim())
+                  .length;
               setAnsweredCount(count);
               setPhase({ kind: "answering" });
               return;
@@ -936,22 +942,21 @@ export function useQuizSession() {
             setRevision(draft.revision);
             selectionsRef.current = draft.selections;
             setSelections(draft.selections);
-            multiSelectionsRef.current = draft.multiSelections ?? {};
-            setMultiSelections(draft.multiSelections ?? {});
+            multiSelectionsRef.current = draft.multiSelections;
+            setMultiSelections(draft.multiSelections);
             freeResponsesRef.current = draft.freeResponses;
             setFreeResponses(draft.freeResponses);
-            freeResponsePartsRef.current = draft.freeResponseParts ?? {};
-            setFreeResponseParts(draft.freeResponseParts ?? {});
+            freeResponsePartsRef.current = draft.freeResponseParts;
+            setFreeResponseParts(draft.freeResponseParts);
             setLegacyAnswerIds(draft.legacyAnswerIds);
             setSavedSelections({});
             setAnsweredCount(
               Object.keys(draft.selections).length +
-                Object.values(draft.multiSelections ?? {}).filter((indices) => indices.length === 2)
+                Object.values(draft.multiSelections).filter((indices) => indices.length === 2)
                   .length +
                 Object.values(draft.freeResponses).filter((value) => value.trim()).length +
-                Object.values(draft.freeResponseParts ?? {}).filter(
-                  ({ a, b }) => a.trim() && b.trim(),
-                ).length,
+                Object.values(draft.freeResponseParts).filter(({ a, b }) => a.trim() && b.trim())
+                  .length,
             );
             setRestoreError(null);
             setPhase({ kind: "answering" });
@@ -1439,22 +1444,21 @@ export function useQuizSession() {
             setRevision(savedDraft.revision);
             selectionsRef.current = savedDraft.selections;
             setSelections(savedDraft.selections);
-            multiSelectionsRef.current = savedDraft.multiSelections ?? {};
-            setMultiSelections(savedDraft.multiSelections ?? {});
+            multiSelectionsRef.current = savedDraft.multiSelections;
+            setMultiSelections(savedDraft.multiSelections);
             freeResponsesRef.current = savedDraft.freeResponses;
             setFreeResponses(savedDraft.freeResponses);
-            freeResponsePartsRef.current = savedDraft.freeResponseParts ?? {};
-            setFreeResponseParts(savedDraft.freeResponseParts ?? {});
+            freeResponsePartsRef.current = savedDraft.freeResponseParts;
+            setFreeResponseParts(savedDraft.freeResponseParts);
             legacyAnswerIdsRef.current = savedDraft.legacyAnswerIds;
             setLegacyAnswerIds(savedDraft.legacyAnswerIds);
             setSavedSelections({});
             setAnsweredCount(
               Object.keys(savedDraft.selections).length +
-                Object.values(savedDraft.multiSelections ?? {}).filter(
-                  (indices) => indices.length === 2,
-                ).length +
+                Object.values(savedDraft.multiSelections).filter((indices) => indices.length === 2)
+                  .length +
                 Object.values(savedDraft.freeResponses).filter((value) => value.trim()).length +
-                Object.values(savedDraft.freeResponseParts ?? {}).filter(
+                Object.values(savedDraft.freeResponseParts).filter(
                   ({ a, b }) => a.trim() && b.trim(),
                 ).length,
             );
@@ -2112,6 +2116,8 @@ export function useQuizSession() {
             setMultiSelections(restored.multiSelections);
             setAnsweredCount(
               Object.keys(selectionsRef.current).length +
+                Object.values(restored.multiSelections).filter((indices) => indices.length === 2)
+                  .length +
                 Object.values(freeResponsesRef.current).filter((value) => value.trim()).length +
                 Object.values(freeResponsePartsRef.current).filter(
                   ({ a, b }) => a.trim() && b.trim(),
@@ -2205,6 +2211,9 @@ export function useQuizSession() {
       const answerCountSelections = preserveLocalDraft
         ? selectionsRef.current
         : restored.selections;
+      const answerCountMultiSelections = preserveLocalDraft
+        ? multiSelectionsRef.current
+        : restored.multiSelections;
       const answerCountFreeResponses = preserveLocalDraft
         ? freeResponsesRef.current
         : restored.freeResponses;
@@ -2213,6 +2222,8 @@ export function useQuizSession() {
         : restored.freeResponseParts;
       setAnsweredCount(
         Object.keys(answerCountSelections).length +
+          Object.values(answerCountMultiSelections).filter((indices) => indices.length === 2)
+            .length +
           Object.values(answerCountFreeResponses).filter((value) => value.trim()).length +
           Object.values(answerCountFreeResponseParts).filter(({ a, b }) => a.trim() && b.trim())
             .length,

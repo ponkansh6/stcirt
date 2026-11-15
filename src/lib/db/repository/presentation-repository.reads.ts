@@ -61,11 +61,17 @@ type AdminPresentation = {
       selectedIndex: number | null;
       selectedIndices?: number[] | null;
       freeText: string | null;
+      freeTextParts?: { a: string; b: string };
       rawScore: number | null;
       normalizedScore: number | null;
     }[];
   }[];
 };
+
+function isQ5TextParts(value: unknown): value is { a: string; b: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return "a" in value && "b" in value && typeof value.a === "string" && typeof value.b === "string";
+}
 
 export type AdminPresentationControls = Pick<
   AdminPresentation,
@@ -738,23 +744,10 @@ function buildPublicProjection(
             const score = answer.normalizedScore;
             const validScore =
               score === null || (Number.isFinite(score) && score >= 0 && score <= 2);
-            let freeTextParts: { a: string; b: string } | undefined;
-            if (typeof answer.freeText === "string" && isFifthQuestion) {
-              try {
-                const parsed: unknown = JSON.parse(answer.freeText);
-                if (
-                  typeof parsed === "object" &&
-                  parsed !== null &&
-                  "a" in parsed &&
-                  "b" in parsed &&
-                  typeof parsed.a === "string" &&
-                  typeof parsed.b === "string"
-                )
-                  freeTextParts = { a: parsed.a, b: parsed.b };
-              } catch {
-                freeTextParts = undefined;
-              }
-            }
+            const freeTextParts =
+              isFifthQuestion && isQ5TextParts(answer.freeTextParts)
+                ? answer.freeTextParts
+                : undefined;
             return {
               position,
               question: questionText,

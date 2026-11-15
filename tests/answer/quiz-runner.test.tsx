@@ -112,6 +112,60 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
   });
 
+  it("renders Q2 as a two-choice checkbox group and reviews both selections", () => {
+    const toggleMultiple = vi.fn();
+    const multipleQuizzes = quizzes.map((quiz, index) =>
+      index === 1
+        ? { ...quiz, question: { ...quiz.question, selectionMode: "multiple" as const } }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        {
+          quizzes: multipleQuizzes,
+          multiSelections: { 2: [0, 2] },
+          answeredCount: 1,
+          toggleMultiple,
+        },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    const question = document.querySelector<HTMLElement>("#question-2");
+    expect(question).not.toBeNull();
+    expect(within(question as HTMLElement).getAllByRole("checkbox")).toHaveLength(4);
+    expect(
+      within(question as HTMLElement)
+        .getAllByRole("checkbox")
+        .filter((item) => (item as HTMLInputElement).checked),
+    ).toHaveLength(2);
+    const review = screen.getByRole("list", { name: "回答内容" });
+    expect(within(within(review).getAllByRole("listitem")[1]!).getByText("A. C2")).toBeVisible();
+    expect(within(within(review).getAllByRole("listitem")[1]!).getByText("C. D2")).toBeVisible();
+    fireEvent.click(within(question as HTMLElement).getByRole("checkbox", { name: /A\.C2/ }));
+    expect(toggleMultiple).toHaveBeenCalledWith(2, 0);
+  });
+
+  it("keeps a multiple-choice question unanswered until both choices are selected", () => {
+    const multipleQuizzes = quizzes.map((quiz, index) =>
+      index === 1
+        ? { ...quiz, question: { ...quiz.question, selectionMode: "multiple" as const } }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "answering" }, { quizzes: multipleQuizzes }),
+    );
+
+    render(<RunnerPage />);
+
+    const navigation = screen.getByRole("navigation", { name: "設問へ移動" });
+    expect(within(navigation).getByRole("link", { name: "第2問未回答へ移動" })).toBeVisible();
+    const review = screen.getByRole("list", { name: "回答内容" });
+    expect(within(within(review).getAllByRole("listitem")[1]!).getByText("未回答")).toBeVisible();
+  });
+
   it("announces ordinary answer progress only from the header", () => {
     mockUseQuizSession.mockReturnValue(
       session({ kind: "answering" }, { selections: { 1: 0 }, answeredCount: 1 }),
@@ -202,6 +256,37 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByText(/以前の保存回答は旧選択式です/)).toBeVisible();
     fireEvent.change(responseA, { target: { value: "新しい回答A" } });
     expect(setFreeResponsePart).toHaveBeenCalledWith(5, "a", "新しい回答A");
+  });
+
+  it("uses the single free-text setter when a non-Q5 response changes", () => {
+    const setFreeResponse = vi.fn();
+    const freeResponseQuizzes = quizzes.map((quiz, index) =>
+      index === 3 || index === 4
+        ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        {
+          kind: "answering",
+        },
+        {
+          quizzes: freeResponseQuizzes,
+          setFreeResponse,
+          setFreeResponsePart: undefined,
+        },
+      ),
+    );
+    render(<RunnerPage />);
+
+    const response = screen.getByRole("textbox", { name: "回答" });
+    expect(response).toHaveValue("");
+    fireEvent.change(response, { target: { value: "Q4 response" } });
+    expect(setFreeResponse).toHaveBeenCalledWith(4, "Q4 response");
+    fireEvent.change(screen.getByRole("textbox", { name: "A. 2/28 朝の食事" }), {
+      target: { value: "Q5 response" },
+    });
+    expect(setFreeResponse).toHaveBeenCalledWith(5, "Q5 response");
   });
 
   it("shows loading and switching states without a home link", () => {

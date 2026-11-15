@@ -231,6 +231,25 @@ describe("durable free-response assessment and restoration", () => {
     });
   });
 
+  it("marks a malformed persisted Q5 payload invalid before calling JEV", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    await testDb.db
+      .update(schema.examAnswerAssessments)
+      .set({ answerText: "not-json" })
+      .where(eq(schema.examAnswerAssessments.submissionId, submissionId));
+
+    await expect(processDueAssessments()).resolves.toMatchObject({ processed: 1, failed: 1 });
+    expect(gradeFreeResponseParts).not.toHaveBeenCalled();
+    const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(assessment).toMatchObject({ state: "failed", errorCode: "jev_invalid_response" });
+  });
+
   it("leaves an old-rubric pending assessment untouched until its answer is resubmitted", async () => {
     await saveAnswerSubmission({
       submissionId,
@@ -357,6 +376,34 @@ describe("durable free-response assessment and restoration", () => {
     await expect(processDueAssessments()).resolves.toMatchObject({ graded: 1 });
     const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(assessment).toMatchObject({ state: "graded", rawScore: 4.5, normalizedScore: 1.5 });
+  });
+
+  it("grades both keyword answers without inventing JEV audit scores", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: [
+        ...validAnswers.slice(0, 4),
+        { questionId: 5, freeTextParts: { a: "ヤムチャ", b: "シーフード店" } },
+      ],
+    });
+    vi.mocked(gradeFreeResponseParts).mockResolvedValueOnce({
+      a: null,
+      b: null,
+      model: "keyword-override",
+    });
+
+    await expect(processDueAssessments()).resolves.toMatchObject({ graded: 1 });
+    const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(assessment).toMatchObject({
+      state: "graded",
+      rawScore: null,
+      normalizedScore: 2,
+      confidence: null,
+      model: "keyword-override",
+    });
   });
 
   it("claims no more than five due assessments per worker call with a 45 second lease", async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createTestDb, type TestDb } from "../helpers/db";
 import * as schema from "@/lib/db/schema";
 
@@ -93,5 +93,24 @@ describe("question-repository", () => {
       selectionMode: "single",
     });
     expect(await getQuestionById(9999)).toBeNull();
+
+    await dbRef
+      .db!.update(schema.examQuestions)
+      .set({ selectionMode: "multiple" })
+      .where(eq(schema.examQuestions.id, id));
+    await expect(getQuestionById(id)).resolves.toMatchObject({ selectionMode: "multiple" });
+  });
+
+  it("treats unknown stored selection modes as single-select in public and private reads", async () => {
+    const id = await insertQuestion("Unknown selection mode");
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ selectionMode: "future-mode" })
+      .where(eq(schema.examQuestions.id, id));
+
+    await expect(getQuestionById(id)).resolves.toMatchObject({ selectionMode: "single" });
+    await expect(getExamQuestions()).resolves.toContainEqual(
+      expect.objectContaining({ id, selectionMode: "single" }),
+    );
   });
 });
