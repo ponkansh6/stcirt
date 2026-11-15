@@ -83,6 +83,46 @@ type AnswerUiModel = {
   primaryAction: AnswerUiAction;
 };
 
+type TimelineEntry = { date: string; time: string; activity: string };
+
+function parseTimeline(questionText: string): {
+  title: string;
+  description: string;
+  entries: TimelineEntry[];
+} | null {
+  const [intro = "", ...rawLines] = questionText.split(/\r?\n/);
+  const sentenceBreak = intro.indexOf("。");
+  const title = sentenceBreak >= 0 ? intro.slice(0, sentenceBreak + 1) : intro;
+  const description = sentenceBreak >= 0 ? intro.slice(sentenceBreak + 1).trim() : "";
+  const lines = rawLines.filter((line) => line.trim().length > 0);
+  const entries = lines
+    .map((line) => {
+      const trimmedLine = line.trim();
+      // Q5 stores the B marker directly after its time period: "早朝（6:30）B".
+      const answerMarker = trimmedLine.match(/^(\S+)\s+(\S+)\s*([AB])$/);
+      if (answerMarker) {
+        return { date: answerMarker[1], time: answerMarker[2], activity: answerMarker[3] };
+      }
+
+      const match = trimmedLine.match(/^(\S+)\s+(\S+)\s+(.+)$/);
+      if (!match) return null;
+      return { date: match[1], time: match[2], activity: match[3] };
+    })
+    .filter((entry): entry is TimelineEntry => entry !== null);
+
+  if (entries.length === 0 || entries.length !== lines.length) return null;
+  return { title, description, entries };
+}
+
+function groupTimelineEntries(entries: TimelineEntry[]) {
+  return entries.reduce<Array<{ date: string; entries: TimelineEntry[] }>>((groups, entry) => {
+    const lastGroup = groups[groups.length - 1];
+    if (lastGroup?.date === entry.date) lastGroup.entries.push(entry);
+    else groups.push({ date: entry.date, entries: [entry] });
+    return groups;
+  }, []);
+}
+
 function hasAnswer(
   question: {
     id: number;
@@ -1218,10 +1258,16 @@ export default function QuizRunner() {
                     }}
                     aria-label={`第${index + 1}問${answered ? "✓ 済" : "未回答"}へ移動`}
                     aria-current={current ? "location" : undefined}
-                    className={`${styles.progressLink} flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight ${answered ? styles.progressAnswered : "border-control-border bg-surface-2 text-muted"} ${current ? styles.progressCurrent : ""}`}
+                    className={`${styles.progressLink} ${answered ? styles.progressAnswered : ""} ${current ? styles.progressCurrent : ""}`}
                   >
-                    <span>第{index + 1}問</span>
-                    {answered ? "✓ 済" : "未回答"}
+                    <span className={styles.progressNumber}>{index + 1}</span>
+                    <span
+                      aria-hidden="true"
+                      className={`${styles.progressStatus} ${answered ? styles.progressStatusAnswered : ""}`}
+                    >
+                      {answered ? "✓" : ""}
+                    </span>
+                    <span className="sr-only">{answered ? "回答済み" : "未回答"}</span>
                   </a>
                 </li>
               );
@@ -1304,6 +1350,10 @@ export default function QuizRunner() {
             const selectedIndex = selections[question.id];
             const selectedIndices = multiSelections[question.id] ?? [];
             const questionTitleId = `question-title-${question.id}`;
+            const timeline =
+              question.id === 5 && question.answerType === "freeText"
+                ? parseTimeline(question.question)
+                : null;
             return (
               <section
                 key={question.id}
@@ -1321,11 +1371,13 @@ export default function QuizRunner() {
                     questionRefs.current[question.id] = node;
                   }}
                   tabIndex={-1}
-                  className={`${styles.questionTitle} mb-6 scroll-mt-20 break-words text-xl font-bold leading-relaxed tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4 sm:text-2xl`}
-                  style={{ whiteSpace: question.id === 5 ? "pre-line" : undefined }}
+                  className={`${styles.questionTitle} mb-4 scroll-mt-20 break-words font-bold tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4`}
                 >
-                  {question.question}
+                  {timeline?.title ?? question.question}
                 </h2>
+                {timeline?.description && (
+                  <p className={styles.questionDescription}>{timeline.description}</p>
+                )}
                 {question.selectionMode === "multiple" && (
                   <p className="mb-4 text-sm font-semibold text-answer-accent" aria-live="polite">
                     2つ選択してください（{selectedIndices.length}/2 選択中）
@@ -1347,35 +1399,109 @@ export default function QuizRunner() {
                         </p>
                       )}
                       {question.id === 5 ? (
-                        <div className="space-y-5">
-                          {(
-                            [
-                              ["a", "A", "2/28 朝の食事"],
-                              ["b", "B", "3/1 早朝（6:30）の食事"],
-                            ] as const
-                          ).map(([part, label, prompt]) => (
-                            <div key={part}>
-                              <label
-                                htmlFor={`answer-${question.id}-${part}`}
-                                className="mb-2 block text-sm font-semibold"
-                              >
-                                {label}. {prompt}
-                              </label>
-                              <textarea
-                                id={`answer-${question.id}-${part}`}
-                                name={`answer-${question.id}-${part}`}
-                                maxLength={1000}
-                                rows={3}
-                                value={freeResponseParts[question.id]?.[part] ?? ""}
-                                onChange={(event) =>
-                                  setFreeResponsePart(question.id, part, event.currentTarget.value)
-                                }
-                                className={`answer-free-text min-h-24 w-full resize-y rounded-lg border border-control-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-answer-accent focus-visible:ring-2 focus-visible:ring-answer-accent/30 ${styles.freeText}`}
-                                disabled={isLocked}
-                              />
-                            </div>
-                          ))}
-                        </div>
+                        timeline ? (
+                          <div className={styles.timeline}>
+                            {groupTimelineEntries(timeline.entries).map((day) => (
+                              <section key={day.date} className={styles.timelineDay}>
+                                <h3 className={styles.timelineDate}>{day.date}</h3>
+                                <ol className={styles.timelineEntries}>
+                                  {day.entries.map((entry, entryIndex) => {
+                                    const part =
+                                      entry.activity === "A"
+                                        ? "a"
+                                        : entry.activity === "B"
+                                          ? "b"
+                                          : null;
+                                    const partLabel = part === "a" ? "A" : "B";
+                                    const prompt =
+                                      part === "a" ? "2/28 朝の食事" : "3/1 早朝（6:30）の食事";
+
+                                    return (
+                                      <li
+                                        key={`${entry.time}-${entryIndex}`}
+                                        className={styles.timelineEntry}
+                                      >
+                                        <span className={styles.timelineTime}>{entry.time}</span>
+                                        <div className={styles.timelineActivity}>
+                                          {part ? (
+                                            <div className={styles.timelineAnswer}>
+                                              <label
+                                                htmlFor={`answer-${question.id}-${part}`}
+                                                aria-label={`${partLabel}. ${prompt}`}
+                                                className={styles.timelineAnswerLabel}
+                                              >
+                                                <span className={styles.answerPartLetter}>
+                                                  {partLabel}
+                                                </span>
+                                                <span>
+                                                  {part === "a" ? "朝の食事" : "早朝の食事"}
+                                                </span>
+                                              </label>
+                                              <input
+                                                id={`answer-${question.id}-${part}`}
+                                                name={`answer-${question.id}-${part}`}
+                                                type="text"
+                                                maxLength={1000}
+                                                value={freeResponseParts[question.id]?.[part] ?? ""}
+                                                onChange={(event) =>
+                                                  setFreeResponsePart(
+                                                    question.id,
+                                                    part,
+                                                    event.currentTarget.value,
+                                                  )
+                                                }
+                                                className={styles.timelineInput}
+                                                disabled={isLocked}
+                                              />
+                                            </div>
+                                          ) : (
+                                            <span className={styles.timelineDescription}>
+                                              {entry.activity}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </li>
+                                    );
+                                  })}
+                                </ol>
+                              </section>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="space-y-5">
+                            {(
+                              [
+                                ["a", "A", "2/28 朝の食事"],
+                                ["b", "B", "3/1 早朝（6:30）の食事"],
+                              ] as const
+                            ).map(([part, label, prompt]) => (
+                              <div key={part}>
+                                <label
+                                  htmlFor={`answer-${question.id}-${part}`}
+                                  className="mb-2 block text-sm font-semibold"
+                                >
+                                  {label}. {prompt}
+                                </label>
+                                <textarea
+                                  id={`answer-${question.id}-${part}`}
+                                  name={`answer-${question.id}-${part}`}
+                                  maxLength={1000}
+                                  rows={3}
+                                  value={freeResponseParts[question.id]?.[part] ?? ""}
+                                  onChange={(event) =>
+                                    setFreeResponsePart(
+                                      question.id,
+                                      part,
+                                      event.currentTarget.value,
+                                    )
+                                  }
+                                  className={`answer-free-text min-h-24 w-full resize-y rounded-lg border border-control-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-answer-accent focus-visible:ring-2 focus-visible:ring-answer-accent/30 ${styles.freeText}`}
+                                  disabled={isLocked}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )
                       ) : (
                         <>
                           <label
@@ -1515,6 +1641,7 @@ export default function QuizRunner() {
                       text: shuffled.choices[choiceIndex],
                     }))
                   : [];
+              const questionSummary = question.id === 5 ? "3回目の旅程の穴埋め" : question.question;
               const freeTextCharacters = Array.from(freeText);
               const longAnswer =
                 question.answerType === "freeText" && freeTextCharacters.length > 180;
@@ -1531,13 +1658,13 @@ export default function QuizRunner() {
                         第{index + 1}問
                       </p>
                       <h3 className="mt-1 break-words font-semibold leading-relaxed">
-                        {question.question}
+                        {questionSummary}
                       </h3>
                     </div>
                     <button
                       type="button"
                       onClick={() => jumpToQuestion(question.id, true)}
-                      aria-label={`第${index + 1}問「${question.question}」を編集する`}
+                      aria-label={`第${index + 1}問「${questionSummary}」を編集する`}
                       className="min-h-11 shrink-0 rounded-md px-3 text-sm font-semibold text-primary underline decoration-1 underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                     >
                       編集する

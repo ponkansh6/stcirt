@@ -14,9 +14,16 @@
 
 .progressLink {
   position: relative;
+  display: flex;
   min-height: 2.75rem;
-  border-width: 1px;
-  border-radius: 0.45rem;
+  min-width: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  color: var(--color-muted);
+  text-decoration: none;
   transition:
     background-color 140ms var(--ease-out-soft),
     border-color 140ms var(--ease-out-soft),
@@ -30,9 +37,39 @@
 }
 
 .progressCurrent {
-  outline: 2px solid var(--color-answer-accent);
-  outline-offset: 1px;
-  font-weight: 800;
+  border-width: 2px;
+  border-color: var(--color-answer-accent);
+  color: var(--color-text);
+}
+
+.progressNumber {
+  font-size: 1rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.progressStatus {
+  position: absolute;
+  top: -0.1rem;
+  right: -0.1rem;
+  display: flex;
+  width: 0.85rem;
+  height: 0.85rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-bg);
+  color: var(--color-answer-accent);
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.progressStatusAnswered {
+  border-color: var(--color-answer-accent);
+  background: var(--color-answer-selection);
 }
 
 .questionList {
@@ -58,8 +95,127 @@
 
 .questionTitle {
   max-width: 42rem;
-  font-size: clamp(1.2rem, 2.6vw, 1.5rem);
-  line-height: 1.7;
+  font-size: 1.25rem;
+  line-height: 1.5;
+}
+
+.questionDescription {
+  margin: -0.35rem 0 1.25rem;
+  color: var(--color-muted);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.timeline {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.timelineDay + .timelineDay {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 1rem;
+}
+
+.timelineDate {
+  margin: 0 0 0.25rem;
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.timelineEntries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timelineEntry {
+  display: grid;
+  grid-template-columns: minmax(5.25rem, 0.35fr) minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+  padding: 0.55rem 0;
+}
+
+.timelineTime {
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.timelineActivity {
+  min-width: 0;
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.timelineDescription {
+  display: block;
+}
+
+.timelineAnswer {
+  min-width: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.timelineAnswerLabel {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.answerPartLetter {
+  display: inline-flex;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-answer-accent);
+  border-radius: 999px;
+  color: var(--color-answer-accent);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.timelineInput {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.875rem;
+  border: 1px solid var(--color-control-border);
+  border-radius: 0.5rem;
+  background: var(--color-bg);
+  padding: 0.65rem 0.75rem;
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.4;
+  outline: none;
+}
+
+.timelineInput:focus-visible {
+  border-color: var(--color-answer-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-answer-accent) 24%, transparent);
+}
+
+.timelineInput:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .examStamp {
@@ -138,7 +294,19 @@
 
 @media (max-width: 420px) {
   .progressLink {
-    font-size: 0.68rem;
-    padding-inline: 0.1rem;
+    min-width: 2.75rem;
+  }
+
+  .timelineEntry {
+    grid-template-columns: minmax(4.75rem, 0.38fr) minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  .timelineTime {
+    font-size: 0.8125rem;
+  }
+
+  .timelineActivity {
+    font-size: 0.9375rem;
   }
 }

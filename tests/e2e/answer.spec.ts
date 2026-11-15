@@ -1229,6 +1229,89 @@ test("@mobile reviews and edits an answer at 320px with a hittable review target
   expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport + 1);
 });
 
+test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", async ({
+  page,
+}, testInfo) => {
+  await mockParticipantSession(page, "Aki");
+  const questions = [1, 2, 3, 4].map(questionFor).concat(
+    makeQuestion({
+      id: 5,
+      answerType: "freeText",
+      choices: [],
+      question: [
+        "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
+        "2/27 昼 香港空港到着",
+        "2/27 夕方 マンダリンオリエンタルホテルのスコーンを食べる",
+        "2/27 夜 香港で評価の高いフォカッチャパニーニを食べる",
+        "2/28 朝 A",
+        "2/28 午前 アバディーンのボートツアーに参加",
+        "2/28 昼 アバディーンでボートヌードルを食べる",
+        "2/28 夜 有名なローストグースを食べる",
+        "3/1 早朝（6:30）B",
+        "3/1 昼〜夜 香港ディズニーランドを楽しむ",
+        "3/2 朝 フレンチトースト（香港は旧イギリス領なので有名）を食べる",
+        "3/2 昼 香港空港発",
+      ].join("\n"),
+    }),
+  );
+  await page.route("**/api/answers/bootstrap**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        mode: "owner",
+        owner: { id: 17, name: "Aki" },
+        participant: { id: 17, name: "Aki" },
+        submission: null,
+        completionSnapshot: null,
+        questions,
+      }),
+    });
+  });
+
+  await page.goto("/answer");
+  const navigation = page.getByRole("navigation", { name: "設問へ移動" });
+  const questionControls = navigation.locator("a, button");
+  await expect(questionControls).toHaveCount(5);
+  for (let index = 0; index < 5; index += 1) {
+    const box = await questionControls.nth(index).boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+    expect(box?.width).toBeGreaterThanOrEqual(44);
+  }
+
+  for (const width of [375, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await questionControls.nth(4).click();
+
+    const fifthQuestion = page.locator("#question-5");
+    await expect(fifthQuestion.getByRole("heading", { level: 2 })).toBeVisible();
+    await expect(fifthQuestion.getByRole("heading", { level: 3 })).toHaveText([
+      "2/27",
+      "2/28",
+      "3/1",
+      "3/2",
+    ]);
+    const answerA = fifthQuestion.getByRole("textbox", { name: "A. 2/28 朝の食事" });
+    const answerB = fifthQuestion.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" });
+    await expect(answerA).toBeVisible();
+    await expect(answerB).toBeVisible();
+    await expectPrimaryTargetGeometry(answerA, `Q5 A input at ${width}px`);
+    await expectPrimaryTargetGeometry(answerB, `Q5 B input at ${width}px`);
+    const answerADay = answerA.locator("xpath=ancestor::ol/parent::section");
+    const answerBDay = answerB.locator("xpath=ancestor::ol/parent::section");
+    await expect(answerADay.getByRole("heading", { level: 3 })).toHaveText("2/28");
+    await expect(answerBDay.getByRole("heading", { level: 3 })).toHaveText("3/1");
+
+    const widths = await page.evaluate(() => ({
+      document: document.documentElement.scrollWidth,
+      body: document.body.scrollWidth,
+      viewport: document.documentElement.clientWidth,
+    }));
+    expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport + 1);
+    await page.screenshot({ path: testInfo.outputPath(`answer-${width}.png`), fullPage: true });
+  }
+});
+
 test("@chromium returns to owner completion after an assisted save and opens target correction directly", async ({
   page,
 }) => {

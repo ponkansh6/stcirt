@@ -151,6 +151,7 @@ The participant UI MUST disable correction while results are visible, for both t
 
 - Individual choices remain in client state until explicit batch confirmation; they do not create server records.
 - Choices are native radio inputs grouped by question with a fieldset and legend; show each question prompt visually only in its heading and visually hide the duplicate legend while retaining it as the radio group's accessible name. Each input has an explicit full-row label, and its submitted value remains the existing shuffled-choice index.
+- The answer page uses a compact horizontal 1–5 question navigator with a minimum 44px target, a visible current-question outline, and a separate answered marker. Q5 keeps its source question text and renders its dated itinerary as date groups with time-period and activity columns; its A/B text inputs appear in their corresponding itinerary rows and continue to use the existing independently saved and graded parts.
 - A pending batch request locks all answer controls and prevents duplicate submission.
 - While pending, selected radios remain checked; the confirmation action communicates its disabled state to assistive technology and guards submission synchronously.
 - The five selected choices remain available after a failed request so the user can retry.
