@@ -58,7 +58,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
       [1, 2, 3, 4, 5].map((id) => ({
         id,
         key: `it-literacy-${String(id).padStart(3, "0")}`,
-        questionVersion: id === 5 ? "tamami-egg-v1" : `test-v${id}`,
+        questionVersion: id === 5 ? "hong-kong-trip-a-b-v1" : `test-v${id}`,
         question: `Question ${id}`,
         choices: id === 5 ? [] : ["A", "B", "C", "D"],
         correctIndex: 0,
@@ -76,7 +76,10 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     const operationId = "00000000-0000-4000-8000-000000000402";
     const answers = [
       ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
-      { questionId: 5, freeText: "  answer from assisted participant  " },
+      {
+        questionId: 5,
+        freeTextParts: { a: "  answer from assisted participant  ", b: " seafood " },
+      },
     ];
     const response = await POST(
       new Request("http://localhost/api/answers/batch?scope=assisted", {
@@ -114,7 +117,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     expect(assessment).toMatchObject({
       submissionId,
       questionId: 5,
-      answerText: "answer from assisted participant",
+      answerText: JSON.stringify({ a: "answer from assisted participant", b: "seafood" }),
       state: "pending",
     });
   });
@@ -124,7 +127,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     const operationId = "00000000-0000-4000-8000-000000000422";
     const answers = [
       ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
-      { questionId: 5, freeText: "answer after publication" },
+      { questionId: 5, freeTextParts: { a: "answer after publication", b: "seafood" } },
     ];
     await testDb.db
       .insert(schema.participantResultSettings)
@@ -161,7 +164,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     const operationId = "00000000-0000-4000-8000-000000000412";
     const answers = [
       ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
-      { questionId: 5, freeText: "answer before the next aggregation" },
+      { questionId: 5, freeTextParts: { a: "answer before the next aggregation", b: "seafood" } },
     ];
 
     // Use registered source versions so both explicit snapshots are aggregatable.
@@ -250,7 +253,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         state: "graded",
         rawScore: 1,
         normalizedScore: 1,
-        rubricVersion: "jev-q5-keywords30-30-jev40-v1",
+        rubricVersion: "jev-q5-independent-points-v1",
         gradedAt: new Date(),
       })
       .where(eq(schema.examAnswerAssessments.submissionId, submissionId));
@@ -264,7 +267,11 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     expect(afterAggregation[0]?.answers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ questionId: 1, answerKind: "selected", selectedIndex: 0 }),
-        expect.objectContaining({ questionId: 5, answerKind: "freeText" }),
+        expect.objectContaining({
+          questionId: 5,
+          answerKind: "freeText",
+          freeTextParts: { a: "answer before the next aggregation", b: "seafood" },
+        }),
       ]),
     );
   });

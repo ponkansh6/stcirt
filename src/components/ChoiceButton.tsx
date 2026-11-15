@@ -11,6 +11,7 @@ interface ChoiceButtonProps {
   onChange?: () => void;
   disabled?: boolean;
   className?: string;
+  inputType?: "radio" | "checkbox";
 }
 
 export default function ChoiceButton({
@@ -24,6 +25,7 @@ export default function ChoiceButton({
   onChange,
   disabled,
   className = "",
+  inputType = "radio",
 }: ChoiceButtonProps) {
   const getStyles = () => {
     switch (variant) {
@@ -49,7 +51,7 @@ export default function ChoiceButton({
       <input
         id={id}
         name={name}
-        type="radio"
+        type={inputType}
         value={value}
         checked={checked}
         onChange={onChange}
@@ -57,7 +59,7 @@ export default function ChoiceButton({
         className="peer sr-only"
       />
       <span
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 font-bold text-sm ${checked ? "border-answer-accent bg-answer-accent text-on-primary" : "border-control-border bg-surface"}`}
+        className={`flex h-8 w-8 shrink-0 items-center justify-center border-2 font-bold text-sm ${inputType === "checkbox" ? "rounded-md" : "rounded-full"} ${checked ? "border-answer-accent bg-answer-accent text-on-primary" : "border-control-border bg-surface"}`}
       >
         {label}
       </span>

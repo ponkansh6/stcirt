@@ -10,7 +10,9 @@ export type AssistedDraft = {
   participantId: number;
   quizzes: LoadedQuiz[];
   selections: Record<number, number>;
+  multiSelections?: Record<number, number[]>;
   freeResponses: Record<number, string>;
+  freeResponseParts?: Record<number, { a: string; b: string }>;
   legacyAnswerIds: number[];
   submissionId: string;
   revision: number;
@@ -49,9 +51,17 @@ export function readAssistedDraft(expectedParticipantId: number): AssistedDraft 
       !draft.selections ||
       typeof draft.selections !== "object" ||
       Array.isArray(draft.selections) ||
+      (draft.multiSelections !== undefined &&
+        (!draft.multiSelections ||
+          typeof draft.multiSelections !== "object" ||
+          Array.isArray(draft.multiSelections))) ||
       !draft.freeResponses ||
       typeof draft.freeResponses !== "object" ||
       Array.isArray(draft.freeResponses) ||
+      (draft.freeResponseParts !== undefined &&
+        (!draft.freeResponseParts ||
+          typeof draft.freeResponseParts !== "object" ||
+          Array.isArray(draft.freeResponseParts))) ||
       (draft.legacyAnswerIds !== undefined &&
         (!Array.isArray(draft.legacyAnswerIds) ||
           draft.legacyAnswerIds.some((id) => !Number.isInteger(id) || id <= 0))) ||
@@ -104,18 +114,46 @@ export function readAssistedDraft(expectedParticipantId: number): AssistedDraft 
           index >= quiz.shuffled.choiceIndices.length
         );
       }) ||
+      Object.entries(draft.multiSelections ?? {}).some(([questionId, indices]) => {
+        const quiz = draft.quizzes!.find(({ question }) => question.id === Number(questionId));
+        return (
+          !quiz ||
+          quiz.question.selectionMode !== "multiple" ||
+          !Array.isArray(indices) ||
+          indices.length > 2 ||
+          new Set(indices).size !== indices.length ||
+          indices.some(
+            (index) =>
+              !Number.isInteger(index) || index < 0 || index >= quiz.shuffled.choiceIndices.length,
+          )
+        );
+      }) ||
       Object.entries(draft.freeResponses).some(
         ([questionId, response]) =>
           !ids.includes(Number(questionId)) ||
           typeof response !== "string" ||
           response.length > 1000,
       ) ||
+      Object.entries(draft.freeResponseParts ?? {}).some(
+        ([questionId, parts]) =>
+          !ids.includes(Number(questionId)) ||
+          !parts ||
+          typeof parts.a !== "string" ||
+          typeof parts.b !== "string" ||
+          parts.a.length > 1000 ||
+          parts.b.length > 1000,
+      ) ||
       (draft.legacyAnswerIds ?? []).some((id) => !ids.includes(id))
     ) {
       clearAssistedDraft();
       return null;
     }
-    return { ...draft, legacyAnswerIds: draft.legacyAnswerIds ?? [] } as AssistedDraft;
+    return {
+      ...draft,
+      multiSelections: draft.multiSelections ?? {},
+      freeResponseParts: draft.freeResponseParts ?? {},
+      legacyAnswerIds: draft.legacyAnswerIds ?? [],
+    } as AssistedDraft;
   } catch {
     clearAssistedDraft();
     return null;

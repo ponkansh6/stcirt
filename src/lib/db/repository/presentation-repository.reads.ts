@@ -44,6 +44,7 @@ type AdminPresentation = {
     question: string;
     choices: string[];
     correctIndex: number;
+    correctIndices: number[] | null;
     correctAnswer: string;
     explanation: string | null;
     answerType: "selected" | "freeText";
@@ -58,6 +59,7 @@ type AdminPresentation = {
       questionId: number;
       answerKind: "selected" | "freeText" | "legacy" | "unanswered";
       selectedIndex: number | null;
+      selectedIndices?: number[] | null;
       freeText: string | null;
       rawScore: number | null;
       normalizedScore: number | null;
@@ -74,7 +76,9 @@ export type PresentationAnswerSnapshot = {
   questionId: number;
   answerKind: "selected" | "freeText" | "legacy" | "unanswered";
   selectedIndex: number | null;
+  selectedIndices?: number[] | null;
   freeText: string | null;
+  freeTextParts?: { a: string; b: string };
   rawScore: number | null;
   normalizedScore: number | null;
 };
@@ -84,7 +88,7 @@ export type ParticipantResultQuestion = {
   question: string;
   answer:
     | { kind: "selected"; value: string; correctness: "correct" | "incorrect" | "unavailable" }
-    | { kind: "freeText"; value: string; score: number | null }
+    | { kind: "freeText"; value: string; score: number | null; parts?: { a: string; b: string } }
     | { kind: "unanswered" }
     | { kind: "legacy" };
 };
@@ -170,7 +174,11 @@ export async function readAdminPresentation(
       question: question.question,
       choices: question.choices,
       correctIndex: question.correctIndex,
-      correctAnswer: question.choices[question.correctIndex] ?? "",
+      correctIndices: question.correctIndices,
+      correctAnswer: (question.correctIndices ?? [question.correctIndex])
+        .map((i) => question.choices[i])
+        .filter(Boolean)
+        .join("、"),
       explanation: question.explanation,
       answerType: question.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
     })),
@@ -202,19 +210,17 @@ function isValidParticipantResultSnapshot(
     equivalentRank: number | null;
     answers: unknown;
   },
-  questionRows: {
-    position: number;
-    sourceQuestionId: number;
-    question: unknown;
-    choices: unknown;
-  }[],
+  questionRows: Pick<
+    typeof presentationQuestions.$inferSelect,
+    "position" | "sourceQuestionId" | "question" | "choices" | "correctIndex" | "correctIndices"
+  >[],
   participantCount: number,
   rankParticipantCount: number,
 ): boolean {
   if (
     !Number.isFinite(entry.score) ||
     entry.score < 0 ||
-    entry.score > questionRows.length ||
+    entry.score > questionRows.length + 1 ||
     (entry.isAggregationTarget &&
       entry.isReference &&
       (entry.rank !== null ||
@@ -288,7 +294,7 @@ function isValidParticipantResultSnapshot(
         (answer.normalizedScore !== null &&
           (!Number.isFinite(answer.normalizedScore) ||
             answer.normalizedScore < 0 ||
-            answer.normalizedScore > 1)))
+            answer.normalizedScore > 2)))
     ) {
       return false;
     }
@@ -345,6 +351,8 @@ async function readParticipantResultState(
         sourceQuestionId: presentationQuestions.sourceQuestionId,
         question: presentationQuestions.question,
         choices: presentationQuestions.choices,
+        correctIndex: presentationQuestions.correctIndex,
+        correctIndices: presentationQuestions.correctIndices,
       })
       .from(presentationQuestions)
       .where(eq(presentationQuestions.sessionId, 1))
@@ -478,8 +486,27 @@ export async function getParticipantResult(participantId: number): Promise<Parti
         }
       } else if (answer.answerKind === "freeText") {
         const score = answer.normalizedScore;
-        // Snapshot validation above rejects non-string freeText before projection.
-        answerDto = { kind: "freeText", value: answer.freeText as string, score };
+        let parts: { a: string; b: string } | undefined;
+        try {
+          const parsed: unknown = JSON.parse(answer.freeText as string);
+          if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            "a" in parsed &&
+            "b" in parsed &&
+            typeof parsed.a === "string" &&
+            typeof parsed.b === "string"
+          )
+            parts = { a: parsed.a, b: parsed.b };
+        } catch {
+          parts = undefined;
+        }
+        answerDto = {
+          kind: "freeText",
+          value: parts ? `A: ${parts.a}\nB: ${parts.b}` : (answer.freeText as string),
+          score,
+          ...(parts ? { parts } : {}),
+        };
       } else if (answer.answerKind === "legacy") {
         // The historical legacy answer is the final free-response question:
         // its original choices are no longer in the snapshot, but its old
@@ -497,7 +524,7 @@ export async function getParticipantResult(participantId: number): Promise<Parti
     return {
       state: "visible" as const,
       score: entry.score,
-      maxScore: questionRows.length,
+      maxScore: questionRows.length + 1,
       rank: entry.isAggregationTarget && !entry.isReference ? entry.rank : null,
       isAggregationTarget: entry.isAggregationTarget,
       isReference: entry.isReference,
@@ -578,6 +605,7 @@ type PublicProjectedQuestion = {
   answerType: "selected" | "freeText";
   correctAnswer?: string;
   correctIndex?: number;
+  correctIndices?: number[] | null;
   explanation?: string | null;
   expectedAnswer?: string | null;
   responses?: {
@@ -633,6 +661,7 @@ function buildPublicProjection(
           : {
               correctAnswer: row.correctAnswer,
               correctIndex: row.correctIndex,
+              correctIndices: row.correctIndices,
               explanation,
             }
         : {}),
@@ -667,27 +696,38 @@ function buildPublicProjection(
           };
           if (!answer || !validQuestion) return unavailable;
           if (answer.answerKind === "selected") {
-            const selectedIndex = answer.selectedIndex;
+            const selectedIndices = Array.isArray(answer.selectedIndices)
+              ? answer.selectedIndices
+              : answer.selectedIndex === null
+                ? []
+                : [answer.selectedIndex];
             const correctIndex = question.correctIndex;
+            const correctIndices = question.correctIndices ?? [correctIndex];
             const selectedValid =
-              Number.isInteger(selectedIndex) &&
-              selectedIndex !== null &&
-              selectedIndex >= 0 &&
-              selectedIndex < question.choices.length;
+              selectedIndices.length > 0 &&
+              selectedIndices.every(
+                (index) => Number.isInteger(index) && index >= 0 && index < question.choices.length,
+              );
             const correctValid =
-              Number.isInteger(correctIndex) &&
-              correctIndex >= 0 &&
-              correctIndex < question.choices.length;
+              correctIndices.length > 0 &&
+              correctIndices.every(
+                (index) => Number.isInteger(index) && index >= 0 && index < question.choices.length,
+              );
+            const isCorrect =
+              selectedIndices.length === correctIndices.length &&
+              selectedIndices.every((index) => correctIndices.includes(index));
             return {
               position,
               question: questionText,
               answer: {
                 kind: "selected",
-                value: selectedValid ? question.choices[selectedIndex as number] : null,
+                value: selectedValid
+                  ? selectedIndices.map((index) => question.choices[index]).join("、")
+                  : null,
               },
               correctness:
                 selectedValid && correctValid
-                  ? selectedIndex === correctIndex
+                  ? isCorrect
                     ? "correct"
                     : "incorrect"
                   : "unavailable",
@@ -697,13 +737,35 @@ function buildPublicProjection(
             const isFifthQuestion = sourceQuestions.get(question.id)?.key === "it-literacy-005";
             const score = answer.normalizedScore;
             const validScore =
-              score === null || (Number.isFinite(score) && score >= 0 && score <= 1);
+              score === null || (Number.isFinite(score) && score >= 0 && score <= 2);
+            let freeTextParts: { a: string; b: string } | undefined;
+            if (typeof answer.freeText === "string" && isFifthQuestion) {
+              try {
+                const parsed: unknown = JSON.parse(answer.freeText);
+                if (
+                  typeof parsed === "object" &&
+                  parsed !== null &&
+                  "a" in parsed &&
+                  "b" in parsed &&
+                  typeof parsed.a === "string" &&
+                  typeof parsed.b === "string"
+                )
+                  freeTextParts = { a: parsed.a, b: parsed.b };
+              } catch {
+                freeTextParts = undefined;
+              }
+            }
             return {
               position,
               question: questionText,
               answer: {
                 kind: "freeText",
-                value: typeof answer.freeText === "string" ? answer.freeText : null,
+                value: freeTextParts
+                  ? `A: ${freeTextParts.a}\nB: ${freeTextParts.b}`
+                  : typeof answer.freeText === "string"
+                    ? answer.freeText
+                    : null,
+                ...(freeTextParts ? { parts: freeTextParts } : {}),
               },
               ...(isFifthQuestion && validScore ? { normalizedScore: score } : {}),
               ...(!validScore || !isFifthQuestion ? { scoreStatus: "unavailable" as const } : {}),
@@ -859,6 +921,7 @@ export async function getPublicPresentation(): Promise<
           question: presentationQuestions.question,
           choices: presentationQuestions.choices,
           correctIndex: presentationQuestions.correctIndex,
+          correctIndices: presentationQuestions.correctIndices,
           explanation: presentationQuestions.explanation,
         })
         .from(presentationQuestions)
@@ -873,7 +936,11 @@ export async function getPublicPresentation(): Promise<
         question: row.question,
         choices: row.choices,
         correctIndex: row.correctIndex,
-        correctAnswer: row.choices[row.correctIndex] ?? "",
+        correctIndices: row.correctIndices,
+        correctAnswer: (row.correctIndices ?? [row.correctIndex])
+          .map((i) => row.choices[i])
+          .filter(Boolean)
+          .join("、"),
         explanation: row.explanation,
         answerType: row.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
       }));
@@ -896,6 +963,7 @@ export async function getPublicPresentation(): Promise<
         question: row.question,
         choices: row.choices,
         correctIndex: 0,
+        correctIndices: null,
         correctAnswer: row.choices[0] ?? "",
         explanation: null,
         answerType: row.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
@@ -907,6 +975,7 @@ export async function getPublicPresentation(): Promise<
           question: presentationQuestions.question,
           choices: presentationQuestions.choices,
           correctIndex: presentationQuestions.correctIndex,
+          correctIndices: presentationQuestions.correctIndices,
         })
         .from(presentationQuestions)
         .where(eq(presentationQuestions.sessionId, 1))
@@ -916,7 +985,11 @@ export async function getPublicPresentation(): Promise<
         question: row.question,
         choices: row.choices,
         correctIndex: row.correctIndex,
-        correctAnswer: row.choices[row.correctIndex] ?? "",
+        correctIndices: row.correctIndices,
+        correctAnswer: (row.correctIndices ?? [row.correctIndex])
+          .map((i) => row.choices[i])
+          .filter(Boolean)
+          .join("、"),
         explanation: null,
         answerType: row.choices.length === 0 ? ("freeText" as const) : ("selected" as const),
       }));

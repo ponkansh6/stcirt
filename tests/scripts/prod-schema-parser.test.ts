@@ -37,8 +37,10 @@ const expectedSchemaManifest = [
       "question",
       "choices",
       "correct_index",
+      "correct_indices",
       "explanation",
       "question_version",
+      "selection_mode",
       "created_at",
     ],
   },
@@ -82,7 +84,14 @@ const expectedSchemaManifest = [
   },
   {
     tableName: "exam_submission_answers",
-    columns: ["submission_id", "question_id", "selected_index", "free_text", "answer_kind"],
+    columns: [
+      "submission_id",
+      "question_id",
+      "selected_index",
+      "selected_indices",
+      "free_text",
+      "answer_kind",
+    ],
   },
   {
     tableName: "exam_answer_assessments",
@@ -134,6 +143,7 @@ const expectedSchemaManifest = [
       "question",
       "choices",
       "correct_index",
+      "correct_indices",
       "explanation",
     ],
   },
@@ -192,7 +202,7 @@ describe("production schema parser", () => {
     const parsed = parseExpectedSchema(schema);
 
     expect(parsed).toHaveLength(19);
-    expect(parsed.reduce((count, table) => count + table.columns.length, 0)).toBe(115);
+    expect(parsed.reduce((count, table) => count + table.columns.length, 0)).toBe(119);
     expect(normalizeManifest(parsed)).toEqual(normalizeManifest(expectedSchemaManifest));
   });
 });

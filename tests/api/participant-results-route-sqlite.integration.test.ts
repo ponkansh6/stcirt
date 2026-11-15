@@ -149,7 +149,7 @@ describe("GET /api/participants/results with SQLite persistence", () => {
       participantCount: 3,
       rankParticipantCount: 3,
       score: 0,
-      maxScore: 1,
+      maxScore: 2,
       questions: [
         {
           position: 0,
@@ -202,7 +202,7 @@ describe("GET /api/participants/results with SQLite persistence", () => {
       participantCount: 3,
       rankParticipantCount: 3,
       score: 1,
-      maxScore: 1,
+      maxScore: 2,
       questions: [{ answer: { value: "Beta", correctness: "correct" } }],
     });
 

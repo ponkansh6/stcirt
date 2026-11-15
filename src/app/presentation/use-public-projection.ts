@@ -27,6 +27,7 @@ export type PublicQuestion = {
 export type PublicAnswerQuestion = PublicQuestion & {
   correctAnswer?: string;
   correctIndex?: number;
+  correctIndices?: number[] | null;
   explanation?: string | null;
   answerType?: "selected" | "freeText";
   expectedAnswer?: string | null;

@@ -10,7 +10,11 @@ import {
   participantResultSettings,
 } from "../schema";
 import { jstDayStart } from "../../date";
-import { gradeFreeResponse, JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
+import {
+  gradeFreeResponseParts,
+  JEV_QUESTION_VERSION,
+  JEV_RUBRIC_VERSION,
+} from "@/lib/jev/adapter";
 import { scoreQ5 } from "@/lib/jev/scoring";
 import { randomUUID } from "node:crypto";
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
@@ -19,18 +23,49 @@ import { QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
 
 export type BatchAnswer =
   | { questionId: number; selectedIndex: number }
-  | { questionId: number; freeText: string };
+  | { questionId: number; selectedIndices: number[] }
+  | { questionId: number; freeText: string }
+  | { questionId: number; freeTextParts: { a: string; b: string } };
+
+type FreeTextParts = { a: string; b: string };
+
+function encodeFreeTextParts(parts: FreeTextParts): string {
+  return JSON.stringify({ a: parts.a.trim(), b: parts.b.trim() });
+}
+
+function decodeFreeTextParts(value: string | null): FreeTextParts | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "a" in parsed &&
+      "b" in parsed &&
+      typeof parsed.a === "string" &&
+      typeof parsed.b === "string"
+    ) {
+      return { a: parsed.a, b: parsed.b };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 type RestoredAnswer = {
   questionId: number;
   answerKind: "selected" | "legacy" | "freeText";
   selectedIndex: number | null;
+  selectedIndices?: number[] | null;
   freeText: string | null;
+  freeTextParts?: FreeTextParts;
 };
 
 type StoredSubmissionAnswer = {
   questionId: number;
   selectedIndex: number | null;
+  selectedIndices: number[] | null;
   freeText: string | null;
   answerKind: string;
 };
@@ -43,15 +78,34 @@ function restoreSubmissionAnswers(
   return questionIds.flatMap<RestoredAnswer>((questionId) => {
     const answer = answerByQuestion.get(questionId);
     if (!answer) return [];
+    if (answer.answerKind === "freeText" && questionId === 5) {
+      const parts = decodeFreeTextParts(answer.freeText);
+      if (parts)
+        return [
+          {
+            questionId,
+            answerKind: "freeText",
+            selectedIndex: null,
+            freeText: null,
+            freeTextParts: parts,
+          },
+        ];
+    }
     if (answer.answerKind === "freeText")
       return [
-        { questionId, answerKind: "freeText", selectedIndex: null, freeText: answer.freeText },
+        {
+          questionId,
+          answerKind: "freeText",
+          selectedIndex: null,
+          freeText: answer.freeText,
+        },
       ];
     return [
       {
         questionId,
         answerKind: answer.answerKind as "selected" | "legacy",
         selectedIndex: answer.selectedIndex,
+        ...(answer.selectedIndices ? { selectedIndices: answer.selectedIndices } : {}),
         freeText: null,
       },
     ];
@@ -111,6 +165,7 @@ export async function getAnswerSubmission(submissionId: string, participantId: n
       .select({
         questionId: examSubmissionAnswers.questionId,
         selectedIndex: examSubmissionAnswers.selectedIndex,
+        selectedIndices: examSubmissionAnswers.selectedIndices,
         freeText: examSubmissionAnswers.freeText,
         answerKind: examSubmissionAnswers.answerKind,
       })
@@ -197,6 +252,7 @@ export async function getLatestAnswerSubmission(participantId: number) {
       .select({
         questionId: examSubmissionAnswers.questionId,
         selectedIndex: examSubmissionAnswers.selectedIndex,
+        selectedIndices: examSubmissionAnswers.selectedIndices,
         freeText: examSubmissionAnswers.freeText,
         answerKind: examSubmissionAnswers.answerKind,
       })
@@ -206,15 +262,17 @@ export async function getLatestAnswerSubmission(participantId: number) {
       .select({
         id: examQuestions.id,
         key: examQuestions.key,
+        selectionMode: examQuestions.selectionMode,
         choiceCount: sql<number>`json_array_length(${examQuestions.choices})`,
       })
       .from(examQuestions)
       .orderBy(asc(examQuestions.id))
       .limit(5);
-    const restoreQuestions = currentQuestions.map(({ id, key, choiceCount }) => ({
+    const restoreQuestions = currentQuestions.map(({ id, key, choiceCount, selectionMode }) => ({
       id,
       answerType: key === "it-literacy-005" ? ("freeText" as const) : ("selected" as const),
       choiceCount,
+      selectionMode: selectionMode === "multiple" ? ("multiple" as const) : ("single" as const),
     }));
     const questionIds = Array.isArray(submission.questionIds) ? submission.questionIds : [];
     const storedIds = storedAnswers.map(({ questionId }) => questionId);
@@ -222,6 +280,18 @@ export async function getLatestAnswerSubmission(participantId: number) {
     const rawAnswersMatch = storedAnswers.every((answer) => {
       const currentQuestion = restoreQuestions.find(({ id }) => id === answer.questionId);
       if (!currentQuestion) return false;
+      if (currentQuestion.answerType === "freeText" && answer.questionId === 5) {
+        const parts = decodeFreeTextParts(answer.freeText);
+        return (
+          answer.answerKind === "freeText" &&
+          answer.selectedIndex === null &&
+          parts !== null &&
+          Boolean(parts.a.trim()) &&
+          Boolean(parts.b.trim()) &&
+          parts.a.trim().length <= 1000 &&
+          parts.b.trim().length <= 1000
+        );
+      }
       if (currentQuestion.answerType === "freeText") {
         return (
           (answer.answerKind === "freeText" &&
@@ -239,9 +309,18 @@ export async function getLatestAnswerSubmission(participantId: number) {
       }
       return (
         answer.answerKind === "selected" &&
-        Number.isInteger(answer.selectedIndex) &&
-        answer.selectedIndex! >= 0 &&
-        answer.selectedIndex! < currentQuestion.choiceCount &&
+        (currentQuestion.selectionMode === "multiple"
+          ? Array.isArray(answer.selectedIndices) &&
+            answer.selectedIndices.length === 2 &&
+            answer.selectedIndex === null &&
+            answer.selectedIndices.every(
+              (index) =>
+                Number.isInteger(index) && index >= 0 && index < currentQuestion.choiceCount,
+            )
+          : answer.selectedIndices === null &&
+            Number.isInteger(answer.selectedIndex) &&
+            answer.selectedIndex! >= 0 &&
+            answer.selectedIndex! < currentQuestion.choiceCount) &&
         answer.freeText === null
       );
     });
@@ -360,6 +439,7 @@ async function saveAnswerSubmissionOnce(
       .select({
         id: examQuestions.id,
         key: examQuestions.key,
+        selectionMode: examQuestions.selectionMode,
         choices: examQuestions.choices,
         questionVersion: examQuestions.questionVersion,
       })
@@ -380,6 +460,7 @@ async function saveAnswerSubmissionOnce(
           .select({
             id: examQuestions.id,
             key: examQuestions.key,
+            selectionMode: examQuestions.selectionMode,
             choices: examQuestions.choices,
             questionVersion: examQuestions.questionVersion,
           })
@@ -391,17 +472,28 @@ async function saveAnswerSubmissionOnce(
       canonicalAnswers.some((answer) => {
         const question = questionById.get(answer.questionId);
         if (!question) return true;
-        if (question.key === "it-literacy-005")
+        if (question.key === "it-literacy-005") {
+          const text = "freeTextParts" in answer ? encodeFreeTextParts(answer.freeTextParts) : "";
           return (
-            !("freeText" in answer) ||
-            answer.freeText.trim().length === 0 ||
-            answer.freeText.trim().length > 1000
+            !("freeTextParts" in answer) ||
+            !answer.freeTextParts.a.trim() ||
+            !answer.freeTextParts.b.trim() ||
+            answer.freeTextParts.a.trim().length > 1000 ||
+            answer.freeTextParts.b.trim().length > 1000 ||
+            text.length > 2200
           );
-        return (
-          !("selectedIndex" in answer) ||
-          answer.selectedIndex < 0 ||
-          answer.selectedIndex >= question.choices.length
-        );
+        }
+        return question.selectionMode === "multiple"
+          ? !("selectedIndices" in answer) ||
+              answer.selectedIndices.length !== 2 ||
+              new Set(answer.selectedIndices).size !== 2 ||
+              answer.selectedIndices.some(
+                (index) =>
+                  !Number.isInteger(index) || index < 0 || index >= question.choices.length,
+              )
+          : !("selectedIndex" in answer) ||
+              answer.selectedIndex < 0 ||
+              answer.selectedIndex >= question.choices.length;
       })
     ) {
       throw new BatchSubmissionError("Answer type does not match its question", 400);
@@ -525,19 +617,32 @@ async function saveAnswerSubmissionOnce(
               submissionId: input.submissionId,
               questionId: answer.questionId,
               selectedIndex: "selectedIndex" in answer ? answer.selectedIndex : null,
-              freeText: "freeText" in answer ? answer.freeText.trim() : null,
-              answerKind: "freeText" in answer ? "freeText" : "selected",
+              selectedIndices: "selectedIndices" in answer ? answer.selectedIndices : null,
+              freeText:
+                "freeTextParts" in answer
+                  ? encodeFreeTextParts(answer.freeTextParts)
+                  : "freeText" in answer
+                    ? answer.freeText.trim()
+                    : null,
+              answerKind:
+                "freeText" in answer || "freeTextParts" in answer ? "freeText" : "selected",
             })),
           );
-          const freeResponse = canonicalAnswers.find((answer) => "freeText" in answer);
-          if (freeResponse && "freeText" in freeResponse) {
+          const freeResponse = canonicalAnswers.find(
+            (answer) => "freeText" in answer || "freeTextParts" in answer,
+          );
+          if (freeResponse && ("freeText" in freeResponse || "freeTextParts" in freeResponse)) {
+            const answerText =
+              "freeTextParts" in freeResponse
+                ? encodeFreeTextParts(freeResponse.freeTextParts)
+                : freeResponse.freeText.trim();
             await tx
               .insert(examAnswerAssessments)
               .values({
                 submissionId: input.submissionId,
                 questionId: freeResponse.questionId,
                 revision,
-                answerText: freeResponse.freeText.trim(),
+                answerText,
                 questionVersion: questionById.get(freeResponse.questionId)?.questionVersion ?? null,
                 state: "pending",
                 rubricVersion:
@@ -552,7 +657,7 @@ async function saveAnswerSubmissionOnce(
                 target: [examAnswerAssessments.submissionId, examAnswerAssessments.questionId],
                 set: {
                   revision,
-                  answerText: freeResponse.freeText.trim(),
+                  answerText,
                   questionVersion:
                     questionById.get(freeResponse.questionId)?.questionVersion ?? null,
                   state: "pending",
@@ -892,18 +997,26 @@ export async function processDueAssessments(
       .returning({ submissionId: examAnswerAssessments.submissionId });
     if (!claim.length) continue;
     try {
-      const result = await gradeFreeResponse(
-        job.answerText,
-        job.questionVersion,
-        job.rubricVersion,
+      const parts = decodeFreeTextParts(job.answerText);
+      if (!parts) throw new Error("jev_invalid_response");
+      const result = await gradeFreeResponseParts(parts, job.questionVersion, job.rubricVersion);
+      const jevScores = { a: result.a?.score ?? null, b: result.b?.score ?? null };
+      const gradedParts = [result.a, result.b].filter(
+        (part): part is NonNullable<typeof part> => part !== null,
       );
+      const rawScore =
+        gradedParts.length === 0
+          ? null
+          : gradedParts.reduce((sum, part) => sum + part.score, 0) / gradedParts.length;
+      const confidence =
+        gradedParts.length === 0 ? null : Math.min(...gradedParts.map((part) => part.confidence));
       const applied = await db
         .update(examAnswerAssessments)
         .set({
           state: "graded",
-          rawScore: result.score,
-          normalizedScore: scoreQ5(job.answerText, result.score),
-          confidence: result.confidence,
+          rawScore,
+          normalizedScore: scoreQ5(parts, jevScores),
+          confidence,
           model: result.model,
           gradedAt: new Date(),
           nextAttemptAt: null,

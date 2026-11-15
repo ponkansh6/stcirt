@@ -5,8 +5,8 @@ import * as schema from "@/lib/db/schema";
 
 const dbRef = vi.hoisted(() => ({ db: null as TestDb["db"] | null }));
 const gradeMock = vi.hoisted(() => vi.fn());
-const rubricVersion = vi.hoisted(() => "jev-q5-keywords30-30-jev40-v1");
-const questionVersion = vi.hoisted(() => "tamami-egg-v1");
+const rubricVersion = vi.hoisted(() => "jev-q5-independent-points-v1");
+const questionVersion = vi.hoisted(() => "hong-kong-trip-a-b-v1");
 
 vi.mock("@/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/db")>();
@@ -19,7 +19,7 @@ vi.mock("@/lib/db", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/jev/adapter", () => ({
-  gradeFreeResponse: gradeMock,
+  gradeFreeResponseParts: gradeMock,
   JEV_QUESTION_VERSION: questionVersion,
   JEV_RUBRIC_VERSION: rubricVersion,
 }));
@@ -30,7 +30,12 @@ import {
   processDueAssessments,
   saveAnswerSubmission,
 } from "@/lib/db/repository/answer-repository";
-import { gradeFreeResponse, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
+import { gradeFreeResponseParts, JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
+
+function gradeResult(score: number, confidence: number, model: string) {
+  const part = { score, confidence, model };
+  return { a: part, b: part, model };
+}
 
 const submissionId = "00000000-0000-4000-8000-000000000101";
 const operationId = "00000000-0000-4000-8000-000000000102";
@@ -40,7 +45,7 @@ describe("durable free-response assessment and restoration", () => {
   let participantId: number;
   const validAnswers = [
     ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
-    { questionId: 5, freeText: "  上司に確認し、承認済み環境を使います。  " },
+    { questionId: 5, freeTextParts: { a: "  ローカルな朝食  ", b: "  店で食事  " } },
   ];
 
   beforeEach(async () => {
@@ -111,7 +116,7 @@ describe("durable free-response assessment and restoration", () => {
     const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(assessment).toMatchObject({
       revision: 1,
-      answerText: "上司に確認し、承認済み環境を使います。",
+      answerText: JSON.stringify({ a: "ローカルな朝食", b: "店で食事" }),
       questionVersion,
       rubricVersion: JEV_RUBRIC_VERSION,
       state: "pending",
@@ -134,7 +139,8 @@ describe("durable free-response assessment and restoration", () => {
           questionId: 5,
           answerKind: "freeText",
           selectedIndex: null,
-          freeText: "上司に確認し、承認済み環境を使います。",
+          freeText: null,
+          freeTextParts: { a: "ローカルな朝食", b: "店で食事" },
         },
       ]),
     });
@@ -188,12 +194,15 @@ describe("durable free-response assessment and restoration", () => {
       operationId: "00000000-0000-4000-8000-000000000105",
       expectedRevision: 1,
       participantId,
-      answers: [...validAnswers.slice(0, 4), { questionId: 5, freeText: "Revised answer" }],
+      answers: [
+        ...validAnswers.slice(0, 4),
+        { questionId: 5, freeTextParts: { a: "Revised answer", b: "Revised answer" } },
+      ],
     });
     const [revised] = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(revised).toMatchObject({
       revision: 2,
-      answerText: "Revised answer",
+      answerText: JSON.stringify({ a: "Revised answer", b: "Revised answer" }),
       questionVersion: "omiwatari-v1",
       rubricVersion: "unversioned",
       state: "pending",
@@ -209,7 +218,7 @@ describe("durable free-response assessment and restoration", () => {
       participantId,
       answers: validAnswers,
     });
-    vi.mocked(gradeFreeResponse).mockRejectedValueOnce(
+    vi.mocked(gradeFreeResponseParts).mockRejectedValueOnce(
       new Error("Unsupported question/rubric version pair"),
     );
 
@@ -244,7 +253,7 @@ describe("durable free-response assessment and restoration", () => {
     });
     const [after] = await testDb.db.select().from(schema.examAnswerAssessments);
 
-    expect(gradeFreeResponse).not.toHaveBeenCalled();
+    expect(gradeFreeResponseParts).not.toHaveBeenCalled();
     expect(after).toEqual(before);
     expect(after).toMatchObject({
       revision: 1,
@@ -268,9 +277,9 @@ describe("durable free-response assessment and restoration", () => {
       participantId,
       answers: validAnswers,
     });
-    vi.mocked(gradeFreeResponse)
+    vi.mocked(gradeFreeResponseParts)
       .mockRejectedValueOnce(new Error("network down"))
-      .mockResolvedValueOnce({ score: 6.3, confidence: 0.99, model: "jev-latest" });
+      .mockResolvedValueOnce(gradeResult(6.3, 0.99, "jev-latest"));
     await expect(processDueAssessments()).resolves.toMatchObject({
       processed: 1,
       retried: 1,
@@ -293,13 +302,13 @@ describe("durable free-response assessment and restoration", () => {
       rawScore: 6.3,
       confidence: 0.99,
     });
-    expect(graded!.normalizedScore).toBeCloseTo(0.28);
+    expect(graded!.normalizedScore).toBeCloseTo(1.4);
   });
 
   it.each([
     { score: 0, confidence: 0, normalized: 0 },
-    { score: 9, confidence: 1, normalized: 0.4 },
-    { score: 4.5, confidence: 0.37, normalized: 0.2 },
+    { score: 9, confidence: 1, normalized: 2 },
+    { score: 4.5, confidence: 0.37, normalized: 1 },
   ])(
     "persists JEV raw score $score without weighting confidence",
     async ({ score, confidence, normalized }) => {
@@ -310,11 +319,9 @@ describe("durable free-response assessment and restoration", () => {
         participantId,
         answers: validAnswers,
       });
-      vi.mocked(gradeFreeResponse).mockResolvedValueOnce({
-        score,
-        confidence,
-        model: "jev-score-audit-model",
-      });
+      vi.mocked(gradeFreeResponseParts).mockResolvedValueOnce(
+        gradeResult(score, confidence, "jev-score-audit-model"),
+      );
 
       await expect(processDueAssessments()).resolves.toMatchObject({ graded: 1 });
       const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
@@ -329,6 +336,28 @@ describe("durable free-response assessment and restoration", () => {
       });
     },
   );
+
+  it("combines an unconditional keyword point with JEV partial credit for the other answer", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: [
+        ...validAnswers.slice(0, 4),
+        { questionId: 5, freeTextParts: { a: "飲茶", b: "レストランで食事" } },
+      ],
+    });
+    vi.mocked(gradeFreeResponseParts).mockResolvedValueOnce({
+      a: null,
+      b: { score: 4.5, confidence: 0.8, model: "jev-latest" },
+      model: "jev-latest",
+    });
+
+    await expect(processDueAssessments()).resolves.toMatchObject({ graded: 1 });
+    const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(assessment).toMatchObject({ state: "graded", rawScore: 4.5, normalizedScore: 1.5 });
+  });
 
   it("claims no more than five due assessments per worker call with a 45 second lease", async () => {
     const submissionIds = [
@@ -350,11 +379,7 @@ describe("durable free-response assessment and restoration", () => {
     const now = new Date("2026-01-02T03:04:05.000Z");
     vi.useFakeTimers();
     vi.setSystemTime(now);
-    vi.mocked(gradeFreeResponse).mockResolvedValue({
-      score: 6,
-      confidence: 0.9,
-      model: "jev-latest",
-    });
+    vi.mocked(gradeFreeResponseParts).mockResolvedValue(gradeResult(6, 0.9, "jev-latest"));
 
     await expect(processDueAssessments()).resolves.toEqual({
       processed: 5,
@@ -362,7 +387,7 @@ describe("durable free-response assessment and restoration", () => {
       retried: 0,
       failed: 0,
     });
-    expect(gradeFreeResponse).toHaveBeenCalledTimes(5);
+    expect(gradeFreeResponseParts).toHaveBeenCalledTimes(5);
     const assessments = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(assessments).toHaveLength(6);
     expect(assessments.filter((assessment) => assessment.state === "graded")).toHaveLength(5);
@@ -389,10 +414,10 @@ describe("durable free-response assessment and restoration", () => {
     const delayed = new Promise<void>((resolve) => {
       release = resolve;
     });
-    vi.mocked(gradeFreeResponse).mockImplementationOnce(async () => {
+    vi.mocked(gradeFreeResponseParts).mockImplementationOnce(async () => {
       started();
       await delayed;
-      return { score: 6, confidence: 0.9, model: "jev-latest" };
+      return gradeResult(6, 0.9, "jev-latest");
     });
     const worker = processDueAssessments();
     await startedPromise;
@@ -414,7 +439,7 @@ describe("durable free-response assessment and restoration", () => {
     const start = new Date("2026-01-02T03:04:05.000Z");
     vi.useFakeTimers();
     vi.setSystemTime(start);
-    vi.mocked(gradeFreeResponse).mockRejectedValue(new Error("network down"));
+    vi.mocked(gradeFreeResponseParts).mockRejectedValue(new Error("network down"));
 
     let now = start;
     for (let attempt = 1; attempt <= 7; attempt += 1) {
@@ -436,7 +461,7 @@ describe("durable free-response assessment and restoration", () => {
     });
     const [terminal] = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(terminal).toMatchObject({ state: "failed", attempts: 8, nextAttemptAt: null });
-    expect(gradeFreeResponse).toHaveBeenCalledTimes(8);
+    expect(gradeFreeResponseParts).toHaveBeenCalledTimes(8);
   });
 
   it("continues to the next due assessment when its claim RETURNING result is hidden", async () => {
@@ -500,11 +525,7 @@ describe("durable free-response assessment and restoration", () => {
         return typeof value === "function" ? value.bind(target) : value;
       },
     }) as TestDb["db"];
-    vi.mocked(gradeFreeResponse).mockResolvedValueOnce({
-      score: 6.3,
-      confidence: 0.99,
-      model: "jev-latest",
-    });
+    vi.mocked(gradeFreeResponseParts).mockResolvedValueOnce(gradeResult(6.3, 0.99, "jev-latest"));
 
     await expect(processDueAssessments()).resolves.toMatchObject({
       processed: 1,
@@ -512,9 +533,9 @@ describe("durable free-response assessment and restoration", () => {
       retried: 0,
       failed: 0,
     });
-    expect(gradeFreeResponse).toHaveBeenCalledTimes(1);
-    expect(gradeFreeResponse).toHaveBeenCalledWith(
-      validAnswers[4] && "freeText" in validAnswers[4] ? validAnswers[4].freeText.trim() : "",
+    expect(gradeFreeResponseParts).toHaveBeenCalledTimes(1);
+    expect(gradeFreeResponseParts).toHaveBeenCalledWith(
+      { a: "ローカルな朝食", b: "店で食事" },
       questionVersion,
       JEV_RUBRIC_VERSION,
     );
@@ -531,8 +552,8 @@ describe("durable free-response assessment and restoration", () => {
       assessments.map((assessment) => [assessment.submissionId, assessment]),
     );
     const gradedAssessment = assessmentBySubmission.get(gradedSubmissionId);
-    expect(gradeFreeResponse).toHaveBeenCalledWith(
-      gradedAssessment!.answerText,
+    expect(gradeFreeResponseParts).toHaveBeenCalledWith(
+      { a: "ローカルな朝食", b: "店で食事" },
       gradedAssessment!.questionVersion,
       gradedAssessment!.rubricVersion,
     );
@@ -540,7 +561,7 @@ describe("durable free-response assessment and restoration", () => {
       submissionId: lostClaimSubmissionId,
       questionId: 5,
       revision: 1,
-      answerText: "上司に確認し、承認済み環境を使います。",
+      answerText: JSON.stringify({ a: "ローカルな朝食", b: "店で食事" }),
       state: "processing",
       attempts: 1,
       claimToken: hiddenClaimToken,
@@ -556,7 +577,7 @@ describe("durable free-response assessment and restoration", () => {
       submissionId: gradedSubmissionId,
       questionId: 5,
       revision: 1,
-      answerText: "上司に確認し、承認済み環境を使います。",
+      answerText: JSON.stringify({ a: "ローカルな朝食", b: "店で食事" }),
       questionVersion,
       rubricVersion: JEV_RUBRIC_VERSION,
       state: "graded",
@@ -568,7 +589,7 @@ describe("durable free-response assessment and restoration", () => {
       nextAttemptAt: null,
       errorCode: null,
     });
-    expect(gradedAssessment!.normalizedScore).toBeCloseTo(0.28);
+    expect(gradedAssessment!.normalizedScore).toBeCloseTo(1.4);
   });
 
   it("ignores a provider failure after another worker has replaced its claim", async () => {
@@ -580,7 +601,7 @@ describe("durable free-response assessment and restoration", () => {
       answers: validAnswers,
     });
     const competingClaimToken = "00000000-0000-4000-8000-000000000105";
-    vi.mocked(gradeFreeResponse).mockImplementationOnce(async () => {
+    vi.mocked(gradeFreeResponseParts).mockImplementationOnce(async () => {
       await testDb.db
         .update(schema.examAnswerAssessments)
         .set({ claimToken: competingClaimToken })
@@ -619,11 +640,7 @@ describe("durable free-response assessment and restoration", () => {
       participantId,
       answers: validAnswers,
     });
-    vi.mocked(gradeFreeResponse).mockResolvedValueOnce({
-      score: 6.3,
-      confidence: 0.99,
-      model: "jev-latest",
-    });
+    vi.mocked(gradeFreeResponseParts).mockResolvedValueOnce(gradeResult(6.3, 0.99, "jev-latest"));
 
     await expect(
       processDueAssessments(false, { submissionId, revision: 1 }),
@@ -631,7 +648,7 @@ describe("durable free-response assessment and restoration", () => {
       processed: 1,
       graded: 1,
     });
-    expect(gradeFreeResponse).toHaveBeenCalledTimes(1);
+    expect(gradeFreeResponseParts).toHaveBeenCalledTimes(1);
     const assessments = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(assessments.find((assessment) => assessment.submissionId === submissionId)?.state).toBe(
       "graded",
@@ -649,15 +666,11 @@ describe("durable free-response assessment and restoration", () => {
       participantId,
       answers: validAnswers,
     });
-    vi.mocked(gradeFreeResponse).mockRejectedValueOnce(new Error("jev_invalid_response"));
+    vi.mocked(gradeFreeResponseParts).mockRejectedValueOnce(new Error("jev_invalid_response"));
     await expect(processDueAssessments()).resolves.toMatchObject({ failed: 1 });
     const [failed] = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(failed).toMatchObject({ state: "failed", attempts: 1, nextAttemptAt: null });
-    vi.mocked(gradeFreeResponse).mockResolvedValueOnce({
-      score: 5.4,
-      confidence: 0.8,
-      model: "jev-latest",
-    });
+    vi.mocked(gradeFreeResponseParts).mockResolvedValueOnce(gradeResult(5.4, 0.8, "jev-latest"));
     await expect(processDueAssessments()).resolves.toMatchObject({ processed: 0 });
     await expect(processDueAssessments(true)).resolves.toMatchObject({ graded: 1, failed: 0 });
     const [retried] = await testDb.db.select().from(schema.examAnswerAssessments);
@@ -666,7 +679,7 @@ describe("durable free-response assessment and restoration", () => {
       attempts: 1,
       rawScore: 5.4,
     });
-    expect(retried!.normalizedScore).toBeCloseTo(0.24);
+    expect(retried!.normalizedScore).toBeCloseTo(1.2);
   });
 
   it("rejects a late result after the lease is reclaimed by another worker", async () => {
@@ -685,13 +698,13 @@ describe("durable free-response assessment and restoration", () => {
     const oldResult = new Promise<void>((resolve) => {
       releaseOld = resolve;
     });
-    vi.mocked(gradeFreeResponse)
+    vi.mocked(gradeFreeResponseParts)
       .mockImplementationOnce(async () => {
         oldStarted();
         await oldResult;
-        return { score: 0.4, confidence: 0.5, model: "jev-latest" };
+        return gradeResult(0.4, 0.5, "jev-latest");
       })
-      .mockResolvedValueOnce({ score: 7.2, confidence: 0.9, model: "jev-latest" });
+      .mockResolvedValueOnce(gradeResult(7.2, 0.9, "jev-latest"));
 
     const oldWorker = processDueAssessments();
     await oldStartedPromise;
@@ -707,7 +720,7 @@ describe("durable free-response assessment and restoration", () => {
       rawScore: 7.2,
       claimToken: null,
     });
-    expect(assessment!.normalizedScore).toBeCloseTo(0.32);
+    expect(assessment!.normalizedScore).toBeCloseTo(1.6);
   });
 
   it("does not apply an assessment after the participant revises the answer revision", async () => {
@@ -726,13 +739,13 @@ describe("durable free-response assessment and restoration", () => {
     const delayed = new Promise<void>((resolve) => {
       releaseGrade = resolve;
     });
-    vi.mocked(gradeFreeResponse)
+    vi.mocked(gradeFreeResponseParts)
       .mockImplementationOnce(async () => {
         gradeStarted();
         await delayed;
-        return { score: 1.8, confidence: 1, model: "old-job-model" };
+        return gradeResult(1.8, 1, "old-job-model");
       })
-      .mockResolvedValueOnce({ score: 9, confidence: 0.75, model: "current-job-model" });
+      .mockResolvedValueOnce(gradeResult(9, 0.75, "current-job-model"));
     const oldWorker = processDueAssessments();
     await gradeStartedPromise;
     await saveAnswerSubmission({
@@ -740,7 +753,10 @@ describe("durable free-response assessment and restoration", () => {
       operationId: "00000000-0000-4000-8000-000000000103",
       expectedRevision: 1,
       participantId,
-      answers: [...validAnswers.slice(0, 4), { questionId: 5, freeText: "Revised answer" }],
+      answers: [
+        ...validAnswers.slice(0, 4),
+        { questionId: 5, freeTextParts: { a: "Revised answer", b: "Revised answer" } },
+      ],
     });
     releaseGrade();
     await oldWorker;
@@ -748,7 +764,7 @@ describe("durable free-response assessment and restoration", () => {
     expect(current).toMatchObject({
       revision: 2,
       state: "graded",
-      answerText: "Revised answer",
+      answerText: JSON.stringify({ a: "Revised answer", b: "Revised answer" }),
       rawScore: 9,
       confidence: 0.75,
       model: "current-job-model",
@@ -756,17 +772,17 @@ describe("durable free-response assessment and restoration", () => {
       rubricVersion: JEV_RUBRIC_VERSION,
       claimToken: null,
     });
-    expect(current!.normalizedScore).toBeCloseTo(0.4);
-    expect(gradeFreeResponse).toHaveBeenCalledTimes(2);
-    expect(gradeFreeResponse).toHaveBeenNthCalledWith(
+    expect(current!.normalizedScore).toBeCloseTo(2);
+    expect(gradeFreeResponseParts).toHaveBeenCalledTimes(2);
+    expect(gradeFreeResponseParts).toHaveBeenNthCalledWith(
       1,
-      "上司に確認し、承認済み環境を使います。",
+      { a: "ローカルな朝食", b: "店で食事" },
       questionVersion,
       JEV_RUBRIC_VERSION,
     );
-    expect(gradeFreeResponse).toHaveBeenNthCalledWith(
+    expect(gradeFreeResponseParts).toHaveBeenNthCalledWith(
       2,
-      "Revised answer",
+      { a: "Revised answer", b: "Revised answer" },
       questionVersion,
       JEV_RUBRIC_VERSION,
     );

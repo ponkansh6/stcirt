@@ -263,10 +263,15 @@ describe("QuizRunner remaining coverage states", () => {
         : quiz,
     );
     mockUseQuizSession.mockReturnValue(
-      session({ kind: "answering" }, { quizzes, freeResponses: { 5: "保存した記述回答" } }),
+      session(
+        { kind: "answering" },
+        { quizzes, freeResponseParts: { 5: { a: "保存した記述回答", b: "" } } },
+      ),
     );
     render(<QuizRunner />);
-    expect(screen.getByRole("textbox", { name: "回答" })).toHaveValue("保存した記述回答");
+    expect(screen.getByRole("textbox", { name: "A. 2/28 朝の食事" })).toHaveValue(
+      "保存した記述回答",
+    );
   });
 
   it("reviews all five selected and free-text answers and reflects an edited selection", () => {
@@ -337,15 +342,15 @@ describe("QuizRunner remaining coverage states", () => {
         ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
         : quiz,
     );
-    const setFreeResponse = vi.fn();
+    const setFreeResponsePart = vi.fn();
     mockUseQuizSession.mockReturnValue(
-      session({ kind: "answering" }, { quizzes, setFreeResponse }),
+      session({ kind: "answering" }, { quizzes, setFreeResponsePart }),
     );
     render(<QuizRunner />);
-    const textbox = screen.getByRole("textbox", { name: "回答" });
+    const textbox = screen.getByRole("textbox", { name: "A. 2/28 朝の食事" });
     expect(textbox).toHaveValue("");
     fireEvent.change(textbox, { target: { value: "入力中の回答" } });
-    expect(setFreeResponse).toHaveBeenCalledWith(5, "入力中の回答");
+    expect(setFreeResponsePart).toHaveBeenCalledWith(5, "a", "入力中の回答");
   });
 
   it("tracks the question at the visible reading midpoint and recalculates on scroll and header resize", async () => {
@@ -630,7 +635,7 @@ describe("QuizRunner remaining coverage states", () => {
 
   it("shows a long free response preview and its full text, including unanswered free text", () => {
     const quizzes = selectedQuizzes.map((quiz, index) =>
-      index >= 3
+      index === 3 || index === 4
         ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
         : quiz,
     );
@@ -638,7 +643,7 @@ describe("QuizRunner remaining coverage states", () => {
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering" },
-        { quizzes, selections: { 1: 0, 2: 0, 3: 0 }, freeResponses: { 5: longAnswer } },
+        { quizzes, selections: { 1: 0, 2: 0, 3: 0 }, freeResponses: { 4: longAnswer } },
       ),
     );
     render(<QuizRunner />);

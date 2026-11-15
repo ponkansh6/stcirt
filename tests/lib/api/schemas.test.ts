@@ -63,6 +63,48 @@ describe("submitAnswerBatchSchema", () => {
       }).success,
     ).toBe(true);
   });
+
+  it("accepts two selected indices for a multi-select question", () => {
+    const answers = [
+      { questionId: 1, selectedIndex: 0 },
+      { questionId: 2, selectedIndices: [1, 4] },
+      { questionId: 3, selectedIndex: 0 },
+      { questionId: 4, selectedIndex: 0 },
+      { questionId: 5, freeText: "An answer" },
+    ];
+
+    expect(
+      submitAnswerBatchSchema.safeParse({
+        submissionId,
+        operationId,
+        expectedRevision: 0,
+        answers,
+      }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    { label: "one", selectedIndices: [1] },
+    { label: "three", selectedIndices: [1, 4, 5] },
+    { label: "negative", selectedIndices: [-1, 4] },
+    { label: "out of range", selectedIndices: [1, 8] },
+  ])("rejects malformed multi-select indices ($label)", ({ selectedIndices }) => {
+    const answers = [
+      { questionId: 1, selectedIndex: 0 },
+      { questionId: 2, selectedIndices },
+      { questionId: 3, selectedIndex: 0 },
+      { questionId: 4, selectedIndex: 0 },
+      { questionId: 5, freeText: "An answer" },
+    ];
+    expect(
+      submitAnswerBatchSchema.safeParse({
+        submissionId,
+        operationId,
+        expectedRevision: 0,
+        answers,
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("publicQuizQuestionSchema", () => {

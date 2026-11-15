@@ -44,7 +44,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       [1, 2, 3, 4, 5].map((id) => ({
         id,
         key: `it-literacy-00${id}`,
-        questionVersion: id === 5 ? "tamami-egg-v1" : `nagano-00${id}-v1`,
+        questionVersion: id === 5 ? "hong-kong-trip-a-b-v1" : `nagano-00${id}-v1`,
         question: `Question ${id}`,
         choices: id === 5 ? [] : ["correct", "incorrect"],
         correctIndex: 0,
@@ -70,14 +70,17 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       operationId: `operation-${participantId}-${suffix}`,
       expectedRevision: 0,
       participantId,
-      answers: [...answerSet, { questionId: 5, freeText: `answer ${suffix}` }],
+      answers: [
+        ...answerSet,
+        { questionId: 5, freeTextParts: { a: `answer ${suffix}`, b: `answer ${suffix}` } },
+      ],
     });
     await testDb.db
       .update(schema.examAnswerAssessments)
       .set({
         state: "graded",
         rawScore,
-        normalizedScore: rawScore / 2,
+        normalizedScore: rawScore,
         confidence: 0.01,
         model: "test-model",
         gradedAt: new Date(),
@@ -99,8 +102,12 @@ describe("free-response presentation scoring and immutable snapshots", () => {
 
     const presentation = await startWithAggregate("fraction-start");
     expect(presentation.entries).toEqual([
-      expect.objectContaining({ displayName: "fractional-one", score: 4.75, rank: 1 }),
-      expect.objectContaining({ displayName: "fractional-two", score: 4.7495, rank: 2 }),
+      expect.objectContaining({ displayName: "fractional-one", score: 5.5, rank: 1 }),
+      expect.objectContaining({
+        displayName: "fractional-two",
+        score: 5.4990000000000006,
+        rank: 2,
+      }),
     ]);
     expect(presentation.entries[0]!.score.toFixed(2)).toBe(
       presentation.entries[1]!.score.toFixed(2),
@@ -110,7 +117,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         questionId: 5,
         answerKind: "freeText",
         rawScore: 1.5,
-        normalizedScore: 0.75,
+        normalizedScore: 1.5,
       }),
     );
     for (let index = 0; index < 12; index += 1)
@@ -129,8 +136,8 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     if (winnerProjection.state === "first")
       expect(winnerProjection.winners[0]?.questionResults[4]).toMatchObject({
         position: 4,
-        answer: { kind: "freeText", value: "answer one" },
-        normalizedScore: 0.75,
+        answer: { kind: "freeText", value: "A: answer one\nB: answer one" },
+        normalizedScore: 1.5,
       });
     expect(JSON.stringify(winnerProjection)).not.toContain('"rawScore"');
   });
@@ -148,7 +155,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     if (projection.state !== "second") throw new Error("Expected second-rank projection");
     expect(projection.winners[0]).toMatchObject({ displayName: "zero-normalized-score" });
     expect(projection.winners[0]?.questionResults[4]).toMatchObject({
-      answer: { kind: "freeText", value: "answer zero" },
+      answer: { kind: "freeText", value: "A: answer zero\nB: answer zero" },
       normalizedScore: 0,
     });
 
@@ -167,7 +174,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     projection = await getPublicPresentation();
     if (projection.state !== "second") throw new Error("Expected second-rank projection");
     expect(projection.winners[0]?.questionResults[4]).toMatchObject({
-      answer: { kind: "freeText", value: "answer zero" },
+      answer: { kind: "freeText", value: "A: answer zero\nB: answer zero" },
       normalizedScore: null,
     });
 
@@ -176,8 +183,8 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     if (projection.state !== "first") throw new Error("Expected first-rank projection");
     expect(projection.winners[0]).toMatchObject({ displayName: "maximum-normalized-score" });
     expect(projection.winners[0]?.questionResults[4]).toMatchObject({
-      answer: { kind: "freeText", value: "answer maximum" },
-      normalizedScore: 1,
+      answer: { kind: "freeText", value: "A: answer maximum\nB: answer maximum" },
+      normalizedScore: 2,
     });
   });
 
@@ -207,7 +214,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     const fifthResult =
       renamedWinner.state === "first" ? renamedWinner.winners[0]?.questionResults[4] : undefined;
     expect(fifthResult).toMatchObject({
-      answer: { kind: "freeText", value: "answer identity" },
+      answer: { kind: "freeText", value: "A: answer identity\nB: answer identity" },
       scoreStatus: "unavailable",
     });
     expect(fifthResult).not.toHaveProperty("normalizedScore");
@@ -233,7 +240,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         ? winnerProjection.winners[0]?.questionResults[4]
         : undefined;
     expect(fifthResult).toMatchObject({
-      answer: { kind: "freeText", value: "answer missing-source" },
+      answer: { kind: "freeText", value: "A: answer missing-source\nB: answer missing-source" },
       scoreStatus: "unavailable",
     });
     expect(fifthResult).not.toHaveProperty("normalizedScore");
@@ -314,7 +321,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         "2": "nagano-002-v1",
         "3": "nagano-003-v1",
         "4": "nagano-004-v1",
-        "5": "tamami-egg-v1",
+        "5": "hong-kong-trip-a-b-v1",
       },
       revision: 1,
     });

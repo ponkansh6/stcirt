@@ -56,8 +56,10 @@ export const examQuestions = sqliteTable("exam_questions", {
   question: text("question").notNull(),
   choices: text("choices", { mode: "json" }).notNull().$type<string[]>(),
   correctIndex: integer("correct_index").notNull(),
+  correctIndices: text("correct_indices", { mode: "json" }).$type<number[] | null>(),
   explanation: text("explanation"),
   questionVersion: text("question_version"),
+  selectionMode: text("selection_mode").notNull().default("single"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -165,6 +167,7 @@ export const examSubmissionAnswers = sqliteTable(
       .notNull()
       .references(() => examQuestions.id, { onDelete: "cascade" }),
     selectedIndex: integer("selected_index"),
+    selectedIndices: text("selected_indices", { mode: "json" }).$type<number[] | null>(),
     freeText: text("free_text"),
     answerKind: text("answer_kind").notNull().default("selected"),
   },
@@ -247,6 +250,7 @@ export const presentationQuestions = sqliteTable(
     question: text("question").notNull(),
     choices: text("choices", { mode: "json" }).notNull().$type<string[]>(),
     correctIndex: integer("correct_index").notNull(),
+    correctIndices: text("correct_indices", { mode: "json" }).$type<number[] | null>(),
     explanation: text("explanation"),
   },
   (t) => ({ pk: primaryKey({ columns: [t.sessionId, t.position] }) }),
@@ -272,6 +276,7 @@ export const presentationEntries = sqliteTable(
         questionId: number;
         answerKind: "selected" | "freeText" | "legacy" | "unanswered";
         selectedIndex: number | null;
+        selectedIndices?: number[] | null;
         freeText: string | null;
         rawScore: number | null;
         normalizedScore: number | null;

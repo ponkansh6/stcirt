@@ -805,7 +805,7 @@ describe("QuizRunner batch answer sheet", () => {
     );
     const retryDrafts: Array<{
       selections: Record<number, number>;
-      freeResponses: Record<number, string>;
+      freeResponseParts: Record<number, { a: string; b: string }>;
     }> = [];
     function ConflictAnswerSheet() {
       const [phase, setPhase] = useState<object>({ kind: "answering" });
@@ -815,24 +815,32 @@ describe("QuizRunner batch answer sheet", () => {
         3: 0,
         4: 3,
       });
-      const [freeResponses, setFreeResponses] = useState<Record<number, string>>({
-        5: "競合後も保持する記述回答",
+      const [freeResponseParts, setFreeResponseParts] = useState<
+        Record<number, { a: string; b: string }>
+      >({
+        5: { a: "競合後も保持する記述回答 A", b: "競合後も保持する記述回答 B" },
       });
       const saveAnswers = vi.fn(async () => {
-        retryDrafts.push({ selections: { ...selections }, freeResponses: { ...freeResponses } });
+        retryDrafts.push({
+          selections: { ...selections },
+          freeResponseParts: { ...freeResponseParts },
+        });
         if (retryDrafts.length === 1) setPhase({ kind: "answering", message: conflictMessage });
       });
       mockUseQuizSession.mockReturnValue(
         session(phase, {
           quizzes: quizzesWithFreeText,
           selections,
-          freeResponses,
+          freeResponseParts,
           savedSelections: { 1: 0, 2: 0, 3: 0, 4: 0 },
           answeredCount: 5,
           select: (questionId: number, choiceIndex: number) =>
             setSelections((current) => ({ ...current, [questionId]: choiceIndex })),
-          setFreeResponse: (questionId: number, value: string) =>
-            setFreeResponses((current) => ({ ...current, [questionId]: value })),
+          setFreeResponsePart: (questionId: number, part: "a" | "b", value: string) =>
+            setFreeResponseParts((current) => ({
+              ...current,
+              [questionId]: { ...current[questionId], [part]: value },
+            })),
           saveAnswers,
         }),
       );
@@ -850,7 +858,12 @@ describe("QuizRunner batch answer sheet", () => {
 
     const question2 = within(document.getElementById("question-2") as HTMLElement);
     expect(question2.getByRole("radio", { name: /D2/ })).toBeChecked();
-    expect(screen.getByRole("textbox", { name: "回答" })).toHaveValue("競合後も保持する記述回答");
+    expect(screen.getByRole("textbox", { name: "A. 2/28 朝の食事" })).toHaveValue(
+      "競合後も保持する記述回答 A",
+    );
+    expect(screen.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })).toHaveValue(
+      "競合後も保持する記述回答 B",
+    );
     fireEvent.click(screen.getByRole("button", { name: "修正内容を確定する" }));
     expect(retryDrafts).toHaveLength(1);
 
@@ -861,9 +874,17 @@ describe("QuizRunner batch answer sheet", () => {
     expect(question2.getByRole("radio", { name: /D2/ })).toBeChecked();
     expect(document.getElementById("answer-3-0")).toBeChecked();
     expect(document.getElementById("answer-4-3")).toBeChecked();
-    expect(screen.getByRole("textbox", { name: "回答" })).toHaveValue("競合後も保持する記述回答");
+    expect(screen.getByRole("textbox", { name: "A. 2/28 朝の食事" })).toHaveValue(
+      "競合後も保持する記述回答 A",
+    );
+    expect(screen.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })).toHaveValue(
+      "競合後も保持する記述回答 B",
+    );
     expect(screen.getByRole("list", { name: "回答内容" })).toHaveTextContent(
-      "競合後も保持する記述回答",
+      "A. 競合後も保持する記述回答 A",
+    );
+    expect(screen.getByRole("list", { name: "回答内容" })).toHaveTextContent(
+      "B. 競合後も保持する記述回答 B",
     );
     expect(retryDrafts).toHaveLength(1);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -872,7 +893,12 @@ describe("QuizRunner batch answer sheet", () => {
     expect(retryDrafts).toHaveLength(2);
     expect(retryDrafts[1]).toEqual({
       selections: { 1: 1, 2: 2, 3: 0, 4: 3 },
-      freeResponses: { 5: "競合後も保持する記述回答" },
+      freeResponseParts: {
+        5: {
+          a: "競合後も保持する記述回答 A",
+          b: "競合後も保持する記述回答 B",
+        },
+      },
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });

@@ -13,7 +13,9 @@ export async function getQuestionById(id: number): Promise<Question | null> {
     question: q.question,
     choices: q.choices,
     correctIndex: q.correctIndex,
+    correctIndices: q.correctIndices,
     explanation: q.explanation,
+    selectionMode: q.selectionMode === "multiple" ? "multiple" : "single",
     createdAt: q.createdAt,
   };
 }
@@ -25,6 +27,7 @@ export async function getExamQuestions(): Promise<QuizQuestion[]> {
       question: examQuestions.question,
       choices: examQuestions.choices,
       key: examQuestions.key,
+      selectionMode: examQuestions.selectionMode,
     })
     .from(examQuestions)
     .orderBy(asc(examQuestions.id))
@@ -35,5 +38,6 @@ export async function getExamQuestions(): Promise<QuizQuestion[]> {
     question: question.question,
     choices: question.choices,
     answerType: question.key === "it-literacy-005" ? "freeText" : "selected",
+    selectionMode: question.selectionMode === "multiple" ? "multiple" : "single",
   }));
 }

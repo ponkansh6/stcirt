@@ -1046,12 +1046,13 @@ describe("useQuizSession hook", () => {
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
     expect(result.current.submissionId).toBe(submissionId);
     expect(result.current.revision).toBe(4);
-    expect(result.current.freeResponses[5]).toBeUndefined();
+    expect(result.current.freeResponseParts[5]).toBeUndefined();
 
     await act(async () => result.current.editAnswers(() => true));
     expect(result.current.legacyAnswerIds).toEqual([5]);
     expect(result.current.phase.kind).toBe("answering");
-    act(() => result.current.setFreeResponse(5, "新しい自由記載回答"));
+    act(() => result.current.setFreeResponsePart(5, "a", "新しい朝飲茶回答"));
+    act(() => result.current.setFreeResponsePart(5, "b", "新しいシーフード回答"));
     await act(async () => result.current.saveAnswers());
 
     expect(result.current.phase.kind).toBe("complete");
@@ -1062,7 +1063,10 @@ describe("useQuizSession hook", () => {
     expect(posts).toHaveLength(1);
     const body = JSON.parse(String(posts[0]?.[1]?.body));
     expect(body).toMatchObject({ submissionId, expectedRevision: 4 });
-    expect(body.answers[4]).toEqual({ questionId: 5, freeText: "新しい自由記載回答" });
+    expect(body.answers[4]).toEqual({
+      questionId: 5,
+      freeTextParts: { a: "新しい朝飲茶回答", b: "新しいシーフード回答" },
+    });
     expect(body.answers[4]).not.toHaveProperty("selectedIndex");
     expect(body.answers[4]).not.toHaveProperty("answerKind");
   });
@@ -1355,19 +1359,20 @@ describe("useQuizSession hook", () => {
     )) {
       act(() => result.current.select(quiz.question.id, 2));
     }
-    act(() => result.current.setFreeResponse(5, "  監査済みの端末を利用します。  "));
+    act(() => result.current.setFreeResponsePart(5, "a", "  朝飲茶  "));
+    act(() => result.current.setFreeResponsePart(5, "b", "  シーフード店  "));
     await act(async () => result.current.saveAnswers());
     expect(result.current.access).toEqual({ kind: "reauthentication", participant });
     expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
     expect(result.current.answeredCount).toBe(5);
-    expect(result.current.freeResponses[5]).toBe("  監査済みの端末を利用します。  ");
+    expect(result.current.freeResponseParts[5]).toEqual({ a: "  朝飲茶  ", b: "  シーフード店  " });
 
     const latestCallsBeforeLogin = vi.mocked(fetchLatestAnswerSubmission).mock.calls.length;
     await act(async () => result.current.login("参加者", "1234"));
     expect(result.current.access).toEqual({ kind: "ready", participant });
     expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
     expect(result.current.answeredCount).toBe(5);
-    expect(result.current.freeResponses[5]).toBe("  監査済みの端末を利用します。  ");
+    expect(result.current.freeResponseParts[5]).toEqual({ a: "  朝飲茶  ", b: "  シーフード店  " });
     expect(vi.mocked(fetchLatestAnswerSubmission)).toHaveBeenCalledTimes(latestCallsBeforeLogin);
     expect(attempts).toHaveLength(1);
 
@@ -1378,7 +1383,7 @@ describe("useQuizSession hook", () => {
     expect(attempts[1]?.answers).toEqual(attempts[0]?.answers);
     expect(attempts[1]?.answers).toContainEqual({
       questionId: 5,
-      freeText: "監査済みの端末を利用します。",
+      freeTextParts: { a: "朝飲茶", b: "シーフード店" },
     });
   });
 
@@ -1389,6 +1394,7 @@ describe("useQuizSession hook", () => {
       answerKind: "selected" | "freeText";
       selectedIndex: number | null;
       freeText: string | null;
+      freeTextParts?: { a: string; b: string };
     }[] = [];
     const canonicalRevision = 7;
     vi.mocked(fetchAnswerBootstrap)
@@ -1456,15 +1462,17 @@ describe("useQuizSession hook", () => {
       questionId: 5,
       answerKind: "freeText",
       selectedIndex: null,
-      freeText: "別タブで保存された回答",
+      freeText: null,
+      freeTextParts: { a: "保存済み朝飲茶", b: "保存済みシーフード店" },
     });
     for (const quiz of result.current.quizzes.filter(
       ({ question: item }) => item.answerType === "selected",
     )) {
       act(() => result.current.select(quiz.question.id, localSelections[quiz.question.id]!));
     }
-    const localFreeResponse = "この端末で編集中の回答";
-    act(() => result.current.setFreeResponse(5, localFreeResponse));
+    const localFreeResponse = { a: "編集中朝飲茶", b: "編集中シーフード店" };
+    act(() => result.current.setFreeResponsePart(5, "a", localFreeResponse.a));
+    act(() => result.current.setFreeResponsePart(5, "b", localFreeResponse.b));
 
     await act(async () => result.current.saveAnswers());
     expect(result.current.access.kind).toBe("reauthentication");
@@ -1479,7 +1487,7 @@ describe("useQuizSession hook", () => {
 
     await act(async () => result.current.refreshSavedAnswers());
     expect(result.current.selections).toEqual(localSelections);
-    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(result.current.freeResponseParts[5]).toEqual(localFreeResponse);
     expect(result.current.savedSelections).toEqual(
       Object.fromEntries(
         result.current.quizzes
@@ -1498,7 +1506,7 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.saveAnswers());
     expect(posts).toHaveLength(2);
     expect(posts[1]).toMatchObject({ expectedRevision: canonicalRevision });
-    expect(posts[1]?.answers).toContainEqual({ questionId: 5, freeText: localFreeResponse });
+    expect(posts[1]?.answers).toContainEqual({ questionId: 5, freeTextParts: localFreeResponse });
     expect(result.current.phase.kind).toBe("complete");
   });
 
@@ -1509,7 +1517,8 @@ describe("useQuizSession hook", () => {
             questionId,
             answerKind: "freeText" as const,
             selectedIndex: null,
-            freeText: "保存済みの自由記述",
+            freeText: null,
+            freeTextParts: { a: "保存済み朝飲茶", b: "保存済みシーフード" },
           }
         : {
             questionId,
@@ -1580,14 +1589,21 @@ describe("useQuizSession hook", () => {
     expect(result.current.revision).toBe(2);
     await act(async () => result.current.editAnswers(() => true));
     act(() => result.current.select(1, 3));
-    const localFreeResponse = "  修正した自由記述  ";
-    act(() => result.current.setFreeResponse(5, localFreeResponse));
+    const localFreeResponse = { a: "  修正した飲茶  ", b: "  修正したシーフード  " };
+    act(() => result.current.setFreeResponsePart(5, "a", localFreeResponse.a));
+    act(() => result.current.setFreeResponsePart(5, "b", localFreeResponse.b));
     expect(result.current.selections[1]).toBe(3);
-    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(result.current.freeResponseParts[5]).toEqual(localFreeResponse);
     const correctionDraft = { ...result.current.selections };
     const expectedAnswers = result.current.quizzes.map(({ question, shuffled }) =>
       question.answerType === "freeText"
-        ? { questionId: question.id, freeText: localFreeResponse.trim() }
+        ? {
+            questionId: question.id,
+            freeTextParts: {
+              a: localFreeResponse.a.trim(),
+              b: localFreeResponse.b.trim(),
+            },
+          }
         : {
             questionId: question.id,
             selectedIndex: shuffled.choiceIndices[correctionDraft[question.id]!],
@@ -1597,7 +1613,7 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.saveAnswers());
     expect(result.current.access).toEqual({ kind: "reauthentication", participant });
     expect(result.current.selections).toEqual(correctionDraft);
-    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(result.current.freeResponseParts[5]).toEqual(localFreeResponse);
     expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
     expect(posts).toHaveLength(1);
 
@@ -1605,7 +1621,7 @@ describe("useQuizSession hook", () => {
     await waitFor(() => expect(result.current.phase).toMatchObject({ refreshRequired: true }));
     expect(result.current.revision).toBe(4);
     expect(result.current.selections).toEqual(correctionDraft);
-    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(result.current.freeResponseParts[5]).toEqual(localFreeResponse);
     expect(posts).toHaveLength(1);
 
     await act(async () => result.current.refreshSavedAnswers());
@@ -1614,7 +1630,7 @@ describe("useQuizSession hook", () => {
       result.current.quizzes[0]!.shuffled.choiceIndices.indexOf(1),
     );
     expect(result.current.selections).toEqual(correctionDraft);
-    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(result.current.freeResponseParts[5]).toEqual(localFreeResponse);
     expect(posts).toHaveLength(1);
 
     await act(async () => result.current.saveAnswers());
@@ -1639,6 +1655,7 @@ describe("useQuizSession hook", () => {
       answerKind: "selected" | "freeText";
       selectedIndex: number | null;
       freeText: string | null;
+      freeTextParts?: { a: string; b: string };
     }[] = [];
     let latestAfterIdChange: Awaited<ReturnType<typeof fetchLatestAnswerSubmission>> = null;
     const originalAnswers = [1, 2, 3, 4, 5].map((questionId) =>
@@ -1647,7 +1664,8 @@ describe("useQuizSession hook", () => {
             questionId,
             answerKind: "freeText" as const,
             selectedIndex: null,
-            freeText: "元の保存済み回答",
+            freeText: null,
+            freeTextParts: { a: "元の朝飲茶", b: "元のシーフード" },
           }
         : {
             questionId,
@@ -1697,7 +1715,9 @@ describe("useQuizSession hook", () => {
             submissionId: changedSubmissionId,
             revision: 4,
             answers: canonicalAnswers.map((answer) =>
-              answer.questionId === 5 ? { ...answer, freeText: "最新の保存済み回答" } : answer,
+              answer.questionId === 5
+                ? { ...answer, freeTextParts: { a: "最新の飲茶", b: "最新のシーフード" } }
+                : answer,
             ),
           }),
         };
@@ -1714,7 +1734,8 @@ describe("useQuizSession hook", () => {
               questionId: item.id,
               answerKind: "freeText" as const,
               selectedIndex: null,
-              freeText: "回答を保存しました",
+              freeText: null,
+              freeTextParts: { a: "回答済み飲茶", b: "回答済みシーフード" },
             }
           : {
               questionId: item.id,
@@ -1735,7 +1756,8 @@ describe("useQuizSession hook", () => {
     )) {
       act(() => result.current.select(quiz.question.id, 1));
     }
-    act(() => result.current.setFreeResponse(5, "この端末の未保存案"));
+    act(() => result.current.setFreeResponsePart(5, "a", "未保存飲茶"));
+    act(() => result.current.setFreeResponsePart(5, "b", "未保存シーフード"));
     await act(async () => result.current.saveAnswers());
     await act(async () => result.current.login("参加者", "1234"));
     await waitFor(() => expect(result.current.phase).toMatchObject({ refreshRequired: true }));
@@ -1745,15 +1767,22 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.login("参加者", "1234"));
     await waitFor(() => expect(result.current.phase.kind).toBe("complete"));
     expect(result.current.submissionId).toBe(changedSubmissionId);
-    expect(result.current.freeResponses[5]).toBeUndefined();
+    expect(result.current.freeResponseParts[5]).toBeUndefined();
 
     await act(async () => result.current.editAnswers(() => true));
-    expect(result.current.freeResponses[5]).toBe("回答を保存しました");
-    act(() => result.current.setFreeResponse(5, "別の未保存案"));
+    expect(result.current.freeResponseParts[5]).toEqual({
+      a: "回答済み飲茶",
+      b: "回答済みシーフード",
+    });
+    act(() => result.current.setFreeResponsePart(5, "a", "別の未保存飲茶"));
+    act(() => result.current.setFreeResponsePart(5, "b", "別の未保存シーフード"));
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase).toMatchObject({ refreshRequired: true });
     await act(async () => result.current.refreshSavedAnswers());
-    expect(result.current.freeResponses[5]).toBe("最新の保存済み回答");
+    expect(result.current.freeResponseParts[5]).toEqual({
+      a: "最新の飲茶",
+      b: "最新のシーフード",
+    });
     expect(result.current.revision).toBe(4);
   });
 
@@ -1880,8 +1909,14 @@ describe("useQuizSession hook", () => {
       answerKind: "selected" | "freeText";
       selectedIndex: number | null;
       freeText: string | null;
+      freeTextParts?: { a: string; b: string };
     };
-    type SubmittedAnswer = { questionId: number; selectedIndex?: number; freeText?: string };
+    type SubmittedAnswer = {
+      questionId: number;
+      selectedIndex?: number;
+      freeText?: string;
+      freeTextParts?: { a: string; b: string };
+    };
     type SubmittedBatch = {
       submissionId: string;
       operationId: string;
@@ -1937,8 +1972,9 @@ describe("useQuizSession hook", () => {
       act(() => result.current.select(quiz.question.id, quiz.question.id % 4));
     }
     const localSelections = { ...result.current.selections };
-    const localFreeResponse = "Bタブの未保存案";
-    act(() => result.current.setFreeResponse(5, localFreeResponse));
+    const localFreeResponse = { a: "Bタブ飲茶案", b: "Bタブシーフード案" };
+    act(() => result.current.setFreeResponsePart(5, "a", localFreeResponse.a));
+    act(() => result.current.setFreeResponsePart(5, "b", localFreeResponse.b));
     expect(result.current.answeredCount).toBe(5);
 
     const canonicalSelections: Record<number, number> = {};
@@ -1960,7 +1996,8 @@ describe("useQuizSession hook", () => {
       questionId: 5,
       answerKind: "freeText",
       selectedIndex: null,
-      freeText: "別タブで保存されたQ5回答",
+      freeText: null,
+      freeTextParts: { a: "別タブ飲茶", b: "別タブシーフード" },
     });
 
     await act(async () => result.current.saveAnswers());
@@ -1970,7 +2007,7 @@ describe("useQuizSession hook", () => {
       message: expect.stringContaining("保存済み回答が更新されています"),
     });
     expect(result.current.selections).toEqual(localSelections);
-    expect(result.current.freeResponses[5]).toBe(localFreeResponse);
+    expect(result.current.freeResponseParts[5]).toEqual(localFreeResponse);
     expect(result.current.savedSelections).toEqual(canonicalSelections);
     expect(result.current.revision).toBe(canonicalRevision);
     expect(result.current.answeredCount).toBe(5);
@@ -1994,7 +2031,7 @@ describe("useQuizSession hook", () => {
     }
     expect(posts[1]?.answers).toContainEqual({
       questionId: 5,
-      freeText: localFreeResponse,
+      freeTextParts: localFreeResponse,
     });
   });
 
@@ -2961,31 +2998,37 @@ describe("useQuizSession hook", () => {
     )) {
       act(() => result.current.select(quiz.question.id, 1));
     }
-    act(() => result.current.setFreeResponse(5, "  承認済みの環境を上司に確認します。  "));
+    act(() => result.current.setFreeResponsePart(5, "a", "  朝飲茶  "));
+    act(() => result.current.setFreeResponsePart(5, "b", "  シーフード店  "));
     expect(result.current.answeredCount).toBe(5);
 
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
-    expect(result.current.freeResponses[5]).toBe("  承認済みの環境を上司に確認します。  ");
+    expect(result.current.freeResponseParts[5]).toEqual({ a: "  朝飲茶  ", b: "  シーフード店  " });
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase.kind).toBe("complete");
     const retriedPayload = posts[1];
     expect(retriedPayload?.operationId).toBe(posts[0]?.operationId);
     expect(retriedPayload?.answers).toContainEqual({
       questionId: 5,
-      freeText: "承認済みの環境を上司に確認します。",
+      freeTextParts: { a: "朝飲茶", b: "シーフード店" },
     });
     if (!retriedPayload) throw new Error("Expected a retry payload");
     const submittedFifthAnswer = (
-      retriedPayload.answers as { questionId: number; selectedIndex?: number; freeText?: string }[]
+      retriedPayload.answers as {
+        questionId: number;
+        selectedIndex?: number;
+        freeText?: string;
+        freeTextParts?: { a: string; b: string };
+      }[]
     ).find(({ questionId }) => questionId === 5);
     expect(submittedFifthAnswer).toEqual({
       questionId: 5,
-      freeText: "承認済みの環境を上司に確認します。",
+      freeTextParts: { a: "朝飲茶", b: "シーフード店" },
     });
 
     await act(async () => result.current.editAnswers(() => true));
-    expect(result.current.freeResponses[5]).toBe("  承認済みの環境を上司に確認します。  ");
+    expect(result.current.freeResponseParts[5]).toEqual({ a: "朝飲茶", b: "シーフード店" });
   });
 
   it("revisits the latest saved submission in completion and restores answers for correction", async () => {

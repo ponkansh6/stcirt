@@ -59,18 +59,25 @@ describe("question-repository", () => {
         explanation: `Explanation ${id}`,
       });
     }
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ selectionMode: "multiple" })
+      .where(sql`${schema.examQuestions.id} = 2`);
 
     const questions = await getExamQuestions();
     expect(questions.map(({ id }) => id)).toEqual([1, 2, 3, 4, 5]);
+    expect(questions[1]).toMatchObject({ id: 2, selectionMode: "multiple" });
     expect(questions[4]).toEqual({
       id: 5,
       question: "Question 5",
       choices: [],
       answerType: "freeText",
+      selectionMode: "single",
     });
     expect(
       questions.every(
-        (question) => Object.keys(question).sort().join(",") === "answerType,choices,id,question",
+        (question) =>
+          Object.keys(question).sort().join(",") === "answerType,choices,id,question,selectionMode",
       ),
     ).toBe(true);
   });
@@ -78,7 +85,13 @@ describe("question-repository", () => {
   it("returns the complete row for answer lookup", async () => {
     const id = await insertQuestion("Answer lookup");
     const question = await getQuestionById(id);
-    expect(question).toMatchObject({ id, question: "Answer lookup", correctIndex: 0 });
+    expect(question).toMatchObject({
+      id,
+      question: "Answer lookup",
+      correctIndex: 0,
+      correctIndices: null,
+      selectionMode: "single",
+    });
     expect(await getQuestionById(9999)).toBeNull();
   });
 });

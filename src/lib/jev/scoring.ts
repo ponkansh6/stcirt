@@ -1,5 +1,5 @@
-const EGG_ALIASES = ["卵", "玉子", "たまご"];
-const SHUNTO_ALIASES = ["春闘", "しゅんとう"];
+const YAMCHA_ALIASES = ["飲茶", "ヤムチャ"];
+const SEAFOOD_ALIASES = ["シーフード"];
 
 function normalizeForKeywordComparison(answer: string): string {
   return answer
@@ -8,9 +8,30 @@ function normalizeForKeywordComparison(answer: string): string {
     .trim();
 }
 
-export function scoreQ5(answerText: string, jevRawScore: number): number {
+function scorePart(answerText: string, jevRawScore: number, aliases: string[]): number {
   const comparableAnswer = normalizeForKeywordComparison(answerText);
-  const eggHit = Number(EGG_ALIASES.some((alias) => comparableAnswer.includes(alias)));
-  const shuntoHit = Number(SHUNTO_ALIASES.some((alias) => comparableAnswer.includes(alias)));
-  return 0.3 * eggHit + 0.3 * shuntoHit + 0.4 * (jevRawScore / 9);
+  if (aliases.some((alias) => comparableAnswer.includes(normalizeForKeywordComparison(alias))))
+    return 1;
+  return Math.round(Math.min(1, Math.max(0, jevRawScore / 9)) * 100) / 100;
+}
+
+export function q5KeywordHits(answers: { a: string; b: string }): { a: boolean; b: boolean } {
+  return {
+    a: YAMCHA_ALIASES.some((alias) =>
+      normalizeForKeywordComparison(answers.a).includes(normalizeForKeywordComparison(alias)),
+    ),
+    b: SEAFOOD_ALIASES.some((alias) =>
+      normalizeForKeywordComparison(answers.b).includes(normalizeForKeywordComparison(alias)),
+    ),
+  };
+}
+
+export function scoreQ5(
+  answers: { a: string; b: string },
+  jevScores: { a: number | null; b: number | null },
+): number {
+  return (
+    scorePart(answers.a, jevScores.a ?? 0, YAMCHA_ALIASES) +
+    scorePart(answers.b, jevScores.b ?? 0, SEAFOOD_ALIASES)
+  );
 }

@@ -595,7 +595,7 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
         <h1 id="question-heading">{question.question}</h1>
         <ol className={`${styles.choices} ${styles.answered} ${styles.answerReveal}`}>
           {question.choices.map((choice, index) => {
-            const isCorrect = index === question.correctIndex;
+            const isCorrect = (question.correctIndices ?? [question.correctIndex]).includes(index);
             return (
               <li key={`${index}-${choice}`} className={isCorrect ? styles.correct : ""}>
                 <span className={styles.choiceLetter}>{String.fromCharCode(65 + index)}</span>

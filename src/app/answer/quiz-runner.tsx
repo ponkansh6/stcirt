@@ -84,13 +84,27 @@ type AnswerUiModel = {
 };
 
 function hasAnswer(
-  question: { id: number; answerType: "selected" | "freeText" },
+  question: {
+    id: number;
+    answerType: "selected" | "freeText";
+    selectionMode?: "single" | "multiple";
+  },
   selections: Record<number, number | undefined>,
+  multiSelections: Record<number, number[]>,
   freeResponses: Record<number, string>,
+  freeResponseParts: Record<number, { a: string; b: string }> = {},
 ): boolean {
   return question.answerType === "freeText"
-    ? Boolean(freeResponses[question.id]?.trim())
-    : selections[question.id] !== undefined;
+    ? question.id === 5
+      ? freeResponseParts[question.id]
+        ? Boolean(
+            freeResponseParts[question.id]?.a.trim() && freeResponseParts[question.id]?.b.trim(),
+          )
+        : Boolean(freeResponses[question.id]?.trim())
+      : Boolean(freeResponses[question.id]?.trim())
+    : question.selectionMode === "multiple"
+      ? (multiSelections[question.id]?.length ?? 0) === 2
+      : selections[question.id] !== undefined;
 }
 
 function deriveAnswerUi({
@@ -350,12 +364,16 @@ export default function QuizRunner() {
     clearAutoEditAssisted,
     quizzes,
     selections,
+    multiSelections = {},
     freeResponses,
+    freeResponseParts = {},
     legacyAnswerIds,
     savedSelections,
     answeredCount,
     select,
+    toggleMultiple,
     setFreeResponse,
+    setFreeResponsePart = (questionId, _part, value) => setFreeResponse(questionId, value),
     saveAnswers,
     submissionId,
     revision,
@@ -533,7 +551,8 @@ export default function QuizRunner() {
   const isSubmitting = phase.kind === "submitting";
   const isRefreshing = phase.kind === "refreshing";
   const unanswered = quizzes.filter(
-    ({ question }) => !hasAnswer(question, selections, freeResponses),
+    ({ question }) =>
+      !hasAnswer(question, selections, multiSelections, freeResponses, freeResponseParts),
   );
   useEffect(() => {
     if (quizzes.length === 0) return;
@@ -1181,7 +1200,13 @@ export default function QuizRunner() {
         <nav aria-label="設問へ移動" className={styles.progressNav}>
           <ol className="grid grid-cols-5 gap-2">
             {quizzes.map(({ question }, index) => {
-              const answered = hasAnswer(question, selections, freeResponses);
+              const answered = hasAnswer(
+                question,
+                selections,
+                multiSelections,
+                freeResponses,
+                freeResponseParts,
+              );
               const current = currentQuestionId === question.id;
               return (
                 <li key={question.id}>
@@ -1277,6 +1302,7 @@ export default function QuizRunner() {
         <div className={styles.questionList}>
           {quizzes.map(({ question, shuffled }, index) => {
             const selectedIndex = selections[question.id];
+            const selectedIndices = multiSelections[question.id] ?? [];
             const questionTitleId = `question-title-${question.id}`;
             return (
               <section
@@ -1296,9 +1322,15 @@ export default function QuizRunner() {
                   }}
                   tabIndex={-1}
                   className={`${styles.questionTitle} mb-6 scroll-mt-20 break-words text-xl font-bold leading-relaxed tracking-tight focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-4 sm:text-2xl`}
+                  style={{ whiteSpace: question.id === 5 ? "pre-line" : undefined }}
                 >
                   {question.question}
                 </h2>
+                {question.selectionMode === "multiple" && (
+                  <p className="mb-4 text-sm font-semibold text-answer-accent" aria-live="polite">
+                    2つ選択してください（{selectedIndices.length}/2 選択中）
+                  </p>
+                )}
                 <fieldset
                   disabled={isLocked}
                   className="min-w-0 space-y-3 border-t border-border-subtle pt-5"
@@ -1309,29 +1341,63 @@ export default function QuizRunner() {
                   </legend>
                   {question.answerType === "freeText" ? (
                     <div>
-                      <label
-                        htmlFor={`answer-${question.id}`}
-                        className="mb-2 block text-sm font-semibold"
-                      >
-                        回答
-                      </label>
                       {legacyAnswerIds.includes(question.id) && (
                         <p className="mb-3 text-sm text-muted">
                           以前の保存回答は旧選択式です。自由記載へ変換・再採点せず、以下に新しい回答を入力できます。
                         </p>
                       )}
-                      <textarea
-                        id={`answer-${question.id}`}
-                        name={`answer-${question.id}`}
-                        maxLength={1000}
-                        rows={6}
-                        value={freeResponses[question.id] ?? ""}
-                        onChange={(event) =>
-                          setFreeResponse(question.id, event.currentTarget.value)
-                        }
-                        className={`answer-free-text min-h-36 w-full resize-y rounded-lg border border-control-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-answer-accent focus-visible:ring-2 focus-visible:ring-answer-accent/30 ${styles.freeText}`}
-                        disabled={isLocked}
-                      />
+                      {question.id === 5 ? (
+                        <div className="space-y-5">
+                          {(
+                            [
+                              ["a", "A", "2/28 朝の食事"],
+                              ["b", "B", "3/1 早朝（6:30）の食事"],
+                            ] as const
+                          ).map(([part, label, prompt]) => (
+                            <div key={part}>
+                              <label
+                                htmlFor={`answer-${question.id}-${part}`}
+                                className="mb-2 block text-sm font-semibold"
+                              >
+                                {label}. {prompt}
+                              </label>
+                              <textarea
+                                id={`answer-${question.id}-${part}`}
+                                name={`answer-${question.id}-${part}`}
+                                maxLength={1000}
+                                rows={3}
+                                value={freeResponseParts[question.id]?.[part] ?? ""}
+                                onChange={(event) =>
+                                  setFreeResponsePart(question.id, part, event.currentTarget.value)
+                                }
+                                className={`answer-free-text min-h-24 w-full resize-y rounded-lg border border-control-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-answer-accent focus-visible:ring-2 focus-visible:ring-answer-accent/30 ${styles.freeText}`}
+                                disabled={isLocked}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <>
+                          <label
+                            htmlFor={`answer-${question.id}`}
+                            className="mb-2 block text-sm font-semibold"
+                          >
+                            回答
+                          </label>
+                          <textarea
+                            id={`answer-${question.id}`}
+                            name={`answer-${question.id}`}
+                            maxLength={1000}
+                            rows={6}
+                            value={freeResponses[question.id] ?? ""}
+                            onChange={(event) =>
+                              setFreeResponse(question.id, event.currentTarget.value)
+                            }
+                            className={`answer-free-text min-h-36 w-full resize-y rounded-lg border border-control-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-answer-accent focus-visible:ring-2 focus-visible:ring-answer-accent/30 ${styles.freeText}`}
+                            disabled={isLocked}
+                          />
+                        </>
+                      )}
                     </div>
                   ) : (
                     shuffled.choices.map((choice, choiceIndex) => (
@@ -1342,10 +1408,32 @@ export default function QuizRunner() {
                         value={String(choiceIndex)}
                         label={choiceLabel(choiceIndex)}
                         text={choice}
-                        variant={selectedIndex === choiceIndex ? "selected" : "idle"}
-                        checked={selectedIndex === choiceIndex}
-                        onChange={() => select(question.id, choiceIndex)}
-                        disabled={isLocked}
+                        variant={
+                          (
+                            question.selectionMode === "multiple"
+                              ? selectedIndices.includes(choiceIndex)
+                              : selectedIndex === choiceIndex
+                          )
+                            ? "selected"
+                            : "idle"
+                        }
+                        checked={
+                          question.selectionMode === "multiple"
+                            ? selectedIndices.includes(choiceIndex)
+                            : selectedIndex === choiceIndex
+                        }
+                        inputType={question.selectionMode === "multiple" ? "checkbox" : "radio"}
+                        onChange={() =>
+                          question.selectionMode === "multiple"
+                            ? toggleMultiple(question.id, choiceIndex)
+                            : select(question.id, choiceIndex)
+                        }
+                        disabled={
+                          isLocked ||
+                          (question.selectionMode === "multiple" &&
+                            selectedIndices.length >= 2 &&
+                            !selectedIndices.includes(choiceIndex))
+                        }
                         className={styles.choiceOption}
                       />
                     ))
@@ -1401,7 +1489,18 @@ export default function QuizRunner() {
             {quizzes.map(({ question, shuffled }, index) => {
               const selectedIndex = selections[question.id];
               const freeText = freeResponses[question.id] ?? "";
-              const answered = hasAnswer(question, selections, freeResponses);
+              const freeParts = freeResponseParts[question.id] ?? {
+                a: freeResponses[question.id] ?? "",
+                b: "",
+              };
+              const answered = hasAnswer(
+                question,
+                selections,
+                multiSelections,
+                freeResponses,
+                freeResponseParts,
+              );
+              const selectedIndices = multiSelections[question.id] ?? [];
               const selectedChoice =
                 question.answerType === "selected" && selectedIndex !== undefined
                   ? {
@@ -1409,6 +1508,13 @@ export default function QuizRunner() {
                       text: shuffled.choices[selectedIndex],
                     }
                   : undefined;
+              const selectedChoices =
+                question.selectionMode === "multiple"
+                  ? selectedIndices.map((choiceIndex) => ({
+                      label: choiceLabel(choiceIndex),
+                      text: shuffled.choices[choiceIndex],
+                    }))
+                  : [];
               const freeTextCharacters = Array.from(freeText);
               const longAnswer =
                 question.answerType === "freeText" && freeTextCharacters.length > 180;
@@ -1444,7 +1550,22 @@ export default function QuizRunner() {
                         {selectedChoice.label} {selectedChoice.text}
                       </p>
                     )}
-                    {question.answerType === "freeText" && answered && (
+                    {question.answerType === "selected" && selectedChoices.length > 0 && (
+                      <ul className="mt-1 space-y-1 leading-relaxed">
+                        {selectedChoices.map((choice) => (
+                          <li key={choice.label}>
+                            {choice.label} {choice.text}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {question.answerType === "freeText" && question.id === 5 && answered && (
+                      <div className="mt-1 space-y-2 leading-relaxed">
+                        <p className="break-words">A. {freeParts.a}</p>
+                        <p className="break-words">B. {freeParts.b}</p>
+                      </div>
+                    )}
+                    {question.answerType === "freeText" && question.id !== 5 && answered && (
                       <>
                         <p className="mt-1 break-words whitespace-pre-wrap leading-relaxed">
                           {preview}

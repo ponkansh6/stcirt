@@ -84,17 +84,22 @@ const ASSISTED_MODE_KEY = "stcirt-answer-scope";
 
 type BatchAnswer =
   | { questionId: number; selectedIndex: number }
-  | { questionId: number; freeText: string };
+  | { questionId: number; selectedIndices: number[] }
+  | { questionId: number; freeText: string }
+  | { questionId: number; freeTextParts: { a: string; b: string } };
 type SaveAttempt = {
   operationId: string;
   expectedRevision: number;
   answers: BatchAnswer[];
   selectedByQuestion: Record<number, number>;
+  selectedIndicesByQuestion: Record<number, number[]>;
   freeResponses: Record<number, string>;
+  freeResponseParts: Record<number, { a: string; b: string }>;
 };
 type SelectedAnswer = AnswerSubmission["answers"][number] & {
   answerKind: "selected";
-  selectedIndex: number;
+  selectedIndex: number | null;
+  selectedIndices?: number[] | null;
 };
 
 function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
@@ -127,6 +132,21 @@ function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
   // subset of questionIds, so every question has exactly one matching answer.
   return questions.every(({ id, answerType }, index) => {
     const answer = submission.answers.find(({ questionId }) => questionId === id)!;
+    if (answerType === "selected" && questions[index]!.selectionMode === "multiple") {
+      return (
+        answer.answerKind === "selected" &&
+        answer.selectedIndex === null &&
+        Array.isArray(answer.selectedIndices) &&
+        answer.selectedIndices.length === 2 &&
+        answer.selectedIndices.every(
+          (choiceIndex) =>
+            Number.isInteger(choiceIndex) &&
+            choiceIndex >= 0 &&
+            choiceIndex < questions[index]!.choiceCount,
+        ) &&
+        answer.freeText === null
+      );
+    }
     if (answerType === "selected") {
       return (
         answer.answerKind === "selected" &&
@@ -145,12 +165,18 @@ function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
         answer.freeText === null
       );
     }
-    return (
-      answer.answerKind === "freeText" &&
-      answer.selectedIndex === null &&
-      Boolean(answer.freeText?.trim()) &&
-      answer.freeText!.trim().length <= 1000
-    );
+    if (answer.answerKind !== "freeText" || answer.selectedIndex !== null) return false;
+    if (id === 5 && answer.freeTextParts !== undefined) {
+      return (
+        answer.freeText === null &&
+        Boolean(answer.freeTextParts.a.trim()) &&
+        Boolean(answer.freeTextParts.b.trim()) &&
+        answer.freeTextParts.a.length <= 1000 &&
+        answer.freeTextParts.b.length <= 1000
+      );
+    }
+    if (id !== 5 && answer.freeTextParts !== undefined) return false;
+    return Boolean(answer.freeText?.trim()) && answer.freeText!.trim().length <= 1000;
   });
 }
 
@@ -180,15 +206,27 @@ function copyAnsweredSelections(
 function restoreDisplaySelections(
   answers: SelectedAnswer[],
   quizzes: LoadedQuiz[],
-): Record<number, number> {
+): { selections: Record<number, number>; multiSelections: Record<number, number[]> } {
   const restored: Record<number, number> = {};
+  const restoredMultiple: Record<number, number[]> = {};
   for (const answer of answers) {
     const quiz = quizzes.find(({ question }) => question.id === answer.questionId)!;
+    if (quiz.question.selectionMode === "multiple") {
+      const displayIndices = (answer.selectedIndices ?? []).map((index) =>
+        quiz.shuffled.choiceIndices.indexOf(index),
+      );
+      if (displayIndices.length !== 2 || displayIndices.some((index) => index < 0))
+        throw new Error("保存済み回答を問題に対応づけられませんでした。");
+      restoredMultiple[answer.questionId] = displayIndices;
+      continue;
+    }
+    if (answer.selectedIndex === null)
+      throw new Error("保存済み回答を問題に対応づけられませんでした。");
     const displayIndex = quiz.shuffled.choiceIndices.indexOf(answer.selectedIndex);
     if (displayIndex < 0) throw new Error("保存済み回答を問題に対応づけられませんでした。");
     restored[answer.questionId] = displayIndex;
   }
-  return restored;
+  return { selections: restored, multiSelections: restoredMultiple };
 }
 
 function restoreSavedAnswers(
@@ -197,7 +235,9 @@ function restoreSavedAnswers(
   expectedSubmissionId?: string,
 ): {
   selections: Record<number, number>;
+  multiSelections: Record<number, number[]>;
   freeResponses: Record<number, string>;
+  freeResponseParts: Record<number, { a: string; b: string }>;
   legacyAnswerIds: number[];
 } {
   try {
@@ -229,14 +269,32 @@ function restoreSavedAnswers(
           }
           continue;
         }
-        if (
-          answer.answerKind !== "freeText" ||
-          !answer.freeText?.trim() ||
-          answer.freeText.trim().length > 1000 ||
-          answer.selectedIndex !== null
-        ) {
+        if (answer.answerKind !== "freeText" || answer.selectedIndex !== null) {
           throw new Error("invalid free text answer");
         }
+        if (question.id === 5) {
+          if (answer.freeTextParts) {
+            if (
+              !answer.freeTextParts.a.trim() ||
+              !answer.freeTextParts.b.trim() ||
+              answer.freeTextParts.a.length > 1000 ||
+              answer.freeTextParts.b.length > 1000
+            )
+              throw new Error("invalid free text parts");
+          } else if (!answer.freeText?.trim() || answer.freeText.trim().length > 1000) {
+            throw new Error("invalid legacy free text answer");
+          }
+        } else if (!answer.freeText?.trim() || answer.freeText.trim().length > 1000) {
+          throw new Error("invalid free text answer");
+        }
+      } else if (question.selectionMode === "multiple") {
+        if (
+          answer.answerKind !== "selected" ||
+          answer.selectedIndex !== null ||
+          answer.selectedIndices?.length !== 2 ||
+          answer.freeText !== null
+        )
+          throw new Error("invalid selected answer");
       } else if (
         answer.answerKind !== "selected" ||
         answer.selectedIndex === null ||
@@ -248,16 +306,26 @@ function restoreSavedAnswers(
 
     const selectedAnswers = submission.answers.filter(
       (answer): answer is SelectedAnswer =>
-        answer.answerKind === "selected" && answer.selectedIndex !== null,
+        answer.answerKind === "selected" &&
+        (answer.selectedIndex !== null || (answer.selectedIndices?.length ?? 0) === 2),
     );
-    const selections = restoreDisplaySelections(selectedAnswers, quizzes);
+    const restoredSelections = restoreDisplaySelections(selectedAnswers, quizzes);
     return {
-      selections,
+      ...restoredSelections,
       freeResponses: Object.fromEntries(
         submission.answers.flatMap((answer) =>
           answer.answerKind === "freeText" && answer.freeText
             ? [[answer.questionId, answer.freeText]]
             : [],
+        ),
+      ),
+      freeResponseParts: Object.fromEntries(
+        submission.answers.flatMap((answer) =>
+          answer.answerKind === "freeText" && answer.freeTextParts
+            ? [[answer.questionId, answer.freeTextParts]]
+            : answer.questionId === 5 && answer.answerKind === "freeText" && answer.freeText
+              ? [[answer.questionId, { a: answer.freeText, b: "" }]]
+              : [],
         ),
       ),
       legacyAnswerIds: submission.answers
@@ -281,7 +349,11 @@ export function useQuizSession() {
   const [access, setAccess] = useState<AccessState>({ kind: "checking" });
   const [quizzes, setQuizzes] = useState<LoadedQuiz[]>([]);
   const [selections, setSelections] = useState<Record<number, number | undefined>>({});
+  const [multiSelections, setMultiSelections] = useState<Record<number, number[]>>({});
   const [freeResponses, setFreeResponses] = useState<Record<number, string>>({});
+  const [freeResponseParts, setFreeResponseParts] = useState<
+    Record<number, { a: string; b: string }>
+  >({});
   const [legacyAnswerIds, setLegacyAnswerIds] = useState<number[]>([]);
   const legacyAnswerIdsRef = useRef(legacyAnswerIds);
   const [savedSelections, setSavedSelections] = useState<Record<number, number | undefined>>({});
@@ -305,7 +377,9 @@ export function useQuizSession() {
   const phaseRef = useRef(phase);
   const accessRef = useRef(access);
   const selectionsRef = useRef(selections);
+  const multiSelectionsRef = useRef(multiSelections);
   const freeResponsesRef = useRef(freeResponses);
+  const freeResponsePartsRef = useRef(freeResponseParts);
   const submissionIdRef = useRef(submissionId);
   const revisionRef = useRef(revision);
   const failedAttemptRef = useRef<SaveAttempt | null>(null);
@@ -322,7 +396,9 @@ export function useQuizSession() {
   accessRef.current = access;
   quizzesRef.current = quizzes;
   selectionsRef.current = selections;
+  multiSelectionsRef.current = multiSelections;
   freeResponsesRef.current = freeResponses;
+  freeResponsePartsRef.current = freeResponseParts;
   submissionIdRef.current = submissionId;
   revisionRef.current = revision;
   legacyAnswerIdsRef.current = legacyAnswerIds;
@@ -400,14 +476,24 @@ export function useQuizSession() {
           setRevision(assistedDraft.revision);
           selectionsRef.current = assistedDraft.selections;
           setSelections(assistedDraft.selections);
+          multiSelectionsRef.current = assistedDraft.multiSelections ?? {};
+          setMultiSelections(assistedDraft.multiSelections ?? {});
           setSavedSelections({});
           freeResponsesRef.current = assistedDraft.freeResponses;
           setFreeResponses(assistedDraft.freeResponses);
+          freeResponsePartsRef.current = assistedDraft.freeResponseParts ?? {};
+          setFreeResponseParts(assistedDraft.freeResponseParts ?? {});
           legacyAnswerIdsRef.current = assistedDraft.legacyAnswerIds;
           setLegacyAnswerIds(assistedDraft.legacyAnswerIds);
           setAnsweredCount(
             Object.keys(assistedDraft.selections).length +
-              Object.values(assistedDraft.freeResponses).filter((value) => value.trim()).length,
+              Object.values(assistedDraft.multiSelections ?? {}).filter(
+                (indices) => indices.length === 2,
+              ).length +
+              Object.values(assistedDraft.freeResponses).filter((value) => value.trim()).length +
+              Object.values(assistedDraft.freeResponseParts ?? {}).filter(
+                ({ a, b }) => a.trim() && b.trim(),
+              ).length,
           );
           setPhase({ kind: "answering" });
         };
@@ -437,9 +523,15 @@ export function useQuizSession() {
           revisionRef.current = 0;
           setSavedSelections({});
           selectionsRef.current = {};
+          multiSelectionsRef.current = {};
+          setMultiSelections({});
           setSelections({});
+          multiSelectionsRef.current = {};
+          setMultiSelections({});
           freeResponsesRef.current = {};
           setFreeResponses({});
+          freeResponsePartsRef.current = {};
+          setFreeResponseParts({});
           legacyAnswerIdsRef.current = [];
           setLegacyAnswerIds([]);
           setAnsweredCount(0);
@@ -495,9 +587,15 @@ export function useQuizSession() {
         }
 
         setSelections({});
+        multiSelectionsRef.current = {};
+        setMultiSelections({});
         selectionsRef.current = {};
+        multiSelectionsRef.current = {};
+        setMultiSelections({});
         setFreeResponses({});
         freeResponsesRef.current = {};
+        freeResponsePartsRef.current = {};
+        setFreeResponseParts({});
         setLegacyAnswerIds([]);
         legacyAnswerIdsRef.current = [];
         setSavedSelections({});
@@ -638,11 +736,17 @@ export function useQuizSession() {
       quizzesRef.current = [];
       setQuizzes([]);
       setSelections({});
+      multiSelectionsRef.current = {};
+      setMultiSelections({});
       setFreeResponses({});
       freeResponsesRef.current = {};
+      freeResponsePartsRef.current = {};
+      setFreeResponseParts({});
       setLegacyAnswerIds([]);
       legacyAnswerIdsRef.current = [];
       selectionsRef.current = {};
+      multiSelectionsRef.current = {};
+      setMultiSelections({});
       setSavedSelections({});
       setAnsweredCount(0);
       const id = newId();
@@ -748,13 +852,22 @@ export function useQuizSession() {
               setRevision(draft.revision);
               selectionsRef.current = draft.selections;
               setSelections(draft.selections);
+              multiSelectionsRef.current = draft.multiSelections ?? {};
+              setMultiSelections(draft.multiSelections ?? {});
               setSavedSelections({});
               freeResponsesRef.current = draft.freeResponses;
               setFreeResponses(draft.freeResponses);
+              freeResponsePartsRef.current = draft.freeResponseParts ?? {};
+              setFreeResponseParts(draft.freeResponseParts ?? {});
               setLegacyAnswerIds(draft.legacyAnswerIds);
               const count =
                 Object.keys(draft.selections).length +
-                Object.values(draft.freeResponses).filter((value) => value.trim()).length;
+                Object.values(draft.multiSelections ?? {}).filter((indices) => indices.length === 2)
+                  .length +
+                Object.values(draft.freeResponses).filter((value) => value.trim()).length +
+                Object.values(draft.freeResponseParts ?? {}).filter(
+                  ({ a, b }) => a.trim() && b.trim(),
+                ).length;
               setAnsweredCount(count);
               setPhase({ kind: "answering" });
               return;
@@ -796,10 +909,18 @@ export function useQuizSession() {
               setSaveConfirmed(false);
               setSavedSelections({});
               selectionsRef.current = {};
+              multiSelectionsRef.current = {};
+              setMultiSelections({});
               freeResponsesRef.current = {};
+              freeResponsePartsRef.current = {};
+              setFreeResponseParts({});
               legacyAnswerIdsRef.current = [];
               setSelections({});
+              multiSelectionsRef.current = {};
+              setMultiSelections({});
               setFreeResponses({});
+              freeResponsePartsRef.current = {};
+              setFreeResponseParts({});
               setLegacyAnswerIds([]);
               setAnsweredCount(0);
               setAutoEditAssisted(false);
@@ -815,13 +936,22 @@ export function useQuizSession() {
             setRevision(draft.revision);
             selectionsRef.current = draft.selections;
             setSelections(draft.selections);
+            multiSelectionsRef.current = draft.multiSelections ?? {};
+            setMultiSelections(draft.multiSelections ?? {});
             freeResponsesRef.current = draft.freeResponses;
             setFreeResponses(draft.freeResponses);
+            freeResponsePartsRef.current = draft.freeResponseParts ?? {};
+            setFreeResponseParts(draft.freeResponseParts ?? {});
             setLegacyAnswerIds(draft.legacyAnswerIds);
             setSavedSelections({});
             setAnsweredCount(
               Object.keys(draft.selections).length +
-                Object.values(draft.freeResponses).filter((value) => value.trim()).length,
+                Object.values(draft.multiSelections ?? {}).filter((indices) => indices.length === 2)
+                  .length +
+                Object.values(draft.freeResponses).filter((value) => value.trim()).length +
+                Object.values(draft.freeResponseParts ?? {}).filter(
+                  ({ a, b }) => a.trim() && b.trim(),
+                ).length,
             );
             setRestoreError(null);
             setPhase({ kind: "answering" });
@@ -856,10 +986,18 @@ export function useQuizSession() {
           setSaveConfirmed(false);
           setSavedSelections({});
           selectionsRef.current = {};
+          multiSelectionsRef.current = {};
+          setMultiSelections({});
           freeResponsesRef.current = {};
+          freeResponsePartsRef.current = {};
+          setFreeResponseParts({});
           legacyAnswerIdsRef.current = [];
           setSelections({});
+          multiSelectionsRef.current = {};
+          setMultiSelections({});
           setFreeResponses({});
+          freeResponsePartsRef.current = {};
+          setFreeResponseParts({});
           setLegacyAnswerIds([]);
           setAnsweredCount(0);
           setAutoEditAssisted(false);
@@ -870,9 +1008,15 @@ export function useQuizSession() {
         setRestoreError(null);
         setSavedSelections({});
         selectionsRef.current = {};
+        multiSelectionsRef.current = {};
+        setMultiSelections({});
         freeResponsesRef.current = {};
+        freeResponsePartsRef.current = {};
+        setFreeResponseParts({});
         legacyAnswerIdsRef.current = [];
         setSelections({});
+        multiSelectionsRef.current = {};
+        setMultiSelections({});
         setFreeResponses({});
         setLegacyAnswerIds([]);
         setAnsweredCount(0);
@@ -966,7 +1110,9 @@ export function useQuizSession() {
         participantId,
         quizzes: quizzesRef.current,
         selections: copyAnsweredSelections(selections),
+        multiSelections: multiSelectionsRef.current,
         freeResponses,
+        freeResponseParts: freeResponsePartsRef.current,
         legacyAnswerIds: legacyAnswerIdsRef.current,
         submissionId: currentSubmissionId,
         revision: revisionRef.current,
@@ -1010,9 +1156,15 @@ export function useQuizSession() {
       quizzesRef.current = [];
       setQuizzes([]);
       selectionsRef.current = {};
+      multiSelectionsRef.current = {};
+      setMultiSelections({});
       setSelections({});
+      multiSelectionsRef.current = {};
+      setMultiSelections({});
       freeResponsesRef.current = {};
       setFreeResponses({});
+      freeResponsePartsRef.current = {};
+      setFreeResponseParts({});
       setLegacyAnswerIds([]);
       legacyAnswerIdsRef.current = [];
       setSavedSelections({});
@@ -1103,9 +1255,15 @@ export function useQuizSession() {
       quizzesRef.current = [];
       setQuizzes([]);
       selectionsRef.current = {};
+      multiSelectionsRef.current = {};
+      setMultiSelections({});
       setSelections({});
+      multiSelectionsRef.current = {};
+      setMultiSelections({});
       freeResponsesRef.current = {};
       setFreeResponses({});
+      freeResponsePartsRef.current = {};
+      setFreeResponseParts({});
       setLegacyAnswerIds([]);
       legacyAnswerIdsRef.current = [];
       setSavedSelections({});
@@ -1158,9 +1316,15 @@ export function useQuizSession() {
             quizzesRef.current = [];
             setQuizzes([]);
             selectionsRef.current = {};
+            multiSelectionsRef.current = {};
+            setMultiSelections({});
             setSelections({});
+            multiSelectionsRef.current = {};
+            setMultiSelections({});
             freeResponsesRef.current = {};
             setFreeResponses({});
+            freeResponsePartsRef.current = {};
+            setFreeResponseParts({});
             setLegacyAnswerIds([]);
             legacyAnswerIdsRef.current = [];
             setSavedSelections({});
@@ -1223,9 +1387,15 @@ export function useQuizSession() {
               revisionRef.current = 0;
               setRevision(0);
               selectionsRef.current = {};
+              multiSelectionsRef.current = {};
+              setMultiSelections({});
               setSelections({});
+              multiSelectionsRef.current = {};
+              setMultiSelections({});
               freeResponsesRef.current = {};
               setFreeResponses({});
+              freeResponsePartsRef.current = {};
+              setFreeResponseParts({});
               legacyAnswerIdsRef.current = [];
               setLegacyAnswerIds([]);
               setSavedSelections({});
@@ -1269,14 +1439,24 @@ export function useQuizSession() {
             setRevision(savedDraft.revision);
             selectionsRef.current = savedDraft.selections;
             setSelections(savedDraft.selections);
+            multiSelectionsRef.current = savedDraft.multiSelections ?? {};
+            setMultiSelections(savedDraft.multiSelections ?? {});
             freeResponsesRef.current = savedDraft.freeResponses;
             setFreeResponses(savedDraft.freeResponses);
+            freeResponsePartsRef.current = savedDraft.freeResponseParts ?? {};
+            setFreeResponseParts(savedDraft.freeResponseParts ?? {});
             legacyAnswerIdsRef.current = savedDraft.legacyAnswerIds;
             setLegacyAnswerIds(savedDraft.legacyAnswerIds);
             setSavedSelections({});
             setAnsweredCount(
               Object.keys(savedDraft.selections).length +
-                Object.values(savedDraft.freeResponses).filter((value) => value.trim()).length,
+                Object.values(savedDraft.multiSelections ?? {}).filter(
+                  (indices) => indices.length === 2,
+                ).length +
+                Object.values(savedDraft.freeResponses).filter((value) => value.trim()).length +
+                Object.values(savedDraft.freeResponseParts ?? {}).filter(
+                  ({ a, b }) => a.trim() && b.trim(),
+                ).length,
             );
             setPhase({ kind: "answering" });
           };
@@ -1306,9 +1486,15 @@ export function useQuizSession() {
             setRevision(0);
             revisionRef.current = 0;
             setSelections({});
+            multiSelectionsRef.current = {};
+            setMultiSelections({});
             selectionsRef.current = {};
+            multiSelectionsRef.current = {};
+            setMultiSelections({});
             setFreeResponses({});
             freeResponsesRef.current = {};
+            freeResponsePartsRef.current = {};
+            setFreeResponseParts({});
             setLegacyAnswerIds([]);
             legacyAnswerIdsRef.current = [];
             setSavedSelections({});
@@ -1377,9 +1563,15 @@ export function useQuizSession() {
             quizzesRef.current = [];
             setQuizzes([]);
             selectionsRef.current = {};
+            multiSelectionsRef.current = {};
+            setMultiSelections({});
             setSelections({});
+            multiSelectionsRef.current = {};
+            setMultiSelections({});
             freeResponsesRef.current = {};
             setFreeResponses({});
+            freeResponsePartsRef.current = {};
+            setFreeResponseParts({});
             legacyAnswerIdsRef.current = [];
             setLegacyAnswerIds([]);
             setAnsweredCount(0);
@@ -1434,9 +1626,15 @@ export function useQuizSession() {
             revisionRef.current = 0;
             setRevision(0);
             selectionsRef.current = {};
+            multiSelectionsRef.current = {};
+            setMultiSelections({});
             setSelections({});
+            multiSelectionsRef.current = {};
+            setMultiSelections({});
             freeResponsesRef.current = {};
             setFreeResponses({});
+            freeResponsePartsRef.current = {};
+            setFreeResponseParts({});
             legacyAnswerIdsRef.current = [];
             setLegacyAnswerIds([]);
             setSavedSelections({});
@@ -1479,9 +1677,15 @@ export function useQuizSession() {
                 );
               } else {
                 setSelections({});
+                multiSelectionsRef.current = {};
+                setMultiSelections({});
                 selectionsRef.current = {};
+                multiSelectionsRef.current = {};
+                setMultiSelections({});
                 setFreeResponses({});
                 freeResponsesRef.current = {};
+                freeResponsePartsRef.current = {};
+                setFreeResponseParts({});
                 setLegacyAnswerIds([]);
                 legacyAnswerIdsRef.current = [];
                 setSavedSelections({});
@@ -1507,9 +1711,15 @@ export function useQuizSession() {
             return participant.id;
           }
           setSelections({});
+          multiSelectionsRef.current = {};
+          setMultiSelections({});
           selectionsRef.current = {};
+          multiSelectionsRef.current = {};
+          setMultiSelections({});
           setFreeResponses({});
           freeResponsesRef.current = {};
+          freeResponsePartsRef.current = {};
+          setFreeResponseParts({});
           setLegacyAnswerIds([]);
           legacyAnswerIdsRef.current = [];
           setSavedSelections({});
@@ -1573,11 +1783,17 @@ export function useQuizSession() {
       quizzesRef.current = [];
       setQuizzes([]);
       setSelections({});
+      multiSelectionsRef.current = {};
+      setMultiSelections({});
       setFreeResponses({});
       freeResponsesRef.current = {};
+      freeResponsePartsRef.current = {};
+      setFreeResponseParts({});
       setLegacyAnswerIds([]);
       legacyAnswerIdsRef.current = [];
       selectionsRef.current = {};
+      multiSelectionsRef.current = {};
+      setMultiSelections({});
       setSavedSelections({});
       setAnsweredCount(0);
       setSubmissionId(null);
@@ -1609,10 +1825,45 @@ export function useQuizSession() {
       setSelections(next);
       setAnsweredCount(
         Object.keys(next).length +
-          Object.values(freeResponsesRef.current).filter((value) => value.trim()).length,
+          Object.values(multiSelectionsRef.current).filter((indices) => indices.length === 2)
+            .length +
+          Object.values(freeResponsesRef.current).filter((value) => value.trim()).length +
+          Object.values(freeResponsePartsRef.current).filter(({ a, b }) => a.trim() && b.trim())
+            .length,
       );
       persistAssistedDraft(next, freeResponsesRef.current);
       setPhase({ kind: "answering" });
+    },
+    [persistAssistedDraft],
+  );
+
+  const toggleMultiple = useCallback(
+    (questionId: number, selectedIndex: number) => {
+      const currentPhase = phaseRef.current;
+      if (
+        busyRef.current ||
+        currentPhase.kind !== "answering" ||
+        currentPhase.retryRequired ||
+        currentPhase.refreshRequired
+      )
+        return;
+      const current = multiSelectionsRef.current[questionId] ?? [];
+      const nextChoices = current.includes(selectedIndex)
+        ? current.filter((index) => index !== selectedIndex)
+        : current.length < 2
+          ? [...current, selectedIndex]
+          : current;
+      const next = { ...multiSelectionsRef.current, [questionId]: nextChoices };
+      multiSelectionsRef.current = next;
+      setMultiSelections(next);
+      setAnsweredCount(
+        Object.values(selectionsRef.current).filter((index) => index !== undefined).length +
+          Object.values(next).filter((indices) => indices.length === 2).length +
+          Object.values(freeResponsesRef.current).filter((value) => value.trim()).length +
+          Object.values(freeResponsePartsRef.current).filter(({ a, b }) => a.trim() && b.trim())
+            .length,
+      );
+      persistAssistedDraft();
     },
     [persistAssistedDraft],
   );
@@ -1624,9 +1875,40 @@ export function useQuizSession() {
       setFreeResponses(next);
       setAnsweredCount(
         Object.keys(selectionsRef.current).length +
-          Object.values(next).filter((entry) => entry.trim()).length,
+          Object.values(multiSelectionsRef.current).filter((indices) => indices.length === 2)
+            .length +
+          Object.values(next).filter((entry) => entry.trim()).length +
+          Object.values(freeResponsePartsRef.current).filter(({ a, b }) => a.trim() && b.trim())
+            .length,
       );
       persistAssistedDraft(selectionsRef.current, next);
+    },
+    [persistAssistedDraft],
+  );
+
+  const setFreeResponsePart = useCallback(
+    (questionId: number, part: "a" | "b", value: string) => {
+      const next = {
+        ...(freeResponsePartsRef.current[questionId] ?? { a: "", b: "" }),
+        [part]: value,
+      };
+      const all = { ...freeResponsePartsRef.current, [questionId]: next };
+      freeResponsePartsRef.current = all;
+      setFreeResponseParts(all);
+      const answeredFreeCount = Object.values(freeResponsesRef.current).filter((entry) =>
+        entry.trim(),
+      ).length;
+      const answeredPartsCount = Object.values(all).filter(
+        ({ a, b }) => a.trim() && b.trim(),
+      ).length;
+      setAnsweredCount(
+        Object.keys(selectionsRef.current).length +
+          Object.values(multiSelectionsRef.current).filter((indices) => indices.length === 2)
+            .length +
+          answeredFreeCount +
+          answeredPartsCount,
+      );
+      persistAssistedDraft(selectionsRef.current, freeResponsesRef.current);
     },
     [persistAssistedDraft],
   );
@@ -1643,20 +1925,45 @@ export function useQuizSession() {
       currentQuizzes.length !== EXAM_QUESTION_COUNT ||
       currentQuizzes.some(({ question }) =>
         question.answerType === "freeText"
-          ? !freeResponsesRef.current[question.id]?.trim() ||
-            freeResponsesRef.current[question.id].trim().length > 1000
-          : currentSelections[question.id] === undefined,
+          ? question.id === 5
+            ? !freeResponsePartsRef.current[question.id]?.a.trim() ||
+              !freeResponsePartsRef.current[question.id]?.b.trim() ||
+              freeResponsePartsRef.current[question.id].a.length > 1000 ||
+              freeResponsePartsRef.current[question.id].b.length > 1000
+            : !freeResponsesRef.current[question.id]?.trim() ||
+              freeResponsesRef.current[question.id].trim().length > 1000
+          : question.selectionMode === "multiple"
+            ? (multiSelectionsRef.current[question.id]?.length ?? 0) !== 2
+            : currentSelections[question.id] === undefined,
       )
     )
       return;
     const selectedByQuestion = copySelections(currentSelections) as Record<number, number>;
+    const selectedIndicesByQuestion = Object.fromEntries(
+      Object.entries(multiSelectionsRef.current).map(([id, indices]) => [Number(id), [...indices]]),
+    );
     const answers = currentQuizzes.map(({ question, shuffled }) =>
       question.answerType === "freeText"
-        ? { questionId: question.id, freeText: freeResponsesRef.current[question.id].trim() }
-        : {
-            questionId: question.id,
-            selectedIndex: shuffled.choiceIndices[selectedByQuestion[question.id]],
-          },
+        ? question.id === 5
+          ? {
+              questionId: question.id,
+              freeTextParts: {
+                a: freeResponsePartsRef.current[question.id].a.trim(),
+                b: freeResponsePartsRef.current[question.id].b.trim(),
+              },
+            }
+          : { questionId: question.id, freeText: freeResponsesRef.current[question.id].trim() }
+        : question.selectionMode === "multiple"
+          ? {
+              questionId: question.id,
+              selectedIndices: selectedIndicesByQuestion[question.id].map(
+                (index) => shuffled.choiceIndices[index],
+              ),
+            }
+          : {
+              questionId: question.id,
+              selectedIndex: shuffled.choiceIndices[selectedByQuestion[question.id]],
+            },
     );
     const sameAnswers = (attempt: SaveAttempt) =>
       attempt.expectedRevision === revisionRef.current &&
@@ -1668,7 +1975,9 @@ export function useQuizSession() {
         expectedRevision: revisionRef.current,
         answers,
         selectedByQuestion,
+        selectedIndicesByQuestion,
         freeResponses: { ...freeResponsesRef.current },
+        freeResponseParts: { ...freeResponsePartsRef.current },
       };
       failedAttemptRef.current = attempt;
     }
@@ -1702,19 +2011,36 @@ export function useQuizSession() {
       }
       const confirmedSelections = { ...attempt.selectedByQuestion };
       const savedAnswers = attempt.answers.map((answer) =>
-        "freeText" in answer
+        "freeTextParts" in answer
           ? {
               questionId: answer.questionId,
               answerKind: "freeText" as const,
               selectedIndex: null,
-              freeText: attempt.freeResponses[answer.questionId]!,
-            }
-          : {
-              questionId: answer.questionId,
-              answerKind: "selected" as const,
-              selectedIndex: answer.selectedIndex,
               freeText: null,
-            },
+              freeTextParts: answer.freeTextParts,
+            }
+          : "freeText" in answer
+            ? {
+                questionId: answer.questionId,
+                answerKind: "freeText" as const,
+                selectedIndex: null,
+                freeText: attempt.freeResponses[answer.questionId]!,
+              }
+            : "selectedIndices" in answer
+              ? {
+                  questionId: answer.questionId,
+                  answerKind: "selected" as const,
+                  selectedIndex: null,
+                  selectedIndices: answer.selectedIndices,
+                  freeText: null,
+                }
+              : {
+                  questionId: answer.questionId,
+                  answerKind: "selected" as const,
+                  selectedIndex: answer.selectedIndex,
+                  selectedIndices: null,
+                  freeText: null,
+                },
       );
       savedSubmissionRef.current = {
         submissionId: result.submissionId,
@@ -1726,13 +2052,18 @@ export function useQuizSession() {
             id: question.id,
             answerType: question.answerType,
             choiceCount: question.choices.length,
+            selectionMode: question.selectionMode,
           })),
         },
       };
       setSavedSelections(confirmedSelections);
       setSelections(confirmedSelections);
+      setMultiSelections(attempt.selectedIndicesByQuestion);
+      multiSelectionsRef.current = attempt.selectedIndicesByQuestion;
       setFreeResponses({ ...attempt.freeResponses });
       freeResponsesRef.current = { ...attempt.freeResponses };
+      setFreeResponseParts({ ...attempt.freeResponseParts });
+      freeResponsePartsRef.current = { ...attempt.freeResponseParts };
       selectionsRef.current = confirmedSelections;
       setRevision(result.revision);
       revisionRef.current = result.revision;
@@ -1777,9 +2108,14 @@ export function useQuizSession() {
             );
             setLegacyAnswerIds(restored.legacyAnswerIds);
             setSavedSelections(restored.selections);
+            multiSelectionsRef.current = restored.multiSelections;
+            setMultiSelections(restored.multiSelections);
             setAnsweredCount(
               Object.keys(selectionsRef.current).length +
-                Object.values(freeResponsesRef.current).filter((value) => value.trim()).length,
+                Object.values(freeResponsesRef.current).filter((value) => value.trim()).length +
+                Object.values(freeResponsePartsRef.current).filter(
+                  ({ a, b }) => a.trim() && b.trim(),
+                ).length,
             );
             setRevision(persisted.revision);
             revisionRef.current = persisted.revision;
@@ -1859,18 +2195,27 @@ export function useQuizSession() {
       } else {
         freeResponsesRef.current = restored.freeResponses;
         setFreeResponses(restored.freeResponses);
+        freeResponsePartsRef.current = restored.freeResponseParts;
+        setFreeResponseParts(restored.freeResponseParts);
       }
       setLegacyAnswerIds(restored.legacyAnswerIds);
       setSavedSelections(restored.selections);
+      multiSelectionsRef.current = restored.multiSelections;
+      setMultiSelections(restored.multiSelections);
       const answerCountSelections = preserveLocalDraft
         ? selectionsRef.current
         : restored.selections;
       const answerCountFreeResponses = preserveLocalDraft
         ? freeResponsesRef.current
         : restored.freeResponses;
+      const answerCountFreeResponseParts = preserveLocalDraft
+        ? freeResponsePartsRef.current
+        : restored.freeResponseParts;
       setAnsweredCount(
         Object.keys(answerCountSelections).length +
-          Object.values(answerCountFreeResponses).filter((value) => value.trim()).length,
+          Object.values(answerCountFreeResponses).filter((value) => value.trim()).length +
+          Object.values(answerCountFreeResponseParts).filter(({ a, b }) => a.trim() && b.trim())
+            .length,
       );
       setRevision(persisted.revision);
       revisionRef.current = persisted.revision;
@@ -1992,14 +2337,21 @@ export function useQuizSession() {
         setRestoreError(null);
         setSaveConfirmed(false);
         selectionsRef.current = restored.selections;
+        multiSelectionsRef.current = restored.multiSelections;
         freeResponsesRef.current = restored.freeResponses;
+        freeResponsePartsRef.current = restored.freeResponseParts;
         setSelections(restored.selections);
+        setMultiSelections(restored.multiSelections);
         setSavedSelections(restored.selections);
         setFreeResponses(restored.freeResponses);
+        setFreeResponseParts(restored.freeResponseParts);
         setLegacyAnswerIds(restored.legacyAnswerIds);
         setAnsweredCount(
           Object.keys(restored.selections).length +
-            Object.values(restored.freeResponses).filter((value) => value.trim()).length,
+            Object.keys(restored.multiSelections).length +
+            Object.values(restored.freeResponses).filter((value) => value.trim()).length +
+            Object.values(restored.freeResponseParts).filter(({ a, b }) => a.trim() && b.trim())
+              .length,
         );
         setPhase({ kind: "answering" });
       } catch {
@@ -2052,7 +2404,9 @@ export function useQuizSession() {
     phase,
     quizzes,
     selections,
+    multiSelections,
     freeResponses,
+    freeResponseParts,
     legacyAnswerIds,
     savedSelections,
     answeredCount,
@@ -2065,7 +2419,9 @@ export function useQuizSession() {
     autoEditAssisted,
     clearAutoEditAssisted,
     select,
+    toggleMultiple,
     setFreeResponse,
+    setFreeResponsePart,
     saveAnswers,
     refreshSavedAnswers,
     editAnswers,

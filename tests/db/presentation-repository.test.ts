@@ -375,12 +375,12 @@ async function completeConcurrentQ5Assessment(submissionId: string, revision: nu
     .db!.update(schema.examAnswerAssessments)
     .set({
       revision,
-      answerText: "Q5 answer",
-      questionVersion: "tamami-egg-v1",
+      answerText: JSON.stringify({ a: "Q5 answer", b: "Q5 answer" }),
+      questionVersion: "hong-kong-trip-a-b-v1",
       state: "graded",
       rawScore: 9,
       normalizedScore: 1,
-      rubricVersion: "jev-q5-keywords30-30-jev40-v1",
+      rubricVersion: "jev-q5-independent-points-v1",
       gradedAt: new Date(),
     })
     .where(
@@ -464,7 +464,7 @@ describe("presentation repository", () => {
       {
         id: 5,
         key: "it-literacy-005",
-        questionVersion: "tamami-egg-v1",
+        questionVersion: "hong-kong-trip-a-b-v1",
         question: "Question 5",
         choices: [],
         correctIndex: 0,
@@ -487,7 +487,7 @@ describe("presentation repository", () => {
       [1, 2, 3, 4, 5].map((id) => ({
         id,
         key: `it-literacy-00${id}`,
-        questionVersion: id === 5 ? "tamami-egg-v1" : `nagano-00${id}-v1`,
+        questionVersion: id === 5 ? "hong-kong-trip-a-b-v1" : `nagano-00${id}-v1`,
         question: `Current question ${id}`,
         choices: id === 5 ? [] : [`Correct ${id}`, `Wrong ${id}`],
         correctIndex: 0,
@@ -500,7 +500,7 @@ describe("presentation repository", () => {
     await testDb.db.insert(schema.examQuestions).values({
       id: 5,
       key: "it-literacy-005",
-      questionVersion: "tamami-egg-v1",
+      questionVersion: "hong-kong-trip-a-b-v1",
       question: "Question 5",
       choices: [],
       correctIndex: 0,
@@ -522,6 +522,7 @@ describe("presentation repository", () => {
     revision = 1,
     suffix = "latest",
     q5NormalizedScore = selectedIndices[1] === 0 ? 1 : 0,
+    q2Selections?: number[],
   ) {
     const id = `submission-${participantId}-${suffix}`;
     const questions = await testDb.db.select().from(schema.examQuestions);
@@ -544,12 +545,14 @@ describe("presentation repository", () => {
               submissionId: id,
               questionId: question.id,
               answerKind: "freeText" as const,
-              freeText: `Q5 ${suffix}`,
+              freeText: JSON.stringify({ a: `Q5 ${suffix}`, b: `Q5 ${suffix}` }),
             }
           : {
               submissionId: id,
               questionId: question.id,
-              selectedIndex: question.id === 1 ? selectedIndices[0]! : 0,
+              ...(question.id === 2 && q2Selections
+                ? { selectedIndices: q2Selections }
+                : { selectedIndex: question.id === 1 ? selectedIndices[0]! : 0 }),
             },
       ),
     );
@@ -557,12 +560,12 @@ describe("presentation repository", () => {
       submissionId: id,
       questionId: 5,
       revision,
-      answerText: `Q5 ${suffix}`,
+      answerText: JSON.stringify({ a: `Q5 ${suffix}`, b: `Q5 ${suffix}` }),
       questionVersion: q5.questionVersion!,
       state: "graded",
       rawScore: selectedIndices[1] === 0 ? 9 : 0,
       normalizedScore: q5NormalizedScore,
-      rubricVersion: "jev-q5-keywords30-30-jev40-v1",
+      rubricVersion: "jev-q5-independent-points-v1",
     });
   }
 
@@ -727,6 +730,32 @@ describe("presentation repository", () => {
       { participantId: noSubmission, rank: null, isAggregationTarget: false },
       { participantId: zeroScore, rank: 1, isAggregationTarget: true },
     ]);
+  });
+
+  it("scores a multi-select answer only when both correct choices are selected", async () => {
+    await addCurrentFiveQuestions();
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({
+        choices: ["A", "B", "C", "D", "E", "F", "G", "H"],
+        selectionMode: "multiple",
+        correctIndices: [1, 4],
+        questionVersion: "india-uber-multi-v1",
+      })
+      .where(eq(schema.examQuestions.id, 2));
+    const exact = await addParticipant("Exact selections");
+    const partial = await addParticipant("One correct selection");
+    await addSubmission(exact, [0, 0], 1, "multi-exact", 1, [1, 4]);
+    await addSubmission(partial, [0, 0], 1, "multi-partial", 1, [1, 5]);
+
+    const aggregated = await op("aggregate", "multi-select-exact-score");
+
+    expect(
+      aggregated.entries.find(({ displayName }) => displayName === "Exact selections"),
+    ).toMatchObject({ score: 5, rank: 1 });
+    expect(
+      aggregated.entries.find(({ displayName }) => displayName === "One correct selection"),
+    ).toMatchObject({ score: 4, rank: 2 });
   });
 
   it("advances an opening presentation with no questions to the podium preview", async () => {
@@ -1500,7 +1529,7 @@ describe("presentation repository", () => {
             {
               position: 1,
               question: "Question 5",
-              answer: { kind: "freeText", value: "Q5 latest" },
+              answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest" },
               normalizedScore: 0,
             },
           ],
@@ -1682,7 +1711,7 @@ describe("presentation repository", () => {
           rank: 3,
           questionResults: [
             { position: 0, answer: { kind: "selected", value: "Correct 1" } },
-            { position: 1, answer: { kind: "freeText", value: "Q5 latest" } },
+            { position: 1, answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest" } },
           ],
         },
       ],
@@ -1873,11 +1902,11 @@ describe("presentation repository", () => {
     expect(projection.winners[0]?.questionResults.map((result) => result.position)).toEqual([0, 1]);
     expect(projection.winners[0]?.questionResults).toMatchObject([
       { answer: { kind: "selected", value: "Correct 1" }, correctness: "correct" },
-      { answer: { kind: "freeText", value: "Q5 latest" }, normalizedScore: 0 },
+      { answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest" }, normalizedScore: 0 },
     ]);
     expect(projection.winners[1]?.questionResults).toMatchObject([
       { answer: { kind: "selected", value: "Wrong 1" }, correctness: "incorrect" },
-      { answer: { kind: "freeText", value: "Q5 latest" }, normalizedScore: 1 },
+      { answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest" }, normalizedScore: 1 },
     ]);
   });
 
@@ -2016,7 +2045,7 @@ describe("presentation repository", () => {
     await expect(getParticipantResult(1)).resolves.toEqual({
       state: "visible",
       score: 0.5,
-      maxScore: 1,
+      maxScore: 2,
       rank: 1,
       isAggregationTarget: true,
       isReference: false,
@@ -2100,14 +2129,14 @@ describe("presentation repository", () => {
         id: "partial-question-set",
         participantId: partialQuestionsParticipant,
         questionIds: [1],
-        questionVersions: { "1": "nagano-001-v1", "5": "tamami-egg-v1" },
+        questionVersions: { "1": "nagano-001-v1", "5": "hong-kong-trip-a-b-v1" },
         revision: 1,
       },
       {
         id: "partial-answer-set",
         participantId: partialAnswersParticipant,
         questionIds: [1, 5],
-        questionVersions: { "1": "nagano-001-v1", "5": "tamami-egg-v1" },
+        questionVersions: { "1": "nagano-001-v1", "5": "hong-kong-trip-a-b-v1" },
         revision: 1,
       },
     ]);
@@ -2126,13 +2155,13 @@ describe("presentation repository", () => {
         submissionId: "partial-question-set",
         questionId: 5,
         answerKind: "freeText",
-        freeText: "Q5 partial",
+        freeText: JSON.stringify({ a: "Q5 partial", b: "Q5 partial" }),
       },
       {
         submissionId: "partial-answer-set",
         questionId: 5,
         answerKind: "freeText",
-        freeText: "Q5 partial",
+        freeText: JSON.stringify({ a: "Q5 partial", b: "Q5 partial" }),
       },
     ]);
     await testDb.db.insert(schema.examAnswerAssessments).values(
@@ -2140,12 +2169,12 @@ describe("presentation repository", () => {
         submissionId,
         questionId: 5,
         revision: 1,
-        answerText: "Q5 partial",
-        questionVersion: "tamami-egg-v1",
+        answerText: JSON.stringify({ a: "Q5 partial", b: "Q5 partial" }),
+        questionVersion: "hong-kong-trip-a-b-v1",
         state: "graded" as const,
         rawScore: 0,
         normalizedScore: 0,
-        rubricVersion: "jev-q5-keywords30-30-jev40-v1",
+        rubricVersion: "jev-q5-independent-points-v1",
       })),
     );
 
@@ -2318,7 +2347,7 @@ describe("presentation repository", () => {
       "2": "nagano-002-v1",
       "3": "nagano-003-v1",
       "4": "nagano-004-v1",
-      "5": "tamami-egg-v1",
+      "5": "hong-kong-trip-a-b-v1",
     };
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
@@ -2333,18 +2362,23 @@ describe("presentation repository", () => {
         questionId,
         selectedIndex: 0,
       })),
-      { submissionId, questionId: 5, answerKind: "freeText", freeText: "Q5 current answer" },
+      {
+        submissionId,
+        questionId: 5,
+        answerKind: "freeText",
+        freeText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
+      },
     ]);
     await testDb.db.insert(schema.examAnswerAssessments).values({
       submissionId,
       questionId: 5,
       revision: 1,
-      answerText: "Q5 current answer",
-      questionVersion: "tamami-egg-v1",
+      answerText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
+      questionVersion: "hong-kong-trip-a-b-v1",
       state: "graded",
       rawScore: 4.5,
       normalizedScore: 0.5,
-      rubricVersion: "jev-q5-keywords30-30-jev40-v1",
+      rubricVersion: "jev-q5-independent-points-v1",
     });
 
     await op("aggregate", "current-five-question-aggregate");
@@ -2356,7 +2390,7 @@ describe("presentation repository", () => {
       { participantId: participant, score: 4.5 },
     ]);
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
-      { questionVersions, rubricVersions: { "5": "jev-q5-keywords30-30-jev40-v1" } },
+      { questionVersions, rubricVersions: { "5": "jev-q5-independent-points-v1" } },
     ]);
   });
 
@@ -2396,11 +2430,11 @@ describe("presentation repository", () => {
     {
       name: "assessment question version",
       questionVersion: "omiwatari-v1",
-      rubricVersion: "tamami-egg-v1",
+      rubricVersion: "hong-kong-trip-a-b-v1",
     },
     {
       name: "assessment rubric version",
-      questionVersion: "tamami-egg-v1",
+      questionVersion: "hong-kong-trip-a-b-v1",
       rubricVersion: "omiwatari-v1",
     },
   ])(
@@ -2414,7 +2448,7 @@ describe("presentation repository", () => {
         "2": "nagano-002-v1",
         "3": "nagano-003-v1",
         "4": "nagano-004-v1",
-        "5": "tamami-egg-v1",
+        "5": "hong-kong-trip-a-b-v1",
       };
       await testDb.db.insert(schema.examAnswerSubmissions).values({
         id: submissionId,
@@ -2423,17 +2457,20 @@ describe("presentation repository", () => {
         questionVersions,
         revision: 1,
       });
-      await testDb.db
-        .insert(schema.examSubmissionAnswers)
-        .values([
-          ...[1, 2, 3, 4].map((questionId) => ({ submissionId, questionId, selectedIndex: 0 })),
-          { submissionId, questionId: 5, answerKind: "freeText", freeText: "Q5 current answer" },
-        ]);
+      await testDb.db.insert(schema.examSubmissionAnswers).values([
+        ...[1, 2, 3, 4].map((questionId) => ({ submissionId, questionId, selectedIndex: 0 })),
+        {
+          submissionId,
+          questionId: 5,
+          answerKind: "freeText",
+          freeText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
+        },
+      ]);
       await testDb.db.insert(schema.examAnswerAssessments).values({
         submissionId,
         questionId: 5,
         revision: 1,
-        answerText: "Q5 current answer",
+        answerText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
         questionVersion,
         state: "graded",
         rawScore: 4.5,
@@ -2473,7 +2510,7 @@ describe("presentation repository", () => {
       "2": "nagano-002-v1",
       "3": "nagano-003-v1",
       "4": "nagano-004-v1",
-      "5": "tamami-egg-v1",
+      "5": "hong-kong-trip-a-b-v1",
     };
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
@@ -2488,18 +2525,23 @@ describe("presentation repository", () => {
         questionId,
         selectedIndex: 0,
       })),
-      { submissionId, questionId: 5, answerKind: "freeText", freeText: "Q5 current answer" },
+      {
+        submissionId,
+        questionId: 5,
+        answerKind: "freeText",
+        freeText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
+      },
     ]);
     await testDb.db.insert(schema.examAnswerAssessments).values({
       submissionId,
       questionId: 5,
       revision: 1,
-      answerText: "Q5 current answer",
-      questionVersion: "tamami-egg-v1",
+      answerText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
+      questionVersion: "hong-kong-trip-a-b-v1",
       state: "graded",
       rawScore: 4.5,
       normalizedScore: 0.5,
-      rubricVersion: "jev-q5-keywords30-30-jev40-v1",
+      rubricVersion: "jev-q5-independent-points-v1",
     });
 
     await op("aggregate", "stale-q5-snapshot-aggregate");
@@ -2831,7 +2873,7 @@ describe("presentation repository", () => {
       equivalentRank: null,
       rankParticipantCount: 1,
       score: 0,
-      maxScore: 2,
+      maxScore: 3,
       questions: [
         {
           position: 0,
@@ -2841,7 +2883,7 @@ describe("presentation repository", () => {
         {
           position: 1,
           question: "Question 5",
-          answer: { kind: "freeText", value: "Q5 latest", score: 0 },
+          answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest", score: 0 },
         },
       ],
     });
@@ -2878,7 +2920,7 @@ describe("presentation repository", () => {
       { questionId: 2, selectedIndex: 0 },
       { questionId: 3, selectedIndex: 0 },
       { questionId: 4, selectedIndex: 0 },
-      { questionId: 5, freeText: "Q5 answer" },
+      { questionId: 5, freeTextParts: { a: "Q5 answer", b: "Q5 answer" } },
     ];
     await saveAnswerSubmission({
       submissionId,
@@ -2942,7 +2984,7 @@ describe("presentation repository", () => {
       { questionId: 2, selectedIndex: 0 },
       { questionId: 3, selectedIndex: 0 },
       { questionId: 4, selectedIndex: 0 },
-      { questionId: 5, freeText: "Q5 answer" },
+      { questionId: 5, freeTextParts: { a: "Q5 answer", b: "Q5 answer" } },
     ];
     await saveAnswerSubmission({
       submissionId,
@@ -3028,11 +3070,18 @@ describe("presentation repository", () => {
     await testDb.db;
     await testDb.db
       .update(schema.examSubmissionAnswers)
-      .set({ answerKind: "freeText", selectedIndex: null, freeText: "pending response" })
+      .set({
+        answerKind: "freeText",
+        selectedIndex: null,
+        freeText: JSON.stringify({ a: "pending response", b: "pending response" }),
+      })
       .where(eq(schema.examSubmissionAnswers.questionId, 5));
     await testDb.db
       .update(schema.examAnswerAssessments)
-      .set({ answerText: "pending response", state: "pending" })
+      .set({
+        answerText: JSON.stringify({ a: "pending response", b: "pending response" }),
+        state: "pending",
+      })
       .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
 
     await expect(op("aggregate", "failed-reaggregate")).rejects.toBeInstanceOf(
@@ -3399,7 +3448,7 @@ describe("presentation repository", () => {
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 1));
     await testDb.db
       .update(schema.examAnswerSubmissions)
-      .set({ questionIds: [5], questionVersions: { "5": "tamami-egg-v1" } })
+      .set({ questionIds: [5], questionVersions: { "5": "hong-kong-trip-a-b-v1" } })
       .where(eq(schema.examAnswerSubmissions.id, `submission-${participant}-latest`));
     await testDb.db
       .delete(schema.examSubmissionAnswers)
@@ -3450,15 +3499,19 @@ describe("presentation repository", () => {
       .where(eq(schema.examQuestions.id, 5));
     await testDb.db
       .update(schema.examSubmissionAnswers)
-      .set({ answerKind: "freeText", selectedIndex: null, freeText: "pending response" })
+      .set({
+        answerKind: "freeText",
+        selectedIndex: null,
+        freeText: JSON.stringify({ a: "pending response", b: "pending response" }),
+      })
       .where(eq(schema.examSubmissionAnswers.questionId, 5));
     await testDb.db
       .update(schema.examAnswerAssessments)
       .set({
-        answerText: "pending response",
+        answerText: JSON.stringify({ a: "pending response", b: "pending response" }),
         state: "pending",
-        questionVersion: "tamami-egg-v1",
-        rubricVersion: "jev-q5-keywords30-30-jev40-v1",
+        questionVersion: "hong-kong-trip-a-b-v1",
+        rubricVersion: "jev-q5-independent-points-v1",
       })
       .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
 
@@ -3557,10 +3610,10 @@ describe("presentation repository", () => {
     expect(sessionBefore[0]).toMatchObject({
       snapshotRevision: 1,
       questionVersions: {
-        "5": "tamami-egg-v1",
+        "5": "hong-kong-trip-a-b-v1",
       },
       rubricVersions: {
-        "5": "jev-q5-keywords30-30-jev40-v1",
+        "5": "jev-q5-independent-points-v1",
       },
     });
 
@@ -3604,7 +3657,7 @@ describe("presentation repository", () => {
       equivalentRank: null,
       rankParticipantCount: 2,
       score: 2,
-      maxScore: 2,
+      maxScore: 3,
       questions: [
         {
           position: 0,
@@ -3614,7 +3667,7 @@ describe("presentation repository", () => {
         {
           position: 1,
           question: "Question 5",
-          answer: { kind: "freeText", value: "Q5 latest", score: 1 },
+          answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest", score: 1 },
         },
       ],
     });
@@ -3628,7 +3681,7 @@ describe("presentation repository", () => {
       equivalentRank: null,
       rankParticipantCount: 2,
       score: 1,
-      maxScore: 2,
+      maxScore: 3,
       questions: [
         {
           position: 0,
@@ -3638,7 +3691,7 @@ describe("presentation repository", () => {
         {
           position: 1,
           question: "Question 5",
-          answer: { kind: "freeText", value: "Q5 latest", score: 0 },
+          answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest", score: 0 },
         },
       ],
     });
@@ -3662,7 +3715,7 @@ describe("presentation repository", () => {
         },
         {
           position: 1,
-          answer: { kind: "freeText", value: "Q5 latest" },
+          answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest" },
         },
       ],
     });
@@ -3683,7 +3736,7 @@ describe("presentation repository", () => {
         },
         {
           position: 1,
-          answer: { kind: "freeText", value: "Q5 latest" },
+          answer: { kind: "freeText", value: "A: Q5 latest\nB: Q5 latest" },
         },
       ],
     });
@@ -3720,7 +3773,7 @@ describe("presentation repository", () => {
       equivalentRank: null,
       rankParticipantCount: 2,
       score: 2,
-      maxScore: 2,
+      maxScore: 3,
       questions: [
         { position: 0, question: "Question 1", answer: { kind: "unanswered" } },
         { position: 1, question: "Question 5", answer: { kind: "legacy" } },
@@ -3799,7 +3852,7 @@ describe("presentation repository", () => {
       rankParticipantCount: 2,
       isAggregationTarget: true,
       score: 1,
-      maxScore: 2,
+      maxScore: 3,
       questions: [
         {
           position: 0,
@@ -3817,7 +3870,7 @@ describe("presentation repository", () => {
     expect(JSON.stringify(freeTextResult)).not.toContain("987");
     await testDb.db
       .update(schema.presentationEntries)
-      .set({ score: 3 })
+      .set({ score: 4 })
       .where(eq(schema.presentationEntries.participantId, second));
     await expect(getParticipantResult(second)).resolves.toEqual({ state: "unavailable" });
     await testDb.db
@@ -3830,7 +3883,7 @@ describe("presentation repository", () => {
       .set({ score: 1 })
       .where(eq(schema.presentationEntries.participantId, second));
     const outOfRangeScoreSnapshot = freeTextSnapshot.map((answer) =>
-      answer.questionId === 5 ? { ...answer, normalizedScore: 1.2 } : answer,
+      answer.questionId === 5 ? { ...answer, normalizedScore: 2.1 } : answer,
     );
     await testDb.db
       .update(schema.presentationEntries)
@@ -3863,7 +3916,7 @@ describe("presentation repository", () => {
     await expect(getParticipantResult(first)).resolves.toMatchObject({
       state: "visible",
       score: 2,
-      maxScore: 2,
+      maxScore: 3,
       rank: null,
       isAggregationTarget: false,
       isReference: false,

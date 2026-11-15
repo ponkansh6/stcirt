@@ -72,17 +72,28 @@ async function seedCommittedWinner(input: Parameters<typeof saveAnswerSubmission
         submissionId: input.submissionId,
         questionId: answer.questionId,
         selectedIndex: "selectedIndex" in answer ? answer.selectedIndex : null,
-        freeText: "freeText" in answer ? answer.freeText.trim() : null,
-        answerKind: "freeText" in answer ? "freeText" : "selected",
+        freeText:
+          "freeTextParts" in answer
+            ? JSON.stringify(answer.freeTextParts)
+            : "freeText" in answer
+              ? answer.freeText.trim()
+              : null,
+        answerKind: "freeText" in answer || "freeTextParts" in answer ? "freeText" : "selected",
       })),
     );
-    const freeResponse = canonicalAnswers.find((answer) => "freeText" in answer);
-    if (freeResponse && "freeText" in freeResponse) {
+    const freeResponse = canonicalAnswers.find(
+      (answer) => "freeText" in answer || "freeTextParts" in answer,
+    );
+    if (freeResponse && ("freeText" in freeResponse || "freeTextParts" in freeResponse)) {
+      const answerText =
+        "freeTextParts" in freeResponse
+          ? JSON.stringify(freeResponse.freeTextParts)
+          : freeResponse.freeText.trim();
       await tx.insert(schema.examAnswerAssessments).values({
         submissionId: input.submissionId,
         questionId: freeResponse.questionId,
         revision,
-        answerText: freeResponse.freeText.trim(),
+        answerText,
         questionVersion: null,
         state: "pending",
         rubricVersion: "unversioned",
@@ -359,6 +370,65 @@ describe("saveAnswerSubmission", () => {
     },
   );
 
+  it("stores and restores two selections for a multi-select question", async () => {
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ choices: ["A", "B", "C", "D", "E", "F", "G", "H"], selectionMode: "multiple" })
+      .where(eq(schema.examQuestions.id, 2));
+    const multiAnswers = [
+      { questionId: 1, selectedIndex: 0 },
+      { questionId: 2, selectedIndices: [1, 4] },
+      { questionId: 3, selectedIndex: 2 },
+      { questionId: 4, selectedIndex: 3 },
+      { questionId: 5, selectedIndex: 0 },
+    ];
+
+    await saveAnswerSubmission({
+      submissionId,
+      operationId: firstOperationId,
+      expectedRevision: 0,
+      participantId,
+      answers: multiAnswers,
+    });
+
+    await expect(getAnswerSubmission(submissionId, participantId)).resolves.toMatchObject({
+      answers: multiAnswers.map((answer) => ({
+        ...answer,
+        answerKind: "selected",
+        freeText: null,
+      })),
+    });
+  });
+
+  it.each([
+    ["one choice", [1]],
+    ["duplicate choices", [1, 1]],
+    ["an out-of-range choice", [1, 8]],
+  ])("rejects multi-select answers with %s", async (_label, selectedIndices) => {
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ choices: ["A", "B", "C", "D", "E", "F", "G", "H"], selectionMode: "multiple" })
+      .where(eq(schema.examQuestions.id, 2));
+    const invalidAnswers = [
+      { questionId: 1, selectedIndex: 0 },
+      { questionId: 2, selectedIndices },
+      { questionId: 3, selectedIndex: 2 },
+      { questionId: 4, selectedIndex: 3 },
+      { questionId: 5, selectedIndex: 0 },
+    ];
+
+    await expectInvalidSubmission(
+      {
+        submissionId,
+        operationId: firstOperationId,
+        expectedRevision: 0,
+        participantId,
+        answers: invalidAnswers,
+      },
+      "Answer type does not match its question",
+    );
+  });
+
   it.each([
     ["blank after trimming", "  \n  "],
     ["longer than 1000 characters after trimming", ` ${"x".repeat(1001)} `],
@@ -500,7 +570,10 @@ describe("saveAnswerSubmission", () => {
       operationId: firstOperationId,
       expectedRevision: 0,
       participantId,
-      answers: [...answers.slice(0, 4), { questionId: 5, freeText: "初回回答" }],
+      answers: [
+        ...answers.slice(0, 4),
+        { questionId: 5, freeTextParts: { a: "初回回答", b: "初回回答" } },
+      ],
     };
     const results = await Promise.all([saveAnswerSubmission(input), saveAnswerSubmission(input)]);
 
@@ -1410,7 +1483,10 @@ describe("saveAnswerSubmission", () => {
       .update(schema.examQuestions)
       .set({ key: "it-literacy-005" })
       .where(eq(schema.examQuestions.id, 5));
-    const initialAnswers = [...answers.slice(0, 4), { questionId: 5, freeText: "初回回答" }];
+    const initialAnswers = [
+      ...answers.slice(0, 4),
+      { questionId: 5, freeTextParts: { a: "初回回答", b: "初回回答" } },
+    ];
     await saveAnswerSubmission({
       submissionId,
       operationId: firstOperationId,
@@ -1436,7 +1512,10 @@ describe("saveAnswerSubmission", () => {
         operationId: secondOperationId,
         expectedRevision: 1,
         participantId,
-        answers: [...answers.slice(0, 4), { questionId: 5, freeText: "修正回答" }],
+        answers: [
+          ...answers.slice(0, 4),
+          { questionId: 5, freeTextParts: { a: "修正回答", b: "修正回答" } },
+        ],
       }),
     ).rejects.toThrow();
 

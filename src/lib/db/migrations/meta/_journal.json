@@ -148,6 +148,41 @@
       "when": 1793788800000,
       "tag": "0020_reference_ranking",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1794718408191,
+      "tag": "0021_proposal_trip_q1",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1794718408192,
+      "tag": "0022_india_uber_multi_select",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1794718408193,
+      "tag": "0023_hong_kong_trip_q5",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1794718408194,
+      "tag": "0024_live_member_prayer_food_q3",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1794718408195,
+      "tag": "0025_tennis_team_meal_q4",
+      "breakpoints": true
     }
   ]
 }

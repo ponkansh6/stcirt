@@ -288,7 +288,8 @@ describe("answer-repository", () => {
           submissionId: "free-text-latest",
           questionId: id,
           selectedIndex: id === questionId ? null : 0,
-          freeText: id === questionId ? "  explanation  " : null,
+          freeText:
+            id === questionId ? JSON.stringify({ a: "explanation", b: "explanation" }) : null,
           answerKind: id === questionId ? ("freeText" as const) : ("selected" as const),
         })),
       );
@@ -297,7 +298,13 @@ describe("answer-repository", () => {
         submissionId: "free-text-latest",
         restoreIntegrity: { status: "complete" },
         answers: expect.arrayContaining([
-          { questionId, answerKind: "freeText", selectedIndex: null, freeText: "  explanation  " },
+          {
+            questionId,
+            answerKind: "freeText",
+            selectedIndex: null,
+            freeText: null,
+            freeTextParts: { a: "explanation", b: "explanation" },
+          },
         ]),
       });
     });
@@ -406,7 +413,12 @@ describe("answer-repository", () => {
 
       expect(latest?.restoreIntegrity).toEqual({
         status: "complete",
-        questions: questionIds.map((id) => ({ id, answerType: "selected", choiceCount: 4 })),
+        questions: questionIds.map((id) => ({
+          id,
+          answerType: "selected",
+          choiceCount: 4,
+          selectionMode: "single",
+        })),
       });
       expect(latest?.answers).toHaveLength(5);
     });
@@ -669,7 +681,7 @@ describe("answer-repository", () => {
       ).resolves.toMatchObject({ answers: [], restoreIntegrity: { status: "invalid" } });
     });
 
-    it("restores a supported legacy answer only for the current final free-text question", async () => {
+    it("rejects a legacy answer for the revised final free-text question", async () => {
       const questionIds = await insertFiveQuestions();
       const questionId = questionIds[4]!;
       await dbRef
@@ -690,22 +702,8 @@ describe("answer-repository", () => {
 
       const latest = await getLatestAnswerSubmission(participantId);
 
-      expect(latest?.restoreIntegrity).toEqual({
-        status: "complete",
-        questions: [
-          { id: 1, answerType: "selected", choiceCount: 4 },
-          { id: 2, answerType: "selected", choiceCount: 4 },
-          { id: 3, answerType: "selected", choiceCount: 4 },
-          { id: 4, answerType: "selected", choiceCount: 4 },
-          { id: questionId, answerType: "freeText", choiceCount: 0 },
-        ],
-      });
-      expect(latest?.answers).toContainEqual({
-        questionId,
-        answerKind: "legacy",
-        selectedIndex: 2,
-        freeText: null,
-      });
+      expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
+      expect(latest?.answers).toEqual([]);
     });
 
     it.each([
@@ -970,7 +968,7 @@ describe("answer-repository", () => {
       const participantId = await insertParticipant("unversioned-q5");
       const answers = [
         ...selectedAnswers(questionIds.slice(0, 4)),
-        { questionId, freeText: "回答" },
+        { questionId, freeTextParts: { a: "回答", b: "回答" } },
       ];
 
       await saveAnswerSubmission({
@@ -997,7 +995,10 @@ describe("answer-repository", () => {
         operationId: "unversioned-q5-revision",
         expectedRevision: 1,
         participantId,
-        answers: [...answers.slice(0, 4), { questionId, freeText: "回答を更新" }],
+        answers: [
+          ...answers.slice(0, 4),
+          { questionId, freeTextParts: { a: "回答を更新", b: "回答を更新" } },
+        ],
       });
 
       const [updatedSubmission] = await dbRef

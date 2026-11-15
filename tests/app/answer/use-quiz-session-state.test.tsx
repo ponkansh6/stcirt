@@ -220,7 +220,8 @@ async function enterRefreshRequired(freeTextFifth = false) {
   const hook = await enterAnswering({ freeTextFifth });
   [1, 2, 3, 4].forEach((id) => act(() => hook.result.current.select(id, 0)));
   if (freeTextFifth) {
-    act(() => hook.result.current.setFreeResponse(5, "draft"));
+    act(() => hook.result.current.setFreeResponsePart(5, "a", "draft A"));
+    act(() => hook.result.current.setFreeResponsePart(5, "b", "draft B"));
   } else {
     act(() => hook.result.current.select(5, 0));
   }
@@ -456,7 +457,8 @@ describe("useQuizSession state transitions", () => {
       questionId: 5,
       answerKind: "freeText" as const,
       selectedIndex: null,
-      freeText: "保存済みの記述回答",
+      freeText: null,
+      freeTextParts: { a: "保存済みの朝飲茶", b: "保存済みのシーフード店" },
     });
     const hook = await enterAnswering(
       {
@@ -468,7 +470,9 @@ describe("useQuizSession state transitions", () => {
 
     expect(api.fetchExamQuestions).not.toHaveBeenCalled();
     await act(async () => hook.result.current.editAnswers(() => true));
-    expect(hook.result.current.freeResponses).toEqual({ 5: "保存済みの記述回答" });
+    expect(hook.result.current.freeResponseParts).toEqual({
+      5: { a: "保存済みの朝飲茶", b: "保存済みのシーフード店" },
+    });
     expect(hook.result.current.answeredCount).toBe(5);
   });
 
@@ -1223,13 +1227,16 @@ describe("useQuizSession state transitions", () => {
     await act(async () => hook.result.current.saveAnswers());
     expect(api.submitAnswerBatch).not.toHaveBeenCalled();
     [1, 2, 3, 4].forEach((id) => act(() => hook.result.current.select(id, 0)));
-    act(() => hook.result.current.setFreeResponse(5, "  written answer  "));
+    act(() => hook.result.current.setFreeResponsePart(5, "a", "  local breakfast  "));
+    act(() => hook.result.current.setFreeResponsePart(5, "b", "  restaurant visit  "));
     expect(hook.result.current.answeredCount).toBe(5);
     await act(async () => hook.result.current.saveAnswers());
     expect(api.submitAnswerBatch).toHaveBeenCalledWith(
       expect.objectContaining({
         submissionId,
-        answers: expect.arrayContaining([{ questionId: 5, freeText: "written answer" }]),
+        answers: expect.arrayContaining([
+          { questionId: 5, freeTextParts: { a: "local breakfast", b: "restaurant visit" } },
+        ]),
       }),
       "owner",
     );
@@ -1312,7 +1319,8 @@ describe("useQuizSession state transitions", () => {
 
   it("counts a saved free response when a selected answer is changed", async () => {
     const hook = await enterAnswering({ freeTextFifth: true });
-    act(() => hook.result.current.setFreeResponse(5, "記述回答"));
+    act(() => hook.result.current.setFreeResponsePart(5, "a", "朝飲茶"));
+    act(() => hook.result.current.setFreeResponsePart(5, "b", "シーフード"));
     act(() => hook.result.current.select(1, 2));
     expect(hook.result.current.answeredCount).toBe(2);
   });
@@ -1513,7 +1521,8 @@ describe("useQuizSession state transitions", () => {
   it("preserves the local draft and refreshes canonical state after conflict reconciliation", async () => {
     const hook = await enterAnswering({ freeTextFifth: true });
     [1, 2, 3, 4].forEach((id) => act(() => hook.result.current.select(id, 0)));
-    act(() => hook.result.current.setFreeResponse(5, "draft"));
+    act(() => hook.result.current.setFreeResponsePart(5, "a", "draft A"));
+    act(() => hook.result.current.setFreeResponsePart(5, "b", "draft B"));
     api.submitAnswerBatch.mockRejectedValueOnce(apiError(409, "conflict"));
     const persistedAnswers: AnswerSubmission["answers"] = [1, 2, 3, 4].map((questionId) => ({
       questionId,
@@ -1525,7 +1534,8 @@ describe("useQuizSession state transitions", () => {
       questionId: 5,
       answerKind: "freeText",
       selectedIndex: null,
-      freeText: "persisted",
+      freeText: null,
+      freeTextParts: { a: "persisted A", b: "persisted B" },
     });
     api.fetchAnswerSubmission.mockResolvedValueOnce(
       makeSubmission({
@@ -1544,7 +1554,9 @@ describe("useQuizSession state transitions", () => {
     );
 
     await act(async () => hook.result.current.saveAnswers());
-    expect(hook.result.current.freeResponses).toEqual({ 5: "draft" });
+    expect(hook.result.current.freeResponseParts).toEqual({
+      5: { a: "draft A", b: "draft B" },
+    });
     expect(hook.result.current.selections).toEqual({ 1: 0, 2: 0, 3: 0, 4: 0 });
     expect(hook.result.current.savedSelections).toEqual(canonicalSavedSelections);
     expect(hook.result.current.revision).toBe(3);
@@ -1563,7 +1575,8 @@ describe("useQuizSession state transitions", () => {
       questionId: 5,
       answerKind: "freeText",
       selectedIndex: null,
-      freeText: "persisted",
+      freeText: null,
+      freeTextParts: { a: "persisted A", b: "persisted B" },
     });
     api.fetchAnswerSubmission.mockResolvedValueOnce(
       makeSubmission({
@@ -1571,7 +1584,9 @@ describe("useQuizSession state transitions", () => {
       }),
     );
     await act(async () => hook.result.current.refreshSavedAnswers());
-    expect(hook.result.current.freeResponses).toEqual({ 5: "persisted" });
+    expect(hook.result.current.freeResponseParts).toEqual({
+      5: { a: "persisted A", b: "persisted B" },
+    });
     expect(hook.result.current.answeredCount).toBe(5);
   });
 
@@ -1803,7 +1818,13 @@ describe("useQuizSession state transitions", () => {
       makeSubmission: () => {
         const answers = makeSubmission().answers.map((answer, index) =>
           index === 4
-            ? { questionId: 5, answerKind: "freeText" as const, selectedIndex: null, freeText: " " }
+            ? {
+                questionId: 5,
+                answerKind: "freeText" as const,
+                selectedIndex: null,
+                freeText: null,
+                freeTextParts: { a: "valid A", b: " " },
+              }
             : answer,
         );
         return makeSubmission({ answers });

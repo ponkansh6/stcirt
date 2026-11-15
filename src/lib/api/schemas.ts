@@ -22,7 +22,28 @@ export const submitAnswerBatchSchema = z
             z
               .object({
                 questionId: z.number().int().positive(),
+                selectedIndices: z.array(z.number().int().min(0).max(7)).length(2),
+              })
+              .strict(),
+          )
+          .or(
+            z
+              .object({
+                questionId: z.number().int().positive(),
                 freeText: z.string().trim().min(1).max(1000),
+              })
+              .strict(),
+          )
+          .or(
+            z
+              .object({
+                questionId: z.number().int().positive(),
+                freeTextParts: z
+                  .object({
+                    a: z.string().trim().min(1).max(1000),
+                    b: z.string().trim().min(1).max(1000),
+                  })
+                  .strict(),
               })
               .strict(),
           ),
@@ -85,7 +106,9 @@ export const answerSubmissionSchema = answerSubmissionIdentitySchema.extend({
       questionId: z.number().int().positive(),
       answerKind: z.enum(["selected", "freeText", "legacy"]),
       selectedIndex: z.number().int().nullable(),
+      selectedIndices: z.array(z.number().int()).nullable().optional(),
       freeText: z.string().nullable(),
+      freeTextParts: z.object({ a: z.string(), b: z.string() }).strict().optional(),
     }),
   ),
   restoreIntegrity: z
@@ -100,6 +123,7 @@ export const answerSubmissionSchema = answerSubmissionIdentitySchema.extend({
                   id: z.number().int().positive(),
                   answerType: z.enum(["selected", "freeText"]),
                   choiceCount: z.number().int().nonnegative(),
+                  selectionMode: z.enum(["single", "multiple"]).optional(),
                 })
                 .strict(),
             )
@@ -122,6 +146,7 @@ export const publicQuizQuestionSchema = z
     question: z.string().min(1),
     choices: z.array(z.string().min(1)),
     answerType: z.enum(["selected", "freeText"]),
+    selectionMode: z.enum(["single", "multiple"]).optional(),
   })
   .strict()
   .superRefine((question, context) => {

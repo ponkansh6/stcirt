@@ -7,6 +7,7 @@ export interface QuizQuestion {
   question: string;
   choices: string[];
   answerType: "selected" | "freeText";
+  selectionMode?: "single" | "multiple";
 }
 
 export interface AnswerResult {

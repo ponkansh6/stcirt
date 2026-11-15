@@ -14,6 +14,7 @@ export const quizQuestionSchema = z
     question: z.string().min(1),
     choices: z.array(z.string().min(1)),
     answerType: z.enum(["selected", "freeText"]),
+    selectionMode: z.enum(["single", "multiple"]).optional(),
   })
   .strict()
   .superRefine((question, context) => {
@@ -248,7 +249,9 @@ export type AnswerBatchInput = {
   expectedRevision: number;
   answers: (
     | { questionId: number; selectedIndex: number }
+    | { questionId: number; selectedIndices: number[] }
     | { questionId: number; freeText: string }
+    | { questionId: number; freeTextParts: { a: string; b: string } }
   )[];
 };
 

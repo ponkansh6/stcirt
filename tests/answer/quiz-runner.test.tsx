@@ -34,12 +34,14 @@ function session(phase: object, overrides: Record<string, unknown> = {}) {
     quizzes,
     selections: {},
     freeResponses: {},
+    freeResponseParts: {},
     legacyAnswerIds: [],
     savedSelections: {},
     answeredCount: 0,
     restoreError: null,
     select: vi.fn(),
     setFreeResponse: vi.fn(),
+    setFreeResponsePart: vi.fn(),
     saveAnswers: vi.fn(),
     refreshSavedAnswers: vi.fn(),
     editAnswers: vi.fn(),
@@ -169,7 +171,7 @@ describe("QuizRunner batch answer sheet", () => {
   });
 
   it("renders the fifth-question free-response field, max length, and legacy guidance", () => {
-    const setFreeResponse = vi.fn();
+    const setFreeResponsePart = vi.fn();
     const freeResponseQuizzes = quizzes.map((quiz, index) =>
       index === 4
         ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
@@ -180,22 +182,26 @@ describe("QuizRunner batch answer sheet", () => {
         { kind: "answering" },
         {
           quizzes: freeResponseQuizzes,
-          freeResponses: { 5: "draft" },
+          freeResponseParts: { 5: { a: "draft A", b: "draft B" } },
           legacyAnswerIds: [5],
-          setFreeResponse,
+          setFreeResponsePart,
         },
       ),
     );
     render(<RunnerPage />);
 
-    const response = screen.getByRole("textbox", { name: "回答" });
-    expect(response).toHaveAttribute("maxLength", "1000");
-    expect(response).toHaveAttribute("rows", "6");
-    expect(response.className).toContain("freeText");
-    expect(response).toHaveValue("draft");
+    const responseA = screen.getByRole("textbox", { name: "A. 2/28 朝の食事" });
+    const responseB = screen.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" });
+    for (const response of [responseA, responseB]) {
+      expect(response).toHaveAttribute("maxLength", "1000");
+      expect(response).toHaveAttribute("rows", "3");
+      expect(response.className).toContain("freeText");
+    }
+    expect(responseA).toHaveValue("draft A");
+    expect(responseB).toHaveValue("draft B");
     expect(screen.getByText(/以前の保存回答は旧選択式です/)).toBeVisible();
-    fireEvent.change(response, { target: { value: "新しい自由記載" } });
-    expect(setFreeResponse).toHaveBeenCalledWith(5, "新しい自由記載");
+    fireEvent.change(responseA, { target: { value: "新しい回答A" } });
+    expect(setFreeResponsePart).toHaveBeenCalledWith(5, "a", "新しい回答A");
   });
 
   it("shows loading and switching states without a home link", () => {

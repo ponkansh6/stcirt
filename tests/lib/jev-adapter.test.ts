@@ -5,6 +5,7 @@ vi.mock("server-only", () => ({}));
 import {
   getRubricVersionForQuestionVersion,
   gradeFreeResponse,
+  gradeFreeResponseParts,
   isSupportedGraderVersionPair,
   JEV_QUESTION_VERSION,
   JEV_RUBRIC_VERSION,
@@ -76,6 +77,46 @@ describe("JEV score adapter", () => {
     );
   });
 
+  it("skips JEV for keyword-complete parts while grading the other part independently", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
+    respond(envelope());
+
+    await expect(
+      gradeFreeResponseParts(
+        { a: "ローカルな朝飲茶", b: "あの店で食事をしました" },
+        JEV_QUESTION_VERSION,
+        JEV_RUBRIC_VERSION,
+      ),
+    ).resolves.toMatchObject({
+      a: null,
+      b: { score: 1.5, confidence: 0.98, model: "jev-latest" },
+      model: "jev-latest",
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [, request] = vi.mocked(fetch).mock.calls[0]!;
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      state: {
+        question: "3/1 早朝に訪れた場所はどこですか？",
+        user_answer: "あの店で食事をしました",
+      },
+    });
+  });
+
+  it("skips both JEV calls when each part contains its required keyword", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      gradeFreeResponseParts(
+        { a: "ヤムチャ", b: "シーフード" },
+        JEV_QUESTION_VERSION,
+        JEV_RUBRIC_VERSION,
+      ),
+    ).resolves.toMatchObject({ a: null, b: null, model: "keyword-override" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("sends the original mixed Unicode answer to JEV without keyword normalization", async () => {
     vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
     respond(envelope());
@@ -102,7 +143,7 @@ describe("JEV score adapter", () => {
 
     try {
       await expect(gradeCurrentAnswer("回答文")).resolves.toEqual({
-        score: 0.8,
+        score: 1.5,
         confidence: 0.98,
         model: "jev-latest",
       });

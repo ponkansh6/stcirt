@@ -356,9 +356,17 @@ async function ensurePresentationSnapshot(
         return question.key === "it-literacy-005"
           ? answer?.answerKind === "legacy" || answer?.answerKind === "freeText"
           : answer?.answerKind === "selected" &&
-              answer.selectedIndex !== null &&
-              answer.selectedIndex >= 0 &&
-              answer.selectedIndex < question.choices.length;
+              (question.selectionMode === "multiple"
+                ? Array.isArray(answer.selectedIndices) &&
+                  answer.selectedIndices.length === 2 &&
+                  new Set(answer.selectedIndices).size === 2 &&
+                  answer.selectedIndices.every(
+                    (index) =>
+                      Number.isInteger(index) && index >= 0 && index < question.choices.length,
+                  )
+                : answer.selectedIndex !== null &&
+                  answer.selectedIndex >= 0 &&
+                  answer.selectedIndex < question.choices.length);
       });
     if (!hasCurrentQuestionSet || !hasCompleteValidAnswers) continue;
 
@@ -426,6 +434,23 @@ async function ensurePresentationSnapshot(
     const assessment = validatedLatest?.assessment;
     const answerSnapshot: PresentationAnswerSnapshot[] = currentQuestions.map((question) => {
       const answer = validCompleteSet ? answers?.get(question.id) : undefined;
+      let freeTextParts: { a: string; b: string } | undefined;
+      if (question.key === "it-literacy-005" && typeof answer?.freeText === "string") {
+        try {
+          const parsed: unknown = JSON.parse(answer.freeText);
+          if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            "a" in parsed &&
+            "b" in parsed &&
+            typeof parsed.a === "string" &&
+            typeof parsed.b === "string"
+          )
+            freeTextParts = { a: parsed.a, b: parsed.b };
+        } catch {
+          freeTextParts = undefined;
+        }
+      }
       const answerKind: PresentationAnswerSnapshot["answerKind"] =
         answer?.answerKind === "selected" ||
         answer?.answerKind === "freeText" ||
@@ -436,7 +461,11 @@ async function ensurePresentationSnapshot(
         questionId: question.id,
         answerKind,
         selectedIndex: answer?.selectedIndex ?? null,
-        freeText: answer?.freeText ?? null,
+        ...(answer?.selectedIndices ? { selectedIndices: answer.selectedIndices } : {}),
+        freeText: freeTextParts
+          ? `A: ${freeTextParts.a}\nB: ${freeTextParts.b}`
+          : (answer?.freeText ?? null),
+        ...(freeTextParts ? { freeTextParts } : {}),
         rawScore: question.key === "it-literacy-005" && assessment ? assessment.rawScore : null,
         normalizedScore:
           question.key === "it-literacy-005" && assessment ? assessment.normalizedScore : null,
@@ -445,7 +474,20 @@ async function ensurePresentationSnapshot(
     const score = validatedLatest
       ? currentQuestions.reduce((sum, question) => {
           if (question.key === "it-literacy-005") return sum + validatedLatest.q5Score;
-          return sum + Number(answers?.get(question.id)?.selectedIndex === question.correctIndex);
+          const answer = answers?.get(question.id);
+          if (question.selectionMode === "multiple") {
+            const selected = answer?.selectedIndices;
+            const correct = question.correctIndices ?? [];
+            return (
+              sum +
+              Number(
+                Array.isArray(selected) &&
+                  selected.length === correct.length &&
+                  selected.every((index) => correct.includes(index)),
+              )
+            );
+          }
+          return sum + Number(answer?.selectedIndex === question.correctIndex);
         }, 0)
       : 0;
     return {
@@ -505,6 +547,7 @@ async function ensurePresentationSnapshot(
       question: question.question,
       choices: question.choices,
       correctIndex: question.correctIndex,
+      correctIndices: question.correctIndices,
       explanation: question.explanation,
     })),
   );
