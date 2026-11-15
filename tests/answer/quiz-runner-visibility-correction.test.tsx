@@ -861,7 +861,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByRole("textbox", { name: "A. 2/28 朝の食事" })).toHaveValue(
       "競合後も保持する記述回答 A",
     );
-    expect(screen.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "B. 3/2 朝の食事" })).toHaveValue(
       "競合後も保持する記述回答 B",
     );
     fireEvent.click(screen.getByRole("button", { name: "修正内容を確定する" }));
@@ -877,7 +877,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getByRole("textbox", { name: "A. 2/28 朝の食事" })).toHaveValue(
       "競合後も保持する記述回答 A",
     );
-    expect(screen.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "B. 3/2 朝の食事" })).toHaveValue(
       "競合後も保持する記述回答 B",
     );
     expect(screen.getByRole("list", { name: "回答内容" })).toHaveTextContent(

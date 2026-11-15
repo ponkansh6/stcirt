@@ -83,7 +83,7 @@ describe("JEV score adapter", () => {
 
     await expect(
       gradeFreeResponseParts(
-        { a: "ローカルな朝飲茶", b: "あの店で食事をしました" },
+        { a: "新鮮なロブスター", b: "あの店で食事をしました" },
         JEV_QUESTION_VERSION,
         JEV_RUBRIC_VERSION,
       ),
@@ -96,7 +96,7 @@ describe("JEV score adapter", () => {
     const [, request] = vi.mocked(fetch).mock.calls[0]!;
     expect(JSON.parse(String(request?.body))).toMatchObject({
       state: {
-        question: "3/1 早朝に訪れた場所はどこですか？",
+        question: "3/2 朝に食べたものは何ですか？",
         user_answer: "あの店で食事をしました",
       },
     });
@@ -109,7 +109,7 @@ describe("JEV score adapter", () => {
 
     await expect(
       gradeFreeResponseParts(
-        { a: "ヤムチャ", b: "シーフード" },
+        { a: "ロブスター", b: "フレンチトースト" },
         JEV_QUESTION_VERSION,
         JEV_RUBRIC_VERSION,
       ),

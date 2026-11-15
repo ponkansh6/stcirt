@@ -1,8 +1,8 @@
 import "server-only";
 import { q5KeywordHits } from "./scoring";
 
-export const JEV_QUESTION_VERSION = "hong-kong-trip-a-b-v1";
-export const JEV_RUBRIC_VERSION = "jev-q5-independent-points-v1";
+export const JEV_QUESTION_VERSION = "hong-kong-trip-a-b-v2";
+export const JEV_RUBRIC_VERSION = "jev-q5-lobster-french-toast-independent-points-v2";
 
 export function isSupportedGraderVersionPair(
   questionVersion: string | null | undefined,
@@ -49,9 +49,8 @@ export async function gradeFreeResponse(
       model,
       state: {
         question:
-          part === "a" ? "2/28 朝に食べたものは何ですか？" : "3/1 早朝に訪れた場所はどこですか？",
-        expected_answer:
-          part === "a" ? "ローカルな朝飲茶（ヤムチャ）" : "ローカルなシーフードレストラン",
+          part === "a" ? "2/28 朝に食べたものは何ですか？" : "3/2 朝に食べたものは何ですか？",
+        expected_answer: part === "a" ? "新鮮なロブスター" : "フレンチトースト",
         user_answer: answer,
       },
       questions: {

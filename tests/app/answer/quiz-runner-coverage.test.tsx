@@ -276,14 +276,13 @@ describe("QuizRunner remaining coverage states", () => {
 
   it("groups a valid fifth-question itinerary and keeps saved A/B answers connected", () => {
     const itinerary = [
-      "香港旅行の旅程です。AとBに回答してください。",
+      "3回目の旅程に関して以下を埋めてください。香港旅行の旅程です。AとBに回答してください。",
       "",
       "2/27 昼 到着",
-      "2/28 朝 A",
+      "2/28 朝 ローカルシーフードレストランでAを食べる",
       "2/28 午前 街歩き",
-      "",
-      "3/1 早朝（6:30）B",
       "3/1 昼〜夜 ディズニー",
+      "3/2 朝 Bを食べる",
     ].join("\n");
     const quizzes = selectedQuizzes.map((quiz, index) =>
       index === 4
@@ -315,16 +314,16 @@ describe("QuizRunner remaining coverage states", () => {
     const question = document.getElementById("question-5");
     expect(question).not.toBeNull();
     expect(within(question as HTMLElement).getByRole("heading", { level: 2 })).toHaveTextContent(
-      "香港旅行の旅程です。",
+      "3回目の旅程に関して以下を埋めてください。",
     );
     expect(
-      within(question as HTMLElement).getByText("AとBに回答してください。"),
+      within(question as HTMLElement).getByText("香港旅行の旅程です。AとBに回答してください。"),
     ).toBeInTheDocument();
     expect(
       within(question as HTMLElement)
         .getAllByRole("heading", { level: 3 })
         .map((heading) => heading.textContent),
-    ).toEqual(["2/27", "2/28", "3/1"]);
+    ).toEqual(["2/27", "2/28", "3/1", "3/2"]);
     expect(within(question as HTMLElement).getByText("街歩き")).toBeInTheDocument();
     expect(within(question as HTMLElement).getByText("ディズニー")).toBeInTheDocument();
 
@@ -332,7 +331,7 @@ describe("QuizRunner remaining coverage states", () => {
       name: "A. 2/28 朝の食事",
     });
     const answerB = within(question as HTMLElement).getByRole("textbox", {
-      name: "B. 3/1 早朝（6:30）の食事",
+      name: "B. 3/2 朝の食事",
     });
     expect(answerA).toHaveValue("保存済みA");
     expect(answerB).toHaveValue("保存済みB");
@@ -349,7 +348,8 @@ describe("QuizRunner remaining coverage states", () => {
             ...quiz,
             question: {
               ...quiz.question,
-              question: "香港旅行の旅程です。\n2/28 朝 A\n3/1 早朝（6:30）B",
+              question:
+                "3回目の旅程に関して以下を埋めてください。香港旅行の旅程です。\n2/28 朝 ローカルシーフードレストランでAを食べる\n3/1 朝 飲茶を食べる\n3/2 朝 Bを食べる",
               answerType: "freeText" as const,
               choices: [],
             },
@@ -367,7 +367,7 @@ describe("QuizRunner remaining coverage states", () => {
     ).toHaveValue("");
     expect(
       within(question as HTMLElement).getByRole("textbox", {
-        name: "B. 3/1 早朝（6:30）の食事",
+        name: "B. 3/2 朝の食事",
       }),
     ).toHaveValue("");
   });
@@ -375,9 +375,9 @@ describe("QuizRunner remaining coverage states", () => {
   it("falls back to the full fifth-question text when any itinerary line is invalid", () => {
     const itinerary = [
       "香港旅行の旅程です。AとBに回答してください。",
-      "2/28 朝 A",
+      "2/28 朝 ローカルシーフードレストランでAを食べる",
       "形式に合わない行は残します。",
-      "3/1 早朝（6:30）B",
+      "3/2 朝 Bを食べる",
     ].join("\n");
     const quizzes = selectedQuizzes.map((quiz, index) =>
       index === 4
@@ -412,7 +412,7 @@ describe("QuizRunner remaining coverage states", () => {
     ).toHaveProperty("tagName", "TEXTAREA");
     expect(
       within(question as HTMLElement).getByRole("textbox", {
-        name: "B. 3/1 早朝（6:30）の食事",
+        name: "B. 3/2 朝の食事",
       }),
     ).toHaveProperty("tagName", "TEXTAREA");
   });

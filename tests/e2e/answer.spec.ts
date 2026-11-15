@@ -686,9 +686,7 @@ async function expectCenteredHitTest(locator: Locator, name: string) {
 async function answerQuestion(page: Page, id: number, choice: string) {
   if (id === 5) {
     await page.getByRole("textbox", { name: "A. 2/28 朝の食事" }).fill(`自由記載${choice}`);
-    await page
-      .getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })
-      .fill(`自由記載${choice}`);
+    await page.getByRole("textbox", { name: "B. 3/2 朝の食事" }).fill(`自由記載${choice}`);
   } else {
     await selectRadio(page, new RegExp(`Option ${id}${choice}`));
   }
@@ -1113,7 +1111,7 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   const radios = page.getByRole("radio");
   await expect(radios).toHaveCount(16);
   await expect(page.getByRole("textbox", { name: "A. 2/28 朝の食事" })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "B. 3/2 朝の食事" })).toBeVisible();
   const firstRadio = group.getByRole("radio", { name: /長文の選択肢Aです/ });
   await page.evaluate(() => document.fonts.ready);
   await expectCenteredHitTest(
@@ -1239,17 +1237,17 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
       answerType: "freeText",
       choices: [],
       question: [
-        "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
+        "3回目の旅程に関して以下を埋めてください。舜基は珠美の1年間の香港滞在中、3回香港に訪問した。",
         "2/27 昼 香港空港到着",
         "2/27 夕方 マンダリンオリエンタルホテルのスコーンを食べる",
         "2/27 夜 香港で評価の高いフォカッチャパニーニを食べる",
-        "2/28 朝 A",
+        "2/28 朝 ローカルシーフードレストランでAを食べる",
         "2/28 午前 アバディーンのボートツアーに参加",
         "2/28 昼 アバディーンでボートヌードルを食べる",
         "2/28 夜 有名なローストグースを食べる",
-        "3/1 早朝（6:30）B",
+        "3/1 朝 飲茶を食べる",
         "3/1 昼〜夜 香港ディズニーランドを楽しむ",
-        "3/2 朝 フレンチトースト（香港は旧イギリス領なので有名）を食べる",
+        "3/2 朝 Bを食べる",
         "3/2 昼 香港空港発",
       ].join("\n"),
     }),
@@ -1284,7 +1282,9 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
     await questionControls.nth(4).click();
 
     const fifthQuestion = page.locator("#question-5");
-    await expect(fifthQuestion.getByRole("heading", { level: 2 })).toBeVisible();
+    await expect(fifthQuestion.getByRole("heading", { level: 2 })).toHaveText(
+      "3回目の旅程に関して以下を埋めてください。",
+    );
     await expect(fifthQuestion.getByRole("heading", { level: 3 })).toHaveText([
       "2/27",
       "2/28",
@@ -1292,7 +1292,7 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
       "3/2",
     ]);
     const answerA = fifthQuestion.getByRole("textbox", { name: "A. 2/28 朝の食事" });
-    const answerB = fifthQuestion.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" });
+    const answerB = fifthQuestion.getByRole("textbox", { name: "B. 3/2 朝の食事" });
     await expect(answerA).toBeVisible();
     await expect(answerB).toBeVisible();
     await expectPrimaryTargetGeometry(answerA, `Q5 A input at ${width}px`);
@@ -1300,7 +1300,7 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
     const answerADay = answerA.locator("xpath=ancestor::ol/parent::section");
     const answerBDay = answerB.locator("xpath=ancestor::ol/parent::section");
     await expect(answerADay.getByRole("heading", { level: 3 })).toHaveText("2/28");
-    await expect(answerBDay.getByRole("heading", { level: 3 })).toHaveText("3/1");
+    await expect(answerBDay.getByRole("heading", { level: 3 })).toHaveText("3/2");
 
     const widths = await page.evaluate(() => ({
       document: document.documentElement.scrollWidth,
@@ -1838,14 +1838,10 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
 
   await answerQuestion(secondTab, 1, "D");
   await secondTab.getByRole("textbox", { name: "A. 2/28 朝の食事" }).fill("Bタブの未保存案 A");
-  await secondTab
-    .getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })
-    .fill("Bタブの未保存案 B");
+  await secondTab.getByRole("textbox", { name: "B. 3/2 朝の食事" }).fill("Bタブの未保存案 B");
   await answerQuestion(page, 1, "B");
   await page.getByRole("textbox", { name: "A. 2/28 朝の食事" }).fill("Aタブで保存した回答 A");
-  await page
-    .getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })
-    .fill("Aタブで保存した回答 B");
+  await page.getByRole("textbox", { name: "B. 3/2 朝の食事" }).fill("Aタブで保存した回答 B");
   await page.getByRole("button", { name: "修正内容を確定する" }).click();
   await expectResultsWaiting(page);
   expect(canonical.revision).toBe(2);
@@ -1859,7 +1855,7 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
   await expect(secondTab.getByRole("textbox", { name: "A. 2/28 朝の食事" })).toHaveValue(
     "Bタブの未保存案 A",
   );
-  await expect(secondTab.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" })).toHaveValue(
+  await expect(secondTab.getByRole("textbox", { name: "B. 3/2 朝の食事" })).toHaveValue(
     "Bタブの未保存案 B",
   );
 

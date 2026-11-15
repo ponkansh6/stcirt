@@ -1,5 +1,5 @@
-const YAMCHA_ALIASES = ["飲茶", "ヤムチャ"];
-const SEAFOOD_ALIASES = ["シーフード"];
+const LOBSTER_ALIASES = ["ロブスター"];
+const FRENCH_TOAST_ALIASES = ["フレンチトースト"];
 
 function normalizeForKeywordComparison(answer: string): string {
   return answer
@@ -17,10 +17,10 @@ function scorePart(answerText: string, jevRawScore: number, aliases: string[]): 
 
 export function q5KeywordHits(answers: { a: string; b: string }): { a: boolean; b: boolean } {
   return {
-    a: YAMCHA_ALIASES.some((alias) =>
+    a: LOBSTER_ALIASES.some((alias) =>
       normalizeForKeywordComparison(answers.a).includes(normalizeForKeywordComparison(alias)),
     ),
-    b: SEAFOOD_ALIASES.some((alias) =>
+    b: FRENCH_TOAST_ALIASES.some((alias) =>
       normalizeForKeywordComparison(answers.b).includes(normalizeForKeywordComparison(alias)),
     ),
   };
@@ -31,7 +31,7 @@ export function scoreQ5(
   jevScores: { a: number | null; b: number | null },
 ): number {
   return (
-    scorePart(answers.a, jevScores.a ?? 0, YAMCHA_ALIASES) +
-    scorePart(answers.b, jevScores.b ?? 0, SEAFOOD_ALIASES)
+    scorePart(answers.a, jevScores.a ?? 0, LOBSTER_ALIASES) +
+    scorePart(answers.b, jevScores.b ?? 0, FRENCH_TOAST_ALIASES)
   );
 }

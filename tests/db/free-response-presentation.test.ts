@@ -45,7 +45,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       [1, 2, 3, 4, 5].map((id) => ({
         id,
         key: `it-literacy-00${id}`,
-        questionVersion: id === 5 ? "hong-kong-trip-a-b-v1" : `nagano-00${id}-v1`,
+        questionVersion: id === 5 ? "hong-kong-trip-a-b-v2" : `nagano-00${id}-v1`,
         question: `Question ${id}`,
         choices: id === 5 ? [] : ["correct", "incorrect"],
         correctIndex: 0,
@@ -496,7 +496,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         "2": "nagano-002-v1",
         "3": "nagano-003-v1",
         "4": "nagano-004-v1",
-        "5": "hong-kong-trip-a-b-v1",
+        "5": "hong-kong-trip-a-b-v2",
       },
       revision: 1,
     });

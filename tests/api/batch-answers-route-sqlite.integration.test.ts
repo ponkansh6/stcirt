@@ -58,7 +58,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
       [1, 2, 3, 4, 5].map((id) => ({
         id,
         key: `it-literacy-${String(id).padStart(3, "0")}`,
-        questionVersion: id === 5 ? "hong-kong-trip-a-b-v1" : `test-v${id}`,
+        questionVersion: id === 5 ? "hong-kong-trip-a-b-v2" : `test-v${id}`,
         question: `Question ${id}`,
         choices: id === 5 ? [] : ["A", "B", "C", "D"],
         correctIndex: 0,
@@ -78,7 +78,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
       ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
       {
         questionId: 5,
-        freeTextParts: { a: "  answer from assisted participant  ", b: " seafood " },
+        freeTextParts: { a: "  新鮮なロブスター  ", b: " フレンチトースト " },
       },
     ];
     const response = await POST(
@@ -117,7 +117,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     expect(assessment).toMatchObject({
       submissionId,
       questionId: 5,
-      answerText: JSON.stringify({ a: "answer from assisted participant", b: "seafood" }),
+      answerText: JSON.stringify({ a: "新鮮なロブスター", b: "フレンチトースト" }),
       state: "pending",
     });
   });
@@ -127,7 +127,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     const operationId = "00000000-0000-4000-8000-000000000422";
     const answers = [
       ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
-      { questionId: 5, freeTextParts: { a: "answer after publication", b: "seafood" } },
+      { questionId: 5, freeTextParts: { a: "新鮮なロブスター", b: "フレンチトースト" } },
     ];
     await testDb.db
       .insert(schema.participantResultSettings)
@@ -164,7 +164,10 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     const operationId = "00000000-0000-4000-8000-000000000412";
     const answers = [
       ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
-      { questionId: 5, freeTextParts: { a: "answer before the next aggregation", b: "seafood" } },
+      {
+        questionId: 5,
+        freeTextParts: { a: "新鮮なロブスター", b: "フレンチトースト" },
+      },
     ];
 
     // Use registered source versions so both explicit snapshots are aggregatable.
@@ -253,7 +256,8 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         state: "graded",
         rawScore: 1,
         normalizedScore: 1,
-        rubricVersion: "jev-q5-independent-points-v1",
+        questionVersion: "hong-kong-trip-a-b-v2",
+        rubricVersion: "jev-q5-lobster-french-toast-independent-points-v2",
         gradedAt: new Date(),
       })
       .where(eq(schema.examAnswerAssessments.submissionId, submissionId));
@@ -270,7 +274,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         expect.objectContaining({
           questionId: 5,
           answerKind: "freeText",
-          freeTextParts: { a: "answer before the next aggregation", b: "seafood" },
+          freeTextParts: { a: "新鮮なロブスター", b: "フレンチトースト" },
         }),
       ]),
     );

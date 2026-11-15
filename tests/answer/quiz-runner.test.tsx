@@ -245,7 +245,7 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
 
     const responseA = screen.getByRole("textbox", { name: "A. 2/28 朝の食事" });
-    const responseB = screen.getByRole("textbox", { name: "B. 3/1 早朝（6:30）の食事" });
+    const responseB = screen.getByRole("textbox", { name: "B. 3/2 朝の食事" });
     for (const response of [responseA, responseB]) {
       expect(response).toHaveAttribute("maxLength", "1000");
       expect(response).toHaveAttribute("rows", "3");

@@ -83,7 +83,14 @@ type AnswerUiModel = {
   primaryAction: AnswerUiAction;
 };
 
-type TimelineEntry = { date: string; time: string; activity: string };
+type TimelineEntry = {
+  date: string;
+  time: string;
+  activity: string;
+  answerPart?: "a" | "b";
+  answerPrefix?: string;
+  answerSuffix?: string;
+};
 
 function parseTimeline(questionText: string): {
   title: string;
@@ -98,15 +105,32 @@ function parseTimeline(questionText: string): {
   const entries = lines
     .map((line) => {
       const trimmedLine = line.trim();
-      // Q5 stores the B marker directly after its time period: "早朝（6:30）B".
+      // Keep supporting legacy marker-only rows such as "朝 A".
       const answerMarker = trimmedLine.match(/^(\S+)\s+(\S+)\s*([AB])$/);
       if (answerMarker) {
-        return { date: answerMarker[1], time: answerMarker[2], activity: answerMarker[3] };
+        return {
+          date: answerMarker[1],
+          time: answerMarker[2],
+          activity: answerMarker[3],
+          answerPart: answerMarker[3] === "A" ? "a" : "b",
+        };
       }
 
       const match = trimmedLine.match(/^(\S+)\s+(\S+)\s+(.+)$/);
       if (!match) return null;
-      return { date: match[1], time: match[2], activity: match[3] };
+      const activity = match[3];
+      const embeddedAnswerMarker = activity.match(/^(.*?)\s*([AB])(を.*)$/);
+      if (embeddedAnswerMarker) {
+        return {
+          date: match[1],
+          time: match[2],
+          activity,
+          answerPart: embeddedAnswerMarker[2] === "A" ? "a" : "b",
+          answerPrefix: embeddedAnswerMarker[1],
+          answerSuffix: embeddedAnswerMarker[3],
+        };
+      }
+      return { date: match[1], time: match[2], activity };
     })
     .filter((entry): entry is TimelineEntry => entry !== null);
 
@@ -1406,15 +1430,9 @@ export default function QuizRunner() {
                                 <h3 className={styles.timelineDate}>{day.date}</h3>
                                 <ol className={styles.timelineEntries}>
                                   {day.entries.map((entry, entryIndex) => {
-                                    const part =
-                                      entry.activity === "A"
-                                        ? "a"
-                                        : entry.activity === "B"
-                                          ? "b"
-                                          : null;
+                                    const part = entry.answerPart ?? null;
                                     const partLabel = part === "a" ? "A" : "B";
-                                    const prompt =
-                                      part === "a" ? "2/28 朝の食事" : "3/1 早朝（6:30）の食事";
+                                    const prompt = part === "a" ? "2/28 朝の食事" : "3/2 朝の食事";
 
                                     return (
                                       <li
@@ -1424,36 +1442,48 @@ export default function QuizRunner() {
                                         <span className={styles.timelineTime}>{entry.time}</span>
                                         <div className={styles.timelineActivity}>
                                           {part ? (
-                                            <div className={styles.timelineAnswer}>
-                                              <label
-                                                htmlFor={`answer-${question.id}-${part}`}
-                                                aria-label={`${partLabel}. ${prompt}`}
-                                                className={styles.timelineAnswerLabel}
-                                              >
-                                                <span className={styles.answerPartLetter}>
-                                                  {partLabel}
+                                            <>
+                                              {entry.answerPrefix && (
+                                                <span className={styles.timelineDescription}>
+                                                  {entry.answerPrefix}
                                                 </span>
-                                                <span>
-                                                  {part === "a" ? "朝の食事" : "早朝の食事"}
+                                              )}
+                                              <div className={styles.timelineAnswer}>
+                                                <label
+                                                  htmlFor={`answer-${question.id}-${part}`}
+                                                  aria-label={`${partLabel}. ${prompt}`}
+                                                  className={styles.timelineAnswerLabel}
+                                                >
+                                                  <span className={styles.answerPartLetter}>
+                                                    {partLabel}
+                                                  </span>
+                                                  <span>朝の食事</span>
+                                                </label>
+                                                <input
+                                                  id={`answer-${question.id}-${part}`}
+                                                  name={`answer-${question.id}-${part}`}
+                                                  type="text"
+                                                  maxLength={1000}
+                                                  value={
+                                                    freeResponseParts[question.id]?.[part] ?? ""
+                                                  }
+                                                  onChange={(event) =>
+                                                    setFreeResponsePart(
+                                                      question.id,
+                                                      part,
+                                                      event.currentTarget.value,
+                                                    )
+                                                  }
+                                                  className={styles.timelineInput}
+                                                  disabled={isLocked}
+                                                />
+                                              </div>
+                                              {entry.answerSuffix && (
+                                                <span className={styles.timelineDescription}>
+                                                  {entry.answerSuffix}
                                                 </span>
-                                              </label>
-                                              <input
-                                                id={`answer-${question.id}-${part}`}
-                                                name={`answer-${question.id}-${part}`}
-                                                type="text"
-                                                maxLength={1000}
-                                                value={freeResponseParts[question.id]?.[part] ?? ""}
-                                                onChange={(event) =>
-                                                  setFreeResponsePart(
-                                                    question.id,
-                                                    part,
-                                                    event.currentTarget.value,
-                                                  )
-                                                }
-                                                className={styles.timelineInput}
-                                                disabled={isLocked}
-                                              />
-                                            </div>
+                                              )}
+                                            </>
                                           ) : (
                                             <span className={styles.timelineDescription}>
                                               {entry.activity}
@@ -1472,7 +1502,7 @@ export default function QuizRunner() {
                             {(
                               [
                                 ["a", "A", "2/28 朝の食事"],
-                                ["b", "B", "3/1 早朝（6:30）の食事"],
+                                ["b", "B", "3/2 朝の食事"],
                               ] as const
                             ).map(([part, label, prompt]) => (
                               <div key={part}>
@@ -1641,7 +1671,7 @@ export default function QuizRunner() {
                       text: shuffled.choices[choiceIndex],
                     }))
                   : [];
-              const questionSummary = question.id === 5 ? "3回目の旅程の穴埋め" : question.question;
+              const questionSummary = question.question;
               const freeTextCharacters = Array.from(freeText);
               const longAnswer =
                 question.answerType === "freeText" && freeTextCharacters.length > 180;
