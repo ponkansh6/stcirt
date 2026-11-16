@@ -23,6 +23,23 @@
     color 140ms var(--ease-out-soft);
 }
 
+.answerProgressSegments {
+  display: flex;
+  gap: 0.2rem;
+  margin-top: 0.25rem;
+}
+
+.answerProgressSegment {
+  width: 0.7rem;
+  height: 0.2rem;
+  border-radius: 999px;
+  background: var(--color-border-subtle);
+}
+
+.answerProgressSegmentAnswered {
+  background: var(--color-answer-accent);
+}
+
 .progressAnswered {
   border-color: var(--color-answer-accent);
   background: var(--color-answer-selection);

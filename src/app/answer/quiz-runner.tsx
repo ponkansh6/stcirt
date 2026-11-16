@@ -1265,6 +1265,28 @@ export default function QuizRunner() {
           <ol className="grid grid-cols-5 gap-2">
             {quizzes.map(({ question }, index) => {
               const current = currentQuestionId === question.id;
+              const selectedCount = multiSelections[question.id]?.length ?? 0;
+              const answerParts =
+                question.answerType === "freeText" && question.id === 5
+                  ? [
+                      {
+                        label: "A",
+                        answered: Boolean(freeResponseParts[question.id]?.a.trim()),
+                      },
+                      {
+                        label: "B",
+                        answered: Boolean(freeResponseParts[question.id]?.b.trim()),
+                      },
+                    ]
+                  : question.selectionMode === "multiple"
+                    ? [
+                        { label: "1つ目", answered: selectedCount >= 1 },
+                        { label: "2つ目", answered: selectedCount >= 2 },
+                      ]
+                    : null;
+              const progressLabel = answerParts
+                ? `。${answerParts.map(({ label, answered }) => `${label}${answered ? "回答あり" : "回答なし"}`).join("、")}`
+                : "";
               return (
                 <li key={question.id}>
                   <a
@@ -1273,11 +1295,21 @@ export default function QuizRunner() {
                       event.preventDefault();
                       jumpToQuestion(question.id);
                     }}
-                    aria-label={`第${index + 1}問へ移動`}
+                    aria-label={`第${index + 1}問へ移動${progressLabel}`}
                     aria-current={current ? "location" : undefined}
                     className={`${styles.progressLink} flex min-h-11 flex-col items-center justify-center rounded-md border border-control-border bg-surface-2 px-1 text-center text-xs font-semibold leading-tight text-muted ${current ? styles.progressCurrent : ""}`}
                   >
                     <span>第{index + 1}問</span>
+                    {answerParts && (
+                      <span aria-hidden="true" className={styles.answerProgressSegments}>
+                        {answerParts.map(({ label, answered }) => (
+                          <span
+                            key={label}
+                            className={`${styles.answerProgressSegment} ${answered ? styles.answerProgressSegmentAnswered : ""}`}
+                          />
+                        ))}
+                      </span>
+                    )}
                   </a>
                 </li>
               );
