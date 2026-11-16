@@ -1378,6 +1378,7 @@ test("@chromium generic slide entrances honor their stage", async ({ page }) => 
         const answerReveal = page.locator("[class*='answerReveal']");
         await expect(answerReveal).toHaveCSS("animation-name", /answerRevealFade/);
         await expect(naturalLayer.locator(":scope > div > div")).toHaveCSS("opacity", "1");
+        await advancePresenterTo(page, "statistics");
         await advancePresenterTo(page, "podium_preview");
         await expect(naturalLayer.locator(":scope > div > div")).toHaveCSS("opacity", "1");
       }
@@ -2640,10 +2641,21 @@ test("@chromium presenter progression never requests fullscreen and manual fulls
   await expect(page.locator("main").getByRole("button", { name: "全画面表示" })).toBeVisible();
   adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
+  await expect(page.getByRole("heading", { name: "第1問の回答統計" })).toBeVisible();
+  await adminRefresh;
+  adminRefresh = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
   await expect(page.getByRole("heading", { name: "いよいよ、結果発表です" })).toBeVisible();
   await adminRefresh;
   expect(await page.evaluate(() => window.__fullscreenRequests)).toBe(1);
-  expect(mock.actionLog).toEqual(["aggregate", "start", "position", "position", "position"]);
+  expect(mock.actionLog).toEqual([
+    "aggregate",
+    "start",
+    "position",
+    "position",
+    "position",
+    "position",
+  ]);
 });
 
 test("@chromium native presenter fullscreen API enters and exits without automatic re-entry", async ({
