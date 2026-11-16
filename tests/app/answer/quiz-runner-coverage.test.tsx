@@ -618,7 +618,7 @@ describe("QuizRunner remaining coverage states", () => {
       expect(observeMock).toHaveBeenCalledWith(header);
 
       act(flushFrames);
-      expect(screen.getByRole("link", { name: "第1問未回答へ移動" })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: "第1問へ移動" })).toHaveAttribute(
         "aria-current",
         "location",
       );
@@ -630,7 +630,7 @@ describe("QuizRunner remaining coverage states", () => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
       });
-      expect(screen.getByRole("link", { name: "第2問未回答へ移動" })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: "第2問へ移動" })).toHaveAttribute(
         "aria-current",
         "location",
       );
@@ -645,7 +645,7 @@ describe("QuizRunner remaining coverage states", () => {
         resizeHeader();
         flushFrames();
       });
-      expect(screen.getByRole("link", { name: "第3問未回答へ移動" })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: "第3問へ移動" })).toHaveAttribute(
         "aria-current",
         "location",
       );
@@ -662,7 +662,7 @@ describe("QuizRunner remaining coverage states", () => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
       });
-      expect(screen.getByRole("link", { name: "第4問未回答へ移動" })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: "第4問へ移動" })).toHaveAttribute(
         "aria-current",
         "location",
       );
@@ -676,7 +676,7 @@ describe("QuizRunner remaining coverage states", () => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
       });
-      expect(screen.getByRole("link", { name: "第5問未回答へ移動" })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: "第5問へ移動" })).toHaveAttribute(
         "aria-current",
         "location",
       );
@@ -690,7 +690,7 @@ describe("QuizRunner remaining coverage states", () => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
       });
-      expect(screen.getByRole("link", { name: "第1問未回答へ移動" })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: "第1問へ移動" })).toHaveAttribute(
         "aria-current",
         "location",
       );
@@ -706,7 +706,7 @@ describe("QuizRunner remaining coverage states", () => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
       });
-      expect(screen.getByRole("link", { name: "第1問未回答へ移動" })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: "第1問へ移動" })).toHaveAttribute(
         "aria-current",
         "location",
       );

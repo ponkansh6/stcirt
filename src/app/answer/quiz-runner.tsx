@@ -1264,13 +1264,6 @@ export default function QuizRunner() {
         <nav aria-label="設問へ移動" className={styles.progressNav}>
           <ol className="grid grid-cols-5 gap-2">
             {quizzes.map(({ question }, index) => {
-              const answered = hasAnswer(
-                question,
-                selections,
-                multiSelections,
-                freeResponses,
-                freeResponseParts,
-              );
               const current = currentQuestionId === question.id;
               return (
                 <li key={question.id}>
@@ -1280,12 +1273,11 @@ export default function QuizRunner() {
                       event.preventDefault();
                       jumpToQuestion(question.id);
                     }}
-                    aria-label={`第${index + 1}問${answered ? "✓ 済" : "未回答"}へ移動`}
+                    aria-label={`第${index + 1}問へ移動`}
                     aria-current={current ? "location" : undefined}
-                    className={`${styles.progressLink} flex min-h-11 flex-col items-center justify-center rounded-md border px-1 text-center text-xs font-semibold leading-tight ${answered ? styles.progressAnswered : "border-control-border bg-surface-2 text-muted"} ${current ? styles.progressCurrent : ""}`}
+                    className={`${styles.progressLink} flex min-h-11 flex-col items-center justify-center rounded-md border border-control-border bg-surface-2 px-1 text-center text-xs font-semibold leading-tight text-muted ${current ? styles.progressCurrent : ""}`}
                   >
                     <span>第{index + 1}問</span>
-                    {answered ? "✓ 済" : "未回答"}
                   </a>
                 </li>
               );
@@ -1670,6 +1662,15 @@ export default function QuizRunner() {
               const longAnswer =
                 question.answerType === "freeText" && freeTextCharacters.length > 180;
               const preview = longAnswer ? freeTextCharacters.slice(0, 180).join("") : freeText;
+              const freePartPreviews = [freeParts.a, freeParts.b].map((answer) => {
+                const characters = Array.from(answer);
+                return {
+                  answer,
+                  characters,
+                  isLong: characters.length > 180,
+                  preview: characters.slice(0, 180).join(""),
+                };
+              });
 
               return (
                 <li
@@ -1712,8 +1713,24 @@ export default function QuizRunner() {
                     )}
                     {question.answerType === "freeText" && question.id === 5 && answered && (
                       <div className="mt-1 space-y-2 leading-relaxed">
-                        <p className="break-words">A. {freeParts.a}</p>
-                        <p className="break-words">B. {freeParts.b}</p>
+                        {freePartPreviews.map(
+                          ({ answer, characters, isLong, preview }, partIndex) => (
+                            <div key={partIndex}>
+                              <p className="break-words whitespace-pre-wrap">
+                                {partIndex === 0 ? "A." : "B."} {preview}
+                                {isLong && "…"}
+                              </p>
+                              {isLong && (
+                                <details className="mt-1">
+                                  <summary className="min-h-11 w-fit cursor-pointer rounded-md py-2 text-sm font-semibold text-primary underline decoration-1 underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                                    全文を表示（{characters.length}文字）
+                                  </summary>
+                                  <p className="mt-1 break-words whitespace-pre-wrap">{answer}</p>
+                                </details>
+                              )}
+                            </div>
+                          ),
+                        )}
                       </div>
                     )}
                     {question.answerType === "freeText" && question.id !== 5 && answered && (

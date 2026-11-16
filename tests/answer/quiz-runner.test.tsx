@@ -161,7 +161,7 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
 
     const navigation = screen.getByRole("navigation", { name: "設問へ移動" });
-    expect(within(navigation).getByRole("link", { name: "第2問未回答へ移動" })).toBeVisible();
+    expect(within(navigation).getByRole("link", { name: "第2問へ移動" })).toBeVisible();
     const review = screen.getByRole("list", { name: "回答内容" });
     expect(within(within(review).getAllByRole("listitem")[1]!).getByText("未回答")).toBeVisible();
   });
@@ -190,7 +190,7 @@ describe("QuizRunner batch answer sheet", () => {
     ).toBeInTheDocument();
   });
 
-  it("uses the same answered status in navigation and final review", () => {
+  it("keeps navigation concise and shows answer status in the final review", () => {
     const freeResponseQuizzes = quizzes.map((quiz, index) =>
       index === 4
         ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
@@ -206,9 +206,9 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
 
     const navigation = screen.getByRole("navigation", { name: "設問へ移動" });
-    expect(within(navigation).getByRole("link", { name: "第1問✓ 済へ移動" })).toBeVisible();
-    expect(within(navigation).getByRole("link", { name: "第2問未回答へ移動" })).toBeVisible();
-    expect(within(navigation).getByRole("link", { name: "第5問未回答へ移動" })).toBeVisible();
+    expect(within(navigation).getByRole("link", { name: "第1問へ移動" })).toBeVisible();
+    expect(within(navigation).getByRole("link", { name: "第2問へ移動" })).toBeVisible();
+    expect(within(navigation).getByRole("link", { name: "第5問へ移動" })).toBeVisible();
 
     const reviewAnswers = screen.getByRole("list", { name: "回答内容" });
     const reviewItems = within(reviewAnswers).getAllByRole("listitem");
