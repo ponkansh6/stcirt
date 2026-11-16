@@ -347,6 +347,30 @@ describe("PresentationScreen", () => {
     });
   });
 
+  it("renders the initial screen while the first public projection is still unavailable", async () => {
+    const api = installApi({
+      projectionResponse: (signal) =>
+        new Promise<Response>((_resolve, reject) => {
+          const rejectAbort = () =>
+            reject(new DOMException("The request was aborted", "AbortError"));
+          if (signal?.aborted) {
+            rejectAbort();
+            return;
+          }
+          signal?.addEventListener("abort", rejectAbort, { once: true });
+        }),
+    });
+
+    render(<PresentationScreen />);
+
+    expect(await screen.findByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
+    expect(api.fetchMock).toHaveBeenCalledWith("/api/presentation", {
+      cache: "no-store",
+      credentials: "omit",
+      signal: expect.any(AbortSignal),
+    });
+  });
+
   it("keeps public projection polling active while the document is hidden", async () => {
     vi.useFakeTimers();
     const originalVisibility = Object.getOwnPropertyDescriptor(document, "visibilityState");

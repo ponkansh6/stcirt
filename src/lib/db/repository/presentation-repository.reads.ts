@@ -59,7 +59,7 @@ type AdminPresentation = {
     rank: number | null;
     isAggregationTarget: boolean;
     isReference: boolean;
-    answers?: {
+    answers: {
       questionId: number;
       answerKind: "selected" | "freeText" | "legacy" | "unanswered";
       selectedIndex: number | null;
@@ -960,12 +960,12 @@ function buildPresentationStatistics(
     AdminPresentation["questions"][number],
     "id" | "choices" | "correctIndices" | "selectionMode" | "answerType"
   >,
-  entries: { answers?: unknown[] }[],
+  entries: { answers: unknown[] }[],
   isQ5 = false,
 ): PresentationStatistics {
   const participantCount = entries.length;
   const normalizedRecords = entries.map((entry) => {
-    const matches = (entry.answers ?? []).filter(
+    const matches = entry.answers.filter(
       (answer): answer is Record<string, unknown> =>
         typeof answer === "object" &&
         answer !== null &&

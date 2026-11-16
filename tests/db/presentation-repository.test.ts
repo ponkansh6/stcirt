@@ -1882,6 +1882,64 @@ describe("presentation repository", () => {
     expect(JSON.stringify(projection)).not.toContain("rawScore");
   });
 
+  it("requires one matching question answer before counting a participant", async () => {
+    await addQuestions();
+    const participants = await Promise.all([
+      addParticipant("No matching answer"),
+      addParticipant("Wrong question answer"),
+      addParticipant("Duplicate question answers"),
+      addParticipant("One matching answer"),
+    ]);
+    for (const [index, participantId] of participants.entries()) {
+      await addSubmission(participantId, [0, 0], 1, `matching-${index}`);
+    }
+    await startWithAggregate("matching-question-statistics");
+
+    const entries = await testDb.db.select().from(schema.presentationEntries);
+    for (const entry of entries) {
+      const q1Answer = entry.answers.find((answer) => answer.questionId === 1)!;
+      let answers: unknown[];
+      switch (entry.participantId) {
+        case participants[0]:
+          answers = [null, "not-an-answer", [], { answerKind: "selected" }];
+          break;
+        case participants[1]:
+          answers = [{ ...q1Answer, questionId: 999 }];
+          break;
+        case participants[2]:
+          answers = [q1Answer, q1Answer];
+          break;
+        default:
+          answers = [null, [], { questionId: 999 }, q1Answer];
+          break;
+      }
+      await testDb.db
+        .update(schema.presentationEntries)
+        .set({ answers: answers as never })
+        .where(eq(schema.presentationEntries.participantId, entry.participantId));
+    }
+
+    const controls = await getAdminPresentationControls();
+    await setPresentationPosition(
+      "matching-question-statistics-position",
+      "statistics",
+      0,
+      controls.snapshotRevision,
+      controls.version,
+    );
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      statistics: {
+        kind: "selected",
+        participantCount: 4,
+        validRespondentCount: 1,
+        uncountableCount: 3,
+        choices: [{ count: 1 }, { count: 0 }],
+      },
+    });
+  });
+
   it("limits Drizzle SELECT-call counts to the public data required by each stage", async () => {
     await addRankFixture();
     await startWithAggregate("stage-read-counts");
@@ -2584,6 +2642,59 @@ describe("presentation repository", () => {
           answer: { kind: "freeText", value: "Private response", score: 0.5 },
         },
       ],
+    });
+  });
+
+  it("classifies a Q5 score above the normalized range as uncountable", async () => {
+    await addFreeTextProjectionFixture("it-literacy-005");
+    const [entry] = await testDb.db.select().from(schema.presentationEntries);
+    const answers = entry!.answers.map((answer) =>
+      answer.questionId === 105
+        ? {
+            ...answer,
+            freeText: "A: A answer\nB: B answer",
+            freeTextParts: { a: "A answer", b: "B answer" },
+            normalizedScore: 3,
+          }
+        : answer,
+    );
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({ answers: answers as never })
+      .where(eq(schema.presentationEntries.participantId, 1));
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ state: "statistics" })
+      .where(eq(schema.presentationSessions.id, 1));
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      statistics: {
+        kind: "freeText",
+        participantCount: 1,
+        gradedCount: 0,
+        ungradedCount: 0,
+        uncountableCount: 1,
+      },
+    });
+  });
+
+  it("handles a missing current-source explanation in an admin deck", async () => {
+    await addFreeTextProjectionFixture("another-free-text-question");
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ explanation: null })
+      .where(eq(schema.examQuestions.id, 105));
+    await testDb.db
+      .update(schema.presentationQuestions)
+      .set({ explanation: "   " })
+      .where(eq(schema.presentationQuestions.sourceQuestionId, 105));
+
+    const deck = await getAdminPresentationDeck();
+    const answerSlide = deck.slides.find(({ state }) => state === "answer");
+    expect(answerSlide?.projection).toMatchObject({
+      state: "answer",
+      question: { expectedAnswer: null },
     });
   });
 
