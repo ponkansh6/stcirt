@@ -25,6 +25,7 @@ import {
   getAnswerSubmission,
   getLatestAnswerSubmission,
   getStats,
+  normalizeSelectedChoiceIndices,
   recordAnswer,
   saveAnswerSubmission,
 } from "@/lib/db/repository/answer-repository";
@@ -150,6 +151,17 @@ describe("answer-repository", () => {
 
   afterEach(() => {
     testDb.cleanup();
+  });
+
+  it("rejects unsupported selection modes when normalizing choice indices", () => {
+    expect(
+      normalizeSelectedChoiceIndices({
+        selectionMode: "unsupported" as unknown as "single" | "multiple" | null,
+        choiceCount: 4,
+        selectedIndex: 1,
+        selectedIndices: null,
+      }),
+    ).toBeNull();
   });
 
   it("returns null when completion visibility is requested for a missing submission", async () => {

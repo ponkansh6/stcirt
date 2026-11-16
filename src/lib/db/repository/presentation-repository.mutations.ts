@@ -550,7 +550,8 @@ async function ensurePresentationSnapshot(
       choices: question.choices,
       correctIndex: question.correctIndex,
       correctIndices: question.correctIndices,
-      selectionMode: question.selectionMode === "multiple" ? "multiple" : "single",
+      selectionMode:
+        question.selectionMode === "multiple" ? ("multiple" as const) : ("single" as const),
       explanation: question.explanation,
     })),
   );

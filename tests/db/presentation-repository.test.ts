@@ -36,10 +36,29 @@ import {
   getPresentationOperationDiagnostics,
   PresentationOperationError,
 } from "@/lib/presentation/operation-diagnostics";
+import {
+  assertStatisticsCategoryTotal,
+  hasOutOfRangeStatisticsIndex,
+} from "@/lib/db/repository/presentation-repository.reads";
 
 type PresentationOperationRecoveryResult =
   | Awaited<ReturnType<typeof operatePresentation>>
   | Awaited<ReturnType<typeof operatePresentationControls>>;
+
+describe("presentation statistics guards", () => {
+  it("detects selected indices outside the available choices", () => {
+    expect(hasOutOfRangeStatisticsIndex([0, 1], 2)).toBe(false);
+    expect(hasOutOfRangeStatisticsIndex([-1], 2)).toBe(true);
+    expect(hasOutOfRangeStatisticsIndex([2], 2)).toBe(true);
+  });
+
+  it("rejects category totals that do not match the participant count", () => {
+    expect(() => assertStatisticsCategoryTotal(2, [1, 1])).not.toThrow();
+    expect(() => assertStatisticsCategoryTotal(2, [1, 0])).toThrow(
+      "Presentation statistics categories do not match the participant count",
+    );
+  });
+});
 
 function commitWinnerThenRaiseAdapterUniqueConflict(
   operationId: string,

@@ -845,6 +845,18 @@ type NormalizedStatisticsAnswer =
   | { kind: "freeText"; score: number | null }
   | { kind: "unavailable" };
 
+export function hasOutOfRangeStatisticsIndex(indices: number[], choiceCount: number): boolean {
+  return indices.some((index) => index < 0 || index >= choiceCount);
+}
+
+export function assertStatisticsCategoryTotal(
+  participantCount: number,
+  categoryCounts: readonly number[],
+): void {
+  if (categoryCounts.reduce((sum, categoryCount) => sum + categoryCount, 0) !== participantCount)
+    throw new Error("Presentation statistics categories do not match the participant count");
+}
+
 function normalizeStatisticsAnswer(
   value: unknown,
   isQ5: boolean,
@@ -1003,15 +1015,18 @@ function buildPresentationStatistics(
         uncountableCount += 1;
         continue;
       }
-      if (answer.indices.some((index) => index < 0 || index >= counts.length)) {
+      if (hasOutOfRangeStatisticsIndex(answer.indices, counts.length)) {
         uncountableCount += 1;
         continue;
       }
       validRespondentCount += 1;
       for (const index of answer.indices) counts[index] = counts[index]! + 1;
     }
-    if (validRespondentCount + uncountableCount + unansweredCount !== participantCount)
-      throw new Error("Presentation statistics categories do not match the participant count");
+    assertStatisticsCategoryTotal(participantCount, [
+      validRespondentCount,
+      uncountableCount,
+      unansweredCount,
+    ]);
     return {
       kind: "selected",
       multiple,
@@ -1044,8 +1059,12 @@ function buildPresentationStatistics(
     ranges[bucket]!.count += 1;
   }
   const gradedCount = ranges.reduce((sum, range) => sum + range.count, 0);
-  if (gradedCount + ungradedCount + uncountableCount + unansweredCount !== participantCount)
-    throw new Error("Presentation statistics categories do not match the participant count");
+  assertStatisticsCategoryTotal(participantCount, [
+    gradedCount,
+    ungradedCount,
+    uncountableCount,
+    unansweredCount,
+  ]);
   return {
     kind: "freeText",
     participantCount,

@@ -663,6 +663,58 @@ describe("PresentationScreen", () => {
     expect(screen.getByRole("list")).toHaveTextContent("A海B山");
   });
 
+  it("renders selected-answer statistics rows", async () => {
+    installApi({
+      projection: {
+        state: "statistics",
+        question,
+        statistics: {
+          kind: "selected",
+          multiple: false,
+          participantCount: 3,
+          validRespondentCount: 3,
+          uncountableCount: 0,
+          choices: [
+            { label: "海", count: 2 },
+            { label: "山", count: 1 },
+          ],
+        },
+      },
+      admin: controls({ state: "statistics" }),
+    });
+
+    render(<PresentationScreen />);
+
+    expect(await screen.findByRole("heading", { name: question.question })).toBeInTheDocument();
+    const rows = screen.getByRole("list", { name: "選択肢ごとの回答人数" });
+    expect(within(rows).getAllByRole("listitem")).toHaveLength(2);
+    expect(rows).toHaveTextContent("海2 人山1 人");
+  });
+
+  it("renders free-response score-range statistics rows", async () => {
+    installApi({
+      projection: {
+        state: "statistics",
+        question,
+        statistics: {
+          kind: "freeText",
+          participantCount: 2,
+          gradedCount: 1,
+          ungradedCount: 1,
+          uncountableCount: 0,
+          ranges: [{ label: "0–2 点", count: 1 }],
+        },
+      },
+      admin: controls({ state: "statistics" }),
+    });
+
+    render(<PresentationScreen />);
+
+    expect(await screen.findByRole("heading", { name: question.question })).toBeInTheDocument();
+    const rows = screen.getByRole("list", { name: "得点区間ごとの人数" });
+    expect(within(rows).getByRole("listitem")).toHaveTextContent("0–2 点1 人");
+  });
+
   it("renders the selected-answer review and explanation without a presentation mode", async () => {
     installApi({
       projection: {

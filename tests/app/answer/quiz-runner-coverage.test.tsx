@@ -341,6 +341,31 @@ describe("QuizRunner remaining coverage states", () => {
     expect(setFreeResponsePart).toHaveBeenNthCalledWith(2, 5, "b", "更新したB");
   });
 
+  it("keeps supporting legacy marker-only itinerary rows", () => {
+    const quizzes = selectedQuizzes.map((quiz, index) =>
+      index === 4
+        ? {
+            ...quiz,
+            question: {
+              ...quiz.question,
+              question: "旅程を完成させてください。\n2/28 朝 A",
+              answerType: "freeText" as const,
+              choices: [],
+            },
+          }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(session({ kind: "answering" }, { quizzes }));
+
+    render(<QuizRunner />);
+
+    const question = document.getElementById("question-5");
+    expect(question).not.toBeNull();
+    expect(
+      within(question as HTMLElement).getByRole("textbox", { name: "A. 2/28 朝の食事" }),
+    ).toBeInTheDocument();
+  });
+
   it("renders empty inline A/B fields when no saved free-response parts are available", () => {
     const quizzes = selectedQuizzes.map((quiz, index) =>
       index === 4
