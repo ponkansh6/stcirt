@@ -1540,6 +1540,7 @@ export default function PresentationScreen({
       return data.question ? { key: `${state}:${String(data.question.id)}` } : null;
     }
     if (state === "statistics") {
+      /* v8 ignore next -- validated statistics projections always include a question. */
       return data.question ? { key: `statistics:${String(data.question.id)}` } : null;
     }
     if (state === "not_started") {

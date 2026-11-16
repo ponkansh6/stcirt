@@ -36,22 +36,13 @@ import {
   getPresentationOperationDiagnostics,
   PresentationOperationError,
 } from "@/lib/presentation/operation-diagnostics";
-import {
-  assertStatisticsCategoryTotal,
-  hasOutOfRangeStatisticsIndex,
-} from "@/lib/db/repository/presentation-repository.reads";
+import { assertStatisticsCategoryTotal } from "@/lib/db/repository/presentation-repository.reads";
 
 type PresentationOperationRecoveryResult =
   | Awaited<ReturnType<typeof operatePresentation>>
   | Awaited<ReturnType<typeof operatePresentationControls>>;
 
 describe("presentation statistics guards", () => {
-  it("detects selected indices outside the available choices", () => {
-    expect(hasOutOfRangeStatisticsIndex([0, 1], 2)).toBe(false);
-    expect(hasOutOfRangeStatisticsIndex([-1], 2)).toBe(true);
-    expect(hasOutOfRangeStatisticsIndex([2], 2)).toBe(true);
-  });
-
   it("rejects category totals that do not match the participant count", () => {
     expect(() => assertStatisticsCategoryTotal(2, [1, 1])).not.toThrow();
     expect(() => assertStatisticsCategoryTotal(2, [1, 0])).toThrow(
@@ -1832,12 +1823,13 @@ describe("presentation repository", () => {
     });
   });
 
-  it("classifies mixed unanswered, selected and legacy answer shapes as uncountable", async () => {
+  it("classifies mixed malformed answer shapes as uncountable", async () => {
     await addQuestions();
     const participants = await Promise.all([
       addParticipant("malformed-unanswered"),
       addParticipant("malformed-selected"),
       addParticipant("malformed-legacy"),
+      addParticipant("malformed-extra-field"),
     ]);
     for (const [index, participantId] of participants.entries()) {
       await addSubmission(participantId, [0, 0], 1, `malformed-${index}`);
@@ -1860,7 +1852,8 @@ describe("presentation repository", () => {
                 rawScore: 2,
                 normalizedScore: 1,
               };
-            return { ...answer, answerKind: "legacy" as const };
+            if (index === 2) return { ...answer, answerKind: "legacy" as const };
+            return { ...answer, unexpectedField: true };
           }),
         })
         .where(eq(schema.presentationEntries.participantId, entry.participantId));
@@ -1879,9 +1872,9 @@ describe("presentation repository", () => {
       state: "statistics",
       statistics: {
         kind: "selected",
-        participantCount: 3,
+        participantCount: 4,
         validRespondentCount: 0,
-        uncountableCount: 3,
+        uncountableCount: 4,
         choices: [{ count: 0 }, { count: 0 }],
       },
     });

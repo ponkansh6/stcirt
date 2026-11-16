@@ -845,10 +845,6 @@ type NormalizedStatisticsAnswer =
   | { kind: "freeText"; score: number | null }
   | { kind: "unavailable" };
 
-export function hasOutOfRangeStatisticsIndex(indices: number[], choiceCount: number): boolean {
-  return indices.some((index) => index < 0 || index >= choiceCount);
-}
-
 export function assertStatisticsCategoryTotal(
   participantCount: number,
   categoryCounts: readonly number[],
@@ -858,16 +854,13 @@ export function assertStatisticsCategoryTotal(
 }
 
 function normalizeStatisticsAnswer(
-  value: unknown,
+  answer: Record<string, unknown>,
   isQ5: boolean,
   question: Pick<
     AdminPresentation["questions"][number],
     "id" | "choices" | "selectionMode" | "answerType"
   >,
 ): NormalizedStatisticsAnswer {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return { kind: "unavailable" };
-  const answer = value as Record<string, unknown>;
   const has = (key: string) => Object.prototype.hasOwnProperty.call(answer, key);
   if (
     answer.questionId !== question.id ||
@@ -973,7 +966,7 @@ function buildPresentationStatistics(
   const participantCount = entries.length;
   const normalizedRecords = entries.map((entry) => {
     const matches = (entry.answers ?? []).filter(
-      (answer) =>
+      (answer): answer is Record<string, unknown> =>
         typeof answer === "object" &&
         answer !== null &&
         !Array.isArray(answer) &&
@@ -1012,10 +1005,6 @@ function buildPresentationStatistics(
         continue;
       }
       if (answer.kind !== "selected" || legacyModeConflict) {
-        uncountableCount += 1;
-        continue;
-      }
-      if (hasOutOfRangeStatisticsIndex(answer.indices, counts.length)) {
         uncountableCount += 1;
         continue;
       }

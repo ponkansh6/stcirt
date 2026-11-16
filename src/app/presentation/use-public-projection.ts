@@ -191,8 +191,7 @@ export function isProjectionData(payload: unknown): payload is ProjectionData {
       return false;
     if (stats.kind === "selected" && stats.multiple !== null && typeof stats.multiple !== "boolean")
       return false;
-    const counts =
-      stats.kind === "selected" ? stats.choices : stats.kind === "freeText" ? stats.ranges : null;
+    const counts = stats.kind === "selected" ? stats.choices : stats.ranges;
     return (
       Array.isArray(counts) &&
       counts.every(

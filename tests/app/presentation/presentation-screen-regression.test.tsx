@@ -691,6 +691,35 @@ describe("PresentationScreen", () => {
     expect(rows).toHaveTextContent("海2 人山1 人");
   });
 
+  it.each([
+    ["複数選択", true, "複数選択では、棒の合計が回答者数を超える場合があります。"],
+    ["旧形式", null, "旧形式の集計データのため、選択形式を判定できません。"],
+  ] as const)(
+    "explains selected-answer statistics for %s",
+    async (_label, multiple, explanation) => {
+      installApi({
+        projection: {
+          state: "statistics",
+          question,
+          statistics: {
+            kind: "selected",
+            multiple,
+            participantCount: 3,
+            validRespondentCount: 3,
+            uncountableCount: 0,
+            choices: [{ label: "海", count: 2 }],
+          },
+        },
+        admin: controls({ state: "statistics" }),
+      });
+
+      render(<PresentationScreen />);
+
+      const statisticsFootnote = await screen.findByText(/有効回答 3 人・集計不可 0 人/);
+      expect(statisticsFootnote).toHaveTextContent(explanation);
+    },
+  );
+
   it("renders free-response score-range statistics rows", async () => {
     installApi({
       projection: {
@@ -879,6 +908,12 @@ describe("PresentationScreen", () => {
 
   it("shows the empty-winner state", async () => {
     installApi({ projection: { state: "first", winners: [] } });
+    render(<PresentationScreen />);
+    expect(await screen.findByText("該当する受賞者はいません")).toBeInTheDocument();
+  });
+
+  it("shows the empty-winner state when a projection omits winners", async () => {
+    installApi({ projection: { state: "first" } });
     render(<PresentationScreen />);
     expect(await screen.findByText("該当する受賞者はいません")).toBeInTheDocument();
   });
