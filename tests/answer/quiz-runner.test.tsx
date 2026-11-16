@@ -224,6 +224,34 @@ describe("QuizRunner batch answer sheet", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows a shortened preview and expandable full text for long Q5 answers", () => {
+    const longAnswer = "A".repeat(181);
+    const freeResponseQuizzes = quizzes.map((quiz, index) =>
+      index === 4
+        ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        {
+          quizzes: freeResponseQuizzes,
+          freeResponseParts: { 5: { a: longAnswer, b: "short B" } },
+        },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    const review = screen.getByRole("list", { name: "回答内容" });
+    const q5Review = within(review).getAllByRole("listitem")[4]!;
+    expect(within(q5Review).getByText(`A. ${longAnswer.slice(0, 180)}…`)).toBeVisible();
+    const details = q5Review.querySelector("details");
+    expect(details).not.toBeNull();
+    expect(within(details as HTMLElement).getByText("全文を表示（181文字）")).toBeInTheDocument();
+    expect(within(details as HTMLElement).getByText(longAnswer)).toBeInTheDocument();
+  });
+
   it("renders the fifth-question free-response field, max length, and legacy guidance", () => {
     const setFreeResponsePart = vi.fn();
     const freeResponseQuizzes = quizzes.map((quiz, index) =>
