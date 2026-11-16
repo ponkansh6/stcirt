@@ -140,10 +140,12 @@ const expectedSchemaManifest = [
       "session_id",
       "position",
       "source_question_id",
+      "source_question_key",
       "question",
       "choices",
       "correct_index",
       "correct_indices",
+      "selection_mode",
       "explanation",
     ],
   },
@@ -202,7 +204,7 @@ describe("production schema parser", () => {
     const parsed = parseExpectedSchema(schema);
 
     expect(parsed).toHaveLength(19);
-    expect(parsed.reduce((count, table) => count + table.columns.length, 0)).toBe(119);
+    expect(parsed.reduce((count, table) => count + table.columns.length, 0)).toBe(121);
     expect(normalizeManifest(parsed)).toEqual(normalizeManifest(expectedSchemaManifest));
   });
 });

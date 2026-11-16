@@ -26,7 +26,14 @@ const responseBoundaryCases = [
   },
   {
     state: "statistics" as const,
-    question: { id: 1, ordinal: 1, total: 1, question: "選択問題", choices: ["A", "B"] },
+    question: {
+      id: 1,
+      ordinal: 1,
+      total: 1,
+      question: "選択問題",
+      choices: ["A", "B"],
+      answerType: "selected" as const,
+    },
     statistics: {
       kind: "selected" as const,
       multiple: true,

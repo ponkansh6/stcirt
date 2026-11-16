@@ -1522,8 +1522,7 @@ export default function PresentationScreen({
     };
   }, [data, loadingPresenterDeck]);
 
-  const winners =
-    data && data.state !== "question" && data.state !== "answer" ? (data.winners ?? []) : [];
+  const winners: Winner[] = data && "winners" in data ? (data.winners ?? []) : [];
   const showFullscreenButton = presenterRequested && Boolean(adminControls) && !isFullscreen;
   const winnerGroups = winners.reduce<{ rank: number; winners: Winner[] }[]>((groups, winner) => {
     let group = groups.find((candidate) => candidate.rank === winner.rank);

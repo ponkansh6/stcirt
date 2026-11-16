@@ -103,7 +103,7 @@ function parseTimeline(questionText: string): {
   const description = sentenceBreak >= 0 ? intro.slice(sentenceBreak + 1).trim() : "";
   const lines = rawLines.filter((line) => line.trim().length > 0);
   const entries = lines
-    .map((line) => {
+    .map((line): TimelineEntry | null => {
       const trimmedLine = line.trim();
       // Keep supporting legacy marker-only rows such as "朝 A".
       const answerMarker = trimmedLine.match(/^(\S+)\s+(\S+)\s*([AB])$/);
