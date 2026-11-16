@@ -2641,7 +2641,7 @@ test("@chromium presenter progression never requests fullscreen and manual fulls
   await expect(page.locator("main").getByRole("button", { name: "全画面表示" })).toBeVisible();
   adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
-  await expect(page.getByRole("heading", { name: "第1問の回答統計" })).toBeVisible();
+  await expect(page.getByText("第1問の回答統計", { exact: true })).toBeVisible();
   await adminRefresh;
   adminRefresh = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
