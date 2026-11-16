@@ -942,6 +942,23 @@ describe("PresentationScreen", () => {
     expect(await screen.findByText("該当する受賞者はいません")).toBeInTheDocument();
   });
 
+  it("shows the empty-winner state when winners is present but undefined", async () => {
+    const payload = { state: "first", winners: undefined };
+    const projectionResponse = async () => {
+      const result = new Response(null, { status: 200 });
+      Object.defineProperty(result, "json", {
+        value: vi.fn().mockResolvedValue(payload),
+      });
+      return result;
+    };
+    installApi({ projectionResponse });
+
+    render(<PresentationScreen />);
+
+    expect(Object.hasOwn(payload, "winners")).toBe(true);
+    expect(await screen.findByText("該当する受賞者はいません")).toBeInTheDocument();
+  });
+
   it("does not expose presenter controls when the session is anonymous", async () => {
     installApi({ authenticated: false });
     render(<PresentationScreen presenterRequested />);
