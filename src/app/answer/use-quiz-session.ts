@@ -24,7 +24,11 @@ import {
 } from "@/lib/api/client";
 import type { QuizQuestion } from "@/types/quiz";
 import { shuffleChoices } from "@/lib/shuffle";
-import { EXAM_QUESTION_COUNT, QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
+import {
+  EXAM_QUESTION_COUNT,
+  MAX_MULTIPLE_CHOICE_OPTIONS,
+  QUIZ_CHOICES_PER_QUESTION,
+} from "@/lib/constants";
 import {
   clearAssistedDraft,
   readAssistedDraft,
@@ -128,10 +132,14 @@ function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
     new Set(questionIds).size !== EXAM_QUESTION_COUNT ||
     new Set(answerIds).size !== EXAM_QUESTION_COUNT ||
     questions.some(({ id }, index) => index > 0 && id <= questions[index - 1]!.id) ||
-    questions.some(({ answerType, choiceCount }) =>
+    questions.some(({ answerType, choiceCount, selectionMode }) =>
       answerType === "freeText"
         ? choiceCount !== 0
-        : choiceCount < 2 || choiceCount > QUIZ_CHOICES_PER_QUESTION,
+        : choiceCount < 2 ||
+          choiceCount >
+            (selectionMode === "multiple"
+              ? MAX_MULTIPLE_CHOICE_OPTIONS
+              : QUIZ_CHOICES_PER_QUESTION),
     ) ||
     answerIds.some((id) => !questionIds.includes(id))
   ) {

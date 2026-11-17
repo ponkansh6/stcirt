@@ -2178,7 +2178,31 @@ describe("useQuizSession state transitions", () => {
     api.fetchAnswerBootstrap
       .mockResolvedValueOnce(makeBootstrap("assisted"))
       .mockRejectedValueOnce(new Error("owner reload failed"));
-    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(makeSubmission());
+    const eightChoiceOwnerSubmission = makeSubmission({
+      answers: [
+        { questionId: 1, answerKind: "selected", selectedIndex: 0, freeText: null },
+        {
+          questionId: 2,
+          answerKind: "selected",
+          selectedIndex: null,
+          selectedIndices: [0, 7],
+          freeText: null,
+        },
+        { questionId: 3, answerKind: "selected", selectedIndex: 0, freeText: null },
+        { questionId: 4, answerKind: "selected", selectedIndex: 0, freeText: null },
+        { questionId: 5, answerKind: "selected", selectedIndex: 0, freeText: null },
+      ],
+      restoreIntegrity: {
+        status: "complete",
+        questions: [1, 2, 3, 4, 5].map((id) => ({
+          id,
+          answerType: "selected",
+          choiceCount: id === 2 ? 8 : 4,
+          ...(id === 2 ? { selectionMode: "multiple" as const } : {}),
+        })),
+      },
+    });
+    api.fetchLatestAnswerSubmission.mockResolvedValueOnce(eightChoiceOwnerSubmission);
     api.submitAnswerBatch.mockImplementationOnce(async ({ submissionId: currentId }) => ({
       submissionId: currentId,
       revision: 1,

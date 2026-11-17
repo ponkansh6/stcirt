@@ -444,6 +444,45 @@ describe("answer-repository", () => {
       expect(latest?.answers).toHaveLength(5);
     });
 
+    it("restores two selections from the current eight-choice multiple question", async () => {
+      const questionIds = await insertFiveQuestions();
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({
+          choices: ["A", "B", "C", "D", "E", "F", "G", "H"],
+          selectionMode: "multiple",
+        })
+        .where(eq(schema.examQuestions.id, questionIds[1]!));
+      const participantId = await insertParticipant();
+      await insertSubmission({ id: "eight-choice-latest", participantId, questionIds });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((questionId) => ({
+          submissionId: "eight-choice-latest",
+          questionId,
+          selectedIndex: questionId === 2 ? null : 0,
+          selectedIndices: questionId === 2 ? [0, 7] : null,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      const latest = await getLatestAnswerSubmission(participantId);
+
+      expect(latest?.restoreIntegrity).toMatchObject({
+        status: "complete",
+        questions: expect.arrayContaining([
+          { id: 2, answerType: "selected", choiceCount: 8, selectionMode: "multiple" },
+        ]),
+      });
+      expect(latest?.answers).toContainEqual({
+        questionId: 2,
+        answerKind: "selected",
+        selectedIndex: null,
+        selectedIndices: [0, 7],
+        freeText: null,
+      });
+    });
+
     it("rejects duplicate raw rows returned by the repository transaction", async () => {
       const questionIds = [1, 2, 3, 4, 5];
       const duplicateRows = [1, 1, 2, 3, 4].map((questionId) => ({

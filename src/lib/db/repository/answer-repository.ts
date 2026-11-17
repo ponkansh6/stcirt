@@ -19,7 +19,7 @@ import { scoreQ5 } from "@/lib/jev/scoring";
 import { randomUUID } from "node:crypto";
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
 import { isSqliteLockContention } from "./sqlite-error-classification";
-import { QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
+import { MAX_MULTIPLE_CHOICE_OPTIONS, QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
 
 export type BatchAnswer =
   | { questionId: number; selectedIndex: number }
@@ -359,10 +359,14 @@ export async function getLatestAnswerSubmission(participantId: number) {
       storedAnswers.length === 5 &&
       new Set(storedIds).size === 5 &&
       restoreQuestions.length === 5 &&
-      restoreQuestions.every(({ answerType, choiceCount }) =>
+      restoreQuestions.every(({ answerType, choiceCount, selectionMode }) =>
         answerType === "freeText"
           ? choiceCount === 0
-          : choiceCount >= 2 && choiceCount <= QUIZ_CHOICES_PER_QUESTION,
+          : choiceCount >= 2 &&
+            choiceCount <=
+              (selectionMode === "multiple"
+                ? MAX_MULTIPLE_CHOICE_OPTIONS
+                : QUIZ_CHOICES_PER_QUESTION),
       ) &&
       questionIds.every((id, index) => id === currentIds[index]) &&
       storedIds.every((id) => questionIds.includes(id)) &&
