@@ -77,6 +77,59 @@ describe("JEV score adapter", () => {
     );
   });
 
+  it("sends one criterion per score level and accepts the provider's highest level", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const request = JSON.parse(String(init?.body));
+        const criteria = request.questions.answer_match.criteria as string[];
+        const highestScore = criteria.length - 1;
+
+        return new Response(
+          JSON.stringify({
+            model: "jev-latest",
+            answers: {
+              answer_match: {
+                type: "score",
+                score: highestScore,
+                confidence: 0.98,
+                legend: Object.fromEntries(
+                  criteria.map((criterion, score) => [String(score), criterion]),
+                ),
+                probabilities: Object.fromEntries(
+                  criteria.map((_, score) => [String(score), score === highestScore ? 1 : 0]),
+                ),
+              },
+            },
+            usage: { input_tokens: 130, output_tokens: 18 },
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    await expect(gradeCurrentAnswer("回答文")).resolves.toEqual({
+      score: 9,
+      confidence: 0.98,
+      model: "jev-latest",
+    });
+
+    const [, request] = vi.mocked(fetch).mock.calls[0]!;
+    expect(JSON.parse(String(request?.body)).questions.answer_match.criteria).toEqual([
+      "0: 内容がない、または誤り",
+      "1: 正しい意味情報がごく一部のみ",
+      "2: 正しい意味情報が一部のみ",
+      "3: 部分的に正しいが大きな不足がある",
+      "4: 部分的に正しく、重要な不足がある",
+      "5: 概ね正しいが重要な曖昧さや不足がある",
+      "6: 概ね正しく、軽い不足が残る",
+      "7: 正しく、軽い不足のみ",
+      "8: ほぼ完全に正しい",
+      "9: 期待される意味を正確かつ十分に満たす",
+    ]);
+  });
+
   it("skips JEV for keyword-complete parts while grading the other part independently", async () => {
     vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
     respond(envelope());
