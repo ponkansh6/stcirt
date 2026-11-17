@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import Image from "next/image";
@@ -136,6 +137,23 @@ function parseTimeline(questionText: string): {
 
   if (entries.length === 0 || entries.length !== lines.length) return null;
   return { title, description, entries };
+}
+
+function blurOnQuestionFiveEnter(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
+  if (
+    event.key !== "Enter" ||
+    event.shiftKey ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.nativeEvent.isComposing ||
+    event.nativeEvent.keyCode === 229
+  ) {
+    return;
+  }
+
+  event.preventDefault();
+  event.currentTarget.blur();
 }
 
 function groupTimelineEntries(entries: TimelineEntry[]) {
@@ -1505,6 +1523,7 @@ export default function QuizRunner() {
                                                       event.currentTarget.value,
                                                     )
                                                   }
+                                                  onKeyDown={blurOnQuestionFiveEnter}
                                                   className={styles.timelineInput}
                                                   disabled={isLocked}
                                                 />
@@ -1556,6 +1575,7 @@ export default function QuizRunner() {
                                       event.currentTarget.value,
                                     )
                                   }
+                                  onKeyDown={blurOnQuestionFiveEnter}
                                   className={`answer-free-text min-h-24 w-full resize-y rounded-lg border border-control-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-answer-accent focus-visible:ring-2 focus-visible:ring-answer-accent/30 ${styles.freeText}`}
                                   disabled={isLocked}
                                 />
@@ -1702,7 +1722,19 @@ export default function QuizRunner() {
                       text: shuffled.choices[choiceIndex],
                     }))
                   : [];
-              const questionSummary = question.question;
+              const questionSummary = question.id === 5 ? "3回目の旅程" : question.question;
+              const timelineAnswerDescriptions =
+                question.id === 5 && question.answerType === "freeText"
+                  ? parseTimeline(question.question)?.entries.reduce<
+                      Partial<Record<"a" | "b", string>>
+                    >((descriptions, entry) => {
+                      if (entry.answerPart) {
+                        descriptions[entry.answerPart] =
+                          `${entry.date} ${entry.time} ${entry.activity}`;
+                      }
+                      return descriptions;
+                    }, {})
+                  : undefined;
               const freeTextCharacters = Array.from(freeText);
               const longAnswer =
                 question.answerType === "freeText" && freeTextCharacters.length > 180;
@@ -1759,22 +1791,31 @@ export default function QuizRunner() {
                     {question.answerType === "freeText" && question.id === 5 && answered && (
                       <div className="mt-1 space-y-2 leading-relaxed">
                         {freePartPreviews.map(
-                          ({ answer, characters, isLong, preview }, partIndex) => (
-                            <div key={partIndex}>
-                              <p className="break-words whitespace-pre-wrap">
-                                {partIndex === 0 ? "A." : "B."} {preview}
-                                {isLong && "…"}
-                              </p>
-                              {isLong && (
-                                <details className="mt-1">
-                                  <summary className="min-h-11 w-fit cursor-pointer rounded-md py-2 text-sm font-semibold text-primary underline decoration-1 underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-                                    全文を表示（{characters.length}文字）
-                                  </summary>
-                                  <p className="mt-1 break-words whitespace-pre-wrap">{answer}</p>
-                                </details>
-                              )}
-                            </div>
-                          ),
+                          ({ answer, characters, isLong, preview }, partIndex) => {
+                            const part = partIndex === 0 ? "a" : "b";
+                            const itineraryDescription = timelineAnswerDescriptions?.[part];
+                            return (
+                              <div key={partIndex}>
+                                {itineraryDescription && (
+                                  <p className="break-words text-sm text-muted">
+                                    {itineraryDescription}
+                                  </p>
+                                )}
+                                <p className="break-words whitespace-pre-wrap">
+                                  {part === "a" ? "A." : "B."} {preview}
+                                  {isLong && "…"}
+                                </p>
+                                {isLong && (
+                                  <details className="mt-1">
+                                    <summary className="min-h-11 w-fit cursor-pointer rounded-md py-2 text-sm font-semibold text-primary underline decoration-1 underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                                      全文を表示（{characters.length}文字）
+                                    </summary>
+                                    <p className="mt-1 break-words whitespace-pre-wrap">{answer}</p>
+                                  </details>
+                                )}
+                              </div>
+                            );
+                          },
                         )}
                       </div>
                     )}

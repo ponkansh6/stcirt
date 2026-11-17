@@ -341,6 +341,252 @@ describe("QuizRunner remaining coverage states", () => {
     expect(setFreeResponsePart).toHaveBeenNthCalledWith(2, 5, "b", "更新したB");
   });
 
+  it("reviews Q5 with only the matching itinerary lines and a concise edit name", () => {
+    const itinerary = [
+      "3回目の旅程に関して以下を埋めてください。香港旅行の旅程です。AとBに回答してください。",
+      "2/27 昼 到着",
+      "2/28 朝 ローカルシーフードレストランでAを食べる",
+      "2/28 午前 街歩き",
+      "3/1 昼〜夜 ディズニー",
+      "3/2 朝 Bを食べる",
+    ].join("\n");
+    const quizzes = selectedQuizzes.map((quiz, index) =>
+      index === 4
+        ? {
+            ...quiz,
+            question: {
+              ...quiz.question,
+              question: itinerary,
+              answerType: "freeText" as const,
+              choices: [],
+            },
+          }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        {
+          quizzes,
+          freeResponseParts: { 5: { a: "回答A", b: "回答B" } },
+          answeredCount: 5,
+        },
+      ),
+    );
+
+    render(<QuizRunner />);
+
+    const review = screen.getByRole("list", { name: "回答内容" });
+    const q5Review = within(review).getAllByRole("listitem")[4]!;
+    expect(within(q5Review).getByRole("heading", { name: "3回目の旅程" })).toBeInTheDocument();
+    expect(
+      within(q5Review).getByRole("button", { name: "第5問「3回目の旅程」を編集する" }),
+    ).toBeInTheDocument();
+    expect(
+      within(q5Review).getByText("2/28 朝 ローカルシーフードレストランでAを食べる"),
+    ).toBeVisible();
+    expect(within(q5Review).getByText("3/2 朝 Bを食べる")).toBeVisible();
+    expect(within(q5Review).getByText("A. 回答A")).toBeVisible();
+    expect(within(q5Review).getByText("B. 回答B")).toBeVisible();
+    expect(q5Review).not.toHaveTextContent("以下を埋めてください");
+    expect(q5Review).not.toHaveTextContent("香港旅行の旅程です");
+    expect(q5Review).not.toHaveTextContent("2/27");
+    expect(q5Review).not.toHaveTextContent("街歩き");
+    expect(q5Review).not.toHaveTextContent("ディズニー");
+  });
+
+  it("falls back to the A/B answer labels when no matching itinerary lines can be parsed", () => {
+    const malformedItinerary = [
+      "旅程を完成させてください。",
+      "2/28 朝 ローカルシーフードレストランでAを食べる",
+      "形式に合わない行",
+      "3/2 朝 Bを食べる",
+    ].join("\n");
+    const quizzes = selectedQuizzes.map((quiz, index) =>
+      index === 4
+        ? {
+            ...quiz,
+            question: {
+              ...quiz.question,
+              question: malformedItinerary,
+              answerType: "freeText" as const,
+              choices: [],
+            },
+          }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "answering" },
+        { quizzes, freeResponseParts: { 5: { a: "回答A", b: "回答B" } }, answeredCount: 5 },
+      ),
+    );
+    render(<QuizRunner />);
+
+    const review = screen.getByRole("list", { name: "回答内容" });
+    const q5Review = within(review).getAllByRole("listitem")[4]!;
+    expect(within(q5Review).getByText("A. 回答A")).toBeVisible();
+    expect(within(q5Review).getByText("B. 回答B")).toBeVisible();
+    expect(q5Review).not.toHaveTextContent("2/28 朝 ローカルシーフードレストランでAを食べる");
+    expect(q5Review).not.toHaveTextContent("3/2 朝 Bを食べる");
+    expect(q5Review).not.toHaveTextContent("形式に合わない行");
+  });
+
+  it("blurs Q5 timeline inputs on plain Enter without submitting and preserves the draft", () => {
+    const itinerary = [
+      "3回目の旅程です。",
+      "2/28 朝 ローカルシーフードレストランでAを食べる",
+      "3/2 朝 Bを食べる",
+    ].join("\n");
+    const quizzes = selectedQuizzes.map((quiz, index) =>
+      index === 4
+        ? {
+            ...quiz,
+            question: {
+              ...quiz.question,
+              question: itinerary,
+              answerType: "freeText" as const,
+              choices: [],
+            },
+          }
+        : quiz,
+    );
+    const setFreeResponsePart = vi.fn();
+    const saveAnswers = vi.fn();
+    function EditableDraft() {
+      const [freeResponseParts, setParts] = useState<Record<number, { a: string; b: string }>>({});
+      const updatePart = (questionId: number, part: "a" | "b", value: string) => {
+        setFreeResponsePart(questionId, part, value);
+        setParts((current) => ({
+          ...current,
+          [questionId]: {
+            a: current[questionId]?.a ?? "",
+            b: current[questionId]?.b ?? "",
+            [part]: value,
+          },
+        }));
+      };
+      mockUseQuizSession.mockReturnValue(
+        session(
+          { kind: "answering" },
+          { quizzes, freeResponseParts, setFreeResponsePart: updatePart, saveAnswers },
+        ),
+      );
+      return <QuizRunner />;
+    }
+    render(<EditableDraft />);
+
+    const answer = screen.getByRole("textbox", { name: "A. 2/28 朝の食事" });
+    fireEvent.change(answer, { target: { value: "編集中" } });
+    answer.focus();
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", isComposing: true });
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", keyCode: 229 });
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", shiftKey: true });
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", ctrlKey: true });
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", altKey: true });
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", metaKey: true });
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter" });
+
+    expect(answer).not.toHaveFocus();
+    expect(answer).toHaveValue("編集中");
+    expect(setFreeResponsePart).toHaveBeenCalledWith(5, "a", "編集中");
+    expect(saveAnswers).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
+  });
+
+  it("keeps Q5 fallback textareas focused for IME and modified Enter, and blurs on plain Enter", () => {
+    const quizzes = selectedQuizzes.map((quiz, index) =>
+      index === 4
+        ? {
+            ...quiz,
+            question: {
+              ...quiz.question,
+              question: "形式に合わない旅程の説明",
+              answerType: "freeText" as const,
+              choices: [],
+            },
+          }
+        : quiz,
+    );
+    const setFreeResponsePart = vi.fn();
+    const saveAnswers = vi.fn();
+    function EditableDraft() {
+      const [freeResponseParts, setParts] = useState<Record<number, { a: string; b: string }>>({});
+      const updatePart = (questionId: number, part: "a" | "b", value: string) => {
+        setFreeResponsePart(questionId, part, value);
+        setParts((current) => ({
+          ...current,
+          [questionId]: {
+            a: current[questionId]?.a ?? "",
+            b: current[questionId]?.b ?? "",
+            [part]: value,
+          },
+        }));
+      };
+      mockUseQuizSession.mockReturnValue(
+        session(
+          { kind: "answering" },
+          { quizzes, freeResponseParts, setFreeResponsePart: updatePart, saveAnswers },
+        ),
+      );
+      return <QuizRunner />;
+    }
+    render(<EditableDraft />);
+
+    const answer = screen.getByRole("textbox", { name: "A. 2/28 朝の食事" });
+    const answerB = screen.getByRole("textbox", { name: "B. 3/2 朝の食事" });
+    expect(answer.tagName).toBe("TEXTAREA");
+    answer.focus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter" });
+    expect(answer).not.toHaveFocus();
+    expect(answer).toHaveValue("");
+    expect(setFreeResponsePart).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
+    expect(answerB).toHaveValue("");
+    answerB.focus();
+    fireEvent.keyDown(answerB, { key: "Enter", code: "Enter" });
+    expect(answerB).not.toHaveFocus();
+    expect(setFreeResponsePart).not.toHaveBeenCalled();
+    expect(saveAnswers).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "未回答の設問に回答してください" })).toBeDisabled();
+
+    fireEvent.change(answer, { target: { value: "入力中" } });
+    answer.focus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", isComposing: true });
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", keyCode: 229 });
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", shiftKey: true });
+    expect(answer).toHaveFocus();
+    const shiftEnter = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+      shiftKey: true,
+    });
+    answer.dispatchEvent(shiftEnter);
+    expect(shiftEnter.defaultPrevented).toBe(false);
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", ctrlKey: true });
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", altKey: true });
+    expect(answer).toHaveFocus();
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter", metaKey: true });
+    expect(answer).toHaveFocus();
+
+    fireEvent.keyDown(answer, { key: "Enter", code: "Enter" });
+    expect(answer).not.toHaveFocus();
+    expect(answer).toHaveValue("入力中");
+    expect(setFreeResponsePart).toHaveBeenCalledWith(5, "a", "入力中");
+    expect(saveAnswers).not.toHaveBeenCalled();
+  });
+
   it("keeps supporting legacy marker-only itinerary rows", () => {
     const quizzes = selectedQuizzes.map((quiz, index) =>
       index === 4

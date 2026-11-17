@@ -214,6 +214,15 @@ describe("QuizRunner batch answer sheet", () => {
     const reviewItems = within(reviewAnswers).getAllByRole("listitem");
     expect(within(reviewItems[0]).getByText("回答")).toBeInTheDocument();
     expect(within(reviewItems[4]).getByText("未回答")).toBeInTheDocument();
+    expect(
+      within(reviewItems[4]).getByRole("heading", { name: "3回目の旅程" }),
+    ).toBeInTheDocument();
+    expect(
+      within(reviewItems[4]).getByRole("button", { name: "第5問「3回目の旅程」を編集する" }),
+    ).toBeInTheDocument();
+    expect(
+      within(reviewItems[4]).queryByText("Question 5?", { exact: true }),
+    ).not.toBeInTheDocument();
     const finalReview = document.querySelector<HTMLElement>(
       '[aria-labelledby="final-check-title"]',
     );
@@ -288,6 +297,7 @@ describe("QuizRunner batch answer sheet", () => {
 
   it("uses the single free-text setter when a non-Q5 response changes", () => {
     const setFreeResponse = vi.fn();
+    const saveAnswers = vi.fn();
     const freeResponseQuizzes = quizzes.map((quiz, index) =>
       index === 3 || index === 4
         ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
@@ -301,6 +311,7 @@ describe("QuizRunner batch answer sheet", () => {
         {
           quizzes: freeResponseQuizzes,
           setFreeResponse,
+          saveAnswers,
           setFreeResponsePart: undefined,
         },
       ),
@@ -315,6 +326,18 @@ describe("QuizRunner batch answer sheet", () => {
       target: { value: "Q5 response" },
     });
     expect(setFreeResponse).toHaveBeenCalledWith(5, "Q5 response");
+
+    const q4Enter = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+    });
+    response.focus();
+    response.dispatchEvent(q4Enter);
+    expect(response).toHaveFocus();
+    expect(q4Enter.defaultPrevented).toBe(false);
+    expect(saveAnswers).not.toHaveBeenCalled();
+    expect(setFreeResponse).toHaveBeenCalledTimes(2);
   });
 
   it("shows loading and switching states without a home link", () => {
