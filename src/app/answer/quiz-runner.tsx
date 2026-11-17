@@ -100,8 +100,11 @@ function parseTimeline(questionText: string): {
 } | null {
   const [intro = "", ...rawLines] = questionText.split(/\r?\n/);
   const sentenceBreak = intro.indexOf("。");
-  const title = sentenceBreak >= 0 ? intro.slice(0, sentenceBreak + 1) : intro;
-  const description = sentenceBreak >= 0 ? intro.slice(sentenceBreak + 1).trim() : "";
+  const keepsIntroAsTitle = intro.startsWith("舜基は珠美の1年間の香港滞在中、3回香港に訪問した。");
+  const title =
+    sentenceBreak >= 0 && !keepsIntroAsTitle ? intro.slice(0, sentenceBreak + 1) : intro;
+  const description =
+    sentenceBreak >= 0 && !keepsIntroAsTitle ? intro.slice(sentenceBreak + 1).trim() : "";
   const lines = rawLines.filter((line) => line.trim().length > 0);
   const entries = lines
     .map((line): TimelineEntry | null => {

@@ -58,7 +58,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
       [1, 2, 3, 4, 5].map((id) => ({
         id,
         key: `it-literacy-${String(id).padStart(3, "0")}`,
-        questionVersion: id === 5 ? "hong-kong-trip-a-b-v2" : `test-v${id}`,
+        questionVersion: id === 5 ? "hong-kong-trip-a-b-v3" : `test-v${id}`,
         question: `Question ${id}`,
         choices: id === 5 ? [] : ["A", "B", "C", "D"],
         correctIndex: 0,
@@ -256,7 +256,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         state: "graded",
         rawScore: 1,
         normalizedScore: 1,
-        questionVersion: "hong-kong-trip-a-b-v2",
+        questionVersion: "hong-kong-trip-a-b-v3",
         rubricVersion: "jev-q5-lobster-french-toast-independent-points-v2",
         gradedAt: new Date(),
       })

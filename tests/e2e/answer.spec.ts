@@ -1279,7 +1279,7 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
       answerType: "freeText",
       choices: [],
       question: [
-        "3回目の旅程に関して以下を埋めてください。舜基は珠美の1年間の香港滞在中、3回香港に訪問した。",
+        "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
         "2/27 昼 香港空港到着",
         "2/27 夕方 マンダリンオリエンタルホテルのスコーンを食べる",
         "2/27 夜 香港で評価の高いフォカッチャパニーニを食べる",
@@ -1325,7 +1325,7 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
 
     const fifthQuestion = page.locator("#question-5");
     await expect(fifthQuestion.getByRole("heading", { level: 2 })).toHaveText(
-      "3回目の旅程に関して以下を埋めてください。",
+      "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
     );
     await expect(fifthQuestion.getByRole("heading", { level: 3 })).toHaveText([
       "2/27",

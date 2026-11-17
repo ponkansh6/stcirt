@@ -276,7 +276,7 @@ describe("QuizRunner remaining coverage states", () => {
 
   it("groups a valid fifth-question itinerary and keeps saved A/B answers connected", () => {
     const itinerary = [
-      "3回目の旅程に関して以下を埋めてください。香港旅行の旅程です。AとBに回答してください。",
+      "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
       "",
       "2/27 昼 到着",
       "2/28 朝 ローカルシーフードレストランでAを食べる",
@@ -314,11 +314,11 @@ describe("QuizRunner remaining coverage states", () => {
     const question = document.getElementById("question-5");
     expect(question).not.toBeNull();
     expect(within(question as HTMLElement).getByRole("heading", { level: 2 })).toHaveTextContent(
-      "3回目の旅程に関して以下を埋めてください。",
+      "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
     );
     expect(
-      within(question as HTMLElement).getByText("香港旅行の旅程です。AとBに回答してください。"),
-    ).toBeInTheDocument();
+      within(question as HTMLElement).queryByText("3回目の旅程に関して以下を埋めてください。"),
+    ).not.toBeInTheDocument();
     expect(
       within(question as HTMLElement)
         .getAllByRole("heading", { level: 3 })
