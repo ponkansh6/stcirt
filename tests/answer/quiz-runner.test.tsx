@@ -206,7 +206,7 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
 
     const navigation = screen.getByRole("navigation", { name: "設問へ移動" });
-    expect(within(navigation).getByRole("link", { name: "第1問へ移動" })).toBeVisible();
+    expect(within(navigation).getByRole("link", { name: /^第1問へ移動/ })).toBeVisible();
     expect(within(navigation).getByRole("link", { name: /^第2問へ移動/ })).toBeVisible();
     expect(within(navigation).getByRole("link", { name: /^第5問へ移動/ })).toBeVisible();
 

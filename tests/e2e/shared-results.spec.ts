@@ -55,17 +55,15 @@ test("@chromium an issued share is readable without login and becomes unavailabl
   let ownerId: number | null = null;
   let targetId: number | null = null;
   let migrationReady = false;
+  let sessionSeeded = false;
+  let questionSeeded = false;
+  let entrySeeded = false;
+  let settingsSeeded = false;
 
   try {
+    // The Playwright process owns this isolated database; clean only this fixture's rows below.
     await migrate(db, { migrationsFolder: "./src/lib/db/migrations" });
     migrationReady = true;
-    // Keep this dedicated E2E database repeatable across Playwright retries.
-    await db.delete(schema.assistedResultShares);
-    await db.delete(schema.assistedParticipants);
-    await db.delete(schema.presentationEntries);
-    await db.delete(schema.presentationQuestions);
-    await db.delete(schema.presentationSessions);
-    await db.delete(schema.participantResultSettings);
 
     const [owner] = await db
       .insert(schema.examParticipants)
@@ -93,6 +91,7 @@ test("@chromium an issued share is readable without login and becomes unavailabl
       projectionHidden: false,
       presentationMode: "full",
     });
+    sessionSeeded = true;
     await db.insert(schema.presentationQuestions).values({
       sessionId: 1,
       position: 0,
@@ -102,6 +101,7 @@ test("@chromium an issued share is readable without login and becomes unavailabl
       correctIndex: 0,
       explanation: null,
     });
+    questionSeeded = true;
     await db.insert(schema.presentationEntries).values({
       sessionId: 1,
       participantId: target.id,
@@ -120,11 +120,13 @@ test("@chromium an issued share is readable without login and becomes unavailabl
         },
       ],
     });
+    entrySeeded = true;
     await db.insert(schema.participantResultSettings).values({
       id: 1,
       visible: true,
       everPublished: true,
     });
+    settingsSeeded = true;
 
     const ownerApi = ownerContext.request;
     const login = await ownerApi.post(`${baseUrl}/api/participants/session`, {
@@ -207,33 +209,67 @@ test("@chromium an issued share is readable without login and becomes unavailabl
     });
   } finally {
     try {
-      if (migrationReady) {
-        if (ownerId !== null) {
-          await db
-            .delete(schema.assistedResultShares)
-            .where(eq(schema.assistedResultShares.ownerParticipantId, ownerId));
-          await db
-            .delete(schema.assistedParticipants)
-            .where(eq(schema.assistedParticipants.ownerParticipantId, ownerId));
-          await db.delete(schema.examParticipants).where(eq(schema.examParticipants.id, ownerId));
-        }
-        if (targetId !== null) {
-          await db
-            .delete(schema.presentationEntries)
-            .where(eq(schema.presentationEntries.participantId, targetId));
-          await db.delete(schema.examParticipants).where(eq(schema.examParticipants.id, targetId));
-        }
-        await db
-          .delete(schema.presentationQuestions)
-          .where(eq(schema.presentationQuestions.sessionId, 1));
-        await db.delete(schema.presentationSessions).where(eq(schema.presentationSessions.id, 1));
-        await db
-          .delete(schema.participantResultSettings)
-          .where(eq(schema.participantResultSettings.id, 1));
-      }
+      if (!page.isClosed()) await page.context().close();
     } finally {
-      await ownerContext.close();
-      await client.close();
+      try {
+        await ownerContext.close();
+      } finally {
+        try {
+          if (migrationReady) {
+            if (ownerId !== null) {
+              await db
+                .delete(schema.assistedResultShares)
+                .where(eq(schema.assistedResultShares.ownerParticipantId, ownerId));
+              await db
+                .delete(schema.assistedParticipants)
+                .where(eq(schema.assistedParticipants.ownerParticipantId, ownerId));
+            }
+            if (targetId !== null && entrySeeded) {
+              await db
+                .delete(schema.presentationEntries)
+                .where(
+                  and(
+                    eq(schema.presentationEntries.sessionId, 1),
+                    eq(schema.presentationEntries.participantId, targetId),
+                  ),
+                );
+            }
+            if (questionSeeded) {
+              await db
+                .delete(schema.presentationQuestions)
+                .where(
+                  and(
+                    eq(schema.presentationQuestions.sessionId, 1),
+                    eq(schema.presentationQuestions.position, 0),
+                    eq(schema.presentationQuestions.sourceQuestionId, 90001),
+                  ),
+                );
+            }
+            if (sessionSeeded) {
+              await db
+                .delete(schema.presentationSessions)
+                .where(eq(schema.presentationSessions.id, 1));
+            }
+            if (settingsSeeded) {
+              await db
+                .delete(schema.participantResultSettings)
+                .where(eq(schema.participantResultSettings.id, 1));
+            }
+            if (ownerId !== null) {
+              await db
+                .delete(schema.examParticipants)
+                .where(eq(schema.examParticipants.id, ownerId));
+            }
+            if (targetId !== null) {
+              await db
+                .delete(schema.examParticipants)
+                .where(eq(schema.examParticipants.id, targetId));
+            }
+          }
+        } finally {
+          await client.close();
+        }
+      }
     }
   }
 });

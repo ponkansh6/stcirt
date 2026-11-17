@@ -1278,15 +1278,30 @@ export default function QuizRunner() {
                         answered: Boolean(freeResponseParts[question.id]?.b.trim()),
                       },
                     ]
-                  : question.selectionMode === "multiple"
+                  : question.answerType === "freeText"
                     ? [
-                        { label: "1つ目", answered: selectedCount >= 1 },
-                        { label: "2つ目", answered: selectedCount >= 2 },
+                        {
+                          label: "回答",
+                          answered: Boolean(freeResponses[question.id]?.trim()),
+                        },
                       ]
-                    : null;
-              const progressLabel = answerParts
-                ? `。${answerParts.map(({ label, answered }) => `${label}${answered ? "回答あり" : "回答なし"}`).join("、")}`
-                : "";
+                    : question.selectionMode === "multiple"
+                      ? [
+                          { label: "1つ目", answered: selectedCount >= 1 },
+                          { label: "2つ目", answered: selectedCount >= 2 },
+                        ]
+                      : [
+                          {
+                            label: "回答",
+                            answered: selections[question.id] !== undefined,
+                          },
+                        ];
+              const progressLabel = `。${answerParts
+                .map(({ label, answered }) => {
+                  const status = answered ? "回答あり" : "回答なし";
+                  return label === "回答" ? status : `${label}${status}`;
+                })
+                .join("、")}`;
               return (
                 <li key={question.id}>
                   <a
@@ -1300,16 +1315,14 @@ export default function QuizRunner() {
                     className={`${styles.progressLink} flex min-h-11 flex-col items-center justify-center rounded-md border border-control-border bg-surface-2 px-1 text-center text-xs font-semibold leading-tight text-muted ${current ? styles.progressCurrent : ""}`}
                   >
                     <span>第{index + 1}問</span>
-                    {answerParts && (
-                      <span aria-hidden="true" className={styles.answerProgressSegments}>
-                        {answerParts.map(({ label, answered }) => (
-                          <span
-                            key={label}
-                            className={`${styles.answerProgressSegment} ${answered ? styles.answerProgressSegmentAnswered : ""}`}
-                          />
-                        ))}
-                      </span>
-                    )}
+                    <span aria-hidden="true" className={styles.answerProgressSegments}>
+                      {answerParts.map(({ label, answered }) => (
+                        <span
+                          key={label}
+                          className={`${styles.answerProgressSegment} ${answered ? styles.answerProgressSegmentAnswered : ""}`}
+                        />
+                      ))}
+                    </span>
                   </a>
                 </li>
               );

@@ -1,7 +1,7 @@
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { test, expect, type Locator, type Page, type Route } from "./fixtures/test";
 import { makeQuestion } from "../fixtures/question";
@@ -412,17 +412,17 @@ test("@chromium result navigation keeps completion visible with link pending unt
   const ownerContext = await browser.newContext();
   let ownerId: number | null = null;
   let migrationReady = false;
+  let sessionSeeded = false;
+  let questionsSeeded = false;
+  let entrySeeded = false;
+  let settingsSeeded = false;
   let releaseHeldNavigationRequest: (() => void) | null = null;
+  const seededQuestionIds = [1, 2, 3, 4, 5].map((position) => 98000 + position);
 
   try {
+    // This E2E owns the ID 1 presentation fixtures it seeds and removes them in finally.
     await migrate(db, { migrationsFolder: "./src/lib/db/migrations" });
     migrationReady = true;
-    // The active presentation and participant result settings use ID 1.
-    // Clear this isolated E2E database's previous fixture state first.
-    await db.delete(schema.presentationEntries);
-    await db.delete(schema.presentationQuestions);
-    await db.delete(schema.presentationSessions);
-    await db.delete(schema.participantResultSettings);
     const [owner] = await db
       .insert(schema.examParticipants)
       .values({ normalizedName: ownerName.normalize("NFC"), displayName: ownerName })
@@ -439,16 +439,18 @@ test("@chromium result navigation keeps completion visible with link pending unt
       projectionHidden: false,
       presentationMode: "full",
     });
-    const seededQuestions = [1, 2, 3, 4, 5].map((position) => ({
+    sessionSeeded = true;
+    const seededQuestions = seededQuestionIds.map((sourceQuestionId, index) => ({
       sessionId: 1,
-      position: position - 1,
-      sourceQuestionId: 98000 + position,
-      question: `Question ${position}?`,
-      choices: position === 5 ? [] : [`Option ${position}A`, `Option ${position}B`],
+      position: index,
+      sourceQuestionId,
+      question: `Question ${index + 1}?`,
+      choices: index === 4 ? [] : [`Option ${index + 1}A`, `Option ${index + 1}B`],
       correctIndex: 0,
       explanation: null,
     }));
     await db.insert(schema.presentationQuestions).values(seededQuestions);
+    questionsSeeded = true;
     await db.insert(schema.presentationEntries).values({
       sessionId: 1,
       participantId: owner.id,
@@ -465,11 +467,13 @@ test("@chromium result navigation keeps completion visible with link pending unt
         normalizedScore: null,
       })),
     });
+    entrySeeded = true;
     await db.insert(schema.participantResultSettings).values({
       id: 1,
       visible: true,
       everPublished: true,
     });
+    settingsSeeded = true;
 
     const login = await ownerContext.request.post(`${baseUrl}/api/participants/session`, {
       data: { name: ownerName, pin: e2eParticipantPin },
@@ -624,17 +628,55 @@ test("@chromium result navigation keeps completion visible with link pending unt
     expect(spinnerWasObserved).toBe(false);
   } finally {
     releaseHeldNavigationRequest?.();
-    if (migrationReady) {
-      await db.delete(schema.presentationEntries);
-      await db.delete(schema.presentationQuestions);
-      await db.delete(schema.presentationSessions);
-      await db.delete(schema.participantResultSettings);
-      if (ownerId !== null) {
-        await db.delete(schema.examParticipants).where(eq(schema.examParticipants.id, ownerId));
+    try {
+      if (!page.isClosed()) await page.context().close();
+    } finally {
+      try {
+        await ownerContext.close();
+      } finally {
+        try {
+          if (migrationReady) {
+            if (ownerId !== null && entrySeeded) {
+              await db
+                .delete(schema.presentationEntries)
+                .where(
+                  and(
+                    eq(schema.presentationEntries.sessionId, 1),
+                    eq(schema.presentationEntries.participantId, ownerId),
+                  ),
+                );
+            }
+            if (questionsSeeded) {
+              await db
+                .delete(schema.presentationQuestions)
+                .where(
+                  and(
+                    eq(schema.presentationQuestions.sessionId, 1),
+                    inArray(schema.presentationQuestions.sourceQuestionId, seededQuestionIds),
+                  ),
+                );
+            }
+            if (sessionSeeded) {
+              await db
+                .delete(schema.presentationSessions)
+                .where(eq(schema.presentationSessions.id, 1));
+            }
+            if (settingsSeeded) {
+              await db
+                .delete(schema.participantResultSettings)
+                .where(eq(schema.participantResultSettings.id, 1));
+            }
+            if (ownerId !== null) {
+              await db
+                .delete(schema.examParticipants)
+                .where(eq(schema.examParticipants.id, ownerId));
+            }
+          }
+        } finally {
+          await client.close();
+        }
       }
     }
-    await ownerContext.close();
-    await client.close();
   }
 });
 
@@ -1146,7 +1188,7 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   await expect(firstRadio).not.toBeChecked();
   await page.keyboard.press("Space");
   await expect(firstRadio).toBeChecked();
-  await expect(navigation.getByRole("link", { name: "第1問へ移動" })).toBeVisible();
+  await expect(navigation.getByRole("link", { name: /^第1問へ移動/ })).toBeVisible();
   const firstRow = firstRadio.locator("xpath=..");
   const radioFocusRing = await firstRow.evaluate((element) => getComputedStyle(element).boxShadow);
   expect(radioFocusRing).not.toBe("none");
@@ -1157,7 +1199,7 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   await expect(navigation.getByRole("list").getByRole("listitem")).toHaveCount(5);
   await expect(navigation.locator("a, button, input")).toHaveCount(5);
   const targetHeading = page.locator("#question-5 h2");
-  await navigation.getByRole("link", { name: "第5問へ移動" }).click();
+  await navigation.getByRole("link", { name: /^第5問へ移動/ }).click();
   await expect(targetHeading).toBeFocused();
   const headingTop = await targetHeading.evaluate((heading) => heading.getBoundingClientRect().top);
   const stickyBottom = await page
@@ -1194,7 +1236,7 @@ test("@mobile reviews and edits an answer at 320px with a hittable review target
   await answerQuestion(page, 5, "小画面で編集する回答です。");
   await page
     .getByRole("navigation", { name: "設問へ移動" })
-    .getByRole("link", { name: "第5問へ移動" })
+    .getByRole("link", { name: /^第5問へ移動/ })
     .click();
   await page.keyboard.press("End");
 
@@ -1214,7 +1256,7 @@ test("@mobile reviews and edits an answer at 320px with a hittable review target
   await selectRadio(page, /Option 3C/);
   await page
     .getByRole("navigation", { name: "設問へ移動" })
-    .getByRole("link", { name: "第5問へ移動" })
+    .getByRole("link", { name: /^第5問へ移動/ })
     .click();
   await page.keyboard.press("End");
   await expect(reviewItems.nth(2)).toContainText("Option 3C");
