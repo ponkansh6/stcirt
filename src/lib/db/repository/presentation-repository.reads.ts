@@ -476,24 +476,51 @@ export async function getParticipantResult(participantId: number): Promise<Parti
       let answerDto: ParticipantResultQuestion["answer"];
       if (answer.answerKind === "selected") {
         const selectedIndex = answer.selectedIndex;
-        const validCorrectIndex =
-          Number.isInteger(question.correctIndex) &&
-          question.correctIndex >= 0 &&
-          question.correctIndex < question.choices.length;
-        if (
-          !validCorrectIndex ||
-          !Number.isInteger(selectedIndex) ||
-          selectedIndex === null ||
-          selectedIndex < 0 ||
-          selectedIndex >= question.choices.length
-        ) {
-          answerDto = { kind: "selected", value: "", correctness: "unavailable" };
+        if (question.selectionMode === "multiple") {
+          const selection = normalizeSelectedChoiceIndices({
+            selectionMode: question.selectionMode,
+            choiceCount: question.choices.length,
+            selectedIndex,
+            selectedIndices: answer.selectedIndices,
+          });
+          const correctSelection = normalizeSelectedChoiceIndices({
+            selectionMode: question.selectionMode,
+            choiceCount: question.choices.length,
+            selectedIndex: null,
+            selectedIndices: question.correctIndices,
+          });
+          if (!selection || !correctSelection) {
+            answerDto = { kind: "selected", value: "", correctness: "unavailable" };
+          } else {
+            const selectedSet = new Set(selection.indices);
+            answerDto = {
+              kind: "selected",
+              value: selection.indices.map((index) => question.choices[index]).join("、"),
+              correctness: correctSelection.indices.every((index) => selectedSet.has(index))
+                ? "correct"
+                : "incorrect",
+            };
+          }
         } else {
-          answerDto = {
-            kind: "selected",
-            value: question.choices[selectedIndex],
-            correctness: selectedIndex === question.correctIndex ? "correct" : "incorrect",
-          };
+          const validCorrectIndex =
+            Number.isInteger(question.correctIndex) &&
+            question.correctIndex >= 0 &&
+            question.correctIndex < question.choices.length;
+          if (
+            !validCorrectIndex ||
+            !Number.isInteger(selectedIndex) ||
+            selectedIndex === null ||
+            selectedIndex < 0 ||
+            selectedIndex >= question.choices.length
+          ) {
+            answerDto = { kind: "selected", value: "", correctness: "unavailable" };
+          } else {
+            answerDto = {
+              kind: "selected",
+              value: question.choices[selectedIndex],
+              correctness: selectedIndex === question.correctIndex ? "correct" : "incorrect",
+            };
+          }
         }
       } else if (answer.answerKind === "freeText") {
         const score = answer.normalizedScore;

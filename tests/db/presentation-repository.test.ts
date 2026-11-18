@@ -3518,6 +3518,97 @@ describe("presentation repository", () => {
     });
   });
 
+  it("restores multiple-choice selections in participant result details", async () => {
+    await addCurrentFiveQuestions();
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({
+        questionVersion: "india-uber-multi-v2",
+        choices: ["A2", "B2", "C2", "D2", "E2", "F2", "G2", "H2"],
+        selectionMode: "multiple",
+        correctIndices: [1, 4],
+      })
+      .where(eq(schema.examQuestions.id, 2));
+    const participantId = await addParticipant("Multiple choice participant");
+    await addSubmission(participantId, [0, 0], 1, "multi-result", 1, [1, 4]);
+    await startWithAggregate("multi-select-result-start");
+    await setParticipantResultsVisible(true);
+
+    const [entry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    expect(entry?.answers.find(({ questionId }) => questionId === 2)).toMatchObject({
+      answerKind: "selected",
+      selectedIndex: null,
+      selectedIndices: [1, 4],
+    });
+
+    const result = await getParticipantResult(participantId);
+    expect(result.state).toBe("visible");
+    if (result.state !== "visible") throw new Error("Expected participant result to be visible");
+    expect(result.questions.find(({ position }) => position === 1)).toMatchObject({
+      answer: { kind: "selected", value: "B2、E2", correctness: "correct" },
+    });
+
+    const setQ2Snapshot = async (
+      selectedIndices: number[] | null,
+      selectedIndex: number | null = null,
+      correctIndices: number[] | null = [1, 4],
+    ) => {
+      const [currentEntry] = await testDb.db
+        .select()
+        .from(schema.presentationEntries)
+        .where(eq(schema.presentationEntries.participantId, participantId));
+      const answers = currentEntry!.answers.map((answer) =>
+        answer.questionId === 2 ? { ...answer, selectedIndex, selectedIndices } : answer,
+      );
+      await testDb.db
+        .update(schema.presentationEntries)
+        .set({ answers })
+        .where(eq(schema.presentationEntries.participantId, participantId));
+      await testDb.db
+        .update(schema.presentationQuestions)
+        .set({ correctIndices })
+        .where(eq(schema.presentationQuestions.position, 1));
+    };
+    const expectQ2Answer = async (value: string, correctness: string, message?: string) => {
+      const updatedResult = await getParticipantResult(participantId);
+      expect(updatedResult.state).toBe("visible");
+      if (updatedResult.state !== "visible") {
+        throw new Error("Expected participant result to be visible");
+      }
+      expect(
+        updatedResult.questions.find(({ position }) => position === 1),
+        message,
+      ).toMatchObject({ answer: { kind: "selected", value, correctness } });
+    };
+
+    await setQ2Snapshot([4, 1]);
+    await expectQ2Answer("E2、B2", "correct");
+    await setQ2Snapshot([1, 5]);
+    await expectQ2Answer("B2、F2", "incorrect");
+
+    for (const invalidAnswer of [
+      { label: "duplicate selections", selectedIndices: [1, 1], selectedIndex: null },
+      { label: "missing selections", selectedIndices: [], selectedIndex: null },
+      { label: "out-of-range selection", selectedIndices: [1, 8], selectedIndex: null },
+      { label: "scalar fallback", selectedIndices: null, selectedIndex: 1 },
+    ]) {
+      await setQ2Snapshot(invalidAnswer.selectedIndices, invalidAnswer.selectedIndex);
+      await expectQ2Answer("", "unavailable", invalidAnswer.label);
+    }
+
+    for (const invalidCorrect of [
+      { label: "null correct indices", indices: null },
+      { label: "duplicate correct indices", indices: [1, 1] },
+      { label: "incomplete correct indices", indices: [1] },
+    ]) {
+      await setQ2Snapshot([1, 4], null, invalidCorrect.indices);
+      await expectQ2Answer("", "unavailable", invalidCorrect.label);
+    }
+  });
+
   it("hides participant result details without changing the public presentation projection", async () => {
     await addQuestions();
     const participant = await addParticipant("Hidden results participant");
