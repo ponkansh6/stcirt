@@ -356,10 +356,10 @@ describe("presentation projection and presenter progression", () => {
   );
 
   it.each([
-    ["two", "question", "39 trimmed Unicode", `　${"🧭".repeat(39)}　`, false],
-    ["one", "question", "40 trimmed Unicode", `　${"🧭".repeat(40)}　`, true],
-    ["two", "answer", "39 trimmed Unicode", `　${"🧭".repeat(39)}　`, false],
-    ["one", "answer", "40 trimmed Unicode", `　${"🧭".repeat(40)}　`, true],
+    ["two", "question", "19 trimmed Unicode", `　${"🧭".repeat(19)}　`, false],
+    ["one", "question", "20 trimmed Unicode", `　${"🧭".repeat(20)}　`, true],
+    ["two", "answer", "19 trimmed Unicode", `　${"🧭".repeat(19)}　`, false],
+    ["one", "answer", "20 trimmed Unicode", `　${"🧭".repeat(20)}　`, true],
   ] as const)(
     "uses %s column layout in the %s stage at the %s-code-point boundary",
     async (_columns, state, _boundary, longChoice, singleColumn) => {

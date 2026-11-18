@@ -556,15 +556,16 @@ Public presentation responses MUST disclose only the data permitted for the curr
 
 #### Scenario: [R8-S11] Use one column for long multiple-choice options
 
-- WHEN a projected question or answer has any choice whose trimmed Unicode code point count is at least 40
+- WHEN a projected question or answer has any choice whose trimmed Unicode code point count is at least 20
 - THEN all choices use one column in both the question and answer stages
-- WHEN every choice has fewer than 40 trimmed Unicode code points
+- WHEN every choice has fewer than 20 trimmed Unicode code points
 - THEN the existing two-column layout is used
 
 #### Scenario: [R8-S12] Omit the question text from answer statistics
 
 - WHEN a statistics stage is displayed
-- THEN the presentation shows the question ordinal and answer statistics without showing the question text
+- THEN the presentation shows the question ordinal and answer distribution without showing the question text, participant totals, or explanatory statistics labels
+- AND each option or score-range row prioritizes its text, keeps its response count and visual bar, and does not add an internal scroll area
 
 #### Scenario: [R8-S9] Aggregate the versioned Q5 total without reweighting or rounding
 

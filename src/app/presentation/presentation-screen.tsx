@@ -528,7 +528,7 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
     </ol>
   );
 }
-const longChoiceThreshold = 40;
+const longChoiceThreshold = 20;
 
 function hasLongChoice(choices: string[]) {
   return choices.some((choice) => Array.from(choice.trim()).length >= longChoiceThreshold);
