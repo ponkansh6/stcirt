@@ -2138,11 +2138,24 @@ describe("presentation repository", () => {
     const q5 = await countTableSelectCalls(getPublicPresentation);
     expect(q5.value).toMatchObject({
       state: "answer",
-      question: { expectedAnswer: "Model answer" },
+      question: {
+        expectedAnswer: "Model answer",
+        expectedAnswerParts: { a: "新鮮なロブスター", b: "フレンチトースト" },
+      },
     });
     expect(q5.value).not.toHaveProperty("question.responses");
+    expect(ordinary.value).not.toHaveProperty("question.expectedAnswerParts");
     expect(q5.selectCalls.get(schema.presentationEntries) ?? 0).toBe(0);
     expect(q5.selectCalls.get(schema.examQuestions)).toBe(1);
+
+    await testDb.db
+      .update(schema.presentationSessions)
+      .set({ state: "question" })
+      .where(eq(schema.presentationSessions.id, 1));
+    const q5Question = await getPublicPresentation();
+    expect(q5Question).toMatchObject({ state: "question", question: { id: 105 } });
+    expect(q5Question).not.toHaveProperty("question.expectedAnswer");
+    expect(q5Question).not.toHaveProperty("question.expectedAnswerParts");
   });
 
   it("orders free-text responses by rank and then display name", async () => {
@@ -2717,7 +2730,7 @@ describe("presentation repository", () => {
     });
   });
 
-  it("suppresses only the identified fifth-question responses in the public projection", async () => {
+  it("publishes only Q5 display parts and suppresses its participant responses", async () => {
     await addFreeTextProjectionFixture("it-literacy-005", 4.5);
 
     const projection = await getPublicPresentation();
@@ -2731,6 +2744,7 @@ describe("presentation repository", () => {
         choices: [],
         answerType: "freeText",
         expectedAnswer: "Model answer",
+        expectedAnswerParts: { a: "新鮮なロブスター", b: "フレンチトースト" },
       },
     });
     if (projection.state === "answer" && projection.question?.answerType === "freeText") {

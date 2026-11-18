@@ -98,8 +98,11 @@ type PresentationQuestionFixture = {
   choices: string[];
   correctAnswer: string;
   explanation: string;
+  ordinal?: number;
+  total?: number;
   answerType?: "selected" | "freeText";
   expectedAnswer?: string;
+  expectedAnswerParts?: { a: string; b: string };
   responses?: {
     displayName: string;
     answer?: string | null;
@@ -218,9 +221,9 @@ async function installAdminApiMock(
           projection = {
             state: slideState,
             question: {
-              id: 11,
-              ordinal: 1,
-              total: 1,
+              id: presentationQuestion.id,
+              ordinal: presentationQuestion.ordinal ?? 1,
+              total: presentationQuestion.total ?? 1,
               question: presentationQuestion.question,
               choices: presentationQuestion.choices,
               ...(slideState === "answer"
@@ -235,6 +238,9 @@ async function installAdminApiMock(
                       : {}),
                     ...(presentationQuestion.expectedAnswer !== undefined
                       ? { expectedAnswer: presentationQuestion.expectedAnswer }
+                      : {}),
+                    ...(presentationQuestion.expectedAnswerParts !== undefined
+                      ? { expectedAnswerParts: presentationQuestion.expectedAnswerParts }
                       : {}),
                     ...(presentationQuestion.responses !== undefined
                       ? { responses: presentationQuestion.responses }
@@ -428,9 +434,9 @@ async function installAdminApiMock(
           projection = {
             state,
             question: {
-              id: 11,
-              ordinal: 1,
-              total: 1,
+              id: presentationQuestion.id,
+              ordinal: presentationQuestion.ordinal ?? 1,
+              total: presentationQuestion.total ?? 1,
               question:
                 snapshotRevision > 1
                   ? `${presentationQuestion.question}（snapshot ${snapshotRevision}）`
@@ -443,15 +449,27 @@ async function installAdminApiMock(
                       presentationQuestion.correctAnswer,
                     ),
                     explanation: presentationQuestion.explanation,
+                    ...(presentationQuestion.answerType
+                      ? { answerType: presentationQuestion.answerType }
+                      : {}),
+                    ...(presentationQuestion.expectedAnswer !== undefined
+                      ? { expectedAnswer: presentationQuestion.expectedAnswer }
+                      : {}),
+                    ...(presentationQuestion.expectedAnswerParts !== undefined
+                      ? { expectedAnswerParts: presentationQuestion.expectedAnswerParts }
+                      : {}),
+                    ...(presentationQuestion.responses !== undefined
+                      ? { responses: presentationQuestion.responses }
+                      : {}),
                   }
                 : {}),
             },
           };
         } else if (state === "statistics") {
           const question = {
-            id: 11,
-            ordinal: 1,
-            total: 1,
+            id: presentationQuestion.id,
+            ordinal: presentationQuestion.ordinal ?? 1,
+            total: presentationQuestion.total ?? 1,
             question: presentationQuestion.question,
             choices: presentationQuestion.choices,
             answerType: presentationQuestion.answerType ?? "selected",
@@ -1729,6 +1747,102 @@ test("@chromium free-text model answer and published responses share their plann
   await expect(answerGroup).toHaveCSS("opacity", "1");
   await expect(supplement).toHaveCSS("opacity", "1");
   await expectNoAccessibilityViolations(page, "presentation free-text answer and responses");
+});
+
+test("@chromium Q5 timeline and long explanation fit all rows inside the slide", async ({
+  page,
+}) => {
+  const itinerary = [
+    "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
+    "2/27 昼 マンダリンオリエンタルホテルのスコーンを食べる",
+    "2/27 夜 香港で評価の高いフォカッチャパニーニを食べる",
+    "2/28 朝 ローカルシーフードレストランでAを食べる",
+    "2/28 昼 アバディーンでボートツアー＆ボートヌードル",
+    "2/28 夜 地元で人気なローストグースを食べる",
+    "3/1 朝 地元の少しリッチな飲茶を食べる",
+    "3/1 昼夜 香港ディズニーランドを楽しむ",
+    "3/2 朝 Bを食べる",
+  ].join("\n");
+  const q5: PresentationQuestionFixture = {
+    ...questions[0],
+    id: 5,
+    ordinal: 5,
+    total: 5,
+    question: itinerary,
+    choices: [],
+    answerType: "freeText",
+    expectedAnswer: Array.from(
+      { length: 10 },
+      (_, index) => `解説${index + 1}：香港での旅程と食事の選び方を確認します。`,
+    ).join(" "),
+    expectedAnswerParts: { a: "新鮮なロブスター", b: "フレンチトースト" },
+    responses: [
+      {
+        displayName: "非公開の参加者",
+        answer: "非公開の個人回答",
+        answerKind: "freeText",
+        similarity: 1,
+        score: 1,
+      },
+    ],
+  };
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await installAdminApiMock(page, { question: q5 });
+  await signIn(page);
+  await startPresentation(page);
+  await openPresenter(page);
+  const answerMutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "answer")).toBeVisible();
+  await answerMutation;
+
+  const timeline = page.locator("ol[class*='q5Timeline']").first();
+  const viewports = [
+    { width: 1920, height: 1080, columns: 2 },
+    { width: 1280, height: 720, columns: 2 },
+    { width: 640, height: 360, columns: 1 },
+  ];
+  for (const viewport of viewports) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await waitForRenderFrames(page);
+    await expect(page.getByRole("heading", { name: "3回目の旅程" })).toBeVisible();
+    await expect(timeline.locator("[class*='q5TimelineDay'] > ol > li")).toHaveCount(8);
+    await expect(page.locator("strong[class*='q5TimelineAnswer']")).toHaveText([
+      "新鮮なロブスター",
+      "フレンチトースト",
+    ]);
+    const longExplanation = q5.expectedAnswer!;
+    await expect(page.getByText(longExplanation)).toBeVisible();
+    await expect(page.getByText("非公開の個人回答")).toHaveCount(0);
+    await expect(page.getByRole("textbox")).toHaveCount(0);
+
+    const layout = await timeline.evaluate((element) => {
+      const viewport = document.querySelector<HTMLElement>(
+        '[data-testid="presentation-fit-viewport"]',
+      );
+      if (!viewport) throw new Error("Missing presentation fit viewport");
+      const bounds = viewport.getBoundingClientRect();
+      const outOfBounds = Array.from(viewport.querySelectorAll("*"))
+        .map((node) => node.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0)
+        .filter(
+          (rect) =>
+            rect.left < bounds.left - 1 ||
+            rect.right > bounds.right + 1 ||
+            rect.top < bounds.top - 1 ||
+            rect.bottom > bounds.bottom + 1,
+        ).length;
+      return {
+        columns: getComputedStyle(element).gridTemplateColumns.split(/\s+/).length,
+        outOfBounds,
+        pageCanScroll: document.documentElement.scrollHeight > innerHeight,
+      };
+    });
+    expect(layout.columns).toBe(viewport.columns);
+    expect(layout.outOfBounds).toBe(0);
+    expect(layout.pageCanScroll).toBe(false);
+  }
+  await expectNoAccessibilityViolations(page, "Q5 answer timeline at narrow viewport");
 });
 
 test("@chromium every stage keeps its fixture text inside the canvas content bounds", async ({

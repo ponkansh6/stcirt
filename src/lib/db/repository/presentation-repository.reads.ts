@@ -651,6 +651,7 @@ type PublicProjectedQuestion = {
   correctIndices?: number[] | null;
   explanation?: string | null;
   expectedAnswer?: string | null;
+  expectedAnswerParts?: { a: string; b: string };
   responses?: {
     displayName: string;
     answer: string | null | undefined;
@@ -700,6 +701,14 @@ function buildPublicProjection(
                       };
                     }),
                   }),
+              ...(row.sourceQuestionKey === "it-literacy-005"
+                ? {
+                    expectedAnswerParts: {
+                      a: "新鮮なロブスター",
+                      b: "フレンチトースト",
+                    },
+                  }
+                : {}),
             }
           : {
               correctAnswer: row.correctAnswer,

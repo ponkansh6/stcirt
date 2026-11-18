@@ -604,6 +604,102 @@
   flex: 0 0 auto;
 }
 
+.q5TimelineReview {
+  align-self: stretch;
+  justify-content: flex-start;
+}
+
+.q5TimelineContent {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: clamp(8px, 1.1cqh, 16px);
+}
+
+.q5TimelineHeading {
+  margin: 0;
+  font-size: clamp(var(--presentation-min-readable-size), 2.4cqw, 2.8rem);
+  line-height: 1.15;
+}
+
+.q5Timeline {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(8px, 1.2cqh, 18px) clamp(16px, 2.5cqw, 40px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@container (max-width: 42rem) {
+  .q5Timeline {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.q5TimelineDay {
+  min-width: 0;
+}
+
+.q5TimelineDay > h2 {
+  margin: 0 0 2px;
+  color: var(--color-presentation-46515b);
+  font-size: clamp(var(--presentation-min-readable-size), 1.35cqw, 1.55rem);
+  line-height: 1.25;
+}
+
+.q5TimelineDay > ol {
+  display: grid;
+  gap: clamp(3px, 0.45cqh, 7px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.q5TimelineEntry {
+  display: grid;
+  grid-template-columns: minmax(3.5rem, 0.22fr) minmax(0, 1fr);
+  gap: clamp(8px, 1cqw, 16px);
+  min-width: 0;
+  align-items: start;
+  font-size: clamp(var(--presentation-min-readable-size), 1.5cqw, 1.75rem);
+  line-height: 1.35;
+}
+
+.q5TimelineTime {
+  color: var(--color-presentation-46515b);
+  white-space: nowrap;
+}
+
+.q5TimelineActivity {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.q5TimelineAnswer {
+  display: inline;
+  padding: 0.04em 0.18em;
+  border-radius: 0.2em;
+  background: var(--color-presentation-e7c87a);
+  color: var(--color-presentation-24343d);
+  font-weight: 800;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.q5TimelineExplanation > h2 {
+  margin: 0;
+  font-size: clamp(var(--presentation-min-readable-size), 1.35cqw, 1.55rem);
+}
+
+.q5TimelineExplanation > p {
+  margin: 3px 0 0;
+  font-size: clamp(var(--presentation-min-readable-size), 1.35cqw, 1.55rem);
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .answerContent {
   width: 100%;
   padding-right: 8px;

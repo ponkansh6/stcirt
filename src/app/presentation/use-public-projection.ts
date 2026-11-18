@@ -32,6 +32,7 @@ export type PublicAnswerQuestion = PublicQuestion & {
   explanation?: string | null;
   answerType?: "selected" | "freeText";
   expectedAnswer?: string | null;
+  expectedAnswerParts?: { a: string; b: string };
   responses?: {
     displayName: string;
     answer?: string | null;

@@ -13,6 +13,11 @@ import {
 } from "react";
 import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "motion/react";
 import Image from "next/image";
+import {
+  hasUniqueTimelineAnswerMarkers,
+  parseTimeline,
+  type TimelineEntry,
+} from "@/lib/presentation/timeline";
 import { canApplyPresenterPoll } from "@/lib/presentation/presenter-position";
 import {
   usePublicProjection,
@@ -559,6 +564,23 @@ function QuestionPrompt({ question, className }: { question: PublicQuestion; cla
 
 function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
   if (question.answerType === "freeText") {
+    const parsedTimeline =
+      question.ordinal === 5 &&
+      question.expectedAnswerParts &&
+      typeof question.expectedAnswerParts.a === "string" &&
+      question.expectedAnswerParts.a.trim().length > 0 &&
+      typeof question.expectedAnswerParts.b === "string" &&
+      question.expectedAnswerParts.b.trim().length > 0
+        ? parseTimeline(question.question)
+        : null;
+    const q5Timeline =
+      parsedTimeline?.entries.length === 8 && hasUniqueTimelineAnswerMarkers(parsedTimeline.entries)
+        ? parsedTimeline.entries
+        : null;
+    if (q5Timeline && question.expectedAnswerParts) {
+      return <Q5TimelineAnswer question={question} entries={q5Timeline} />;
+    }
+
     const showResponses = (question.responses?.length ?? 0) > 0;
     return (
       <section
@@ -620,6 +642,73 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
             );
           })}
         </ol>
+      </div>
+    </section>
+  );
+}
+
+function Q5TimelineAnswer({
+  question,
+  entries,
+}: {
+  question: PublicAnswerQuestion;
+  entries: TimelineEntry[];
+}) {
+  const groups = entries.reduce<{ date: string; entries: TimelineEntry[] }[]>((result, entry) => {
+    const current = result[result.length - 1];
+    if (current?.date === entry.date) current.entries.push(entry);
+    else result.push({ date: entry.date, entries: [entry] });
+    return result;
+  }, []);
+  const parts = question.expectedAnswerParts;
+  if (!parts) return null;
+
+  return (
+    <section
+      className={`${styles.question} ${styles.answerReview} ${styles.q5TimelineReview}`}
+      aria-labelledby="question-heading"
+    >
+      <p className={styles.ordinal}>
+        問 <strong>{question.ordinal}</strong>
+      </p>
+      <div className={styles.q5TimelineContent}>
+        <h1 id="question-heading" className={styles.q5TimelineHeading}>
+          3回目の旅程
+        </h1>
+        <ol className={`${styles.q5Timeline} ${styles.answerReveal}`} aria-label="正解を含む旅程">
+          {groups.map((group) => (
+            <li className={styles.q5TimelineDay} key={group.date}>
+              <h2>{group.date}</h2>
+              <ol>
+                {group.entries.map((entry, index) => {
+                  const answer = entry.answerPart ? parts[entry.answerPart] : null;
+                  return (
+                    <li className={styles.q5TimelineEntry} key={`${entry.time}-${index}`}>
+                      <span className={styles.q5TimelineTime}>{entry.time}</span>
+                      <span className={styles.q5TimelineActivity}>
+                        {answer ? (
+                          <>
+                            {entry.answerPrefix}
+                            <strong className={styles.q5TimelineAnswer}>{answer}</strong>
+                            {entry.answerSuffix}
+                          </>
+                        ) : (
+                          entry.activity
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            </li>
+          ))}
+        </ol>
+        {question.expectedAnswer?.trim() && (
+          <div className={`${styles.answerReveal} ${styles.q5TimelineExplanation}`}>
+            <h2>解説</h2>
+            <p>{question.expectedAnswer}</p>
+          </div>
+        )}
       </div>
     </section>
   );
