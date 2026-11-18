@@ -321,13 +321,13 @@ describe("durable free-response assessment and restoration", () => {
       rawScore: 6.3,
       confidence: 0.99,
     });
-    expect(graded!.normalizedScore).toBeCloseTo(1.4);
+    expect(graded!.normalizedScore).toBeCloseTo(0.7);
   });
 
   it.each([
     { score: 0, confidence: 0, normalized: 0 },
-    { score: 9, confidence: 1, normalized: 2 },
-    { score: 4.5, confidence: 0.37, normalized: 1 },
+    { score: 9, confidence: 1, normalized: 1 },
+    { score: 4.5, confidence: 0.37, normalized: 0.5 },
   ])(
     "persists JEV raw score $score without weighting confidence",
     async ({ score, confidence, normalized }) => {
@@ -375,7 +375,7 @@ describe("durable free-response assessment and restoration", () => {
 
     await expect(processDueAssessments()).resolves.toMatchObject({ graded: 1 });
     const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
-    expect(assessment).toMatchObject({ state: "graded", rawScore: 4.5, normalizedScore: 1.5 });
+    expect(assessment).toMatchObject({ state: "graded", rawScore: 4.5, normalizedScore: 0.75 });
   });
 
   it("grades both keyword answers without inventing JEV audit scores", async () => {
@@ -400,7 +400,7 @@ describe("durable free-response assessment and restoration", () => {
     expect(assessment).toMatchObject({
       state: "graded",
       rawScore: null,
-      normalizedScore: 2,
+      normalizedScore: 1,
       confidence: null,
       model: "keyword-override",
     });
@@ -636,7 +636,7 @@ describe("durable free-response assessment and restoration", () => {
       nextAttemptAt: null,
       errorCode: null,
     });
-    expect(gradedAssessment!.normalizedScore).toBeCloseTo(1.4);
+    expect(gradedAssessment!.normalizedScore).toBeCloseTo(0.7);
   });
 
   it("ignores a provider failure after another worker has replaced its claim", async () => {
@@ -726,7 +726,7 @@ describe("durable free-response assessment and restoration", () => {
       attempts: 1,
       rawScore: 5.4,
     });
-    expect(retried!.normalizedScore).toBeCloseTo(1.2);
+    expect(retried!.normalizedScore).toBeCloseTo(0.6);
   });
 
   it("rejects a late result after the lease is reclaimed by another worker", async () => {
@@ -767,7 +767,7 @@ describe("durable free-response assessment and restoration", () => {
       rawScore: 7.2,
       claimToken: null,
     });
-    expect(assessment!.normalizedScore).toBeCloseTo(1.6);
+    expect(assessment!.normalizedScore).toBeCloseTo(0.8);
   });
 
   it("does not apply an assessment after the participant revises the answer revision", async () => {
@@ -819,7 +819,7 @@ describe("durable free-response assessment and restoration", () => {
       rubricVersion: JEV_RUBRIC_VERSION,
       claimToken: null,
     });
-    expect(current!.normalizedScore).toBeCloseTo(2);
+    expect(current!.normalizedScore).toBeCloseTo(1);
     expect(gradeFreeResponseParts).toHaveBeenCalledTimes(2);
     expect(gradeFreeResponseParts).toHaveBeenNthCalledWith(
       1,

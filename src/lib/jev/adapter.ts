@@ -1,8 +1,8 @@
 import "server-only";
 import { q5KeywordHits } from "./scoring";
+import { JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION } from "./versions";
 
-export const JEV_QUESTION_VERSION = "hong-kong-trip-a-b-v3";
-export const JEV_RUBRIC_VERSION = "jev-q5-lobster-french-toast-independent-points-v2";
+export { JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION, LEGACY_Q5_RUBRIC_VERSION } from "./versions";
 // JEV treats each criterion's array index as its score, so the 0–9 scale needs ten entries.
 const JEV_SCORE_CRITERIA = [
   "0: 内容がない、または誤り",

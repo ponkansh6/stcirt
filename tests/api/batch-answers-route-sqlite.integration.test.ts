@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, type TestDb } from "../helpers/db";
 import * as schema from "@/lib/db/schema";
+import { JEV_RUBRIC_VERSION } from "@/lib/jev/versions";
 
 const dbRef = vi.hoisted(() => ({ db: null as TestDb["db"] | null }));
 
@@ -257,7 +258,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         rawScore: 1,
         normalizedScore: 1,
         questionVersion: "hong-kong-trip-a-b-v3",
-        rubricVersion: "jev-q5-lobster-french-toast-independent-points-v2",
+        rubricVersion: JEV_RUBRIC_VERSION,
         gradedAt: new Date(),
       })
       .where(eq(schema.examAnswerAssessments.submissionId, submissionId));

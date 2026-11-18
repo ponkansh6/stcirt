@@ -22,7 +22,7 @@ const visibleResult = {
   participantCount: 5,
   rankParticipantCount: 5,
   score: 1.5,
-  maxScore: 2,
+  maxScore: 5,
   questions: [
     {
       position: 0,
@@ -33,6 +33,9 @@ const visibleResult = {
         correctness: "incorrect" as const,
       },
     },
+    { position: 1, question: "2問目", answer: { kind: "unanswered" as const } },
+    { position: 2, question: "3問目", answer: { kind: "unanswered" as const } },
+    { position: 3, question: "4問目", answer: { kind: "unanswered" as const } },
     {
       position: 4,
       question: "自由記述の問題",
@@ -315,7 +318,7 @@ describe("ResultsPanel", () => {
     expect(screen.getByText("2位")).toBeVisible();
     expect(screen.getByText("/ 5人")).toBeVisible();
     expect(screen.getByText("1.50点")).toBeVisible();
-    expect(screen.getByText("/ 2点")).toBeVisible();
+    expect(screen.getByText("/ 5点")).toBeVisible();
     expect(screen.getByText("最初の問題")).toBeVisible();
     expect(screen.getByText("選択した回答")).toBeVisible();
     expect(screen.getByText(/× 不正解/)).toBeVisible();

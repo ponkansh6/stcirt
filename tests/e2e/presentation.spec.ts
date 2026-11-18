@@ -261,10 +261,10 @@ async function installAdminApiMock(
                       uncountableCount: 0,
                       ranges: [
                         "0点",
-                        "0点超〜0.5点",
-                        "0.5点超〜1点",
-                        "1点超〜1.5点",
-                        "1.5点超〜2点",
+                        "0点超〜0.25点",
+                        "0.25点超〜0.5点",
+                        "0.5点超〜0.75点",
+                        "0.75点超〜1点",
                       ].map((label, index) => ({
                         label,
                         count: index === 2 ? winnerEntries.length : 0,
@@ -466,10 +466,10 @@ async function installAdminApiMock(
                     uncountableCount: 0,
                     ranges: [
                       "0点",
-                      "0点超〜0.5点",
-                      "0.5点超〜1点",
-                      "1点超〜1.5点",
-                      "1.5点超〜2点",
+                      "0点超〜0.25点",
+                      "0.25点超〜0.5点",
+                      "0.5点超〜0.75点",
+                      "0.75点超〜1点",
                     ].map((label, index) => ({
                       label,
                       count: index === 2 ? winnerEntries.length : 0,

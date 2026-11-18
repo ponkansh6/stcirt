@@ -562,7 +562,7 @@ export async function getParticipantResult(participantId: number): Promise<Parti
     return {
       state: "visible" as const,
       score: entry.score,
-      maxScore: questionRows.length + 1,
+      maxScore: questionRows.length,
       rank: entry.isAggregationTarget && !entry.isReference ? entry.rank : null,
       isAggregationTarget: entry.isAggregationTarget,
       isReference: entry.isReference,
@@ -1053,7 +1053,7 @@ function buildPresentationStatistics(
     };
   }
 
-  const labels = ["0点", "0点超〜0.5点", "0.5点超〜1点", "1点超〜1.5点", "1.5点超〜2点"];
+  const labels = ["0点", "0点超〜0.25点", "0.25点超〜0.5点", "0.5点超〜0.75点", "0.75点超〜1点"];
   const ranges = labels.map((label) => ({ label, count: 0 }));
   let ungradedCount = 0;
   let uncountableCount = 0;
@@ -1071,7 +1071,11 @@ function buildPresentationStatistics(
       ungradedCount += 1;
       continue;
     }
-    const bucket = answer.score === 0 ? 0 : Math.ceil(answer.score * 2);
+    if (answer.score > 1) {
+      uncountableCount += 1;
+      continue;
+    }
+    const bucket = answer.score === 0 ? 0 : Math.ceil(answer.score * 4);
     ranges[bucket]!.count += 1;
   }
   const gradedCount = ranges.reduce((sum, range) => sum + range.count, 0);

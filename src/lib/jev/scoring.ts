@@ -1,5 +1,6 @@
 const LOBSTER_ALIASES = ["ロブスター"];
 const FRENCH_TOAST_ALIASES = ["フレンチトースト"];
+const Q5_PART_MAX_SCORE = 0.5;
 
 function normalizeForKeywordComparison(answer: string): string {
   return answer
@@ -11,8 +12,9 @@ function normalizeForKeywordComparison(answer: string): string {
 function scorePart(answerText: string, jevRawScore: number, aliases: string[]): number {
   const comparableAnswer = normalizeForKeywordComparison(answerText);
   if (aliases.some((alias) => comparableAnswer.includes(normalizeForKeywordComparison(alias))))
-    return 1;
-  return Math.round(Math.min(1, Math.max(0, jevRawScore / 9)) * 100) / 100;
+    return Q5_PART_MAX_SCORE;
+  const normalizedScore = Math.round(Math.min(1, Math.max(0, jevRawScore / 9)) * 100) / 100;
+  return normalizedScore * Q5_PART_MAX_SCORE;
 }
 
 export function q5KeywordHits(answers: { a: string; b: string }): { a: boolean; b: boolean } {

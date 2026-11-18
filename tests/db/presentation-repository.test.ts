@@ -32,6 +32,7 @@ import {
   setPresentationReferenceNames,
 } from "@/lib/db/repository/presentation-repository";
 import { saveAnswerSubmission } from "@/lib/db/repository/answer-repository";
+import { JEV_RUBRIC_VERSION } from "@/lib/jev/adapter";
 import {
   getPresentationOperationDiagnostics,
   PresentationOperationError,
@@ -390,7 +391,7 @@ async function completeConcurrentQ5Assessment(submissionId: string, revision: nu
       state: "graded",
       rawScore: 9,
       normalizedScore: 1,
-      rubricVersion: "jev-q5-lobster-french-toast-independent-points-v2",
+      rubricVersion: JEV_RUBRIC_VERSION,
       gradedAt: new Date(),
     })
     .where(
@@ -575,7 +576,7 @@ describe("presentation repository", () => {
       state: "graded",
       rawScore: selectedIndices[1] === 0 ? 9 : 0,
       normalizedScore: q5NormalizedScore,
-      rubricVersion: "jev-q5-lobster-french-toast-independent-points-v2",
+      rubricVersion: JEV_RUBRIC_VERSION,
     });
   }
 
@@ -809,10 +810,10 @@ describe("presentation repository", () => {
         uncountableCount: 0,
         ranges: [
           { label: "0点", count: 0 },
-          { label: "0点超〜0.5点", count: 0 },
-          { label: "0.5点超〜1点", count: 0 },
-          { label: "1点超〜1.5点", count: 0 },
-          { label: "1.5点超〜2点", count: 0 },
+          { label: "0点超〜0.25点", count: 0 },
+          { label: "0.25点超〜0.5点", count: 0 },
+          { label: "0.5点超〜0.75点", count: 0 },
+          { label: "0.75点超〜1点", count: 0 },
         ],
       },
     });
@@ -2628,7 +2629,7 @@ describe("presentation repository", () => {
     await expect(getParticipantResult(1)).resolves.toEqual({
       state: "visible",
       score: 0.5,
-      maxScore: 2,
+      maxScore: 1,
       rank: 1,
       isAggregationTarget: true,
       isReference: false,
@@ -2800,7 +2801,7 @@ describe("presentation repository", () => {
         state: "graded" as const,
         rawScore: 0,
         normalizedScore: 0,
-        rubricVersion: "jev-q5-lobster-french-toast-independent-points-v2",
+        rubricVersion: JEV_RUBRIC_VERSION,
       })),
     );
 
@@ -3004,7 +3005,7 @@ describe("presentation repository", () => {
       state: "graded",
       rawScore: 4.5,
       normalizedScore: 0.5,
-      rubricVersion: "jev-q5-lobster-french-toast-independent-points-v2",
+      rubricVersion: JEV_RUBRIC_VERSION,
     });
 
     await op("aggregate", "current-five-question-aggregate");
@@ -3018,7 +3019,7 @@ describe("presentation repository", () => {
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
       {
         questionVersions,
-        rubricVersions: { "5": "jev-q5-lobster-french-toast-independent-points-v2" },
+        rubricVersions: { "5": JEV_RUBRIC_VERSION },
       },
     ]);
   });
@@ -3170,7 +3171,7 @@ describe("presentation repository", () => {
       state: "graded",
       rawScore: 4.5,
       normalizedScore: 0.5,
-      rubricVersion: "jev-q5-lobster-french-toast-independent-points-v2",
+      rubricVersion: JEV_RUBRIC_VERSION,
     });
 
     await op("aggregate", "stale-q5-snapshot-aggregate");
@@ -3502,7 +3503,7 @@ describe("presentation repository", () => {
       equivalentRank: null,
       rankParticipantCount: 1,
       score: 0,
-      maxScore: 3,
+      maxScore: 2,
       questions: [
         {
           position: 0,
@@ -4234,7 +4235,7 @@ describe("presentation repository", () => {
         answerText: JSON.stringify({ a: "pending response", b: "pending response" }),
         state: "pending",
         questionVersion: "hong-kong-trip-a-b-v3",
-        rubricVersion: "jev-q5-lobster-french-toast-independent-points-v2",
+        rubricVersion: JEV_RUBRIC_VERSION,
       })
       .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
 
@@ -4336,7 +4337,7 @@ describe("presentation repository", () => {
         "5": "hong-kong-trip-a-b-v3",
       },
       rubricVersions: {
-        "5": "jev-q5-lobster-french-toast-independent-points-v2",
+        "5": JEV_RUBRIC_VERSION,
       },
     });
 
@@ -4380,7 +4381,7 @@ describe("presentation repository", () => {
       equivalentRank: null,
       rankParticipantCount: 2,
       score: 2,
-      maxScore: 3,
+      maxScore: 2,
       questions: [
         {
           position: 0,
@@ -4404,7 +4405,7 @@ describe("presentation repository", () => {
       equivalentRank: null,
       rankParticipantCount: 2,
       score: 1,
-      maxScore: 3,
+      maxScore: 2,
       questions: [
         {
           position: 0,
@@ -4496,7 +4497,7 @@ describe("presentation repository", () => {
       equivalentRank: null,
       rankParticipantCount: 2,
       score: 2,
-      maxScore: 3,
+      maxScore: 2,
       questions: [
         { position: 0, question: "Question 1", answer: { kind: "unanswered" } },
         { position: 1, question: "Question 5", answer: { kind: "legacy" } },
@@ -4575,7 +4576,7 @@ describe("presentation repository", () => {
       rankParticipantCount: 2,
       isAggregationTarget: true,
       score: 1,
-      maxScore: 3,
+      maxScore: 2,
       questions: [
         {
           position: 0,
@@ -4663,7 +4664,7 @@ describe("presentation repository", () => {
     await expect(getParticipantResult(first)).resolves.toMatchObject({
       state: "visible",
       score: 2,
-      maxScore: 3,
+      maxScore: 2,
       rank: null,
       isAggregationTarget: false,
       isReference: false,

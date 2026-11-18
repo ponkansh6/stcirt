@@ -17,11 +17,14 @@ vi.mock("@/lib/db", async (importOriginal) => {
 
 import {
   getAdminPresentationDeck,
+  getParticipantResult,
   getPublicPresentation,
   operatePresentation,
   PresentationConflictError,
+  setParticipantResultsVisible,
 } from "@/lib/db/repository/presentation-repository";
 import { saveAnswerSubmission } from "@/lib/db/repository/answer-repository";
+import { parseParticipantResult } from "@/lib/participant-results-contract";
 
 const answerSet = [1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 }));
 
@@ -64,7 +67,11 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     return participant!.id;
   }
 
-  async function addFreeTextSubmission(participantId: number, rawScore: number, suffix: string) {
+  async function addFreeTextSubmission(
+    participantId: number,
+    normalizedScore: number,
+    suffix: string,
+  ) {
     const submissionId = `free-${participantId}-${suffix}`;
     await saveAnswerSubmission({
       submissionId,
@@ -80,8 +87,8 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       .update(schema.examAnswerAssessments)
       .set({
         state: "graded",
-        rawScore,
-        normalizedScore: rawScore,
+        rawScore: normalizedScore * 9,
+        normalizedScore,
         confidence: 0.01,
         model: "test-model",
         gradedAt: new Date(),
@@ -95,18 +102,18 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     return operatePresentation(operationId, "start");
   }
 
-  it("adds score divided by two at full precision and ranks before display rounding", async () => {
+  it("adds normalized Q5 score at full precision and ranks before display rounding", async () => {
     const first = await addParticipant("fractional-one");
     const second = await addParticipant("fractional-two");
-    await addFreeTextSubmission(first, 1.5, "one");
-    await addFreeTextSubmission(second, 1.499, "two");
+    await addFreeTextSubmission(first, 0.75, "one");
+    await addFreeTextSubmission(second, 0.7495, "two");
 
     const presentation = await startWithAggregate("fraction-start");
     expect(presentation.entries).toEqual([
-      expect.objectContaining({ displayName: "fractional-one", score: 5.5, rank: 1 }),
+      expect.objectContaining({ displayName: "fractional-one", score: 4.75, rank: 1 }),
       expect.objectContaining({
         displayName: "fractional-two",
-        score: 5.4990000000000006,
+        score: 4.7495,
         rank: 2,
       }),
     ]);
@@ -117,8 +124,8 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       expect.objectContaining({
         questionId: 5,
         answerKind: "freeText",
-        rawScore: 1.5,
-        normalizedScore: 1.5,
+        rawScore: 6.75,
+        normalizedScore: 0.75,
       }),
     );
     for (let index = 0; index < 17; index += 1)
@@ -138,7 +145,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       expect(winnerProjection.winners[0]?.questionResults[4]).toMatchObject({
         position: 4,
         answer: { kind: "freeText", value: "A: answer one\nB: answer one" },
-        normalizedScore: 1.5,
+        normalizedScore: 0.75,
       });
     expect(JSON.stringify(winnerProjection)).not.toContain('"rawScore"');
   });
@@ -147,7 +154,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     const participantId = await addParticipant("zero-normalized-score");
     const maximumParticipantId = await addParticipant("maximum-normalized-score");
     await addFreeTextSubmission(participantId, 0, "zero");
-    await addFreeTextSubmission(maximumParticipantId, 2, "maximum");
+    await addFreeTextSubmission(maximumParticipantId, 1, "maximum");
     await startWithAggregate("zero-score-start");
     for (let index = 0; index < 17; index += 1)
       await operatePresentation(`zero-score-forward-${index}`, "advance");
@@ -185,12 +192,37 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     expect(projection.winners[0]).toMatchObject({ displayName: "maximum-normalized-score" });
     expect(projection.winners[0]?.questionResults[4]).toMatchObject({
       answer: { kind: "freeText", value: "A: answer maximum\nB: answer maximum" },
-      normalizedScore: 2,
+      normalizedScore: 1,
     });
   });
 
-  it("bins free-text scores at every inclusive half-point boundary without exposing unanswered counts", async () => {
-    const values = [0, 0.5, 0.51, 1, 1.5, 2];
+  it("returns a new-scale result DTO accepted by the participant client contract", async () => {
+    const participantId = await addParticipant("new-scale-result");
+    await addFreeTextSubmission(participantId, 1, "new-scale-result");
+    await startWithAggregate("new-scale-result-start");
+    await setParticipantResultsVisible(true);
+
+    const result = await getParticipantResult(participantId);
+    expect(result).toMatchObject({
+      state: "visible",
+      score: 5,
+      maxScore: 5,
+      questions: [
+        { position: 0 },
+        { position: 1 },
+        { position: 2 },
+        { position: 3 },
+        {
+          position: 4,
+          answer: { kind: "freeText", score: 1 },
+        },
+      ],
+    });
+    expect(parseParticipantResult(result)).toEqual(result);
+  });
+
+  it("bins Q5 scores at every inclusive quarter-point boundary without exposing unanswered counts", async () => {
+    const values = [0, 0.25, 0.255, 0.5, 0.505, 0.75, 0.755, 1];
     const participants = await Promise.all(
       values.map((_, index) => addParticipant(`range-${index}`)),
     );
@@ -199,7 +231,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     for (let index = 0; index < values.length; index += 1) {
       await addFreeTextSubmission(participants[index]!, values[index]!, `range-${index}`);
     }
-    await addFreeTextSubmission(ungradedParticipant, 1, "ungraded");
+    await addFreeTextSubmission(ungradedParticipant, 0.5, "ungraded");
     await startWithAggregate("range-boundary-start");
     const [ungradedEntry] = await testDb.db
       .select()
@@ -222,22 +254,60 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       question: { ordinal: 5 },
       statistics: {
         kind: "freeText",
-        participantCount: 8,
-        gradedCount: 6,
+        participantCount: 10,
+        gradedCount: 8,
         ungradedCount: 1,
         uncountableCount: 0,
         ranges: [
           { label: "0点", count: 1 },
-          { label: "0点超〜0.5点", count: 1 },
-          { label: "0.5点超〜1点", count: 2 },
-          { label: "1点超〜1.5点", count: 1 },
-          { label: "1.5点超〜2点", count: 1 },
+          { label: "0点超〜0.25点", count: 1 },
+          { label: "0.25点超〜0.5点", count: 2 },
+          { label: "0.5点超〜0.75点", count: 2 },
+          { label: "0.75点超〜1点", count: 2 },
         ],
       },
     });
     expect(JSON.stringify(projection)).not.toContain("unanswered");
     expect(JSON.stringify(projection)).not.toContain("rawScore");
     expect(JSON.stringify(projection)).not.toContain("range-0");
+  });
+
+  it("classifies a valid legacy Q5 score above the new maximum as uncountable", async () => {
+    const participantId = await addParticipant("legacy-score-above-new-maximum");
+    await addFreeTextSubmission(participantId, 1, "legacy-score");
+    await startWithAggregate("legacy-score-start");
+    const [entry] = await testDb.db
+      .select()
+      .from(schema.presentationEntries)
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    await testDb.db
+      .update(schema.presentationEntries)
+      .set({
+        answers: entry!.answers.map((answer) =>
+          answer.questionId === 5 ? { ...answer, rawScore: 9, normalizedScore: 1.5 } : answer,
+        ),
+      })
+      .where(eq(schema.presentationEntries.participantId, participantId));
+    for (let index = 0; index < 15; index += 1)
+      await operatePresentation("legacy-score-forward-" + index, "advance");
+
+    await expect(getPublicPresentation()).resolves.toMatchObject({
+      state: "statistics",
+      statistics: {
+        kind: "freeText",
+        participantCount: 1,
+        gradedCount: 0,
+        ungradedCount: 0,
+        uncountableCount: 1,
+        ranges: [
+          { label: "0点", count: 0 },
+          { label: "0点超〜0.25点", count: 0 },
+          { label: "0.25点超〜0.5点", count: 0 },
+          { label: "0.5点超〜0.75点", count: 0 },
+          { label: "0.75点超〜1点", count: 0 },
+        ],
+      },
+    });
   });
 
   it("classifies malformed free-text content with a zero score as uncountable", async () => {
@@ -276,10 +346,10 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         uncountableCount: 1,
         ranges: [
           { label: "0点", count: 0 },
-          { label: "0点超〜0.5点", count: 0 },
-          { label: "0.5点超〜1点", count: 0 },
-          { label: "1点超〜1.5点", count: 0 },
-          { label: "1.5点超〜2点", count: 0 },
+          { label: "0点超〜0.25点", count: 0 },
+          { label: "0.25点超〜0.5点", count: 0 },
+          { label: "0.5点超〜0.75点", count: 0 },
+          { label: "0.75点超〜1点", count: 0 },
         ],
       },
     });
@@ -316,10 +386,10 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         uncountableCount: 1,
         ranges: [
           { label: "0点", count: 0 },
-          { label: "0点超〜0.5点", count: 0 },
-          { label: "0.5点超〜1点", count: 0 },
-          { label: "1点超〜1.5点", count: 0 },
-          { label: "1.5点超〜2点", count: 0 },
+          { label: "0点超〜0.25点", count: 0 },
+          { label: "0.25点超〜0.5点", count: 0 },
+          { label: "0.5点超〜0.75点", count: 0 },
+          { label: "0.75点超〜1点", count: 0 },
         ],
       },
     });

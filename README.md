@@ -65,6 +65,13 @@ A Next.js 16 application for a shared five-question exam: four multiple-choice q
 
    For an existing deployment, apply checked-in migrations with `pnpm db:migrate`.
 
+   Q5 awards up to 0.5 point each for A and B (1 point total); the exam maximum is 5 points. After deploying the matching code, run the explicit repair command to convert legacy-rubric assessment rows in `graded`, `pending`, or `failed` state: non-null normalized scores are halved, null scores remain null, and each row keeps its state. A `processing` row interrupts the repair; it does not trigger an AI rerun. Review the dry-run output first, then rerun with `--apply` to commit the transactional, idempotent repair. This is a data repair, not a schema migration:
+
+   ```bash
+   node --env-file=.env.local --import tsx scripts/repair-q5-scoring.ts
+   node --env-file=.env.local --import tsx scripts/repair-q5-scoring.ts --apply
+   ```
+
 4. **Configure participant access**:
 
    Choose a four-digit PIN when prompted in the interactive terminal, then enter it again to confirm. Input is hidden, accepts ASCII digits only, and preserves leading zeroes. The signing secret is generated automatically and never printed. This upserts only those two keys in `.env.local`, preserving database and other settings, and saves the file with owner-only permissions. Non-interactive runs fail because PIN entry requires a terminal.

@@ -125,7 +125,7 @@ export const parseParticipantResult = (payload: unknown): ParticipantResult | nu
   }
 
   if (
-    (payload.maxScore !== questions.length && payload.maxScore !== questions.length + 1) ||
+    payload.maxScore !== questions.length ||
     payload.score < 0 ||
     payload.score > payload.maxScore
   ) {
