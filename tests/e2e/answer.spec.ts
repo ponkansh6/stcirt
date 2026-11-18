@@ -1365,6 +1365,130 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
   }
 });
 
+test("@chromium previews the Q5 scone photo accessibly without changing the answer", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 812 });
+  await mockParticipantSession(page, "Aki");
+  const questions = [1, 2, 3, 4].map(questionFor).concat(
+    makeQuestion({
+      id: 5,
+      answerType: "freeText",
+      choices: [],
+      question: [
+        "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
+        "2/27 昼 マンダリンオリエンタルホテルのスコーンを食べる",
+        "2/28 朝 ローカルシーフードレストランでAを食べる",
+        "3/2 朝 Bを食べる",
+      ].join("\n"),
+    }),
+  );
+  await page.route("**/api/answers/bootstrap**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        mode: "owner",
+        owner: { id: 17, name: "Aki" },
+        participant: { id: 17, name: "Aki" },
+        submission: null,
+        completionSnapshot: null,
+        questions,
+      }),
+    });
+  });
+
+  await page.goto("/answer");
+  const answerPageUrl = page.url();
+  const submittedBatches: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/api/answers/batch")) {
+      submittedBatches.push(request.url());
+    }
+  });
+  await page
+    .getByRole("navigation", { name: "設問へ移動" })
+    .getByRole("link", { name: /^第5問へ移動/ })
+    .click();
+  const answer = page.getByRole("textbox", { name: "A. 2/28 朝の食事" });
+  await answer.fill("入力中の回答を保持する");
+  const preview = page.getByRole("button", {
+    name: "マンダリンオリエンタルホテルのスコーンの写真を拡大表示",
+  });
+  await expect(preview).toBeVisible();
+  const dialog = page.getByRole("dialog", {
+    name: "マンダリンオリエンタルホテルのスコーンの写真",
+  });
+  await preview.click();
+  await expect(dialog).toBeVisible();
+  const fullImage = dialog.getByRole("img", { name: "マンダリンオリエンタルホテルのスコーン" });
+  await expect(fullImage).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "写真を閉じる" })).toBeFocused();
+  const imageBox = await fullImage.boundingBox();
+  expect(imageBox?.height).toBeLessThanOrEqual(812 * 0.9 + 1);
+  await page.keyboard.press("Tab");
+  await expect(dialog.getByRole("button", { name: "写真を閉じる" })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(dialog.getByRole("button", { name: "写真を閉じる" })).toBeFocused();
+  await dialog.getByRole("button", { name: "写真を閉じる" }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(preview).toBeFocused();
+
+  await preview.focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(preview).toBeFocused();
+  await expect(answer).toHaveValue("入力中の回答を保持する");
+
+  await page.keyboard.press("Space");
+  await expect(dialog).toBeVisible();
+  const dialogBox = await dialog.boundingBox();
+  expect(dialogBox).not.toBeNull();
+  const backdropPoint = await page.evaluate(() => {
+    const dialogElement = document.querySelector("dialog");
+    if (!dialogElement) return null;
+    const rect = dialogElement.getBoundingClientRect();
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
+    const gap = 4;
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const candidates = [
+      { x: rect.left - gap, y: centerY },
+      { x: rect.right + gap, y: centerY },
+      { x: centerX, y: rect.top - gap },
+      { x: centerX, y: rect.bottom + gap },
+    ];
+    return (
+      candidates.find(
+        ({ x, y }) =>
+          x >= 0 &&
+          x < viewportWidth &&
+          y >= 0 &&
+          y < viewportHeight &&
+          (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom),
+      ) ?? null
+    );
+  });
+  expect(backdropPoint).not.toBeNull();
+  if (!backdropPoint) throw new Error("No visible point outside the native dialog was found.");
+  await page.mouse.click(backdropPoint.x, backdropPoint.y);
+  await expect(dialog).not.toBeVisible();
+  await expect(preview).toBeFocused();
+  const widths = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth,
+    body: document.body.scrollWidth,
+    viewport: document.documentElement.clientWidth,
+  }));
+  expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport + 1);
+  await expect(page.locator("#question-5")).toBeVisible();
+  await expect(page).toHaveURL(answerPageUrl);
+  await expect(answer).toHaveValue("入力中の回答を保持する");
+  expect(submittedBatches).toEqual([]);
+});
+
 test("@chromium returns to owner completion after an assisted save and opens target correction directly", async ({
   page,
 }) => {

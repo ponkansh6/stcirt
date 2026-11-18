@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { cleanup, render, screen, fireEvent, within } from "@testing-library/react";
 import QuizRunner from "@/app/answer/quiz-runner";
 import GlobalHeader from "@/app/GlobalHeader";
+import { getQuestionPhoto } from "@/app/answer/question-photo-preview";
 
 const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
@@ -73,6 +74,15 @@ describe("QuizRunner batch answer sheet", () => {
     } else {
       Reflect.deleteProperty(document, "visibilityState");
     }
+  });
+
+  it("maps the scone photo only to the normalized Q5 activity", () => {
+    expect(
+      getQuestionPhoto(5, "  マンダリンオリエンタルホテルのスコーンを食べる  "),
+    ).not.toBeNull();
+    expect(getQuestionPhoto(5, "マンダリンオリエンタルホテルのスコーンを\n食べる")).toBeNull();
+    expect(getQuestionPhoto(4, "マンダリンオリエンタルホテルのスコーンを食べる")).toBeNull();
+    expect(getQuestionPhoto(5, "マンダリンオリエンタルホテルのスコーンを食べる（昼）")).toBeNull();
   });
 
   it("renders five native radio groups, progress navigation, and a disabled final confirmation while unanswered", () => {

@@ -309,6 +309,17 @@ The participant interface MUST support the documented responsive layout, keyboar
 - WHEN an answer submission is pending
 - THEN its small 16 CSS px spinner uses a 2 CSS px border that inherits the button text color, remains visible while decorative and hidden from assistive technology, and stops rotating when reduced motion is requested
 
+#### Scenario: [R5-S5] Preview the supported Q5 itinerary photo accessibly
+
+- WHEN the fifth question contains the activity `マンダリンオリエンタルホテルのスコーンを食べる`, allowing only trimmed and whitespace-collapsed exact matching
+- THEN a 48 × 64 CSS px photo preview appears to the left of that activity with an 8 CSS px gap; other questions and unmatched activities do not gain a photo or image spacing
+- WHEN the participant opens the preview by mouse, Enter, or Space
+- THEN a labeled native dialog shows the full photo contained within the viewport, traps focus, and leaves the current answer draft intact
+- WHEN the participant closes the dialog with its close button, Escape, or the backdrop
+- THEN focus returns to the preview button; no answer submission or question navigation occurs. The preview does not save or submit answers, Q5 edits continue to use the existing draft-update behavior, and the answer batch is saved only after explicit confirmation.
+- WHEN the answer page is viewed at 320 CSS px width
+- THEN the photo row remains usable without horizontal scrolling
+
 - Use a restrained exam-paper visual style with the existing beige, navy, and gold palette, light surfaces, ink text, and subtle decorative framing; use a restrained green accent for question numbers displayed in the answer screen, the selected answer state, the final confirmation label and left border, and the free-response textarea's focus-visible border, 2 CSS px ring at its existing opacity, and outline color. Keep the existing focus selector, 3 CSS px outline width/style/offset, ring width and opacity, and other controls' focus colors unchanged. Keep navigation's current and answered states distinct. Keep spacing consistent and align the answering navigation with the answer content width. Do not use medals, pass/fail imagery, or certificate visuals.
 - Always use the light color palette regardless of the operating system's color-scheme preference.
 - Provide readable contrast, visible keyboard focus, native radio semantics, live status updates, and textual progress labels so color is not the sole signal. Choice rows and the primary confirmation action have at least 44 CSS px of interaction height.

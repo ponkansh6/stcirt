@@ -22,6 +22,12 @@ import { ApiError } from "@/lib/api/client";
 import { HeaderPortal } from "./header-portal";
 import { resolveAnswererDisplay } from "./answerer-display";
 import { runIfSubmissionAllowed } from "./submission-gate";
+import {
+  getQuestionPhoto,
+  QuestionPhotoDialog,
+  QuestionPhotoPreview,
+  type QuestionPhoto,
+} from "./question-photo-preview";
 import { useParticipantResultsVisibility } from "./use-participant-results-visibility";
 import {
   makeSubmissionVisibilityKey,
@@ -470,6 +476,10 @@ export default function QuizRunner() {
   const completionHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const completionReauthenticationHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const [currentQuestionId, setCurrentQuestionId] = useState<number | null>(null);
+  const [openQuestionPhoto, setOpenQuestionPhoto] = useState<{
+    photo: QuestionPhoto;
+    trigger: HTMLButtonElement;
+  } | null>(null);
   const previousPhaseKind = useRef(phase.kind);
   const shouldFocusSubmissionRef = useRef(false);
   const shouldFocusCompletion = useRef(false);
@@ -1475,6 +1485,9 @@ export default function QuizRunner() {
                             <ol className={styles.timelineEntries}>
                               {timeline.entries.map((entry, entryIndex) => {
                                 const part = entry.answerPart ?? null;
+                                const photo = part
+                                  ? null
+                                  : getQuestionPhoto(question.id, entry.activity);
                                 const partLabel = part === "a" ? "A" : "B";
                                 const prompt = part === "a" ? "2/28 朝の食事" : "3/2 朝の食事";
 
@@ -1530,6 +1543,21 @@ export default function QuizRunner() {
                                             </span>
                                           )}
                                         </>
+                                      ) : photo ? (
+                                        <div className={styles.timelineActivityWithPhoto}>
+                                          <QuestionPhotoPreview
+                                            photo={photo}
+                                            onOpen={(selectedPhoto, trigger) =>
+                                              setOpenQuestionPhoto({
+                                                photo: selectedPhoto,
+                                                trigger,
+                                              })
+                                            }
+                                          />
+                                          <span className={styles.timelineDescription}>
+                                            {entry.activity}
+                                          </span>
+                                        </div>
                                       ) : (
                                         <span className={styles.timelineDescription}>
                                           {entry.activity}
@@ -1869,6 +1897,11 @@ export default function QuizRunner() {
           )}
         </section>
       </main>
+      <QuestionPhotoDialog
+        photo={openQuestionPhoto?.photo ?? null}
+        trigger={openQuestionPhoto?.trigger ?? null}
+        onClose={() => setOpenQuestionPhoto(null)}
+      />
     </>
   );
 }
