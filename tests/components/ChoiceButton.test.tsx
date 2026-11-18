@@ -28,7 +28,7 @@ describe("ChoiceButton", () => {
     expect(radio).not.toBeChecked();
   });
 
-  it("renders the selected mark and a checked native radio", () => {
+  it("renders a checked native radio without selection indicators", () => {
     render(
       <ChoiceButton
         id="choice-a"
@@ -40,8 +40,9 @@ describe("ChoiceButton", () => {
         checked
       />,
     );
-    expect(screen.getByText("選択中")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /A\..*Selected text/ })).toBeChecked();
+    expect(screen.queryByText("選択中")).not.toBeInTheDocument();
+    expect(screen.queryByText("✓")).not.toBeInTheDocument();
   });
 
   it("uses checkbox geometry for a multiple-select choice", () => {
@@ -106,7 +107,8 @@ describe("ChoiceButton", () => {
 
     rerender(choice(true));
     expect(screen.getByRole("radio", { name: /A\..*Clickable/ })).toBeChecked();
-    expect(screen.getByText("選択中")).toBeVisible();
+    expect(screen.queryByText("選択中")).not.toBeInTheDocument();
+    expect(screen.queryByText("✓")).not.toBeInTheDocument();
   });
 
   it("disables the radio while a submission is pending", () => {

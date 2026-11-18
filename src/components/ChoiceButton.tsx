@@ -64,15 +64,6 @@ export default function ChoiceButton({
         {label}
       </span>
       <span className="min-w-0 flex-1 break-words font-medium">{text}</span>
-      {checked && (
-        <span
-          aria-hidden="true"
-          className="inline-flex shrink-0 items-center gap-1 text-sm font-bold text-answer-accent"
-        >
-          <span>✓</span>
-          <span>選択中</span>
-        </span>
-      )}
     </label>
   );
 }
