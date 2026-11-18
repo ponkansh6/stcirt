@@ -225,6 +225,13 @@
       "when": 1794718408201,
       "tag": "0031_hong_kong_trip_q5_itinerary",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1794718408202,
+      "tag": "0032_hong_kong_trip_q5_explanation",
+      "breakpoints": true
     }
   ]
 }
