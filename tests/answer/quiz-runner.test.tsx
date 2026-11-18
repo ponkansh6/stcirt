@@ -22,6 +22,11 @@ const quizzes = Array.from({ length: 5 }, (_, index) => ({
 }));
 
 const visibilityStateDescriptor = Object.getOwnPropertyDescriptor(document, "visibilityState");
+const dialogShowModalDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLDialogElement.prototype,
+  "showModal",
+);
+const dialogCloseDescriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "close");
 
 function session(phase: object, overrides: Record<string, unknown> = {}) {
   return {
@@ -69,6 +74,16 @@ describe("QuizRunner batch answer sheet", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    if (dialogShowModalDescriptor) {
+      Object.defineProperty(HTMLDialogElement.prototype, "showModal", dialogShowModalDescriptor);
+    } else {
+      Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal");
+    }
+    if (dialogCloseDescriptor) {
+      Object.defineProperty(HTMLDialogElement.prototype, "close", dialogCloseDescriptor);
+    } else {
+      Reflect.deleteProperty(HTMLDialogElement.prototype, "close");
+    }
     if (visibilityStateDescriptor) {
       Object.defineProperty(document, "visibilityState", visibilityStateDescriptor);
     } else {
@@ -83,6 +98,59 @@ describe("QuizRunner batch answer sheet", () => {
     expect(getQuestionPhoto(5, "マンダリンオリエンタルホテルのスコーンを\n食べる")).toBeNull();
     expect(getQuestionPhoto(4, "マンダリンオリエンタルホテルのスコーンを食べる")).toBeNull();
     expect(getQuestionPhoto(5, "マンダリンオリエンタルホテルのスコーンを食べる（昼）")).toBeNull();
+  });
+
+  it("opens and closes the Q5 activity photo preview", () => {
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.open = true;
+      },
+    });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.open = false;
+      },
+    });
+    const freeResponseQuizzes = quizzes.map((quiz, index) =>
+      index === 4
+        ? {
+            ...quiz,
+            question: {
+              ...quiz.question,
+              answerType: "freeText" as const,
+              choices: [],
+              question:
+                "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。\n" +
+                "2/27 昼 マンダリンオリエンタルホテルのスコーンを食べる\n" +
+                "2/27 夜 香港で評価の高いフォカッチャパニーニを食べる\n" +
+                "2/28 朝 ローカルシーフードレストランでAを食べる\n" +
+                "2/28 昼 アバディーンでボートツアー＆ボートヌードル\n" +
+                "2/28 夜 地元で人気なローストグースを食べる\n" +
+                "3/1 朝 地元の少しリッチな飲茶を食べる\n" +
+                "3/1 昼夜 香港ディズニーランドを楽しむ\n" +
+                "3/2 朝 Bを食べる",
+            },
+          }
+        : quiz,
+    );
+    mockUseQuizSession.mockReturnValue(
+      session({ kind: "answering" }, { quizzes: freeResponseQuizzes }),
+    );
+    render(<RunnerPage />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "マンダリンオリエンタルホテルのスコーンの写真を拡大表示",
+      }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "マンダリンオリエンタルホテルのスコーンの写真",
+    });
+    expect(dialog).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "写真を閉じる" }));
+    expect(dialog).not.toBeVisible();
   });
 
   it("renders five native radio groups, progress navigation, and a disabled final confirmation while unanswered", () => {

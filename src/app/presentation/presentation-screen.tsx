@@ -660,7 +660,9 @@ function Q5TimelineAnswer({
   question,
   entries,
 }: {
-  question: PublicAnswerQuestion;
+  question: PublicAnswerQuestion & {
+    expectedAnswerParts: NonNullable<PublicAnswerQuestion["expectedAnswerParts"]>;
+  };
   entries: TimelineEntry[];
 }) {
   const groups = entries.reduce<{ date: string; entries: TimelineEntry[] }[]>((result, entry) => {
@@ -670,7 +672,6 @@ function Q5TimelineAnswer({
     return result;
   }, []);
   const parts = question.expectedAnswerParts;
-  if (!parts) return null;
 
   return (
     <section

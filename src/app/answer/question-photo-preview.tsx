@@ -40,7 +40,7 @@ export function QuestionPhotoPreview({
       className={styles.previewButton}
       aria-label={`${photo.label}を拡大表示`}
       onClick={() => {
-        if (buttonRef.current) onOpen(photo, buttonRef.current);
+        onOpen(photo, buttonRef.current!);
       }}
     >
       <Image src={photo.src} width={961} height={1280} sizes="48px" alt={photo.alt} />
@@ -63,8 +63,8 @@ export function QuestionPhotoDialog({
   onCloseRef.current = onClose;
 
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog || !photo) return;
+    if (!photo) return;
+    const dialog = dialogRef.current!;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     dialog.showModal();
@@ -100,8 +100,7 @@ export function QuestionPhotoDialog({
       }}
       onKeyDown={(event) => {
         if (event.key !== "Tab") return;
-        const dialog = dialogRef.current;
-        if (!dialog) return;
+        const dialog = dialogRef.current!;
         const focusable = dialog.querySelectorAll<HTMLElement>(
           'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
         );
