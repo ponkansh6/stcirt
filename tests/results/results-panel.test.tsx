@@ -130,13 +130,7 @@ describe("ResultsPanel", () => {
     expect(screen.getByRole("heading", { name: "代理回答の結果" })).toBeVisible();
     expect(screen.getByText("名前")).toBeVisible();
     expect(screen.getByText("Assistant")).toBeVisible();
-    expect(screen.getByRole("link", { name: "自分の結果を見る" })).toHaveAttribute(
-      "href",
-      "/results",
-    );
-    expect(
-      screen.getByRole("link", { name: "自分の結果を見る" }).getAttribute("href"),
-    ).not.toContain("18");
+    expect(screen.queryByRole("link", { name: "自分の結果を見る" })).not.toBeInTheDocument();
   });
 
   it("shows share controls only for an authorized submitted assisted result", async () => {
@@ -153,16 +147,9 @@ describe("ResultsPanel", () => {
     expect(screen.getByRole("button", { name: "共有URLを発行" })).toBeEnabled();
   });
 
-  it("shows the assisted result switch only when an assisted submission exists and keeps IDs out of links", () => {
-    const { rerender } = render(
-      <ResultsPanel initial={{ state: "waiting" }} scope="owner" hasAssistedSubmission={false} />,
-    );
+  it("does not link from the owner's result to the assisted result", () => {
+    render(<ResultsPanel initial={{ state: "waiting" }} scope="owner" hasAssistedSubmission />);
     expect(screen.queryByRole("link", { name: "代理回答の結果を見る" })).not.toBeInTheDocument();
-
-    rerender(<ResultsPanel initial={{ state: "waiting" }} scope="owner" hasAssistedSubmission />);
-    const assistedLink = screen.getByRole("link", { name: "代理回答の結果を見る" });
-    expect(assistedLink).toHaveAttribute("href", "/results?scope=assisted");
-    expect(assistedLink.getAttribute("href")).not.toMatch(/\d/);
   });
 
   it("uses the server state initially, skips hidden-tab changes, and refreshes on return", async () => {

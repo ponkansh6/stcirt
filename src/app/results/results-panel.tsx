@@ -192,19 +192,6 @@ export default function ResultsPanel({
             結果を更新できませんでした。通信状況を確認して、ページを再読み込みしてください。
           </p>
         ) : null}
-        {scope !== null && authorized && (
-          <nav aria-label="結果の切り替え" className="mt-6 flex flex-wrap gap-x-5 gap-y-2">
-            {scope === "assisted" ? (
-              <Link className="font-semibold text-primary underline" href="/results">
-                自分の結果を見る
-              </Link>
-            ) : hasAssistedSubmission ? (
-              <Link className="font-semibold text-primary underline" href="/results?scope=assisted">
-                代理回答の結果を見る
-              </Link>
-            ) : null}
-          </nav>
-        )}
         {scope === "assisted" && authorized && hasAssistedSubmission ? (
           <ShareManager canIssue={result.state === "visible"} />
         ) : null}
