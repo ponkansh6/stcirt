@@ -540,6 +540,10 @@ function hasLongChoice(choices: string[]) {
 }
 
 function QuestionPrompt({ question, className }: { question: PublicQuestion; className: string }) {
+  const parsedQ5Timeline = question.ordinal === 5 ? parseTimeline(question.question) : null;
+  const preserveQuestionLines =
+    parsedQ5Timeline?.entries.length === 8 &&
+    hasUniqueTimelineAnswerMarkers(parsedQ5Timeline.entries);
   const choicesClassName = hasLongChoice(question.choices)
     ? `${styles.choices} ${styles.singleColumnChoices}`
     : styles.choices;
@@ -549,7 +553,12 @@ function QuestionPrompt({ question, className }: { question: PublicQuestion; cla
       <p className={styles.ordinal}>
         問 <strong>{question.ordinal}</strong>
       </p>
-      <h1 id="question-heading">{question.question}</h1>
+      <h1
+        id="question-heading"
+        className={preserveQuestionLines ? styles.q5QuestionHeading : undefined}
+      >
+        {question.question}
+      </h1>
       <ol className={choicesClassName}>
         {question.choices.map((choice, index) => (
           <li key={`${index}-${choice}`}>

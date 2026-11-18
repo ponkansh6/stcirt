@@ -2519,7 +2519,10 @@ describe("presentation projection and presenter progression", () => {
     });
     render(<PresentationScreen presenterRequested />);
 
-    expect(await screen.findByRole("heading", { name: questionText })).toBeInTheDocument();
+    const questionHeading = await screen.findByRole("heading", { name: questionText });
+    expect(questionHeading).toBeInTheDocument();
+    expect(questionHeading.textContent).toBe(questionText);
+    expect(questionHeading).toHaveClass(/q5QuestionHeading/);
     expect(screen.queryByText("新鮮なロブスター")).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await settled();
@@ -2588,6 +2591,7 @@ describe("presentation projection and presenter progression", () => {
     const fallbackHeading = await screen.findByRole("heading", { name: /舜基は珠美の1年間/ });
     expect(fallbackHeading).toHaveTextContent(validItinerary[0]);
     expect(fallbackHeading).toHaveTextContent(validItinerary.at(-1)!);
+    expect(fallbackHeading).not.toHaveClass(/q5QuestionHeading/);
     if (failure === "malformed non-empty row") {
       expect(fallbackHeading).toHaveTextContent("malformed row");
     }
