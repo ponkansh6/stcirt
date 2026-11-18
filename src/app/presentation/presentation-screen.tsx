@@ -586,8 +586,11 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
       parsedTimeline?.entries.length === 8 && hasUniqueTimelineAnswerMarkers(parsedTimeline.entries)
         ? parsedTimeline.entries
         : null;
-    if (q5Timeline && question.expectedAnswerParts) {
-      return <Q5TimelineAnswer question={question} entries={q5Timeline} />;
+    const expectedAnswerParts = question.expectedAnswerParts;
+    if (q5Timeline && expectedAnswerParts) {
+      return (
+        <Q5TimelineAnswer question={{ ...question, expectedAnswerParts }} entries={q5Timeline} />
+      );
     }
 
     const showResponses = (question.responses?.length ?? 0) > 0;

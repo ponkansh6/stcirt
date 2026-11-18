@@ -102,7 +102,7 @@ describe("question photo preview", () => {
       <QuestionPhotoDialog photo={photo} trigger={null} onClose={vi.fn()} />,
     );
     const dialog = container.querySelector("dialog") as HTMLDialogElement;
-    const closeButton = screen.getByRole("button", { name: "写真を閉じる" });
+    const closeButton = screen.getByRole("button", { name: "写真を閉じる" }) as HTMLButtonElement;
     closeButton.disabled = true;
     const enterEvent = new KeyboardEvent("keydown", {
       key: "Enter",
