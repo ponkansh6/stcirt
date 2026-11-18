@@ -849,6 +849,45 @@ describe("presentation repository", () => {
     );
   });
 
+  it("scores other multiple-choice questions with unavailable correct indices as zero", async () => {
+    await addCurrentFiveQuestions();
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({
+        choices: ["A", "B", "C", "D", "E", "F", "G", "H"],
+        selectionMode: "multiple",
+        correctIndices: null,
+      })
+      .where(eq(schema.examQuestions.id, 1));
+    const participant = await addParticipant("Other multi missing correct indices");
+    await addSubmission(participant, [0, 0], 1, "other-multi-correct-indices-null", 1);
+    await testDb.db
+      .update(schema.examSubmissionAnswers)
+      .set({ selectedIndex: null, selectedIndices: [1, 4] })
+      .where(
+        and(
+          eq(
+            schema.examSubmissionAnswers.submissionId,
+            `submission-${participant}-other-multi-correct-indices-null`,
+          ),
+          eq(schema.examSubmissionAnswers.questionId, 1),
+        ),
+      );
+
+    const aggregated = await op("aggregate", "other-multi-correct-indices-null-score");
+
+    expect(aggregated.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          displayName: "Other multi missing correct indices",
+          score: 4,
+          rank: 1,
+          isAggregationTarget: true,
+        }),
+      ]),
+    );
+  });
+
   it("advances an opening presentation with no questions to the podium preview", async () => {
     await addQ5OnlyQuestion();
     await op("aggregate", "empty-opening-aggregate");
