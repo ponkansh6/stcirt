@@ -778,6 +778,34 @@ describe("presentation repository", () => {
     );
   });
 
+  it("scores Q2 with unavailable correct indices as zero", async () => {
+    await addCurrentFiveQuestions();
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({
+        choices: ["A", "B", "C", "D", "E", "F", "G", "H"],
+        selectionMode: "multiple",
+        correctIndices: null,
+        questionVersion: "india-uber-multi-v1",
+      })
+      .where(eq(schema.examQuestions.id, 2));
+    const participant = await addParticipant("Q2 missing correct indices");
+    await addSubmission(participant, [0, 0], 1, "multi-correct-indices-null", 1, [0, 5]);
+
+    const aggregated = await op("aggregate", "multi-correct-indices-null-score");
+
+    expect(aggregated.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          displayName: "Q2 missing correct indices",
+          score: 4,
+          rank: 1,
+          isAggregationTarget: true,
+        }),
+      ]),
+    );
+  });
+
   it("keeps full-match scoring for other multiple-choice questions", async () => {
     await addCurrentFiveQuestions();
     await testDb.db
