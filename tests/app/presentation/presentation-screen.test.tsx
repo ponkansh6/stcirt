@@ -355,6 +355,41 @@ describe("presentation projection and presenter progression", () => {
     },
   );
 
+  it.each([
+    ["two", "question", "39 trimmed Unicode", `　${"🧭".repeat(39)}　`, false],
+    ["one", "question", "40 trimmed Unicode", `　${"🧭".repeat(40)}　`, true],
+    ["two", "answer", "39 trimmed Unicode", `　${"🧭".repeat(39)}　`, false],
+    ["one", "answer", "40 trimmed Unicode", `　${"🧭".repeat(40)}　`, true],
+  ] as const)(
+    "uses %s column layout in the %s stage at the %s-code-point boundary",
+    async (_columns, state, _boundary, longChoice, singleColumn) => {
+      setup({
+        projection: {
+          state,
+          question: {
+            id: 1,
+            ordinal: 1,
+            total: 5,
+            question: "設問",
+            choices: ["短い選択肢", longChoice],
+            correctIndex: 0,
+            explanation: "補足",
+          },
+        },
+        admin: { state },
+      });
+      render(<PresentationScreen />);
+      await settled();
+
+      const choices = screen.getByRole("list");
+      if (singleColumn) {
+        expect(choices).toHaveClass(/singleColumnChoices/);
+      } else {
+        expect(choices).not.toHaveClass(/singleColumnChoices/);
+      }
+    },
+  );
+
   it("keeps a question entry mounted across same-ID polls and replaces it for a new question ID", async () => {
     vi.useFakeTimers();
     let projection: Record<string, unknown> = {

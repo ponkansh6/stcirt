@@ -706,6 +706,10 @@
   list-style: none;
 }
 
+.singleColumnChoices {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .choices li {
   display: flex;
   min-height: clamp(42px, 8cqh, 82px);

@@ -709,7 +709,8 @@ describe("PresentationScreen", () => {
 
     render(<PresentationScreen />);
 
-    expect(await screen.findByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "回答統計" })).toBeInTheDocument();
+    expect(screen.queryByText(question.question, { exact: true })).not.toBeInTheDocument();
     const rows = screen.getByRole("list", { name: "選択肢ごとの回答人数" });
     expect(within(rows).getAllByRole("listitem")).toHaveLength(2);
     expect(rows).toHaveTextContent("海2 人山1 人");
@@ -763,7 +764,8 @@ describe("PresentationScreen", () => {
 
     render(<PresentationScreen />);
 
-    expect(await screen.findByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "回答統計" })).toBeInTheDocument();
+    expect(screen.queryByText(question.question, { exact: true })).not.toBeInTheDocument();
     const rows = screen.getByRole("list", { name: "得点区間ごとの人数" });
     expect(within(rows).getByRole("listitem")).toHaveTextContent("0–2 点1 人");
   });

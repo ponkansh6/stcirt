@@ -528,14 +528,24 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
     </ol>
   );
 }
+const longChoiceThreshold = 40;
+
+function hasLongChoice(choices: string[]) {
+  return choices.some((choice) => Array.from(choice.trim()).length >= longChoiceThreshold);
+}
+
 function QuestionPrompt({ question, className }: { question: PublicQuestion; className: string }) {
+  const choicesClassName = hasLongChoice(question.choices)
+    ? `${styles.choices} ${styles.singleColumnChoices}`
+    : styles.choices;
+
   return (
     <section className={`${styles.question} ${className}`} aria-labelledby="question-heading">
       <p className={styles.ordinal}>
         問 <strong>{question.ordinal}</strong>
       </p>
       <h1 id="question-heading">{question.question}</h1>
-      <ol className={styles.choices}>
+      <ol className={choicesClassName}>
         {question.choices.map((choice, index) => (
           <li key={`${index}-${choice}`}>
             <span className={styles.choiceLetter}>{String.fromCharCode(65 + index)}</span>
@@ -586,6 +596,9 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
   }
   const hasExplanation =
     typeof question.explanation === "string" && question.explanation.trim().length > 0;
+  const choicesClassName = hasLongChoice(question.choices)
+    ? `${styles.choices} ${styles.answered} ${styles.answerReveal} ${styles.singleColumnChoices}`
+    : `${styles.choices} ${styles.answered} ${styles.answerReveal}`;
 
   return (
     <section
@@ -597,7 +610,7 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
       </p>
       <div className={styles.answerContent}>
         <h1 id="question-heading">{question.question}</h1>
-        <ol className={`${styles.choices} ${styles.answered} ${styles.answerReveal}`}>
+        <ol className={choicesClassName}>
           {question.choices.map((choice, index) => {
             const isCorrect = (question.correctIndices ?? [question.correctIndex]).includes(index);
             return (
@@ -633,8 +646,7 @@ function StatisticsSlide({
       <p className={styles.ordinal}>
         問 <strong>{question.ordinal}</strong>
       </p>
-      <h1 id="statistics-title">{question.question}</h1>
-      <h2>回答統計</h2>
+      <h1 id="statistics-title">回答統計</h1>
       <p className={styles.statisticsPopulation}>全参加者 {statistics.participantCount} 人</p>
       <ol
         className={styles.statisticsRows}

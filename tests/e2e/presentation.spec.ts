@@ -1801,7 +1801,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
     },
     {
       state: "statistics",
-      text: [questions[0].question, "回答統計", "全参加者 2 人", "カフェ", "2 人"],
+      text: ["回答統計", "全参加者 2 人", "カフェ", "2 人"],
     },
     { state: "podium_preview", text: ["いよいよ、結果発表です", "どうぞお楽しみに"] },
     { state: "third", text: ["該当する受賞者はいません", "第三位"] },
@@ -1832,6 +1832,9 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
     }
     const inspection = await inspectSlide();
     for (const text of stage.text) expect(inspection.text).toContain(text);
+    if (stage.state === "statistics") {
+      expect(inspection.text).not.toContain(questions[0].question);
+    }
     if (stage.state === "first_prize") {
       const beef = page.getByRole("img", { name: "和牛の写真" });
       const catalog = page.getByRole("img", { name: "和牛カタログの表紙" });

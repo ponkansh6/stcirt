@@ -554,6 +554,18 @@ Public presentation responses MUST disclose only the data permitted for the curr
 - WHEN reduced motion is requested
 - THEN these slide entrances have no translate or stagger delay and all content is immediately visible, and slide exits use zero duration
 
+#### Scenario: [R8-S11] Use one column for long multiple-choice options
+
+- WHEN a projected question or answer has any choice whose trimmed Unicode code point count is at least 40
+- THEN all choices use one column in both the question and answer stages
+- WHEN every choice has fewer than 40 trimmed Unicode code points
+- THEN the existing two-column layout is used
+
+#### Scenario: [R8-S12] Omit the question text from answer statistics
+
+- WHEN a statistics stage is displayed
+- THEN the presentation shows the question ordinal and answer statistics without showing the question text
+
 #### Scenario: [R8-S9] Aggregate the versioned Q5 total without reweighting or rounding
 
 - WHEN a complete submission has the current Q5 question and rubric versions and a graded assessment for its current revision
