@@ -93,18 +93,19 @@
   overflow-wrap: anywhere;
 }
 
-.timelineDay + .timelineDay {
-  margin-top: 1.25rem;
-  border-top: 1px solid var(--color-border-subtle);
-  padding-top: 1rem;
+.timelineDate {
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-weight: 650;
+  line-height: 1.6;
+  white-space: nowrap;
 }
 
-.timelineDate {
-  margin: 0 0 0.25rem;
-  color: var(--color-text);
-  font-size: 1rem;
-  font-weight: 650;
-  line-height: 1.5;
+.timelineWhen {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.35rem;
 }
 
 .timelineEntries {
@@ -115,7 +116,7 @@
 
 .timelineEntry {
   display: grid;
-  grid-template-columns: minmax(5.25rem, 0.35fr) minmax(0, 1fr);
+  grid-template-columns: minmax(5.75rem, 0.35fr) minmax(0, 1fr);
   gap: 0.65rem;
   align-items: start;
   padding: 0.55rem 0;
@@ -294,8 +295,12 @@
 
 @media (max-width: 420px) {
   .timelineEntry {
-    grid-template-columns: minmax(4.75rem, 0.38fr) minmax(0, 1fr);
+    grid-template-columns: minmax(5.25rem, 0.4fr) minmax(0, 1fr);
     gap: 0.5rem;
+  }
+
+  .timelineDate {
+    font-size: 0.8125rem;
   }
 
   .timelineTime {

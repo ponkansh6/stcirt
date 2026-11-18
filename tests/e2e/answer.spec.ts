@@ -1280,17 +1280,14 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
       choices: [],
       question: [
         "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
-        "2/27 昼 香港空港到着",
-        "2/27 夕方 マンダリンオリエンタルホテルのスコーンを食べる",
+        "2/27 昼 マンダリンオリエンタルホテルのスコーンを食べる",
         "2/27 夜 香港で評価の高いフォカッチャパニーニを食べる",
         "2/28 朝 ローカルシーフードレストランでAを食べる",
-        "2/28 午前 アバディーンのボートツアーに参加",
-        "2/28 昼 アバディーンでボートヌードルを食べる",
-        "2/28 夜 有名なローストグースを食べる",
-        "3/1 朝 飲茶を食べる",
-        "3/1 昼〜夜 香港ディズニーランドを楽しむ",
+        "2/28 昼 アバディーンでボートツアー＆ボートヌードル",
+        "2/28 夜 地元で人気なローストグースを食べる",
+        "3/1 朝 地元の少しリッチな飲茶を食べる",
+        "3/1 昼夜 香港ディズニーランドを楽しむ",
         "3/2 朝 Bを食べる",
-        "3/2 昼 香港空港発",
       ].join("\n"),
     }),
   );
@@ -1327,22 +1324,36 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
     await expect(fifthQuestion.getByRole("heading", { level: 2 })).toHaveText(
       "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
     );
-    await expect(fifthQuestion.getByRole("heading", { level: 3 })).toHaveText([
-      "2/27",
-      "2/28",
-      "3/1",
-      "3/2",
-    ]);
+    const itineraryEntries = fifthQuestion.locator("ol").getByRole("listitem");
+    await expect(itineraryEntries).toHaveCount(8);
+    const expectedEntries = [
+      ["2/27", "昼", "マンダリンオリエンタルホテルのスコーンを食べる"],
+      ["2/27", "夜", "香港で評価の高いフォカッチャパニーニを食べる"],
+      ["2/28", "朝", "ローカルシーフードレストランで"],
+      ["2/28", "昼", "アバディーンでボートツアー＆ボートヌードル"],
+      ["2/28", "夜", "地元で人気なローストグースを食べる"],
+      ["3/1", "朝", "地元の少しリッチな飲茶を食べる"],
+      ["3/1", "昼夜", "香港ディズニーランドを楽しむ"],
+      ["3/2", "朝", "を食べる"],
+    ] as const;
+    for (const [index, [date, time, activity]] of expectedEntries.entries()) {
+      const entry = itineraryEntries.nth(index);
+      await expect(entry.getByText(date, { exact: true })).toBeVisible();
+      await expect(entry.getByText(time, { exact: true })).toBeVisible();
+      await expect(entry).toContainText(activity);
+    }
     const answerA = fifthQuestion.getByRole("textbox", { name: "A. 2/28 朝の食事" });
     const answerB = fifthQuestion.getByRole("textbox", { name: "B. 3/2 朝の食事" });
     await expect(answerA).toBeVisible();
     await expect(answerB).toBeVisible();
     await expectPrimaryTargetGeometry(answerA, `Q5 A input at ${width}px`);
     await expectPrimaryTargetGeometry(answerB, `Q5 B input at ${width}px`);
-    const answerADay = answerA.locator("xpath=ancestor::ol/parent::section");
-    const answerBDay = answerB.locator("xpath=ancestor::ol/parent::section");
-    await expect(answerADay.getByRole("heading", { level: 3 })).toHaveText("2/28");
-    await expect(answerBDay.getByRole("heading", { level: 3 })).toHaveText("3/2");
+    await expect(
+      itineraryEntries.nth(2).getByRole("textbox", { name: "A. 2/28 朝の食事" }),
+    ).toBeVisible();
+    await expect(
+      itineraryEntries.nth(7).getByRole("textbox", { name: "B. 3/2 朝の食事" }),
+    ).toBeVisible();
 
     const widths = await page.evaluate(() => ({
       document: document.documentElement.scrollWidth,

@@ -159,15 +159,6 @@ function blurOnQuestionFiveEnter(event: KeyboardEvent<HTMLInputElement | HTMLTex
   event.currentTarget.blur();
 }
 
-function groupTimelineEntries(entries: TimelineEntry[]) {
-  return entries.reduce<Array<{ date: string; entries: TimelineEntry[] }>>((groups, entry) => {
-    const lastGroup = groups[groups.length - 1];
-    if (lastGroup?.date === entry.date) lastGroup.entries.push(entry);
-    else groups.push({ date: entry.date, entries: [entry] });
-    return groups;
-  }, []);
-}
-
 function hasAnswer(
   question: {
     id: number;
@@ -1481,78 +1472,74 @@ export default function QuizRunner() {
                       {question.id === 5 ? (
                         timeline ? (
                           <div className={styles.timeline}>
-                            {groupTimelineEntries(timeline.entries).map((day) => (
-                              <section key={day.date} className={styles.timelineDay}>
-                                <h3 className={styles.timelineDate}>{day.date}</h3>
-                                <ol className={styles.timelineEntries}>
-                                  {day.entries.map((entry, entryIndex) => {
-                                    const part = entry.answerPart ?? null;
-                                    const partLabel = part === "a" ? "A" : "B";
-                                    const prompt = part === "a" ? "2/28 朝の食事" : "3/2 朝の食事";
+                            <ol className={styles.timelineEntries}>
+                              {timeline.entries.map((entry, entryIndex) => {
+                                const part = entry.answerPart ?? null;
+                                const partLabel = part === "a" ? "A" : "B";
+                                const prompt = part === "a" ? "2/28 朝の食事" : "3/2 朝の食事";
 
-                                    return (
-                                      <li
-                                        key={`${entry.time}-${entryIndex}`}
-                                        className={styles.timelineEntry}
-                                      >
-                                        <span className={styles.timelineTime}>{entry.time}</span>
-                                        <div className={styles.timelineActivity}>
-                                          {part ? (
-                                            <>
-                                              {entry.answerPrefix && (
-                                                <span className={styles.timelineDescription}>
-                                                  {entry.answerPrefix}
-                                                </span>
-                                              )}
-                                              <div className={styles.timelineAnswer}>
-                                                <label
-                                                  htmlFor={`answer-${question.id}-${part}`}
-                                                  aria-label={`${partLabel}. ${prompt}`}
-                                                  className={styles.timelineAnswerLabel}
-                                                >
-                                                  <span className={styles.answerPartLetter}>
-                                                    {partLabel}
-                                                  </span>
-                                                  <span>朝の食事</span>
-                                                </label>
-                                                <input
-                                                  id={`answer-${question.id}-${part}`}
-                                                  name={`answer-${question.id}-${part}`}
-                                                  type="text"
-                                                  maxLength={1000}
-                                                  value={
-                                                    freeResponseParts[question.id]?.[part] ?? ""
-                                                  }
-                                                  onChange={(event) =>
-                                                    setFreeResponsePart(
-                                                      question.id,
-                                                      part,
-                                                      event.currentTarget.value,
-                                                    )
-                                                  }
-                                                  onKeyDown={blurOnQuestionFiveEnter}
-                                                  className={styles.timelineInput}
-                                                  disabled={isLocked}
-                                                />
-                                              </div>
-                                              {entry.answerSuffix && (
-                                                <span className={styles.timelineDescription}>
-                                                  {entry.answerSuffix}
-                                                </span>
-                                              )}
-                                            </>
-                                          ) : (
+                                return (
+                                  <li
+                                    key={`${entry.time}-${entryIndex}`}
+                                    className={styles.timelineEntry}
+                                  >
+                                    <div className={styles.timelineWhen}>
+                                      <span className={styles.timelineDate}>{entry.date}</span>
+                                      <span className={styles.timelineTime}>{entry.time}</span>
+                                    </div>
+                                    <div className={styles.timelineActivity}>
+                                      {part ? (
+                                        <>
+                                          {entry.answerPrefix && (
                                             <span className={styles.timelineDescription}>
-                                              {entry.activity}
+                                              {entry.answerPrefix}
                                             </span>
                                           )}
-                                        </div>
-                                      </li>
-                                    );
-                                  })}
-                                </ol>
-                              </section>
-                            ))}
+                                          <div className={styles.timelineAnswer}>
+                                            <label
+                                              htmlFor={`answer-${question.id}-${part}`}
+                                              aria-label={`${partLabel}. ${prompt}`}
+                                              className={styles.timelineAnswerLabel}
+                                            >
+                                              <span className={styles.answerPartLetter}>
+                                                {partLabel}
+                                              </span>
+                                              <span>朝の食事</span>
+                                            </label>
+                                            <input
+                                              id={`answer-${question.id}-${part}`}
+                                              name={`answer-${question.id}-${part}`}
+                                              type="text"
+                                              maxLength={1000}
+                                              value={freeResponseParts[question.id]?.[part] ?? ""}
+                                              onChange={(event) =>
+                                                setFreeResponsePart(
+                                                  question.id,
+                                                  part,
+                                                  event.currentTarget.value,
+                                                )
+                                              }
+                                              onKeyDown={blurOnQuestionFiveEnter}
+                                              className={styles.timelineInput}
+                                              disabled={isLocked}
+                                            />
+                                          </div>
+                                          {entry.answerSuffix && (
+                                            <span className={styles.timelineDescription}>
+                                              {entry.answerSuffix}
+                                            </span>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <span className={styles.timelineDescription}>
+                                          {entry.activity}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ol>
                           </div>
                         ) : (
                           <div className="space-y-5">

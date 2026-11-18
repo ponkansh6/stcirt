@@ -274,7 +274,7 @@ describe("QuizRunner remaining coverage states", () => {
     );
   });
 
-  it("groups a valid fifth-question itinerary and keeps saved A/B answers connected", () => {
+  it("renders a valid fifth-question itinerary without day groups and keeps saved A/B answers connected", () => {
     const itinerary = [
       "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
       "",
@@ -319,11 +319,18 @@ describe("QuizRunner remaining coverage states", () => {
     expect(
       within(question as HTMLElement).queryByText("3回目の旅程に関して以下を埋めてください。"),
     ).not.toBeInTheDocument();
+    expect(within(question as HTMLElement).queryAllByRole("heading", { level: 3 })).toHaveLength(0);
     expect(
       within(question as HTMLElement)
-        .getAllByRole("heading", { level: 3 })
-        .map((heading) => heading.textContent),
-    ).toEqual(["2/27", "2/28", "3/1", "3/2"]);
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      "2/27昼到着",
+      "2/28朝ローカルシーフードレストランでA朝の食事を食べる",
+      "2/28午前街歩き",
+      "3/1昼〜夜ディズニー",
+      "3/2朝B朝の食事を食べる",
+    ]);
     expect(within(question as HTMLElement).getByText("街歩き")).toBeInTheDocument();
     expect(within(question as HTMLElement).getByText("ディズニー")).toBeInTheDocument();
 
