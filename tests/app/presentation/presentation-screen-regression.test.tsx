@@ -709,7 +709,10 @@ describe("PresentationScreen", () => {
 
     render(<PresentationScreen />);
 
-    expect(await screen.findByRole("heading", { name: "回答統計" })).toBeInTheDocument();
+    const statisticsRegion = await screen.findByRole("region", { name: "問1の集計結果" });
+    for (const removedCopy of ["回答統計", "全参加者", "有効回答", "集計不可"]) {
+      expect(within(statisticsRegion).queryByText(new RegExp(removedCopy))).not.toBeInTheDocument();
+    }
     expect(screen.queryByText(question.question, { exact: true })).not.toBeInTheDocument();
     const rows = screen.getByRole("list", { name: "選択肢ごとの回答人数" });
     expect(within(rows).getAllByRole("listitem")).toHaveLength(2);
@@ -717,33 +720,39 @@ describe("PresentationScreen", () => {
   });
 
   it.each([
-    ["複数選択", true, "複数選択では、棒の合計が回答者数を超える場合があります。"],
-    ["旧形式", null, "旧形式の集計データのため、選択形式を判定できません。"],
-  ] as const)(
-    "explains selected-answer statistics for %s",
-    async (_label, multiple, explanation) => {
-      installApi({
-        projection: {
-          state: "statistics",
-          question,
-          statistics: {
-            kind: "selected",
-            multiple,
-            participantCount: 3,
-            validRespondentCount: 3,
-            uncountableCount: 0,
-            choices: [{ label: "海", count: 2 }],
-          },
+    ["複数選択", true],
+    ["旧形式", null],
+  ] as const)("hides selected-answer statistics metadata for %s", async (_label, multiple) => {
+    installApi({
+      projection: {
+        state: "statistics",
+        question,
+        statistics: {
+          kind: "selected",
+          multiple,
+          participantCount: 3,
+          validRespondentCount: 3,
+          uncountableCount: 0,
+          choices: [{ label: "海", count: 2 }],
         },
-        admin: controls({ state: "statistics" }),
-      });
+      },
+      admin: controls({ state: "statistics" }),
+    });
 
-      render(<PresentationScreen />);
+    render(<PresentationScreen />);
 
-      const statisticsFootnote = await screen.findByText(/有効回答 3 人・集計不可 0 人/);
-      expect(statisticsFootnote).toHaveTextContent(explanation);
-    },
-  );
+    const statisticsRegion = await screen.findByRole("region", { name: "問1の集計結果" });
+    for (const removedCopy of [
+      "回答統計",
+      "全参加者",
+      "有効回答",
+      "集計不可",
+      "複数選択",
+      "旧形式",
+    ]) {
+      expect(within(statisticsRegion).queryByText(new RegExp(removedCopy))).not.toBeInTheDocument();
+    }
+  });
 
   it("renders free-response score-range statistics rows", async () => {
     installApi({
@@ -764,7 +773,17 @@ describe("PresentationScreen", () => {
 
     render(<PresentationScreen />);
 
-    expect(await screen.findByRole("heading", { name: "回答統計" })).toBeInTheDocument();
+    const statisticsRegion = await screen.findByRole("region", { name: "問1の集計結果" });
+    for (const removedCopy of [
+      "回答統計",
+      "全参加者",
+      "有効回答",
+      "集計不可",
+      "採点済み",
+      "未採点",
+    ]) {
+      expect(within(statisticsRegion).queryByText(new RegExp(removedCopy))).not.toBeInTheDocument();
+    }
     expect(screen.queryByText(question.question, { exact: true })).not.toBeInTheDocument();
     const rows = screen.getByRole("list", { name: "得点区間ごとの人数" });
     expect(within(rows).getByRole("listitem")).toHaveTextContent("0–2 点1 人");

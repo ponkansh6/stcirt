@@ -1,6 +1,8 @@
 import { test, expect } from "./fixtures/test";
 import { e2eAdminPin } from "./fixtures/admin-auth";
 import { expectNoAccessibilityViolations } from "./axe";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 
 declare global {
   interface Window {
@@ -123,6 +125,7 @@ async function installAdminApiMock(
     fullscreenSupported?: boolean;
     questionCount?: number;
     question?: PresentationQuestionFixture;
+    multiple?: boolean;
     skipEmptyRanks?: boolean;
   } = {},
 ) {
@@ -272,7 +275,7 @@ async function installAdminApiMock(
                     }
                   : {
                       kind: "selected",
-                      multiple: false,
+                      multiple: options.multiple ?? false,
                       participantCount: winnerEntries.length,
                       validRespondentCount: winnerEntries.length,
                       uncountableCount: 0,
@@ -735,7 +738,7 @@ function slideFor(page: import("@playwright/test").Page, state: PresentationStat
     case "answer":
       return page.locator("[class*='answerReview']");
     case "statistics":
-      return page.getByRole("heading", { name: "回答統計" });
+      return page.getByRole("region", { name: "問1の集計結果" });
     case "podium_preview":
       return page.getByRole("heading", { name: "いよいよ、結果発表です" });
     case "third":
@@ -1171,35 +1174,39 @@ async function installAnswerRevealAnimationProbe(
 async function expectAnswerRevealFitDuringAndAfter(
   page: import("@playwright/test").Page,
   entryStartIndex: number,
+  expectedGroupCount = 2,
 ) {
   const answer = page.locator("[class*='answerReview'] [class*='answerReveal']");
   const supplement = page.locator("[class*='answerSupplement']");
+  const expectedGroups = expectedGroupCount === 1 ? ["answer"] : ["answer", "supplement"];
   const endCountBefore = await page.evaluate(() => window.__answerRevealAnimationEnds.length);
   await expect
     .poll(() => page.evaluate(() => window.__answerRevealAnimations.length))
-    .toBe(entryStartIndex + 2);
+    .toBe(entryStartIndex + expectedGroupCount);
   await expect
     .poll(() => answer.evaluate((element) => element.getAnimations()[0]?.playState))
     .toBe("paused");
-  await expect
-    .poll(() => supplement.evaluate((element) => element.getAnimations()[0]?.playState))
-    .toBe("paused");
   await expect(answer).toHaveCSS("animation-delay", "0.1s");
   await expect(answer).toHaveCSS("animation-duration", "0.35s");
-  await expect(supplement).toHaveCSS("animation-delay", "0.35s");
-  await expect(supplement).toHaveCSS("animation-duration", "0.3s");
   await expect(answer).toHaveCSS("opacity", "0");
-  await expect(supplement).toHaveCSS("opacity", "0");
   const answerCurrentTime = await answer.evaluate(
     (element) => element.getAnimations()[0]?.currentTime,
   );
   expect(answerCurrentTime).not.toBeNull();
   expect(answerCurrentTime).toBe(0);
-  const supplementCurrentTime = await supplement.evaluate(
-    (element) => element.getAnimations()[0]?.currentTime,
-  );
-  expect(supplementCurrentTime).not.toBeNull();
-  expect(supplementCurrentTime).toBe(0);
+  if (expectedGroupCount === 2) {
+    await expect
+      .poll(() => supplement.evaluate((element) => element.getAnimations()[0]?.playState))
+      .toBe("paused");
+    await expect(supplement).toHaveCSS("animation-delay", "0.35s");
+    await expect(supplement).toHaveCSS("animation-duration", "0.3s");
+    await expect(supplement).toHaveCSS("opacity", "0");
+    const supplementCurrentTime = await supplement.evaluate(
+      (element) => element.getAnimations()[0]?.currentTime,
+    );
+    expect(supplementCurrentTime).not.toBeNull();
+    expect(supplementCurrentTime).toBe(0);
+  }
 
   const inspectFit = async () =>
     page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
@@ -1258,14 +1265,16 @@ async function expectAnswerRevealFitDuringAndAfter(
   });
   await expect
     .poll(() => page.evaluate(() => window.__answerRevealAnimationEnds.length))
-    .toBe(endCountBefore + 2);
+    .toBe(endCountBefore + expectedGroupCount);
   expect(
-    await page.evaluate(() =>
-      window.__answerRevealAnimationEnds.slice(-2).map(({ group }) => group),
+    await page.evaluate(
+      (groupCount) =>
+        window.__answerRevealAnimationEnds.slice(-groupCount).map(({ group }) => group),
+      expectedGroupCount,
     ),
-  ).toEqual(["answer", "supplement"]);
+  ).toEqual(expectedGroups);
   await expect(answer).toHaveCSS("opacity", "1");
-  await expect(supplement).toHaveCSS("opacity", "1");
+  if (expectedGroupCount === 2) await expect(supplement).toHaveCSS("opacity", "1");
   const after = await inspectFit();
   assertFit(after);
   expect(after.scale).toBeCloseTo(during.scale, 5);
@@ -1504,9 +1513,7 @@ test("@chromium rapid presenter navigation settles on the latest slide after exi
   expect(mock.positionLog.at(-1)).toMatchObject({ state: "podium_preview", questionIndex: 0 });
 });
 
-test("@chromium selected-answer and supplement groups replay on stage re-entry", async ({
-  page,
-}) => {
+test("@chromium selected-answer reveal replays on stage re-entry", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await installAnswerRevealAnimationProbe(page, questions[0].id);
@@ -1533,20 +1540,18 @@ test("@chromium selected-answer and supplement groups replay on stage re-entry",
   await expect(answerList).not.toHaveAttribute("inert");
   await expect(answerList).toHaveCSS("animation-delay", "0.1s");
   await expect(answerList).toHaveCSS("animation-duration", "0.35s");
-  await expect(supplement).toBeAttached();
-  await expect(supplement).toHaveCSS("animation-delay", "0.35s");
-  await expect(supplement).toHaveCSS("animation-duration", "0.3s");
-  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimations.length)).toBe(2);
+  await expect(supplement).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimations.length)).toBe(1);
   expect(
     await page.evaluate(() => window.__answerRevealAnimations.map(({ group }) => group)),
-  ).toEqual(["answer", "supplement"]);
+  ).toEqual(["answer"]);
   expect(
     await page.evaluate(() =>
       window.__answerRevealAnimations.every(({ name }) => name.includes("answerRevealFade")),
     ),
   ).toBe(true);
 
-  await expectAnswerRevealFitDuringAndAfter(page, 0);
+  await expectAnswerRevealFitDuringAndAfter(page, 0, 1);
   const previous = nextAdminMutation(page);
   await page.locator("main").press("ArrowLeft");
   await expect(slideFor(page, "question")).toBeVisible();
@@ -1555,8 +1560,8 @@ test("@chromium selected-answer and supplement groups replay on stage re-entry",
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "answer")).toBeVisible();
   await reentry;
-  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimations.length)).toBe(4);
-  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimationEnds.length)).toBe(4);
+  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimations.length)).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__answerRevealAnimationEnds.length)).toBe(2);
 });
 
 test("@chromium presenter can leave and advance stages during an active answer reveal", async ({
@@ -1801,7 +1806,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
     },
     {
       state: "statistics",
-      text: ["回答統計", "全参加者 2 人", "カフェ", "2 人"],
+      text: ["カフェ", "2 人"],
     },
     { state: "podium_preview", text: ["いよいよ、結果発表です", "どうぞお楽しみに"] },
     { state: "third", text: ["該当する受賞者はいません", "第三位"] },
@@ -1863,7 +1868,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
       if (stage.state === "answer") {
         await expect
           .poll(() => page.evaluate(() => window.__answerRevealAnimationEnds.length))
-          .toBe(2);
+          .toBe(1);
       }
       await expectNoAccessibilityViolations(page, `presentation ${stage.state} state`);
     }
@@ -1882,33 +1887,111 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
 test("@chromium statistics direct position is shared with the public projection", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  const longChoices = [
+    "海沿いの小さなカフェで、ふたりが初めて話した場所",
+    "大学の図書館で共通の友人に紹介された場所",
+    "駅前の広場で待ち合わせをして偶然出会った場所",
+    "旅行先の美術館で一緒に作品を見ていた場所",
+    "春の公園で桜を眺めながら話をした場所",
+    "商店街の本屋で同じ本を手に取った場所",
+    "友人の開いた集まりで最初に挨拶を交わした場所",
+    "川沿いの遊歩道を一緒に散歩した思い出の場所",
+  ];
+  const statisticsQuestion = { ...questions[0], choices: longChoices };
   await page.emulateMedia({ reducedMotion: "reduce" });
-  const mock = await installAdminApiMock(page);
+  const mock = await installAdminApiMock(page, { question: statisticsQuestion, multiple: true });
   mock.setPresentationPosition("statistics");
   await signIn(page);
   await openPresenter(page);
 
   await expect(slideFor(page, "statistics")).toBeVisible();
-  await expect(page.getByText("全参加者 2 人")).toBeVisible();
-  await expect(page.getByText("2 人").first()).toBeVisible();
-  const layout = await page.evaluate(() => {
-    const canvas = document.querySelector('[data-testid="presentation-canvas"]');
-    if (!canvas) throw new Error("Presentation canvas is missing");
-    const bounds = canvas.getBoundingClientRect();
-    return {
-      canvasOutOfBounds: bounds.left < -1 || bounds.right > window.innerWidth + 1,
-      pageCanScroll: document.documentElement.scrollWidth > window.innerWidth,
-    };
-  });
-  expect(layout.canvasOutOfBounds).toBe(false);
-  expect(layout.pageCanScroll).toBe(false);
+  const screenshotDir = process.env.PRESENTATION_SCREENSHOT_DIR;
+  if (screenshotDir) await mkdir(screenshotDir, { recursive: true });
+  const viewports = [
+    { name: "1440x900", width: 1440, height: 900 },
+    { name: "1280x720", width: 1280, height: 720 },
+    { name: "768x1024", width: 768, height: 1024 },
+    { name: "390x844", width: 390, height: 844 },
+  ];
+  for (const viewport of viewports) {
+    await test.step(`statistics layout at ${viewport.name}`, async () => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      const statisticsRegion = page.getByRole("region", { name: "問1の集計結果" });
+      await expect(statisticsRegion).toBeVisible();
+      for (const label of longChoices) {
+        await expect(statisticsRegion.getByText(label, { exact: true })).toBeVisible();
+      }
+      for (const removedCopy of [
+        "回答統計",
+        "全参加者",
+        "有効回答",
+        "集計不可",
+        "複数選択",
+        "採点済み",
+        "未採点",
+      ]) {
+        await expect(statisticsRegion.getByText(removedCopy, { exact: true })).toHaveCount(0);
+      }
+      const readLayout = () =>
+        page.evaluate(() => {
+          const canvas = document.querySelector('[data-testid="presentation-canvas"]');
+          const statistics = document.querySelector('[aria-label="問1の集計結果"]');
+          if (!canvas || !statistics) throw new Error("Presentation statistics are missing");
+          const canvasBounds = canvas.getBoundingClientRect();
+          const statisticsBounds = statistics.getBoundingClientRect();
+          const list = statistics.querySelector("ol");
+          if (!list) throw new Error("Statistics choices are missing");
+          const hasVerticalOverflow = Array.from(statistics.querySelectorAll("*"))
+            .filter((element) => {
+              const style = getComputedStyle(element);
+              return style.overflowY === "auto" || style.overflowY === "scroll";
+            })
+            .some((element) => element.scrollHeight > element.clientHeight + 1);
+          return {
+            canvasOutOfBounds: canvasBounds.left < -1 || canvasBounds.right > window.innerWidth + 1,
+            statisticsOutOfBounds:
+              statisticsBounds.top < canvasBounds.top - 1 ||
+              statisticsBounds.bottom > canvasBounds.bottom + 1,
+            statisticsWidthRatio: statisticsBounds.width / canvasBounds.width,
+            listHasOverflow: list.scrollHeight > list.clientHeight + 1,
+            hasVerticalOverflow,
+            pageCanScrollVertically: document.documentElement.scrollHeight > window.innerHeight,
+            pageCanScrollHorizontally: document.documentElement.scrollWidth > window.innerWidth,
+          };
+        });
+      await expect
+        .poll(async () => {
+          const layout = await readLayout();
+          return (
+            !layout.canvasOutOfBounds &&
+            !layout.statisticsOutOfBounds &&
+            layout.statisticsWidthRatio >= 0.6 &&
+            !layout.listHasOverflow &&
+            !layout.hasVerticalOverflow &&
+            !layout.pageCanScrollVertically &&
+            !layout.pageCanScrollHorizontally
+          );
+        })
+        .toBe(true);
+      const layout = await readLayout();
+      if (screenshotDir && test.info().project.name === "chromium") {
+        await page.screenshot({ path: join(screenshotDir, `statistics-${viewport.name}.png`) });
+      }
+      expect(layout.canvasOutOfBounds, viewport.name).toBe(false);
+      expect(layout.statisticsOutOfBounds, viewport.name).toBe(false);
+      expect(layout.statisticsWidthRatio, viewport.name).toBeGreaterThanOrEqual(0.6);
+      expect(layout.listHasOverflow, viewport.name).toBe(false);
+      expect(layout.hasVerticalOverflow, viewport.name).toBe(false);
+      expect(layout.pageCanScrollVertically, viewport.name).toBe(false);
+      expect(layout.pageCanScrollHorizontally, viewport.name).toBe(false);
+    });
+  }
 
   const publicPage = await page.context().newPage();
   await publicPage.setViewportSize({ width: 390, height: 844 });
   await publicPage.goto("/presentation");
-  await expect(publicPage.getByRole("heading", { name: "回答統計" })).toBeVisible();
-  await expect(publicPage.getByText("全参加者 2 人")).toBeVisible();
+  await expect(publicPage.getByRole("region", { name: "問1の集計結果" })).toBeVisible();
+  await expect(publicPage.getByText(longChoices[0], { exact: true })).toBeVisible();
 });
 
 test("@chromium first-prize position is shared with the public projection and survives reload", async ({

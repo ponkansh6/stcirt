@@ -635,12 +635,10 @@ function StatisticsSlide({
   const rows = statistics.kind === "selected" ? statistics.choices : statistics.ranges;
   const maxCount = Math.max(1, ...rows.map((row) => row.count));
   return (
-    <section className={styles.statistics} aria-labelledby="statistics-title">
+    <section className={styles.statistics} aria-label={`問${question.ordinal}の集計結果`}>
       <p className={styles.ordinal}>
         問 <strong>{question.ordinal}</strong>
       </p>
-      <h1 id="statistics-title">回答統計</h1>
-      <p className={styles.statisticsPopulation}>全参加者 {statistics.participantCount} 人</p>
       <ol
         className={styles.statisticsRows}
         aria-label={statistics.kind === "selected" ? "選択肢ごとの回答人数" : "得点区間ごとの人数"}
@@ -658,21 +656,6 @@ function StatisticsSlide({
           </li>
         ))}
       </ol>
-      {statistics.kind === "selected" ? (
-        <p className={styles.statisticsFootnote}>
-          有効回答 {statistics.validRespondentCount} 人・集計不可 {statistics.uncountableCount} 人
-          {statistics.multiple === true
-            ? "。複数選択では、棒の合計が回答者数を超える場合があります。"
-            : statistics.multiple === null
-              ? "。旧形式の集計データのため、選択形式を判定できません。"
-              : null}
-        </p>
-      ) : (
-        <p className={styles.statisticsFootnote}>
-          採点済み {statistics.gradedCount} 人・未採点 {statistics.ungradedCount} 人・集計不可{" "}
-          {statistics.uncountableCount} 人
-        </p>
-      )}
     </section>
   );
 }
