@@ -72,7 +72,7 @@ export default function ParticipantResultDetails({
                 QUESTION {String(item.position + 1).padStart(2, "0")}
               </p>
               <p className="mt-2 whitespace-pre-wrap break-words font-medium [overflow-wrap:anywhere]">
-                {item.question}
+                {item.position === 4 ? "3回目の旅程" : item.question}
               </p>
               <div className="mt-4 border-l-2 border-primary/30 pl-4 pt-1">
                 {item.answer.kind === "selected" ? (

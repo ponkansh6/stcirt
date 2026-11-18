@@ -476,6 +476,15 @@ async function ensurePresentationSnapshot(
       ? currentQuestions.reduce((sum, question) => {
           if (question.key === "it-literacy-005") return sum + validatedLatest.q5Score;
           const answer = answers?.get(question.id);
+          if (question.key === "it-literacy-002" && question.selectionMode === "multiple") {
+            const selected = answer?.selectedIndices;
+            const correct = question.correctIndices ?? [];
+            const partialScore =
+              Array.isArray(selected) && selected.length === correct.length
+                ? Math.min(1, correct.filter((index) => selected.includes(index)).length * 0.5)
+                : 0;
+            return sum + partialScore;
+          }
           if (question.selectionMode === "multiple") {
             const selected = answer?.selectedIndices;
             const correct = question.correctIndices ?? [];

@@ -744,7 +744,7 @@ describe("presentation repository", () => {
     ]);
   });
 
-  it("scores a multi-select answer only when both correct choices are selected", async () => {
+  it("awards half a point per correct Q2 choice", async () => {
     await addCurrentFiveQuestions();
     await testDb.db
       .update(schema.examQuestions)
@@ -756,18 +756,26 @@ describe("presentation repository", () => {
       })
       .where(eq(schema.examQuestions.id, 2));
     const exact = await addParticipant("Exact selections");
-    const partial = await addParticipant("One correct selection");
+    const partialFirst = await addParticipant("First correct selection");
+    const partialSecond = await addParticipant("Second correct selection");
+    const none = await addParticipant("No correct selections");
     await addSubmission(exact, [0, 0], 1, "multi-exact", 1, [1, 4]);
-    await addSubmission(partial, [0, 0], 1, "multi-partial", 1, [1, 5]);
+    await addSubmission(partialFirst, [0, 0], 1, "multi-partial-first", 1, [1, 5]);
+    await addSubmission(partialSecond, [0, 0], 1, "multi-partial-second", 1, [0, 4]);
+    await addSubmission(none, [0, 0], 1, "multi-none", 1, [0, 5]);
 
     const aggregated = await op("aggregate", "multi-select-exact-score");
 
     expect(
       aggregated.entries.find(({ displayName }) => displayName === "Exact selections"),
     ).toMatchObject({ score: 5, rank: 1 });
-    expect(
-      aggregated.entries.find(({ displayName }) => displayName === "One correct selection"),
-    ).toMatchObject({ score: 4, rank: 2 });
+    expect(aggregated.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ displayName: "First correct selection", score: 4.5, rank: 2 }),
+        expect.objectContaining({ displayName: "Second correct selection", score: 4.5, rank: 2 }),
+        expect.objectContaining({ displayName: "No correct selections", score: 4, rank: 4 }),
+      ]),
+    );
   });
 
   it("advances an opening presentation with no questions to the podium preview", async () => {
