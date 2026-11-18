@@ -778,6 +778,49 @@ describe("presentation repository", () => {
     );
   });
 
+  it("keeps full-match scoring for other multiple-choice questions", async () => {
+    await addCurrentFiveQuestions();
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({
+        choices: ["A", "B", "C", "D", "E", "F", "G", "H"],
+        selectionMode: "multiple",
+        correctIndices: [1, 4],
+      })
+      .where(eq(schema.examQuestions.id, 1));
+    const exact = await addParticipant("Other multi exact selections");
+    const mismatch = await addParticipant("Other multi mismatch selections");
+    await addSubmission(exact, [0, 0], 1, "other-multi-exact", 1);
+    await addSubmission(mismatch, [0, 0], 1, "other-multi-mismatch", 1);
+    for (const [participantId, suffix, selectedIndices] of [
+      [exact, "other-multi-exact", [1, 4]],
+      [mismatch, "other-multi-mismatch", [1, 5]],
+    ] as const) {
+      await testDb.db
+        .update(schema.examSubmissionAnswers)
+        .set({ selectedIndex: null, selectedIndices: [...selectedIndices] })
+        .where(
+          and(
+            eq(schema.examSubmissionAnswers.submissionId, `submission-${participantId}-${suffix}`),
+            eq(schema.examSubmissionAnswers.questionId, 1),
+          ),
+        );
+    }
+
+    const aggregated = await op("aggregate", "other-multi-full-match-score");
+
+    expect(aggregated.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ displayName: "Other multi exact selections", score: 5, rank: 1 }),
+        expect.objectContaining({
+          displayName: "Other multi mismatch selections",
+          score: 4,
+          rank: 2,
+        }),
+      ]),
+    );
+  });
+
   it("advances an opening presentation with no questions to the podium preview", async () => {
     await addQ5OnlyQuestion();
     await op("aggregate", "empty-opening-aggregate");
