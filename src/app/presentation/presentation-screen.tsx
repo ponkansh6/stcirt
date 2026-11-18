@@ -594,8 +594,6 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
       </section>
     );
   }
-  const hasExplanation =
-    typeof question.explanation === "string" && question.explanation.trim().length > 0;
   const choicesClassName = hasLongChoice(question.choices)
     ? `${styles.choices} ${styles.answered} ${styles.answerReveal} ${styles.singleColumnChoices}`
     : `${styles.choices} ${styles.answered} ${styles.answerReveal}`;
@@ -622,11 +620,6 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
             );
           })}
         </ol>
-        {hasExplanation && (
-          <div className={`${styles.explanation} ${styles.answerSupplement}`}>
-            <p>{question.explanation}</p>
-          </div>
-        )}
       </div>
     </section>
   );

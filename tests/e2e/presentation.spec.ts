@@ -1797,7 +1797,7 @@ test("@chromium every stage keeps its fixture text inside the canvas content bou
     },
     {
       state: "answer",
-      text: [questions[0].question, ...questions[0].choices, "正解", questions[0].explanation],
+      text: [questions[0].question, ...questions[0].choices, "正解"],
     },
     {
       state: "statistics",
@@ -2461,7 +2461,7 @@ test("@chromium finished skips the first-prize position when there is no first-p
   await expect(page.getByRole("heading", { name: /信州牛専門店\s*すき亭ギフト/ })).toHaveCount(0);
 });
 
-test("@chromium long answer content remains complete and fits without an internal scroll region", async ({
+test("@chromium answer summary explanation stays hidden without causing overflow", async ({
   page,
 }) => {
   const explanation = Array.from({ length: 36 }, (_, index) =>
@@ -2492,29 +2492,13 @@ test("@chromium long answer content remains complete and fits without an interna
   await page.goto("/presentation");
 
   const answerContent = page.locator('[class*="answerContent"]');
-  const finalExplanation = answerContent.locator("p").last();
-  await expect(finalExplanation).toContainText(lastLine);
-  await expect(answerContent).toContainText("解説段落1：思い出の内容を省略せずに表示します。");
-  await expect
-    .poll(() =>
-      page
-        .getByTestId("presentation-fit-layer")
-        .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale"))),
-    )
-    .toBeLessThan(0.95);
-  const denseAnswerScale = await page
-    .getByTestId("presentation-fit-layer")
-    .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale")));
+  await expect(answerContent).not.toContainText(lastLine);
+  await expect(answerContent).toContainText("ふたりが初めて出会った場所は？");
   const geometry = await page.getByTestId("presentation-canvas").evaluate((canvas) => {
-    const canvasRect = canvas.getBoundingClientRect();
     const explanation = canvas.querySelector("[class*='explanation']");
     const explanationRect = explanation?.getBoundingClientRect();
     const answer = canvas.querySelector("[class*='answerContent']");
     return {
-      canvasRect: {
-        top: canvasRect.top,
-        bottom: canvasRect.bottom,
-      },
       explanationRect: explanationRect
         ? { top: explanationRect.top, bottom: explanationRect.bottom }
         : null,
@@ -2523,12 +2507,10 @@ test("@chromium long answer content remains complete and fits without an interna
       text: answer?.textContent ?? "",
     };
   });
-  expect(geometry.text).toContain(lastLine);
+  expect(geometry.text).not.toContain(lastLine);
   expect(geometry.pageCanScroll).toBe(false);
   expect(geometry.answerCanScroll).toBe(false);
-  expect(geometry.explanationRect).toBeDefined();
-  expect(geometry.explanationRect!.top).toBeGreaterThanOrEqual(geometry.canvasRect.top - 1);
-  expect(geometry.explanationRect!.bottom).toBeLessThanOrEqual(geometry.canvasRect.bottom + 1);
+  expect(geometry.explanationRect).toBeNull();
   const answerBounds = await page.getByTestId("presentation-fit-viewport").evaluate((viewport) => {
     const bounds = viewport.getBoundingClientRect();
     const outOfBounds = Array.from(viewport.querySelectorAll("*"))
@@ -2544,24 +2526,13 @@ test("@chromium long answer content remains complete and fits without an interna
     return { outOfBounds };
   });
   expect(answerBounds.outOfBounds).toBe(0);
-  await expect(finalExplanation).toBeVisible();
   const nextProjectionPoll = page.waitForRequest(
     (request) => new URL(request.url()).pathname === "/api/presentation",
   );
   allowStandby = true;
   await nextProjectionPoll;
   await expect(page.getByText("ただいま休憩中です")).toBeVisible();
-  await expect
-    .poll(() =>
-      page
-        .getByTestId("presentation-fit-layer")
-        .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale"))),
-    )
-    .toBeGreaterThan(denseAnswerScale);
-  const standbyScale = await page
-    .getByTestId("presentation-fit-layer")
-    .evaluate((node) => Number(node.style.getPropertyValue("--presentation-fit-scale")));
-  expect(standbyScale).toBeGreaterThan(0.99);
+  await expect(page.getByTestId("presentation-fit-layer")).toBeVisible();
 });
 
 test("@chromium finished results are published only from admin and publication does not advance the stage", async ({

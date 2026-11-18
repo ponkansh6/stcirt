@@ -487,7 +487,7 @@ describe("presentation projection and presenter progression", () => {
     await settled();
 
     expect(currentPresenceEntry("answerReveal")).toBe(firstEntry);
-    expect(screen.getByText("同じIDの補足更新")).toBeInTheDocument();
+    expect(screen.queryByText("同じIDの補足更新")).not.toBeInTheDocument();
 
     projection = {
       state: "answer",
@@ -509,7 +509,7 @@ describe("presentation projection and presenter progression", () => {
     const nextEntry = currentPresenceEntry("answerReveal");
     expect(nextEntry).toBeInTheDocument();
     expect(nextEntry).not.toBe(firstEntry);
-    expect(screen.getByText("次の補足")).toBeInTheDocument();
+    expect(screen.queryByText("次の補足")).not.toBeInTheDocument();
     expect(api.calls.filter(({ path }) => path === "/api/presentation")).toHaveLength(3);
   });
 
@@ -818,15 +818,7 @@ describe("presentation projection and presenter progression", () => {
           explanation: "共通の友人にすすめられた作品です。",
         },
       },
-      [
-        "問 2",
-        "一緒に見た最初の映画は？",
-        "作品A",
-        "作品B",
-        "作品C",
-        "正解",
-        "共通の友人にすすめられた作品です。",
-      ],
+      ["問 2", "一緒に見た最初の映画は？", "作品A", "作品B", "作品C", "正解"],
     ],
     [
       "podium_preview",
@@ -860,6 +852,9 @@ describe("presentation projection and presenter progression", () => {
 
       const slide = await screen.findByRole("region", { name: "現在のスライド" });
       for (const content of contents) expect(slide).toHaveTextContent(content);
+      if (projection.state === "answer") {
+        expect(slide).not.toHaveTextContent("共通の友人にすすめられた作品です。");
+      }
       if (projection.state === "third_prize") {
         expect(screen.getByRole("status")).toHaveTextContent(
           "3位の景品、天守石垣サブレを紹介します",

@@ -770,7 +770,7 @@ describe("PresentationScreen", () => {
     expect(within(rows).getByRole("listitem")).toHaveTextContent("0–2 点1 人");
   });
 
-  it("renders the selected-answer review and explanation without a presentation mode", async () => {
+  it("renders the selected-answer review without the summary explanation", async () => {
     installApi({
       projection: {
         state: "answer",
@@ -783,12 +783,12 @@ describe("PresentationScreen", () => {
       },
     });
     render(<PresentationScreen />);
-    expect(await screen.findByText("家族旅行で訪れました。")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: question.question })).toBeInTheDocument();
+    expect(screen.queryByText("家族旅行で訪れました。")).not.toBeInTheDocument();
     expect(screen.getByText("問").parentElement).toHaveTextContent("問 1");
     expect(screen.queryByText(/QUESTION|\/ 2/)).not.toBeInTheDocument();
     expect(screen.queryByText("THE STORY BEHIND IT")).not.toBeInTheDocument();
     expect(screen.getAllByText("正解")).toHaveLength(1);
-    expect(screen.getByRole("heading", { name: question.question })).toBeInTheDocument();
     expect(screen.getByText("山")).toBeInTheDocument();
   });
 
@@ -808,7 +808,6 @@ describe("PresentationScreen", () => {
     const ordinal = await screen.findByText("問");
     const heading = screen.getByRole("heading", { name: question.question });
     const answerList = screen.getByRole("list");
-    const supplement = screen.getByText("家族旅行で訪れました。");
     expect(ordinal).toBeVisible();
     expect(heading).toBeVisible();
     expect(answerList.tagName).toBe("OL");
@@ -816,8 +815,7 @@ describe("PresentationScreen", () => {
     expect(answerList).not.toHaveAttribute("aria-hidden");
     expect(answerList).not.toHaveAttribute("inert");
     expect(within(answerList).getAllByRole("listitem")).toHaveLength(question.choices.length);
-    expect(supplement).toBeVisible();
-    expect(supplement.closest("[class*='answerSupplement']")).toBeInTheDocument();
+    expect(screen.queryByText("家族旅行で訪れました。")).not.toBeInTheDocument();
   });
 
   it("preserves the answer node for same-question polls and replaces it for a new question ID", async () => {
@@ -840,7 +838,7 @@ describe("PresentationScreen", () => {
       await act(async () => vi.advanceTimersByTimeAsync(1400));
       await flush();
 
-      expect(screen.getByText("更新された説明")).toBeInTheDocument();
+      expect(screen.queryByText("更新された説明")).not.toBeInTheDocument();
       expect(screen.getByRole("list")).toBe(answerList);
 
       api.setProjection({
@@ -865,7 +863,7 @@ describe("PresentationScreen", () => {
     }
   });
 
-  it("renders the complete long explanation including its repeated closing paragraph", async () => {
+  it("does not render the summary explanation even when it is long", async () => {
     const repeatedClosing = "この出来事は、今でもふたりにとって大切な思い出です。";
     const explanation = [
       "初めて訪れたのは、まだ少し肌寒い春の日でした。駅から続く坂道を歩きながら、ふたりで次の休みにどこへ行こうか話していました。",
@@ -881,10 +879,10 @@ describe("PresentationScreen", () => {
     });
     render(<PresentationScreen />);
     const slide = await screen.findByRole("region", { name: "現在のスライド" });
-    const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
-    await waitFor(() => {
-      expect(normalize(slide.textContent ?? "")).toContain(normalize(explanation));
-    });
+    expect(slide).not.toHaveTextContent("初めて訪れたのは、まだ少し肌寒い春の日でした。");
+    expect(slide).not.toHaveTextContent(repeatedClosing);
+    expect(slide).toHaveTextContent(question.question);
+    expect(within(slide).getByRole("list")).toBeVisible();
   });
 
   it("renders free-text responses with missing optional scores and empty response lists", async () => {
@@ -4064,7 +4062,7 @@ describe("PresentationScreen", () => {
       await flush();
       expect(screen.getByRole("status")).toHaveTextContent("第2問の解説");
       expect(screen.getByRole("heading", { name: "二問目の設問" })).toBeInTheDocument();
-      expect(screen.getByText("二問目の解説")).toBeInTheDocument();
+      expect(screen.queryByText("二問目の解説")).not.toBeInTheDocument();
     } finally {
       let resolved = 0;
       while (resolved < pendingActions.length) {
