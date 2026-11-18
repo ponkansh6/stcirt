@@ -5,6 +5,78 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("database migrations", () => {
+  it("updates question two choices in migration 0030 while preserving other questions", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stcirt-india-uber-migration-"));
+    const client = createClient({ url: `file:${dir}/migration.db` });
+    try {
+      await client.execute(`
+        CREATE TABLE exam_questions (
+          id integer PRIMARY KEY NOT NULL,
+          question_key text NOT NULL,
+          question text NOT NULL,
+          choices text NOT NULL,
+          correct_index integer NOT NULL,
+          explanation text,
+          question_version text
+        );
+      `);
+      await client.execute(`
+        CREATE TABLE exam_answer_submissions (
+          id text PRIMARY KEY NOT NULL
+        );
+      `);
+      await client.execute(`
+        CREATE TABLE exam_submission_answers (
+          submission_id text NOT NULL,
+          question_id integer NOT NULL,
+          selected_index integer NOT NULL,
+          free_text text,
+          answer_kind text NOT NULL DEFAULT 'selected',
+          PRIMARY KEY (submission_id, question_id)
+        );
+      `);
+      await client.execute("CREATE TABLE presentation_questions (session_id integer NOT NULL)");
+      await client.execute(`
+        INSERT INTO exam_questions (id, question_key, question, choices, correct_index, explanation)
+        VALUES
+          (2, 'it-literacy-002', 'Question 2', '[]', 0, 'old explanation'),
+          (3, 'it-literacy-003', 'Question 3', '["Keep","these"]', 1, 'unchanged')
+      `);
+
+      for (const file of ["0022_india_uber_multi_select.sql", "0030_india_uber_choices.sql"]) {
+        const migration = readFileSync(join(process.cwd(), "src/lib/db/migrations", file), "utf8");
+        for (const statement of migration.split("--> statement-breakpoint")) {
+          if (statement.trim()) await client.execute(statement);
+        }
+      }
+
+      const questionTwo = await client.execute(
+        "SELECT choices, correct_index, correct_indices, selection_mode, question_version FROM exam_questions WHERE id = 2",
+      );
+      expect(questionTwo.rows[0]).toEqual({
+        choices:
+          '["窓が全開","ぶつけても気にせず走行","シートベルトなし","日本語の練習内容紹介","インド料理を延々と紹介","インド映画音楽が爆音","大量の象のストラップ","他の運転手と激しく口論"]',
+        correct_index: 2,
+        correct_indices: "[2,3]",
+        selection_mode: "multiple",
+        question_version: "india-uber-multi-v2",
+      });
+      const otherQuestion = await client.execute(
+        "SELECT question, choices, correct_index, explanation, question_version FROM exam_questions WHERE id = 3",
+      );
+      expect(otherQuestion.rows[0]).toEqual({
+        question: "Question 3",
+        choices: '["Keep","these"]',
+        correct_index: 1,
+        explanation: "unchanged",
+        question_version: null,
+      });
+    } finally {
+      client.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("preserves anonymous answer rows when migration 0002 adds participant attribution", async () => {
     const dir = mkdtempSync(join(tmpdir(), "stcirt-migration-test-"));
     const client = createClient({ url: `file:${dir}/migration.db` });

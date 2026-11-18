@@ -1461,7 +1461,11 @@ export default function QuizRunner() {
                 )}
                 <fieldset
                   disabled={isLocked}
-                  className="min-w-0 space-y-3 border-t border-border-subtle pt-5"
+                  className={`min-w-0 border-t border-border-subtle pt-5 ${
+                    question.id === 2 && question.answerType === "selected"
+                      ? styles.questionTwoChoices
+                      : "space-y-3"
+                  }`}
                 >
                   <legend className="sr-only">
                     <span className="sr-only">第{index + 1}問 / 全5問：</span>

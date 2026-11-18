@@ -315,6 +315,7 @@ export async function getLatestAnswerSubmission(participantId: number) {
       .select({
         id: examQuestions.id,
         key: examQuestions.key,
+        questionVersion: examQuestions.questionVersion,
         selectionMode: examQuestions.selectionMode,
         choiceCount: sql<number>`json_array_length(${examQuestions.choices})`,
       })
@@ -328,6 +329,11 @@ export async function getLatestAnswerSubmission(participantId: number) {
       selectionMode: selectionMode === "multiple" ? ("multiple" as const) : ("single" as const),
     }));
     const questionIds = Array.isArray(submission.questionIds) ? submission.questionIds : [];
+    const questionVersions = submission.questionVersions;
+    const questionVersionsMatch = currentQuestions.every(({ id, questionVersion }) => {
+      const savedVersion = questionVersions?.[String(id)];
+      return savedVersion == null || questionVersion == null || savedVersion === questionVersion;
+    });
     const storedIds = storedAnswers.map(({ questionId }) => questionId);
     const currentIds = restoreQuestions.map(({ id }) => id);
     const rawAnswersMatch = storedAnswers.every((answer) => {
@@ -355,6 +361,7 @@ export async function getLatestAnswerSubmission(participantId: number) {
     });
     const integrityComplete =
       questionIds.length === 5 &&
+      questionVersionsMatch &&
       new Set(questionIds).size === 5 &&
       storedAnswers.length === 5 &&
       new Set(storedIds).size === 5 &&

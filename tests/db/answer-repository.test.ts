@@ -76,11 +76,13 @@ async function insertSubmission(input: {
   participantId: number;
   questionIds: number[];
   revision?: number;
+  questionVersions?: Record<string, string> | null;
 }) {
   await dbRef.db!.insert(schema.examAnswerSubmissions).values({
     id: input.id,
     participantId: input.participantId,
     questionIds: input.questionIds,
+    questionVersions: input.questionVersions,
     revision: input.revision ?? 1,
   });
 }
@@ -442,6 +444,96 @@ describe("answer-repository", () => {
         })),
       });
       expect(latest?.answers).toHaveLength(5);
+    });
+
+    it("rejects restoration when a saved question version differs from the current version", async () => {
+      const questionIds = await insertFiveQuestions();
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({ questionVersion: "india-uber-multi-v2" })
+        .where(eq(schema.examQuestions.id, 2));
+      const participantId = await insertParticipant();
+      await insertSubmission({
+        id: "outdated-question-version",
+        participantId,
+        questionIds,
+        questionVersions: { "2": "india-uber-multi-v1" },
+      });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((questionId) => ({
+          submissionId: "outdated-question-version",
+          questionId,
+          selectedIndex: 1,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      await expect(getLatestAnswerSubmission(participantId)).resolves.toMatchObject({
+        answers: [],
+        restoreIntegrity: { status: "invalid" },
+      });
+    });
+
+    it("restores answers when the saved question versions match the current versions", async () => {
+      const questionIds = await insertFiveQuestions();
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({ questionVersion: "india-uber-multi-v2" })
+        .where(eq(schema.examQuestions.id, 2));
+      const participantId = await insertParticipant();
+      await insertSubmission({
+        id: "matching-question-version",
+        participantId,
+        questionIds,
+        questionVersions: { "2": "india-uber-multi-v2" },
+      });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((questionId) => ({
+          submissionId: "matching-question-version",
+          questionId,
+          selectedIndex: 1,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      await expect(getLatestAnswerSubmission(participantId)).resolves.toMatchObject({
+        restoreIntegrity: { status: "complete" },
+        answers: expect.arrayContaining([
+          expect.objectContaining({ questionId: 2, selectedIndex: 1 }),
+        ]),
+      });
+    });
+
+    it("keeps restoring historical answers when the saved question version is missing", async () => {
+      const questionIds = await insertFiveQuestions();
+      await dbRef
+        .db!.update(schema.examQuestions)
+        .set({ questionVersion: "india-uber-multi-v2" })
+        .where(eq(schema.examQuestions.id, 2));
+      const participantId = await insertParticipant();
+      await insertSubmission({
+        id: "missing-question-version",
+        participantId,
+        questionIds,
+      });
+      await dbRef.db!.insert(schema.examSubmissionAnswers).values(
+        questionIds.map((questionId) => ({
+          submissionId: "missing-question-version",
+          questionId,
+          selectedIndex: 1,
+          freeText: null,
+          answerKind: "selected" as const,
+        })),
+      );
+
+      await expect(getLatestAnswerSubmission(participantId)).resolves.toMatchObject({
+        restoreIntegrity: { status: "complete" },
+        answers: expect.arrayContaining([
+          expect.objectContaining({ questionId: 2, selectedIndex: 1 }),
+        ]),
+      });
     });
 
     it("restores two selections from the current eight-choice multiple question", async () => {
