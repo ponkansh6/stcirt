@@ -387,7 +387,7 @@ async function completeConcurrentQ5Assessment(submissionId: string, revision: nu
     .set({
       revision,
       answerText: JSON.stringify({ a: "Q5 answer", b: "Q5 answer" }),
-      questionVersion: "hong-kong-trip-a-b-v4",
+      questionVersion: "hong-kong-trip-a-b-v5",
       state: "graded",
       rawScore: 9,
       normalizedScore: 1,
@@ -475,7 +475,7 @@ describe("presentation repository", () => {
       {
         id: 5,
         key: "it-literacy-005",
-        questionVersion: "hong-kong-trip-a-b-v4",
+        questionVersion: "hong-kong-trip-a-b-v5",
         question: "Question 5",
         choices: [],
         correctIndex: 0,
@@ -498,7 +498,7 @@ describe("presentation repository", () => {
       [1, 2, 3, 4, 5].map((id) => ({
         id,
         key: `it-literacy-00${id}`,
-        questionVersion: id === 5 ? "hong-kong-trip-a-b-v4" : `nagano-00${id}-v1`,
+        questionVersion: id === 5 ? "hong-kong-trip-a-b-v5" : `nagano-00${id}-v1`,
         question: `Current question ${id}`,
         choices: id === 5 ? [] : [`Correct ${id}`, `Wrong ${id}`],
         correctIndex: 0,
@@ -511,7 +511,7 @@ describe("presentation repository", () => {
     await testDb.db.insert(schema.examQuestions).values({
       id: 5,
       key: "it-literacy-005",
-      questionVersion: "hong-kong-trip-a-b-v4",
+      questionVersion: "hong-kong-trip-a-b-v5",
       question: "Question 5",
       choices: [],
       correctIndex: 0,
@@ -2888,14 +2888,14 @@ describe("presentation repository", () => {
         id: "partial-question-set",
         participantId: partialQuestionsParticipant,
         questionIds: [1],
-        questionVersions: { "1": "nagano-001-v1", "5": "hong-kong-trip-a-b-v4" },
+        questionVersions: { "1": "nagano-001-v1", "5": "hong-kong-trip-a-b-v5" },
         revision: 1,
       },
       {
         id: "partial-answer-set",
         participantId: partialAnswersParticipant,
         questionIds: [1, 5],
-        questionVersions: { "1": "nagano-001-v1", "5": "hong-kong-trip-a-b-v4" },
+        questionVersions: { "1": "nagano-001-v1", "5": "hong-kong-trip-a-b-v5" },
         revision: 1,
       },
     ]);
@@ -2929,7 +2929,7 @@ describe("presentation repository", () => {
         questionId: 5,
         revision: 1,
         answerText: JSON.stringify({ a: "Q5 partial", b: "Q5 partial" }),
-        questionVersion: "hong-kong-trip-a-b-v4",
+        questionVersion: "hong-kong-trip-a-b-v5",
         state: "graded" as const,
         rawScore: 0,
         normalizedScore: 0,
@@ -3106,7 +3106,7 @@ describe("presentation repository", () => {
       "2": "nagano-002-v1",
       "3": "nagano-003-v1",
       "4": "nagano-004-v1",
-      "5": "hong-kong-trip-a-b-v4",
+      "5": "hong-kong-trip-a-b-v5",
     };
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
@@ -3133,7 +3133,7 @@ describe("presentation repository", () => {
       questionId: 5,
       revision: 1,
       answerText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
-      questionVersion: "hong-kong-trip-a-b-v4",
+      questionVersion: "hong-kong-trip-a-b-v5",
       state: "graded",
       rawScore: 4.5,
       normalizedScore: 0.5,
@@ -3210,7 +3210,7 @@ describe("presentation repository", () => {
         "2": "nagano-002-v1",
         "3": "nagano-003-v1",
         "4": "nagano-004-v1",
-        "5": "hong-kong-trip-a-b-v4",
+        "5": "hong-kong-trip-a-b-v5",
       };
       await testDb.db.insert(schema.examAnswerSubmissions).values({
         id: submissionId,
@@ -3272,7 +3272,7 @@ describe("presentation repository", () => {
       "2": "nagano-002-v1",
       "3": "nagano-003-v1",
       "4": "nagano-004-v1",
-      "5": "hong-kong-trip-a-b-v4",
+      "5": "hong-kong-trip-a-b-v5",
     };
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
@@ -3299,7 +3299,7 @@ describe("presentation repository", () => {
       questionId: 5,
       revision: 1,
       answerText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
-      questionVersion: "hong-kong-trip-a-b-v4",
+      questionVersion: "hong-kong-trip-a-b-v5",
       state: "graded",
       rawScore: 4.5,
       normalizedScore: 0.5,
@@ -4304,7 +4304,7 @@ describe("presentation repository", () => {
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 1));
     await testDb.db
       .update(schema.examAnswerSubmissions)
-      .set({ questionIds: [5], questionVersions: { "5": "hong-kong-trip-a-b-v4" } })
+      .set({ questionIds: [5], questionVersions: { "5": "hong-kong-trip-a-b-v5" } })
       .where(eq(schema.examAnswerSubmissions.id, `submission-${participant}-latest`));
     await testDb.db
       .delete(schema.examSubmissionAnswers)
@@ -4366,7 +4366,7 @@ describe("presentation repository", () => {
       .set({
         answerText: JSON.stringify({ a: "pending response", b: "pending response" }),
         state: "pending",
-        questionVersion: "hong-kong-trip-a-b-v4",
+        questionVersion: "hong-kong-trip-a-b-v5",
         rubricVersion: JEV_RUBRIC_VERSION,
       })
       .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
@@ -4466,7 +4466,7 @@ describe("presentation repository", () => {
     expect(sessionBefore[0]).toMatchObject({
       snapshotRevision: 1,
       questionVersions: {
-        "5": "hong-kong-trip-a-b-v4",
+        "5": "hong-kong-trip-a-b-v5",
       },
       rubricVersions: {
         "5": JEV_RUBRIC_VERSION,

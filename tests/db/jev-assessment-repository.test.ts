@@ -6,7 +6,7 @@ import * as schema from "@/lib/db/schema";
 const dbRef = vi.hoisted(() => ({ db: null as TestDb["db"] | null }));
 const gradeMock = vi.hoisted(() => vi.fn());
 const rubricVersion = vi.hoisted(() => "jev-q5-lobster-french-toast-independent-points-v2");
-const questionVersion = vi.hoisted(() => "hong-kong-trip-a-b-v4");
+const questionVersion = vi.hoisted(() => "hong-kong-trip-a-b-v5");
 
 vi.mock("@/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/db")>();
