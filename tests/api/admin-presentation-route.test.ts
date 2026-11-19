@@ -59,12 +59,13 @@ const controlsPayload = {
 
 function request(
   method: "GET" | "POST",
-  options: { origin?: string; body?: unknown; rawBody?: string } = {},
+  options: { origin?: string; body?: unknown; rawBody?: string; vercelId?: string } = {},
 ) {
   return new Request("http://localhost/api/admin/presentation", {
     method,
     headers: {
       ...(options.origin === undefined ? {} : { Origin: options.origin }),
+      ...(options.vercelId === undefined ? {} : { "x-vercel-id": options.vercelId }),
       Host: "localhost",
       ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
     },
@@ -364,6 +365,7 @@ describe("/api/admin/presentation route", () => {
 
   it.each([
     ["Presentation session is unavailable", "session_unavailable"],
+    ["Free-response assessments must finish before results are aggregated", "grading_pending"],
     [
       "Current questions include missing or unsupported versions; update the question and rubric version registry before aggregating",
       "unsupported_question_version",
@@ -384,6 +386,22 @@ describe("/api/admin/presentation route", () => {
       event: "admin_presentation_aggregate_conflict",
       reason,
     });
+  });
+
+  it("uses a valid Vercel request ID in aggregate conflict logs", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(operatePresentationControls).mockRejectedValueOnce(
+      new PresentationConflictError("Presentation state changed concurrently"),
+    );
+    const response = await POST(
+      request("POST", {
+        body: { operationId, action: "aggregate" },
+        vercelId: "iad1::abc-123_xyz",
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(JSON.parse(warn.mock.calls[0][0] as string).vercelRequestId).toBe("iad1::abc-123_xyz");
   });
 
   it("returns unavailable for unexpected operation errors", async () => {
