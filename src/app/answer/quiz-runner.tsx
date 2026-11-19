@@ -1476,6 +1476,7 @@ export default function QuizRunner() {
                                                 )
                                               }
                                               onKeyDown={blurOnQuestionFiveEnter}
+                                              enterKeyHint={part === "a" ? "done" : undefined}
                                               className={styles.timelineInput}
                                               disabled={isLocked}
                                             />
@@ -1541,6 +1542,7 @@ export default function QuizRunner() {
                                     )
                                   }
                                   onKeyDown={blurOnQuestionFiveEnter}
+                                  enterKeyHint={part === "a" ? "done" : undefined}
                                   className={`answer-free-text min-h-24 w-full resize-y rounded-lg border border-control-border bg-bg p-4 text-base text-text shadow-sm outline-none focus-visible:border-answer-accent focus-visible:ring-2 focus-visible:ring-answer-accent/30 ${styles.freeText}`}
                                   disabled={isLocked}
                                 />

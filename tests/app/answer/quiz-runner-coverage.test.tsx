@@ -484,6 +484,9 @@ describe("QuizRunner remaining coverage states", () => {
     render(<EditableDraft />);
 
     const answer = screen.getByRole("textbox", { name: "A. 2/28 朝の食事" });
+    const answerB = screen.getByRole("textbox", { name: "B. 3/2 朝の食事" });
+    expect(answer).toHaveAttribute("enterkeyhint", "done");
+    expect(answerB).not.toHaveAttribute("enterkeyhint");
     fireEvent.change(answer, { target: { value: "編集中" } });
     answer.focus();
     expect(answer).toHaveFocus();
@@ -550,6 +553,8 @@ describe("QuizRunner remaining coverage states", () => {
     const answer = screen.getByRole("textbox", { name: "A. 2/28 朝の食事" });
     const answerB = screen.getByRole("textbox", { name: "B. 3/2 朝の食事" });
     expect(answer.tagName).toBe("TEXTAREA");
+    expect(answer).toHaveAttribute("enterkeyhint", "done");
+    expect(answerB).not.toHaveAttribute("enterkeyhint");
     answer.focus();
     fireEvent.keyDown(answer, { key: "Enter", code: "Enter" });
     expect(answer).not.toHaveFocus();
