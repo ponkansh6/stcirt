@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import {
   isAdminPresentationAuthConfigured,
   isAdminPresentationRequest,
@@ -12,6 +13,7 @@ import {
   PresentationConflictError,
 } from "@/lib/db/repository/presentation-repository";
 import type { PresentationState } from "@/lib/db/repository/presentation-repository";
+import { getPresentationOperationDiagnostics } from "@/lib/presentation/operation-diagnostics";
 
 export const runtime = "nodejs";
 const noStore = { "Cache-Control": "no-store, private" };
@@ -143,8 +145,55 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     if (error instanceof PresentationConflictError) {
-      return NextResponse.json({ error: error.message }, { status: 409, headers: noStore });
+      if (value.action === "aggregate") {
+        console.warn(
+          JSON.stringify({
+            event: "admin_presentation_aggregate_conflict",
+            vercelRequestId: getVercelRequestId(request),
+            reason: error.reason ?? getAggregateConflictReason(error.message),
+          }),
+        );
+      }
+      return NextResponse.json(
+        { error: error.message, ...(error.reason ? { reason: error.reason } : {}) },
+        { status: 409, headers: noStore },
+      );
+    }
+    if (value.action === "aggregate") {
+      const diagnostics = getPresentationOperationDiagnostics(error);
+      console.error(
+        JSON.stringify({
+          event: "admin_presentation_aggregate_failed",
+          vercelRequestId: getVercelRequestId(request),
+          phase: diagnostics?.phase ?? "unclassified",
+          errorKind: diagnostics?.errorKind ?? "unknown",
+          databaseCode: diagnostics?.databaseCode ?? null,
+          clientErrorClass: diagnostics?.clientErrorClass ?? null,
+          clientCode: diagnostics?.clientCode ?? null,
+        }),
+      );
     }
     return unavailable();
   }
+}
+
+function getAggregateConflictReason(message: string) {
+  switch (message) {
+    case "Presentation session is unavailable":
+      return "session_unavailable";
+    case "Current questions include missing or unsupported versions; update the question and rubric version registry before aggregating":
+      return "unsupported_question_version";
+    case "Free-response assessments must finish before results are aggregated":
+      return "grading_pending";
+    case "Presentation state changed concurrently":
+      return "state_changed";
+    default:
+      return "other_conflict";
+  }
+}
+
+function getVercelRequestId(request: Request) {
+  const value = request.headers.get("x-vercel-id");
+  if (value && /^[A-Za-z0-9:_-]{1,128}$/.test(value)) return value;
+  return `generated:${randomUUID()}`;
 }

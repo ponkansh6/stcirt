@@ -14,6 +14,11 @@ vi.mock("@/lib/db/repository/presentation-repository", () => ({
   setPresentationPosition: vi.fn(),
   PresentationConflictError: class PresentationConflictError extends Error {
     readonly status = 409;
+    readonly reason?: string;
+    constructor(message: string, reason?: string) {
+      super(message);
+      this.reason = reason;
+    }
   },
 }));
 
@@ -335,11 +340,50 @@ describe("/api/admin/presentation route", () => {
     });
   });
 
+  it("preserves the aggregate conflict reason in the 409 response", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(operatePresentationControls).mockRejectedValueOnce(
+      new PresentationConflictError(
+        "Free-response assessments must finish before results are aggregated",
+        "grading_pending",
+      ),
+    );
+    const response = await POST(request("POST", { body: { operationId, action: "aggregate" } }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Free-response assessments must finish before results are aggregated",
+      reason: "grading_pending",
+    });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(JSON.parse(warn.mock.calls[0][0] as string)).toMatchObject({
+      event: "admin_presentation_aggregate_conflict",
+      reason: "grading_pending",
+    });
+  });
+
   it("returns unavailable for unexpected operation errors", async () => {
     vi.mocked(operatePresentationControls).mockRejectedValueOnce(new Error("database unavailable"));
     const response = await POST(request("POST", { body: { operationId, action: "advance" } }));
 
     expect(response.status).toBe(503);
     expect(response.headers.get("cache-control")).toBe("no-store, private");
+  });
+
+  it("logs safe diagnostics for unexpected aggregate failures", async () => {
+    const error = new Error("database unavailable with sensitive details");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(operatePresentationControls).mockRejectedValueOnce(error);
+    const response = await POST(request("POST", { body: { operationId, action: "aggregate" } }));
+
+    expect(response.status).toBe(503);
+    expect(log).toHaveBeenCalledOnce();
+    const entry = JSON.parse(log.mock.calls[0][0] as string);
+    expect(entry).toMatchObject({
+      event: "admin_presentation_aggregate_failed",
+      phase: "unclassified",
+      errorKind: "unknown",
+    });
+    expect(JSON.stringify(entry)).not.toContain("sensitive details");
   });
 });

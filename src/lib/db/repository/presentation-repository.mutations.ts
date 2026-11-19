@@ -38,8 +38,21 @@ import {
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
 import { isSqliteLockContention } from "./sqlite-error-classification";
 
+export type PresentationConflictReason =
+  | "grading_pending"
+  | "unsupported_question_version"
+  | "unsupported_legacy_answer";
+
 export class PresentationConflictError extends Error {
   readonly status = 409;
+
+  constructor(
+    message: string,
+    readonly reason?: PresentationConflictReason,
+  ) {
+    super(message);
+    this.name = "PresentationConflictError";
+  }
 }
 
 export type PresentationAggregationSummary = {
@@ -263,6 +276,7 @@ async function ensurePresentationSnapshot(
   if (!versionMaps) {
     throw new PresentationConflictError(
       "Current questions include missing or unsupported versions; update the question and rubric version registry before aggregating",
+      "unsupported_question_version",
     );
   }
   setOperationPhase?.("participants_read");
@@ -396,11 +410,13 @@ async function ensurePresentationSnapshot(
       ) {
         throw new PresentationConflictError(
           "Free-response assessments must finish before results are aggregated",
+          "grading_pending",
         );
       }
     } else {
       throw new PresentationConflictError(
         `Submission ${submission.id} has an unsupported legacy Q5 answer; audit or resubmit it before aggregating`,
+        "unsupported_legacy_answer",
       );
     }
 

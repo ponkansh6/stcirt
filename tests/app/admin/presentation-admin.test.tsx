@@ -2798,6 +2798,38 @@ describe("presentation admin console", () => {
     expect(screen.getByText("現在の状態：進行中：問題")).toBeInTheDocument();
   });
 
+  it("explains that Q5 grading must finish after an aggregate conflict even if refresh fails", async () => {
+    let stateReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/presentation" && init?.method === "POST")
+        return response(409, { error: "conflict", reason: "grading_pending" });
+      if (path === "/api/admin/presentation") {
+        stateReads += 1;
+        return stateReads === 1
+          ? response(200, {
+              state: "not_started",
+              questionIndex: 0,
+              questionCount: 5,
+              projectionHidden: false,
+              participantResultsVisible: false,
+              participantResultsReady: false,
+            })
+          : response(503, {});
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+
+    await user.click(await screen.findByRole("button", { name: "集計" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Q5.*採点|採点.*完了/);
+    expect(stateReads).toBe(2);
+  });
+
   it("executes reset immediately without showing a confirmation dialog", async () => {
     const api = apiFetch({
       state: { state: "question", questionIndex: 0 },

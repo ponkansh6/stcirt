@@ -4371,9 +4371,11 @@ describe("presentation repository", () => {
       })
       .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
 
-    await expect(op("aggregate", "pending-response-aggregate")).rejects.toBeInstanceOf(
-      PresentationConflictError,
+    const aggregateError = await op("aggregate", "pending-response-aggregate").catch(
+      (error: unknown) => error,
     );
+    expect(aggregateError).toBeInstanceOf(PresentationConflictError);
+    expect(aggregateError).toMatchObject({ reason: "grading_pending" });
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(1);
     await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(2);
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([

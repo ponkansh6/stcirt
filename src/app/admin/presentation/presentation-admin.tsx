@@ -12,7 +12,19 @@ type AdminState = {
   participantResultsVisible: boolean;
   participantResultsReady: boolean;
 };
-type ApiError = Error & { status?: number };
+const aggregateConflictMessages = {
+  grading_pending: "未採点の自由記述回答があります。採点を完了してから、もう一度集計してください。",
+  unsupported_question_version:
+    "問題または採点基準のバージョンを確認できません。設定を更新してから、もう一度集計してください。",
+  unsupported_legacy_answer:
+    "旧形式の自由記述回答を集計できません。該当回答を確認して再提出してから、もう一度集計してください。",
+};
+type AggregateConflictReason = keyof typeof aggregateConflictMessages;
+type ApiError = Error & { status?: number; reason?: AggregateConflictReason };
+
+function isAggregateConflictReason(value: unknown): value is AggregateConflictReason {
+  return typeof value === "string" && Object.hasOwn(aggregateConflictMessages, value);
+}
 type AggregationSummary = {
   snapshotUpdated: boolean;
   includedSubmissionCount: number;
@@ -114,6 +126,10 @@ async function postAction(action: "start" | "aggregate" | "reset") {
   if (!response.ok) {
     const error = new Error("操作を反映できませんでした。") as ApiError;
     error.status = response.status;
+    if (action === "aggregate" && response.status === 409) {
+      const payload = (await response.json().catch(() => null)) as { reason?: unknown } | null;
+      if (isAggregateConflictReason(payload?.reason)) error.reason = payload.reason;
+    }
     throw error;
   }
   if (action !== "aggregate") return null;
@@ -478,12 +494,18 @@ export default function PresentationAdmin() {
         setAdminState(null);
         setMessage("管理者セッションの有効期限が切れました。PIN を入力してください。");
       } else {
+        const aggregateReason = (error as ApiError).reason;
+        const conflictMessage =
+          action === "aggregate" && aggregateReason
+            ? aggregateConflictMessages[aggregateReason]
+            : null;
         const failureMessage =
-          action === "publish" || action === "hideResults"
+          conflictMessage ??
+          (action === "publish" || action === "hideResults"
             ? "結果の準備または公開に失敗しました。状態を確認して再試行してください。"
-            : "操作を反映できませんでした。状態を再確認してから再試行してください。";
+            : "操作を反映できませんでした。状態を再確認してから再試行してください。");
         const refreshed = await refresh();
-        if (refreshed === true) setMessage(failureMessage);
+        if (refreshed === true || conflictMessage) setMessage(failureMessage);
         const handoff = visibilityFocusHandoff.current;
         if (handoff) {
           if (refreshed === true) {

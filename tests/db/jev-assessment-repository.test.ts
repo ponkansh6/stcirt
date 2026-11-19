@@ -221,6 +221,7 @@ describe("durable free-response assessment and restoration", () => {
     vi.mocked(gradeFreeResponseParts).mockRejectedValueOnce(
       new Error("Unsupported question/rubric version pair"),
     );
+    const failureLog = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(processDueAssessments()).resolves.toMatchObject({ processed: 1, failed: 1 });
     const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
@@ -229,6 +230,12 @@ describe("durable free-response assessment and restoration", () => {
       errorCode: "jev_unknown_version_pair",
       nextAttemptAt: null,
     });
+    expect(failureLog).toHaveBeenCalledWith("answer_assessment_failed", {
+      reason: "jev_unknown_version_pair",
+      outcome: "terminal",
+      attempts: 1,
+    });
+    failureLog.mockRestore();
   });
 
   it("marks a malformed persisted Q5 payload invalid before calling JEV", async () => {
@@ -248,6 +255,33 @@ describe("durable free-response assessment and restoration", () => {
     expect(gradeFreeResponseParts).not.toHaveBeenCalled();
     const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(assessment).toMatchObject({ state: "failed", errorCode: "jev_invalid_response" });
+  });
+
+  it("redacts unknown JEV-prefixed errors from retry logs", async () => {
+    await saveAnswerSubmission({
+      submissionId,
+      operationId,
+      expectedRevision: 0,
+      participantId,
+      answers: validAnswers,
+    });
+    vi.mocked(gradeFreeResponseParts).mockRejectedValueOnce(new Error("jev_secret_answer_payload"));
+    const failureLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(processDueAssessments()).resolves.toMatchObject({ processed: 1, retried: 1 });
+    const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
+    expect(assessment).toMatchObject({
+      state: "pending",
+      attempts: 1,
+      errorCode: "jev_secret_answer_payload",
+    });
+    expect(failureLog).toHaveBeenCalledWith("answer_assessment_failed", {
+      reason: "jev_transport_error",
+      outcome: "retry_scheduled",
+      attempts: 1,
+    });
+    expect(JSON.stringify(failureLog.mock.calls)).not.toContain("jev_secret_answer_payload");
+    failureLog.mockRestore();
   });
 
   it("leaves an old-rubric pending assessment untouched until its answer is resubmitted", async () => {

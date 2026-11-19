@@ -21,6 +21,16 @@ import { sqliteCauseObjects } from "./sqlite-cause-traversal";
 import { isSqliteLockContention } from "./sqlite-error-classification";
 import { MAX_MULTIPLE_CHOICE_OPTIONS, QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
 
+const SAFE_ASSESSMENT_LOG_REASONS = new Set([
+  "jev_validation",
+  "jev_http_error",
+  "jev_transport_error",
+  "jev_invalid_json",
+  "jev_invalid_response",
+  "jev_not_configured",
+  "jev_unknown_version_pair",
+]);
+
 export type BatchAnswer =
   | { questionId: number; selectedIndex: number }
   | { questionId: number; selectedIndices: number[] }
@@ -1113,6 +1123,11 @@ export async function processDueAssessments(
       if (changed.length) {
         if (terminal) failed += 1;
         else retried += 1;
+        console.error("answer_assessment_failed", {
+          reason: SAFE_ASSESSMENT_LOG_REASONS.has(code) ? code : "jev_transport_error",
+          outcome: terminal ? "terminal" : "retry_scheduled",
+          attempts,
+        });
       }
     }
   }
