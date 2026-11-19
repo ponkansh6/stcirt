@@ -362,6 +362,30 @@ describe("/api/admin/presentation route", () => {
     });
   });
 
+  it.each([
+    ["Presentation session is unavailable", "session_unavailable"],
+    [
+      "Current questions include missing or unsupported versions; update the question and rubric version registry before aggregating",
+      "unsupported_question_version",
+    ],
+    ["Presentation state changed concurrently", "state_changed"],
+    ["Unexpected conflict detail", "other_conflict"],
+  ])("maps aggregate conflict %s to %s", async (message, reason) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(operatePresentationControls).mockRejectedValueOnce(
+      new PresentationConflictError(message),
+    );
+    const response = await POST(request("POST", { body: { operationId, action: "aggregate" } }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: message });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(JSON.parse(warn.mock.calls[0][0] as string)).toMatchObject({
+      event: "admin_presentation_aggregate_conflict",
+      reason,
+    });
+  });
+
   it("returns unavailable for unexpected operation errors", async () => {
     vi.mocked(operatePresentationControls).mockRejectedValueOnce(new Error("database unavailable"));
     const response = await POST(request("POST", { body: { operationId, action: "advance" } }));

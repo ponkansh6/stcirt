@@ -2830,6 +2830,32 @@ describe("presentation admin console", () => {
     expect(stateReads).toBe(2);
   });
 
+  it("explains unsupported question versions after an aggregate conflict", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/admin/session") return response(200, { authenticated: true });
+      if (path === "/api/admin/presentation" && init?.method === "POST")
+        return response(409, { error: "conflict", reason: "unsupported_question_version" });
+      if (path === "/api/admin/presentation")
+        return response(200, {
+          state: "not_started",
+          questionIndex: 0,
+          questionCount: 5,
+          projectionHidden: false,
+          participantResultsVisible: false,
+          participantResultsReady: false,
+        });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<PresentationAdmin />);
+
+    await user.click(await screen.findByRole("button", { name: "集計" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/バージョンを確認できません/);
+  });
+
   it("executes reset immediately without showing a confirmation dialog", async () => {
     const api = apiFetch({
       state: { state: "question", questionIndex: 0 },
