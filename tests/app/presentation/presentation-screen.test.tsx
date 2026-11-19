@@ -2531,6 +2531,13 @@ describe("presentation projection and presenter progression", () => {
     expect(within(questionRegion).getByRole("list", { name: "旅程" })).toBe(questionTimeline);
     expect(questionTimeline.querySelectorAll("[class*='q5TimelineDay']")).toHaveLength(4);
     expect(questionTimeline.querySelectorAll("[class*='q5TimelineDay'] > ol > li")).toHaveLength(8);
+    expect(questionTimeline.querySelectorAll("[class*='q5TimelineDate']")).toHaveLength(8);
+    expect(
+      Array.from(
+        questionTimeline.querySelectorAll("[class*='q5TimelineDate']"),
+        (date) => date.textContent,
+      ),
+    ).toEqual(["2/27", "2/27", "2/28", "2/28", "2/28", "3/1", "3/1", "3/2"]);
     expect(within(questionTimeline).getByText("A", { exact: true })).toBeInTheDocument();
     expect(within(questionTimeline).getByText("B", { exact: true })).toBeInTheDocument();
     expect(within(questionTimeline).queryByText("新鮮なロブスター")).not.toBeInTheDocument();
@@ -2544,7 +2551,13 @@ describe("presentation projection and presenter progression", () => {
       within(answerRegion).queryByRole("heading", { name: "3回目の旅程" }),
     ).not.toBeInTheDocument();
     const answerTimeline = within(answerRegion).getByRole("list", { name: "正解を含む旅程" });
-    expect(within(answerTimeline).getAllByText(/^(2\/27|2\/28|3\/1|3\/2)$/)).toHaveLength(4);
+    expect(answerTimeline.querySelectorAll("[class*='q5TimelineDate']")).toHaveLength(8);
+    expect(
+      Array.from(
+        answerTimeline.querySelectorAll("[class*='q5TimelineDate']"),
+        (date) => date.textContent,
+      ),
+    ).toEqual(["2/27", "2/27", "2/28", "2/28", "2/28", "3/1", "3/1", "3/2"]);
     expect(screen.getByText("新鮮なロブスター").closest("strong")).toBeInTheDocument();
     expect(screen.getByText("フレンチトースト").closest("strong")).toBeInTheDocument();
     expect(answerTimeline.querySelectorAll("[class*='q5TimelineDay']")).toHaveLength(4);

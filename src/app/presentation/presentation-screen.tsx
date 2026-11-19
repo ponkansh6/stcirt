@@ -705,14 +705,16 @@ function Q5TimelineSlide({
         >
           {groups.map((group) => (
             <li className={styles.q5TimelineDay} key={group.date}>
-              <h2>{group.date}</h2>
               <ol>
                 {group.entries.map((entry, index) => {
                   const answer =
                     entry.answerPart && answerParts ? answerParts[entry.answerPart] : null;
                   return (
                     <li className={styles.q5TimelineEntry} key={`${entry.time}-${index}`}>
-                      <span className={styles.q5TimelineTime}>{entry.time}</span>
+                      <span className={styles.q5TimelineWhen}>
+                        <span className={styles.q5TimelineDate}>{entry.date}</span>
+                        <span className={styles.q5TimelineTime}>{entry.time}</span>
+                      </span>
                       <span className={styles.q5TimelineActivity}>
                         {answer ? (
                           <>

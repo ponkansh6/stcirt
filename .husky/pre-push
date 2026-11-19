@@ -2,6 +2,7 @@
 # ============================================================================
 # pre-push — 分単位 / push 差分スコープ / 「壊れたものを push させない」
 #
+#   Phase 0（常時・blocking）: 本番 migration 適用履歴
 #   Phase 1（常時・並列）: preflight | unit+coverage | production build
 #   Phase 2（条件付き）  : E2E
 #   Phase 3（条件付き）  : 本番スキーマ drift（blocking）
@@ -53,7 +54,22 @@ check_prod_schema() {
     bash scripts/check-prod-schema.sh
 }
 
+check_prod_migrations() (
+  echo "[pre-push] 本番 migration 適用履歴を確認します (blocking)"
+  if [ ! -f "$ROOT/.env.local" ]; then
+    echo "[error] 本番 migration 確認に必要な .env.local がありません。push を中止します。" >&2
+    return 1
+  fi
+
+  # SHA は git から得た値で、チェッカー側でも形式を検証する。
+  set -f
+  set -- $PUSH_TIPS
+  env -u TURSO_DATABASE_URL -u TURSO_AUTH_TOKEN \
+    node --env-file="$ROOT/.env.local" scripts/check-prod-migrations.mjs "$@"
+)
+
 TIP=""
+PUSH_TIPS=""
 CHANGED=""
 SAW_REF=0
 
@@ -65,6 +81,10 @@ while read -r _lref lsha _rref rsha; do
   # exit 128 で落ちて `git push origin :branch` が常に失敗していた。
   if is_zero "$lsha"; then continue; fi
 
+  case "$lsha" in
+    *[!0-9a-fA-F]*) echo "[error] push 対象の Git SHA が不正です。push を中止します。" >&2; exit 1 ;;
+  esac
+  PUSH_TIPS="${PUSH_TIPS}${PUSH_TIPS:+ }$lsha"
   TIP="$lsha"
   if [ -n "${rsha:-}" ] && ! is_zero "$rsha"; then
     BASE="$rsha"                                              # 既存 ref への追記
@@ -87,6 +107,7 @@ fi
 
 if [ -z "$TIP" ]; then                       # stdin なし（手動実行など）
   TIP=$(git rev-parse HEAD)
+  PUSH_TIPS="$TIP"
   BASE=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
   if [ -n "$BASE" ]; then
     CHANGED=$(git diff --name-only "$BASE" HEAD)
@@ -96,6 +117,11 @@ if [ -z "$TIP" ]; then                       # stdin なし（手動実行など
 fi
 
 CHANGED=$(printf '%s\n' "$CHANGED" | sed '/^$/d' | sort -u)
+
+# ---------------------------------------------------------------------------
+# 0. 本番 migration 適用履歴（全 push で blocking）
+# ---------------------------------------------------------------------------
+check_prod_migrations
 
 # ---------------------------------------------------------------------------
 # 1. 実行フェーズの決定
@@ -117,7 +143,7 @@ if changed_match '^src/lib/db/(schema\.ts$|migrations/)'; then
 fi
 N_CHANGED=$(printf '%s\n' "$CHANGED" | grep -c . || true)
 printf '[pre-push] tip=%s  changed=%s files\n' "$(git rev-parse --short "$TIP")" "$N_CHANGED"
-printf '[pre-push] plan: preflight=1 unit+coverage=%s build=%s e2e=%s drift=%s\n\n' \
+printf '[pre-push] plan: migration-history=1 preflight=1 unit+coverage=%s build=%s e2e=%s drift=%s\n\n' \
   "$NEED_TEST" "$NEED_BUILD" "$NEED_E2E" "$NEED_DRIFT"
 
 if changed_match '^src/' && ! changed_match '^tests/'; then

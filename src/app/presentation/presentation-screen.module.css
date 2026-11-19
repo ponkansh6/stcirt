@@ -650,13 +650,6 @@
   background: var(--color-presentation-fffdf5);
 }
 
-.q5TimelineDay > h2 {
-  margin: 0 0 2px;
-  color: var(--color-presentation-46515b);
-  font-size: clamp(var(--presentation-min-readable-size), 1.35cqw, 1.55rem);
-  line-height: 1.25;
-}
-
 .q5TimelineDay > ol {
   display: grid;
   gap: clamp(3px, 0.45cqh, 7px);
@@ -667,17 +660,35 @@
 
 .q5TimelineEntry {
   display: grid;
-  grid-template-columns: 2.4em minmax(0, 1fr);
+  grid-template-columns: minmax(4.8em, max-content) minmax(0, 1fr);
   gap: clamp(6px, 0.8cqw, 12px);
   min-width: 0;
   align-items: start;
-  font-size: clamp(var(--presentation-min-readable-size), 1.5cqw, 1.75rem);
-  line-height: 1.35;
+  font-size: clamp(var(--presentation-min-readable-size), 1.8cqw, 2.1rem);
+  line-height: 1.3;
 }
 
+.q5TimelineWhen {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.35em;
+}
+
+.q5TimelineDate,
 .q5TimelineTime {
   color: var(--color-presentation-46515b);
   overflow-wrap: anywhere;
+}
+
+.q5TimelineDate {
+  flex: 0 0 2.5em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.q5TimelineTime {
+  white-space: nowrap;
 }
 
 .q5TimelineActivity {
@@ -728,12 +739,16 @@
 }
 
 .answerContent {
+  --answer-content-inline-inset: 8px;
+
   width: 100%;
-  padding-right: 8px;
+  box-sizing: border-box;
+  padding-right: var(--answer-content-inline-inset);
   overflow-wrap: anywhere;
 }
 
 .answerContent > h1 {
+  width: calc(100% + var(--answer-content-inline-inset));
   margin: 0;
 }
 
@@ -820,7 +835,7 @@
 .question h1:not(.ordinal) {
   max-width: 1250px;
   margin: 0;
-  font-size: clamp(var(--presentation-min-readable-size), 4cqw, 4.2rem);
+  font-size: clamp(var(--presentation-min-readable-size), 3.8cqw, 4rem);
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.3;
@@ -849,7 +864,7 @@
   border-radius: 10px;
   background: var(--color-surface);
   padding: var(--spacing-projection-block-2) var(--spacing-projection-inline-2);
-  font-size: clamp(var(--presentation-min-readable-size), 2cqw, 1.9rem);
+  font-size: clamp(var(--presentation-min-readable-size), 2.15cqw, 2rem);
   font-weight: 650;
   line-height: 1.35;
 }
@@ -1813,7 +1828,7 @@
   }
 
   .question h1:not(.ordinal) {
-    font-size: clamp(var(--presentation-min-readable-size), 4.7cqw, 2rem);
+    font-size: clamp(var(--presentation-min-readable-size), 4.4cqw, 1.9rem);
   }
 
   .choices {
@@ -1824,7 +1839,7 @@
   .choices li {
     min-height: 36px;
     gap: var(--spacing-projection-inline-1);
-    font-size: clamp(var(--presentation-min-readable-size), 2.5cqw, 1rem);
+    font-size: clamp(var(--presentation-min-readable-size), 2.7cqw, 1.05rem);
   }
 
   .choiceLetter {

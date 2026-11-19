@@ -675,6 +675,30 @@ async function waitForRenderFrames(page: import("@playwright/test").Page) {
   );
 }
 
+async function headingLines(heading: import("@playwright/test").Locator) {
+  return heading.evaluate((element) => {
+    const text = element.textContent ?? "";
+    const range = document.createRange();
+    const lines: { top: number; text: string }[] = [];
+    range.selectNodeContents(element);
+
+    for (let index = 0; index < text.length; index += 1) {
+      range.setStart(element.firstChild!, index);
+      range.setEnd(element.firstChild!, index + 1);
+      const rect = range.getBoundingClientRect();
+      const top = Math.round(rect.top);
+      let line = lines.find((candidate) => candidate.top === top);
+      if (!line) {
+        line = { top, text: "" };
+        lines.push(line);
+      }
+      line.text += text[index];
+    }
+
+    return lines.map(({ text: line }) => line);
+  });
+}
+
 async function waitForCurrentPresentationEntryAnimations(page: import("@playwright/test").Page) {
   const result = await page.evaluate(async () => {
     const openingTitle = document.querySelector<HTMLElement>(
@@ -1532,13 +1556,26 @@ test("@chromium rapid presenter navigation settles on the latest slide after exi
 });
 
 test("@chromium selected-answer reveal replays on stage re-entry", async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.emulateMedia({ reducedMotion: "no-preference" });
+  const questionText =
+    "この問題では発表スライドと回答スライドの見出しが同じ位置で改行されることを確認します。";
   await installAnswerRevealAnimationProbe(page, questions[0].id);
-  await installAdminApiMock(page);
+  await installAdminApiMock(page, {
+    question: { ...questions[0], question: questionText },
+  });
   await signIn(page);
   await startPresentation(page);
   await openPresenter(page);
+
+  const questionHeading = page.getByRole("heading", { name: questionText });
+  await expect(questionHeading).toHaveText(questionText);
+  await waitForRenderFrames(page);
+  const questionLines = await headingLines(questionHeading);
+  const questionWidth = await questionHeading.evaluate(
+    (element) => (element as HTMLElement).offsetWidth,
+  );
+  expect(questionLines.length).toBeGreaterThan(1);
 
   const enterAnswer = async () => {
     const mutation = nextAdminMutation(page);
@@ -1548,11 +1585,16 @@ test("@chromium selected-answer reveal replays on stage re-entry", async ({ page
   };
   await enterAnswer();
   const ordinal = page.locator("[class*='answerReview'] [class*='ordinal']");
-  const questionHeading = page.getByRole("heading", { name: questions[0].question });
+  const answerHeading = page.locator("[class*='answerReview'] h1");
   const answerList = page.locator("[class*='answerReview'] ol[class*='answerReveal']");
   const supplement = page.locator("[class*='answerSupplement']");
   await expect(ordinal).toHaveText("問 1");
-  await expect(questionHeading).toBeVisible();
+  await expect(answerHeading).toHaveText(questionText);
+  await waitForRenderFrames(page);
+  expect(await answerHeading.evaluate((element) => (element as HTMLElement).offsetWidth)).toBe(
+    questionWidth,
+  );
+  expect(await headingLines(answerHeading)).toEqual(questionLines);
   await expect(answerList).toBeAttached();
   await expect(answerList).not.toHaveAttribute("aria-hidden");
   await expect(answerList).not.toHaveAttribute("inert");
@@ -1572,7 +1614,7 @@ test("@chromium selected-answer reveal replays on stage re-entry", async ({ page
   await expectAnswerRevealFitDuringAndAfter(page, 0, 1);
   const previous = nextAdminMutation(page);
   await page.locator("main").press("ArrowLeft");
-  await expect(slideFor(page, "question")).toBeVisible();
+  await expect(questionHeading).toBeVisible();
   await previous;
   const reentry = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
@@ -1857,18 +1899,19 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
       const days = Array.from(element.children).filter(
         (node): node is HTMLElement => node instanceof HTMLElement && node.tagName === "LI",
       );
-      const dayHeadings = days.map((day) => {
-        const heading = day.querySelector(":scope > h2");
-        if (!heading) throw new Error("Missing timeline date heading");
-        return { text: heading.textContent?.trim() ?? "", rect: rect(heading) };
-      });
+      const dates = days.flatMap((day) =>
+        Array.from(day.querySelectorAll<HTMLElement>("[class*='q5TimelineWhen']"), (when) => ({
+          text: when.textContent?.trim() ?? "",
+          rect: rect(when),
+        })),
+      );
       const rows = days.flatMap((day) =>
         Array.from(day.querySelectorAll<HTMLElement>(":scope > ol > li")).map((row) => ({
           text: row.textContent?.trim() ?? "",
           rect: rect(row),
         })),
       );
-      return { region: rect(region), timeline: rect(element), dayHeadings, rows };
+      return { region: rect(region), timeline: rect(element), dates, rows };
     });
   const expectMatchingRect = (
     actual: { x: number; y: number; width: number; height: number },
@@ -1884,12 +1927,10 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
   ) => {
     expectMatchingRect(actual.region, expected.region);
     expectMatchingRect(actual.timeline, expected.timeline);
-    expect(actual.dayHeadings.map((day) => day.text)).toEqual(
-      expected.dayHeadings.map((day) => day.text),
-    );
+    expect(actual.dates.map((date) => date.text)).toEqual(expected.dates.map((date) => date.text));
     expect(actual.rows).toHaveLength(expected.rows.length);
-    actual.dayHeadings.forEach((day, index) =>
-      expectMatchingRect(day.rect, expected.dayHeadings[index].rect),
+    actual.dates.forEach((date, index) =>
+      expectMatchingRect(date.rect, expected.dates[index].rect),
     );
     actual.rows.forEach((row, index) => expectMatchingRect(row.rect, expected.rows[index].rect));
   };
@@ -1926,6 +1967,16 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
   await expect(questionTimeline).toHaveAttribute("aria-label", "旅程");
   await expect(questionTimeline.locator("[class*='q5TimelineDay']")).toHaveCount(4);
   await expect(questionTimeline.locator("[class*='q5TimelineDay'] > ol > li")).toHaveCount(8);
+  await expect(questionTimeline.locator("[class*='q5TimelineDate']")).toHaveText([
+    "2/27",
+    "2/27",
+    "2/28",
+    "2/28",
+    "2/28",
+    "3/1",
+    "3/1",
+    "3/2",
+  ]);
   await expect(questionTimeline.getByText("A", { exact: true })).toBeVisible();
   await expect(questionTimeline.getByText("B", { exact: true })).toBeVisible();
   await expect(questionTimeline).not.toContainText("新鮮なロブスター");
@@ -1971,6 +2022,16 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
     await expect(answerRegion.getByRole("heading", { level: 1 })).toHaveText("問 5");
     await expect(answerTimeline.locator("[class*='q5TimelineDay']")).toHaveCount(4);
     await expect(answerTimeline.locator("[class*='q5TimelineDay'] > ol > li")).toHaveCount(8);
+    await expect(answerTimeline.locator("[class*='q5TimelineDate']")).toHaveText([
+      "2/27",
+      "2/27",
+      "2/28",
+      "2/28",
+      "2/28",
+      "3/1",
+      "3/1",
+      "3/2",
+    ]);
     await expect(page.locator("strong[class*='q5TimelineAnswer']")).toHaveText([
       "新鮮なロブスター",
       "フレンチトースト",
