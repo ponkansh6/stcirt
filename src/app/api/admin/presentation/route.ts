@@ -150,12 +150,15 @@ export async function POST(request: Request) {
           JSON.stringify({
             event: "admin_presentation_aggregate_conflict",
             vercelRequestId: getVercelRequestId(request),
-            reason: error.reason ?? getAggregateConflictReason(error.message),
+            reason: error.reason ?? "other_conflict",
           }),
         );
       }
       return NextResponse.json(
-        { error: error.message, ...(error.reason ? { reason: error.reason } : {}) },
+        {
+          error: error.message,
+          ...(isPublicPresentationConflictReason(error.reason) ? { reason: error.reason } : {}),
+        },
         { status: 409, headers: noStore },
       );
     }
@@ -177,19 +180,12 @@ export async function POST(request: Request) {
   }
 }
 
-function getAggregateConflictReason(message: string) {
-  switch (message) {
-    case "Presentation session is unavailable":
-      return "session_unavailable";
-    case "Current questions include missing or unsupported versions; update the question and rubric version registry before aggregating":
-      return "unsupported_question_version";
-    case "Free-response assessments must finish before results are aggregated":
-      return "grading_pending";
-    case "Presentation state changed concurrently":
-      return "state_changed";
-    default:
-      return "other_conflict";
-  }
+function isPublicPresentationConflictReason(reason: string | undefined): boolean {
+  return (
+    reason === "grading_pending" ||
+    reason === "unsupported_question_version" ||
+    reason === "unsupported_legacy_answer"
+  );
 }
 
 function getVercelRequestId(request: Request) {

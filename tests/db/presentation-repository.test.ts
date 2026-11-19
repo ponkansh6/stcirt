@@ -5049,13 +5049,13 @@ describe("presentation repository", () => {
   it("reports an unavailable session when snapshot persistence cannot reread it", async () => {
     await addQ5OnlyQuestion();
 
-    await expect(
-      returnNoSelectedRows(
-        schema.presentationSessions,
-        () => op("aggregate", "missing-session-read"),
-        2,
-      ),
-    ).rejects.toBeInstanceOf(PresentationConflictError);
+    const aggregate = returnNoSelectedRows(
+      schema.presentationSessions,
+      () => op("aggregate", "missing-session-read"),
+      2,
+    );
+    await expect(aggregate).rejects.toBeInstanceOf(PresentationConflictError);
+    await expect(aggregate).rejects.toMatchObject({ reason: "session_unavailable" });
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toHaveLength(0);
     await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toHaveLength(0);
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
@@ -5280,9 +5280,11 @@ describe("presentation repository", () => {
       .set({ question: "Changed before failed aggregate" })
       .where(eq(schema.examQuestions.id, 1));
 
-    await expect(
-      returnNoUpdatedRows(schema.presentationSessions, () => op("aggregate", "aggregate-cas-miss")),
-    ).rejects.toBeInstanceOf(PresentationConflictError);
+    const aggregate = returnNoUpdatedRows(schema.presentationSessions, () =>
+      op("aggregate", "aggregate-cas-miss"),
+    );
+    await expect(aggregate).rejects.toBeInstanceOf(PresentationConflictError);
+    await expect(aggregate).rejects.toMatchObject({ reason: "state_changed" });
     await expect(getAdminPresentation()).resolves.toMatchObject({
       version: 1,
       snapshotRevision: 1,

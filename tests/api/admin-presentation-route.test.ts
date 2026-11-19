@@ -364,34 +364,46 @@ describe("/api/admin/presentation route", () => {
   });
 
   it.each([
-    ["Presentation session is unavailable", "session_unavailable"],
-    ["Free-response assessments must finish before results are aggregated", "grading_pending"],
+    ["Session lookup failed", "session_unavailable", undefined],
+    ["Grading is incomplete", "grading_pending", "grading_pending"],
     [
-      "Current questions include missing or unsupported versions; update the question and rubric version registry before aggregating",
+      "Question versions need an update",
+      "unsupported_question_version",
       "unsupported_question_version",
     ],
-    ["Presentation state changed concurrently", "state_changed"],
-    ["Unexpected conflict detail", "other_conflict"],
-  ])("maps aggregate conflict %s to %s", async (message, reason) => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.mocked(operatePresentationControls).mockRejectedValueOnce(
-      new PresentationConflictError(message),
-    );
-    const response = await POST(request("POST", { body: { operationId, action: "aggregate" } }));
+    ["The state changed", "state_changed", undefined],
+    [
+      "Legacy answers cannot be aggregated",
+      "unsupported_legacy_answer",
+      "unsupported_legacy_answer",
+    ],
+    ["Presentation session is unavailable", undefined, undefined],
+  ] as const)(
+    "maps aggregate conflict %s to its typed reason",
+    async (message, reason, responseReason) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.mocked(operatePresentationControls).mockRejectedValueOnce(
+        new PresentationConflictError(message, reason),
+      );
+      const response = await POST(request("POST", { body: { operationId, action: "aggregate" } }));
 
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({ error: message });
-    expect(warn).toHaveBeenCalledOnce();
-    expect(JSON.parse(warn.mock.calls[0][0] as string)).toMatchObject({
-      event: "admin_presentation_aggregate_conflict",
-      reason,
-    });
-  });
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error: message,
+        ...(responseReason === undefined ? {} : { reason: responseReason }),
+      });
+      expect(warn).toHaveBeenCalledOnce();
+      expect(JSON.parse(warn.mock.calls[0][0] as string)).toMatchObject({
+        event: "admin_presentation_aggregate_conflict",
+        reason: reason ?? "other_conflict",
+      });
+    },
+  );
 
   it("uses a valid Vercel request ID in aggregate conflict logs", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.mocked(operatePresentationControls).mockRejectedValueOnce(
-      new PresentationConflictError("Presentation state changed concurrently"),
+      new PresentationConflictError("The state changed", "state_changed"),
     );
     const response = await POST(
       request("POST", {

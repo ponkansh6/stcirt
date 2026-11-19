@@ -41,7 +41,9 @@ import { isSqliteLockContention } from "./sqlite-error-classification";
 export type PresentationConflictReason =
   | "grading_pending"
   | "unsupported_question_version"
-  | "unsupported_legacy_answer";
+  | "unsupported_legacy_answer"
+  | "session_unavailable"
+  | "state_changed";
 
 export class PresentationConflictError extends Error {
   readonly status = 409;
@@ -223,7 +225,12 @@ export async function acquirePresentationSession(
     .select()
     .from(presentationSessions)
     .where(eq(presentationSessions.id, 1));
-  if (!session) throw new PresentationConflictError("Presentation session is unavailable");
+  if (!session) {
+    throw new PresentationConflictError(
+      "Presentation session is unavailable",
+      "session_unavailable",
+    );
+  }
   return session;
 }
 
@@ -628,14 +635,17 @@ async function ensurePresentationSnapshot(
     .where(and(eq(presentationSessions.id, 1), eq(presentationSessions.version, session.version)))
     .returning({ id: presentationSessions.id });
   if (!updated.length)
-    throw new PresentationConflictError("Presentation state changed concurrently");
+    throw new PresentationConflictError("Presentation state changed concurrently", "state_changed");
   setOperationPhase?.("read_session");
   const [snapshottedSession] = await tx
     .select()
     .from(presentationSessions)
     .where(eq(presentationSessions.id, 1));
   if (!snapshottedSession)
-    throw new PresentationConflictError("Presentation session is unavailable");
+    throw new PresentationConflictError(
+      "Presentation session is unavailable",
+      "session_unavailable",
+    );
   return {
     session: snapshottedSession,
     aggregationSummary: {
@@ -1072,7 +1082,10 @@ async function operatePresentationWithResponse<T>(
             : {}),
         } as T & { aggregationSummary?: PresentationAggregationSummary };
       }
-      throw new PresentationConflictError("Presentation state changed concurrently");
+      throw new PresentationConflictError(
+        "Presentation state changed concurrently",
+        "state_changed",
+      );
     });
   }
 }

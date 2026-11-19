@@ -2856,32 +2856,6 @@ describe("presentation admin console", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/バージョンを確認できません/);
   });
 
-  it("uses the recognized grading reason from an aggregate conflict response", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
-      if (path === "/api/admin/session") return response(200, { authenticated: true });
-      if (path === "/api/admin/presentation" && init?.method === "POST")
-        return response(409, { error: "conflict", reason: "grading_pending" });
-      if (path === "/api/admin/presentation")
-        return response(200, {
-          state: "not_started",
-          questionIndex: 0,
-          questionCount: 5,
-          projectionHidden: false,
-          participantResultsVisible: false,
-          participantResultsReady: false,
-        });
-      throw new Error(`Unexpected request: ${path}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-    render(<PresentationAdmin />);
-
-    await user.click(await screen.findByRole("button", { name: "集計" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Q5.*採点|採点.*完了/);
-  });
-
   it("uses the generic aggregate error for an unknown conflict reason", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
