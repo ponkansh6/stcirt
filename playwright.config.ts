@@ -8,6 +8,7 @@ import {
 } from "./tests/e2e/fixtures/admin-auth";
 
 const devBundlerFlag = process.env.NEXT_FONT_GOOGLE_MOCKED_RESPONSES ? "--webpack" : "--turbopack";
+const includeAllProjectTests = process.env.STCIRT_E2E_TAG_INVENTORY === "1";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -26,10 +27,12 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      grep: includeAllProjectTests ? undefined : /(?:^|\s)@chromium(?:\s|$)/,
       use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "Mobile Chrome",
+      grep: includeAllProjectTests ? undefined : /(?:^|\s)@mobile(?:\s|$)/,
       use: { ...devices["Pixel 5"] },
     },
   ],

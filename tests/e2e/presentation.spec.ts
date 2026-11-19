@@ -1749,7 +1749,7 @@ test("@chromium free-text model answer and published responses share their plann
   await expectNoAccessibilityViolations(page, "presentation free-text answer and responses");
 });
 
-test("@chromium Q5 timeline and long explanation fit all rows inside the slide", async ({
+test("@chromium Q5 question and answer timelines fit all rows inside the slide", async ({
   page,
 }) => {
   const itinerary = [
@@ -1791,31 +1791,13 @@ test("@chromium Q5 timeline and long explanation fit all rows inside the slide",
   await signIn(page);
   await startPresentation(page);
   await openPresenter(page);
-  const answerMutation = nextAdminMutation(page);
-  await page.locator("main").press("ArrowRight");
-  await expect(slideFor(page, "answer")).toBeVisible();
-  await answerMutation;
-
-  const timeline = page.locator("ol[class*='q5Timeline']").first();
+  const questionTimeline = page.getByRole("list", { name: "旅程" });
   const viewports = [
     { width: 1920, height: 1080, columns: 2 },
     { width: 1280, height: 720, columns: 2 },
     { width: 640, height: 360, columns: 1 },
   ];
-  for (const viewport of viewports) {
-    await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await waitForRenderFrames(page);
-    await expect(page.getByRole("heading", { name: "3回目の旅程" })).toBeVisible();
-    await expect(timeline.locator("[class*='q5TimelineDay'] > ol > li")).toHaveCount(8);
-    await expect(page.locator("strong[class*='q5TimelineAnswer']")).toHaveText([
-      "新鮮なロブスター",
-      "フレンチトースト",
-    ]);
-    const longExplanation = q5.expectedAnswer!;
-    await expect(page.getByText(longExplanation)).toBeVisible();
-    await expect(page.getByText("非公開の個人回答")).toHaveCount(0);
-    await expect(page.getByRole("textbox")).toHaveCount(0);
-
+  const expectTimelineFit = async (timeline: typeof questionTimeline, columns: number) => {
     const layout = await timeline.evaluate((element) => {
       const viewport = document.querySelector<HTMLElement>(
         '[data-testid="presentation-fit-viewport"]',
@@ -1838,11 +1820,55 @@ test("@chromium Q5 timeline and long explanation fit all rows inside the slide",
         pageCanScroll: document.documentElement.scrollHeight > innerHeight,
       };
     });
-    expect(layout.columns).toBe(viewport.columns);
+    expect(layout.columns).toBe(columns);
     expect(layout.outOfBounds).toBe(0);
     expect(layout.pageCanScroll).toBe(false);
+  };
+
+  await expect(page.locator("#question-heading")).toContainText("舜基は珠美の1年間の香港滞在中");
+  await expect(page.locator("[class*='q5TimelinePromptDescription']")).toBeVisible();
+  await expect(page.locator("[class*='q5TimelinePromptDescription']")).toContainText(
+    "3回目の旅程に関して以下を埋めてください。",
+  );
+  await expect(questionTimeline).toHaveAttribute("aria-label", "旅程");
+  await expect(questionTimeline.locator("[class*='q5TimelineDay']")).toHaveCount(4);
+  await expect(questionTimeline.locator("[class*='q5TimelineDay'] > ol > li")).toHaveCount(8);
+  await expect(questionTimeline.getByText("A", { exact: true })).toBeVisible();
+  await expect(questionTimeline.getByText("B", { exact: true })).toBeVisible();
+  await expect(questionTimeline).not.toContainText("新鮮なロブスター");
+  await expect(questionTimeline).not.toContainText("フレンチトースト");
+
+  for (const viewport of viewports) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await waitForRenderFrames(page);
+    await expectTimelineFit(questionTimeline, viewport.columns);
   }
-  await expectNoAccessibilityViolations(page, "Q5 answer timeline at narrow viewport");
+  await expectNoAccessibilityViolations(page, "Q5 question timeline");
+
+  const answerMutation = nextAdminMutation(page);
+  await page.locator("main").press("ArrowRight");
+  await expect(slideFor(page, "answer")).toBeVisible();
+  await answerMutation;
+
+  const answerTimeline = page.getByRole("list", { name: "正解を含む旅程" });
+  for (const viewport of viewports) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await waitForRenderFrames(page);
+    await expect(page.getByRole("heading", { name: "3回目の旅程" })).toBeVisible();
+    await expect(answerTimeline.locator("[class*='q5TimelineDay']")).toHaveCount(4);
+    await expect(answerTimeline.locator("[class*='q5TimelineDay'] > ol > li")).toHaveCount(8);
+    await expect(page.locator("strong[class*='q5TimelineAnswer']")).toHaveText([
+      "新鮮なロブスター",
+      "フレンチトースト",
+    ]);
+    await expect(page.getByText(q5.expectedAnswer!)).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "解説" })).toHaveCount(0);
+    await expect(page.getByText("非公開の個人回答")).toHaveCount(0);
+    await expect(page.getByRole("textbox")).toHaveCount(0);
+
+    await expectTimelineFit(answerTimeline, viewport.columns);
+  }
+  await expectNoAccessibilityViolations(page, "Q5 question and answer timelines");
 });
 
 test("@chromium every stage keeps its fixture text inside the canvas content bounds", async ({

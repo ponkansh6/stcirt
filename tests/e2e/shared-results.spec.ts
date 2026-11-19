@@ -40,11 +40,7 @@ test("@chromium invalid shared links fail closed with or without participant coo
 test("@chromium an issued share is readable without login and becomes unavailable after stop", async ({
   browser,
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "chromium",
-    "The seeded share flow owns the shared isolated E2E database in Chromium only.",
-  );
+}) => {
   test.setTimeout(90_000);
   const client = createClient({ url: e2eDatabaseUrl, authToken: "" });
   const db = drizzle({ client, schema });

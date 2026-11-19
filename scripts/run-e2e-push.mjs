@@ -69,11 +69,12 @@ function validateTaggedRows(rows, { name, tag }, description, { requireExpectedT
   }
 }
 
-function runPlaywright(args, { capture = false, reportDir } = {}) {
+function runPlaywright(args, { capture = false, reportDir, includeAllProjectTests = false } = {}) {
   const result = spawnSync("playwright", ["test", ...args], {
     encoding: "utf8",
     env: {
       ...process.env,
+      STCIRT_E2E_TAG_INVENTORY: includeAllProjectTests ? "1" : "0",
       PLAYWRIGHT_HTML_OPEN: "never",
       ...(reportDir ? { PLAYWRIGHT_HTML_OUTPUT_DIR: reportDir } : {}),
     },
@@ -101,14 +102,25 @@ for (const project of projects) {
   try {
     const selectors = [`--project=${project.name}`, `--grep=${project.tag}`];
     const lists = [
-      { label: "unfiltered", args: [`--project=${project.name}`] },
-      { label: "tag union", args: [`--project=${project.name}`, `--grep=${unionTagPattern}`] },
+      {
+        label: "unfiltered",
+        args: [`--project=${project.name}`],
+        includeAllProjectTests: true,
+      },
+      {
+        label: "tag union",
+        args: [`--project=${project.name}`, `--grep=${unionTagPattern}`],
+        includeAllProjectTests: true,
+      },
       { label: "selected", args: selectors },
     ];
     const outputs = new Map();
 
     for (const list of lists) {
-      const result = runPlaywright(["--list", ...list.args], { capture: true });
+      const result = runPlaywright(["--list", ...list.args], {
+        capture: true,
+        includeAllProjectTests: list.includeAllProjectTests,
+      });
       const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
       if (result.status !== 0) {
         console.error(

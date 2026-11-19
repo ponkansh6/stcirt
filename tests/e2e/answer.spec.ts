@@ -398,11 +398,7 @@ async function mockQuestions(page: Page, requests: string[] = []) {
 test("@chromium result navigation keeps completion visible with link pending until the RSC request continues", async ({
   browser,
   page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name !== "chromium",
-    "The signed participant session and isolated DB navigation flow runs in Chromium only.",
-  );
+}) => {
   test.setTimeout(90_000);
 
   const client = createClient({ url: e2eDatabaseUrl, authToken: "" });
