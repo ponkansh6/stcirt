@@ -44,6 +44,8 @@ Migration 0024 replaces Q3 (`exam_questions.id = 3`, key `it-literacy-003`) with
 
 Migration 0025 replaces Q4 (`exam_questions.id = 4`, key `it-literacy-004`) with the university tennis-club team-meal question. It shuffles the four choices, marks すき家のキング牛丼 as the single correct answer, and sets question version `shunki-tennis-team-king-beef-v1` so earlier submissions do not match the revised question.
 
+Migration 0034 removes 時々 from Q4's prompt to match the current question wording and advances its question version to `shunki-tennis-team-king-beef-v2` so submissions saved against the previous wording do not match.
+
 Migration 0021 replaces Q1 (`exam_questions.id = 1`, key `it-literacy-001`) with the Nagasaki proposal-trip airport incident question. The correct answer is choice 0, and its question version is `proposal-trip-v1` so prior submissions and presentation snapshots do not match the revised question.
 
 Migration 0022 replaces Q2 (`exam_questions.id = 2`, key `it-literacy-002`) with the India Uber question. It shuffles the eight choices, marks choices 1 and 4 correct, and sets `selection_mode = multiple` and question version `india-uber-multi-v1`. Multiple-choice responses persist their selected choice indices as an array; Q2 awards 0.5 points for each correct choice selected, up to 1 point, while participant result correctness is `correct` only when the response matches the full correct-index set. Existing single-choice questions retain `selectedIndex` behavior.
