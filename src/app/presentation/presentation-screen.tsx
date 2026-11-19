@@ -723,10 +723,12 @@ function Q5TimelineSlide({
                         ) : entry.answerPart ? (
                           <>
                             {entry.answerPrefix}
-                            <span className={styles.q5TimelineBlankMarker}>
-                              {entry.answerPart.toUpperCase()}
+                            <span className={styles.q5TimelineBlankGroup}>
+                              <span className={styles.q5TimelineBlankMarker}>
+                                {entry.answerPart.toUpperCase()}
+                              </span>
+                              <span className={styles.q5TimelineBlankField} aria-hidden="true" />
                             </span>
-                            <span className={styles.q5TimelineBlankField} aria-hidden="true" />
                             {entry.answerSuffix}
                           </>
                         ) : (

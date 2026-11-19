@@ -663,8 +663,8 @@
 
 .q5TimelineEntry {
   display: grid;
-  grid-template-columns: minmax(3.5rem, 0.22fr) minmax(0, 1fr);
-  gap: clamp(8px, 1cqw, 16px);
+  grid-template-columns: 2.4em minmax(0, 1fr);
+  gap: clamp(6px, 0.8cqw, 12px);
   min-width: 0;
   align-items: start;
   font-size: clamp(var(--presentation-min-readable-size), 1.5cqw, 1.75rem);
@@ -673,7 +673,7 @@
 
 .q5TimelineTime {
   color: var(--color-presentation-46515b);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .q5TimelineActivity {
@@ -708,9 +708,16 @@
   vertical-align: baseline;
 }
 
+.q5TimelineBlankGroup {
+  display: inline-flex;
+  align-items: baseline;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
 .q5TimelineBlankField {
   display: inline-block;
-  width: 3.5em;
+  width: 7.8em;
   margin: 0 0.2em 0.12em;
   border-bottom: 1px solid var(--color-presentation-88919a);
   vertical-align: baseline;

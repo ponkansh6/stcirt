@@ -1825,7 +1825,95 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
     expect(layout.outOfBounds).toBe(0);
     expect(layout.pageCanScroll).toBe(false);
   };
-
+  const settleTimeline = async (timeline: typeof questionTimeline) => {
+    await timeline.evaluate(async (element) => {
+      await document.fonts.ready;
+      const animations = element.getAnimations({ subtree: true });
+      await Promise.all(
+        animations
+          .filter((animation) => animation.effect?.getTiming().iterations !== Infinity)
+          .map((animation) => animation.finished.catch(() => undefined)),
+      );
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+    });
+  };
+  const readTimelineGeometry = async (timeline: typeof questionTimeline) =>
+    timeline.evaluate((element) => {
+      const rect = (node: Element) => {
+        const bounds = node.getBoundingClientRect();
+        return {
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+        };
+      };
+      const region = element.closest("section");
+      if (!region) throw new Error("Missing timeline region");
+      const days = Array.from(element.children).filter(
+        (node): node is HTMLElement => node instanceof HTMLElement && node.tagName === "LI",
+      );
+      const dayHeadings = days.map((day) => {
+        const heading = day.querySelector(":scope > h2");
+        if (!heading) throw new Error("Missing timeline date heading");
+        return { text: heading.textContent?.trim() ?? "", rect: rect(heading) };
+      });
+      const rows = days.flatMap((day) =>
+        Array.from(day.querySelectorAll<HTMLElement>(":scope > ol > li")).map((row) => ({
+          text: row.textContent?.trim() ?? "",
+          rect: rect(row),
+        })),
+      );
+      return { region: rect(region), timeline: rect(element), dayHeadings, rows };
+    });
+  const expectMatchingRect = (
+    actual: { x: number; y: number; width: number; height: number },
+    expected: { x: number; y: number; width: number; height: number },
+  ) => {
+    for (const dimension of ["x", "y", "width", "height"] as const) {
+      expect(Math.abs(actual[dimension] - expected[dimension])).toBeLessThan(1);
+    }
+  };
+  const expectMatchingTimelineGeometry = (
+    actual: Awaited<ReturnType<typeof readTimelineGeometry>>,
+    expected: Awaited<ReturnType<typeof readTimelineGeometry>>,
+  ) => {
+    expectMatchingRect(actual.region, expected.region);
+    expectMatchingRect(actual.timeline, expected.timeline);
+    expect(actual.dayHeadings.map((day) => day.text)).toEqual(
+      expected.dayHeadings.map((day) => day.text),
+    );
+    expect(actual.rows).toHaveLength(expected.rows.length);
+    actual.dayHeadings.forEach((day, index) =>
+      expectMatchingRect(day.rect, expected.dayHeadings[index].rect),
+    );
+    actual.rows.forEach((row, index) => expectMatchingRect(row.rect, expected.rows[index].rect));
+  };
+  const readAnswerBlankCohesion = async (marker: import("@playwright/test").Locator) =>
+    marker.evaluate((element) => {
+      const activity = element.parentElement;
+      const field = activity?.querySelector<HTMLElement>('[aria-hidden="true"]');
+      if (!activity || !field) throw new Error("Missing answer blank field");
+      const markerRect = element.getBoundingClientRect();
+      const fieldRect = field.getBoundingClientRect();
+      const activityStyle = getComputedStyle(activity);
+      const fontSize = Number.parseFloat(activityStyle.fontSize);
+      const lineHeight = Number.parseFloat(activityStyle.lineHeight);
+      return {
+        fieldCount: activity.querySelectorAll('[aria-hidden="true"]').length,
+        horizontalGap: fieldRect.left - markerRect.right,
+        fontSize,
+        fieldWidth: fieldRect.width,
+        baselineDifference: Math.abs(fieldRect.bottom - markerRect.bottom),
+        lineHeight,
+      };
+    });
+  const questionGeometryByViewport = new Map<
+    number,
+    Awaited<ReturnType<typeof readTimelineGeometry>>
+  >();
   await expect(questionRegion).toBeVisible();
   await expect(questionTimeline).toBeVisible();
   await expect(questionRegion).not.toContainText("舜基は珠美の1年間の香港滞在中");
@@ -1840,11 +1928,26 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
   await expect(questionTimeline.getByText("B", { exact: true })).toBeVisible();
   await expect(questionTimeline).not.toContainText("新鮮なロブスター");
   await expect(questionTimeline).not.toContainText("フレンチトースト");
+  await expect(questionTimeline.getByText("A", { exact: true })).toHaveCount(1);
+  await expect(questionTimeline.getByText("B", { exact: true })).toHaveCount(1);
 
   for (const viewport of viewports) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await waitForRenderFrames(page);
+    await settleTimeline(questionTimeline);
     await expectTimelineFit(questionTimeline, viewport.columns);
+    if (viewport.width === 1920 || viewport.width === 1280) {
+      questionGeometryByViewport.set(viewport.width, await readTimelineGeometry(questionTimeline));
+    }
+    for (const markerName of ["A", "B"]) {
+      const cohesion = await readAnswerBlankCohesion(
+        questionTimeline.getByText(markerName, { exact: true }),
+      );
+      expect(cohesion.fieldCount).toBe(1);
+      expect(cohesion.horizontalGap).toBeGreaterThanOrEqual(0);
+      expect(cohesion.horizontalGap).toBeLessThan(cohesion.fontSize);
+      expect(cohesion.fieldWidth).toBeGreaterThan(0);
+      expect(cohesion.baselineDifference).toBeLessThan(cohesion.lineHeight * 0.25);
+    }
   }
   await expectNoAccessibilityViolations(page, "Q5 question timeline");
 
@@ -1857,7 +1960,7 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
   const answerRegion = page.getByRole("region", { name: "問5の正解を含む旅程" });
   for (const viewport of viewports) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await waitForRenderFrames(page);
+    await settleTimeline(answerTimeline);
     await expect(page.getByRole("heading", { name: "3回目の旅程" })).toHaveCount(0);
     await expect(answerRegion).toBeVisible();
     await expect(answerRegion.getByRole("heading", { level: 1 })).toHaveText("問 5");
@@ -1873,6 +1976,10 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
     await expect(page.getByRole("textbox")).toHaveCount(0);
 
     await expectTimelineFit(answerTimeline, viewport.columns);
+    const questionGeometry = questionGeometryByViewport.get(viewport.width);
+    if (questionGeometry) {
+      expectMatchingTimelineGeometry(await readTimelineGeometry(answerTimeline), questionGeometry);
+    }
   }
   await expectNoAccessibilityViolations(page, "Q5 question and answer timelines");
 });
