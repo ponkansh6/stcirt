@@ -644,6 +644,11 @@
 
 .q5TimelineDay {
   min-width: 0;
+  padding: clamp(8px, 0.9cqw, 14px);
+  border: 1px solid var(--color-presentation-d9cba8);
+  border-inline-start: 4px solid var(--color-presentation-b8954c);
+  border-radius: 8px;
+  background: var(--color-presentation-fffdf5);
 }
 
 .q5TimelineDay > h2 {
