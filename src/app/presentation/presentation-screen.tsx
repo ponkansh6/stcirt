@@ -541,24 +541,30 @@ function hasLongChoice(choices: string[]) {
 
 function QuestionPrompt({ question, className }: { question: PublicQuestion; className: string }) {
   const parsedQ5Timeline = question.ordinal === 5 ? parseTimeline(question.question) : null;
-  const preserveQuestionLines =
+  const hasUsableQ5Timeline =
     parsedQ5Timeline?.entries.length === 8 &&
     hasUniqueTimelineAnswerMarkers(parsedQ5Timeline.entries);
   const choicesClassName = hasLongChoice(question.choices)
     ? `${styles.choices} ${styles.singleColumnChoices}`
     : styles.choices;
 
+  if (hasUsableQ5Timeline && parsedQ5Timeline) {
+    return (
+      <Q5TimelineSlide
+        questionOrdinal={question.ordinal}
+        className={className}
+        entries={parsedQ5Timeline.entries}
+        ariaLabel="旅程"
+      />
+    );
+  }
+
   return (
     <section className={`${styles.question} ${className}`} aria-labelledby="question-heading">
       <p className={styles.ordinal}>
         問 <strong>{question.ordinal}</strong>
       </p>
-      <h1
-        id="question-heading"
-        className={preserveQuestionLines ? styles.q5QuestionHeading : undefined}
-      >
-        {question.question}
-      </h1>
+      <h1 id="question-heading">{question.question}</h1>
       <ol className={choicesClassName}>
         {question.choices.map((choice, index) => (
           <li key={`${index}-${choice}`}>
@@ -589,7 +595,12 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
     const expectedAnswerParts = question.expectedAnswerParts;
     if (q5Timeline && expectedAnswerParts) {
       return (
-        <Q5TimelineAnswer question={{ ...question, expectedAnswerParts }} entries={q5Timeline} />
+        <Q5TimelineSlide
+          questionOrdinal={question.ordinal}
+          entries={q5Timeline}
+          answerParts={expectedAnswerParts}
+          ariaLabel="正解を含む旅程"
+        />
       );
     }
 
@@ -659,14 +670,18 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
   );
 }
 
-function Q5TimelineAnswer({
-  question,
+function Q5TimelineSlide({
+  questionOrdinal,
+  className,
   entries,
+  answerParts,
+  ariaLabel,
 }: {
-  question: PublicAnswerQuestion & {
-    expectedAnswerParts: NonNullable<PublicAnswerQuestion["expectedAnswerParts"]>;
-  };
+  questionOrdinal: number;
+  className?: string;
   entries: TimelineEntry[];
+  answerParts?: { a: string; b: string };
+  ariaLabel: string;
 }) {
   const groups = entries.reduce<{ date: string; entries: TimelineEntry[] }[]>((result, entry) => {
     const current = result[result.length - 1];
@@ -674,27 +689,27 @@ function Q5TimelineAnswer({
     else result.push({ date: entry.date, entries: [entry] });
     return result;
   }, []);
-  const parts = question.expectedAnswerParts;
 
   return (
     <section
-      className={`${styles.question} ${styles.answerReview} ${styles.q5TimelineReview}`}
-      aria-labelledby="question-heading"
+      className={`${styles.question} ${styles.answerReview} ${styles.q5TimelineReview} ${className ?? ""}`}
+      aria-label={`問${questionOrdinal}の${ariaLabel}`}
     >
-      <p className={styles.ordinal}>
-        問 <strong>{question.ordinal}</strong>
-      </p>
+      <h1 className={styles.ordinal}>
+        問 <strong>{questionOrdinal}</strong>
+      </h1>
       <div className={styles.q5TimelineContent}>
-        <h1 id="question-heading" className={styles.q5TimelineHeading}>
-          3回目の旅程
-        </h1>
-        <ol className={`${styles.q5Timeline} ${styles.answerReveal}`} aria-label="正解を含む旅程">
+        <ol
+          className={`${styles.q5Timeline}${answerParts ? ` ${styles.answerReveal}` : ""}`}
+          aria-label={ariaLabel}
+        >
           {groups.map((group) => (
             <li className={styles.q5TimelineDay} key={group.date}>
               <h2>{group.date}</h2>
               <ol>
                 {group.entries.map((entry, index) => {
-                  const answer = entry.answerPart ? parts[entry.answerPart] : null;
+                  const answer =
+                    entry.answerPart && answerParts ? answerParts[entry.answerPart] : null;
                   return (
                     <li className={styles.q5TimelineEntry} key={`${entry.time}-${index}`}>
                       <span className={styles.q5TimelineTime}>{entry.time}</span>
@@ -703,6 +718,15 @@ function Q5TimelineAnswer({
                           <>
                             {entry.answerPrefix}
                             <strong className={styles.q5TimelineAnswer}>{answer}</strong>
+                            {entry.answerSuffix}
+                          </>
+                        ) : entry.answerPart ? (
+                          <>
+                            {entry.answerPrefix}
+                            <span className={styles.q5TimelineBlankMarker}>
+                              {entry.answerPart.toUpperCase()}
+                            </span>
+                            <span className={styles.q5TimelineBlankField} aria-hidden="true" />
                             {entry.answerSuffix}
                           </>
                         ) : (
@@ -716,12 +740,6 @@ function Q5TimelineAnswer({
             </li>
           ))}
         </ol>
-        {question.expectedAnswer?.trim() && (
-          <div className={`${styles.answerReveal} ${styles.q5TimelineExplanation}`}>
-            <h2>解説</h2>
-            <p>{question.expectedAnswer}</p>
-          </div>
-        )}
       </div>
     </section>
   );

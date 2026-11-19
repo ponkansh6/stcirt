@@ -1791,6 +1791,7 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
   await signIn(page);
   await startPresentation(page);
   await openPresenter(page);
+  const questionRegion = page.getByRole("region", { name: "問5の旅程" });
   const questionTimeline = page.getByRole("list", { name: "旅程" });
   const viewports = [
     { width: 1920, height: 1080, columns: 2 },
@@ -1825,11 +1826,13 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
     expect(layout.pageCanScroll).toBe(false);
   };
 
-  await expect(page.locator("#question-heading")).toContainText("舜基は珠美の1年間の香港滞在中");
-  await expect(page.locator("[class*='q5TimelinePromptDescription']")).toBeVisible();
-  await expect(page.locator("[class*='q5TimelinePromptDescription']")).toContainText(
-    "3回目の旅程に関して以下を埋めてください。",
-  );
+  await expect(questionRegion).toBeVisible();
+  await expect(questionTimeline).toBeVisible();
+  await expect(questionRegion).not.toContainText("舜基は珠美の1年間の香港滞在中");
+  await expect(questionRegion).not.toContainText("3回目の旅程に関して以下を埋めてください。");
+  await expect(questionRegion).not.toContainText("解説");
+  await expect(questionRegion.getByRole("heading", { level: 1 })).toHaveText("問 5");
+  await expect(questionRegion.getByRole("heading", { name: "3回目の旅程" })).toHaveCount(0);
   await expect(questionTimeline).toHaveAttribute("aria-label", "旅程");
   await expect(questionTimeline.locator("[class*='q5TimelineDay']")).toHaveCount(4);
   await expect(questionTimeline.locator("[class*='q5TimelineDay'] > ol > li")).toHaveCount(8);
@@ -1851,10 +1854,13 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
   await answerMutation;
 
   const answerTimeline = page.getByRole("list", { name: "正解を含む旅程" });
+  const answerRegion = page.getByRole("region", { name: "問5の正解を含む旅程" });
   for (const viewport of viewports) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await waitForRenderFrames(page);
-    await expect(page.getByRole("heading", { name: "3回目の旅程" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "3回目の旅程" })).toHaveCount(0);
+    await expect(answerRegion).toBeVisible();
+    await expect(answerRegion.getByRole("heading", { level: 1 })).toHaveText("問 5");
     await expect(answerTimeline.locator("[class*='q5TimelineDay']")).toHaveCount(4);
     await expect(answerTimeline.locator("[class*='q5TimelineDay'] > ol > li")).toHaveCount(8);
     await expect(page.locator("strong[class*='q5TimelineAnswer']")).toHaveText([

@@ -2470,7 +2470,7 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.queryByText(/秘密の回答者|秘密の参加者回答/)).not.toBeInTheDocument();
   });
 
-  it("reveals the answer-only Q5 timeline between the question and answer stages", async () => {
+  it("shows only the Q5 itinerary before the answer and omits its explanation", async () => {
     const questionText = [
       "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
       "2/27 昼 マンダリンオリエンタルホテルのスコーンを食べる",
@@ -2519,28 +2519,62 @@ describe("presentation projection and presenter progression", () => {
     });
     render(<PresentationScreen presenterRequested />);
 
-    const questionHeading = await screen.findByRole("heading", { name: questionText });
-    expect(questionHeading).toBeInTheDocument();
-    expect(questionHeading.textContent).toBe(questionText);
-    expect(questionHeading).toHaveClass(/q5QuestionHeading/);
-    expect(screen.queryByText("新鮮なロブスター")).not.toBeInTheDocument();
+    const questionTimeline = await screen.findByRole("list", { name: "旅程" });
+    const questionRegion = screen.getByRole("region", { name: "問5の旅程" });
+    expect(questionRegion).not.toHaveTextContent("舜基は珠美の1年間の香港滞在中");
+    expect(questionRegion).not.toHaveTextContent("3回目の旅程に関して以下を埋めてください。");
+    expect(questionRegion).not.toHaveTextContent("解説");
+    expect(within(questionRegion).getByRole("heading", { level: 1 })).toHaveTextContent(/問\s*5/);
+    expect(
+      within(questionRegion).queryByRole("heading", { name: "3回目の旅程" }),
+    ).not.toBeInTheDocument();
+    expect(within(questionRegion).getByRole("list", { name: "旅程" })).toBe(questionTimeline);
+    expect(questionTimeline.querySelectorAll("[class*='q5TimelineDay']")).toHaveLength(4);
+    expect(questionTimeline.querySelectorAll("[class*='q5TimelineDay'] > ol > li")).toHaveLength(8);
+    expect(within(questionTimeline).getByText("A", { exact: true })).toBeInTheDocument();
+    expect(within(questionTimeline).getByText("B", { exact: true })).toBeInTheDocument();
+    expect(within(questionTimeline).queryByText("新鮮なロブスター")).not.toBeInTheDocument();
+    expect(within(questionTimeline).queryByText("フレンチトースト")).not.toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await settled();
 
-    expect(screen.getByRole("heading", { name: "3回目の旅程" })).toBeInTheDocument();
-    expect(screen.getAllByText(/^(2\/27|2\/28|3\/1|3\/2)$/)).toHaveLength(4);
+    const answerRegion = screen.getByRole("region", { name: "問5の正解を含む旅程" });
+    expect(within(answerRegion).getByRole("heading", { level: 1 })).toHaveTextContent(/問\s*5/);
+    expect(
+      within(answerRegion).queryByRole("heading", { name: "3回目の旅程" }),
+    ).not.toBeInTheDocument();
+    const answerTimeline = within(answerRegion).getByRole("list", { name: "正解を含む旅程" });
+    expect(within(answerTimeline).getAllByText(/^(2\/27|2\/28|3\/1|3\/2)$/)).toHaveLength(4);
     expect(screen.getByText("新鮮なロブスター").closest("strong")).toBeInTheDocument();
     expect(screen.getByText("フレンチトースト").closest("strong")).toBeInTheDocument();
-    expect(screen.getByText("Aは新鮮なロブスター、Bはフレンチトーストです。")).toBeInTheDocument();
+    expect(answerTimeline.querySelectorAll("[class*='q5TimelineDay']")).toHaveLength(4);
+    expect(answerTimeline.querySelectorAll("[class*='q5TimelineDay'] > ol > li")).toHaveLength(8);
+    expect(
+      screen.queryByText("Aは新鮮なロブスター、Bはフレンチトーストです。"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "解説" })).not.toBeInTheDocument();
     expect(screen.queryByText("非公開の個人回答")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(document.querySelectorAll("[class*='q5TimelineDay'] > ol > li")).toHaveLength(8);
 
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowLeft" });
     await settled();
-    expect(screen.getByRole("heading", { name: questionText })).toBeInTheDocument();
-    expect(screen.queryByText("新鮮なロブスター")).not.toBeInTheDocument();
-    expect(screen.queryByText("フレンチトースト")).not.toBeInTheDocument();
+    const returnedQuestionRegion = screen.getByRole("region", { name: "問5の旅程" });
+    const returnedQuestionTimeline = within(returnedQuestionRegion).getByRole("list", {
+      name: "旅程",
+    });
+    expect(within(returnedQuestionRegion).getByRole("heading", { level: 1 })).toHaveTextContent(
+      /問\s*5/,
+    );
+    expect(returnedQuestionRegion).not.toHaveTextContent("舜基は珠美の1年間の香港滞在中");
+    expect(returnedQuestionRegion).not.toHaveTextContent(
+      "3回目の旅程に関して以下を埋めてください。",
+    );
+    expect(
+      within(returnedQuestionTimeline).queryByText("新鮮なロブスター"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(returnedQuestionTimeline).queryByText("フレンチトースト"),
+    ).not.toBeInTheDocument();
   });
 
   it.each([
