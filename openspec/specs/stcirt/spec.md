@@ -312,13 +312,14 @@ The participant interface MUST support the documented responsive layout, keyboar
 #### Scenario: [R5-S5] Preview the supported Q5 itinerary photo accessibly
 
 - WHEN the fifth question contains the activity `マンダリンオリエンタルホテルのスコーンを食べる`, allowing only trimmed and whitespace-collapsed exact matching
-- THEN a 48 × 64 CSS px photo preview appears to the left of that activity with an 8 CSS px gap; other questions and unmatched activities do not gain a photo or image spacing
+- THEN the parsed itinerary uses shared date/time, 48 CSS px photo, and activity columns; its 48 × 64 CSS px photo preview appears in the photo column, while rows without a supported photo keep an empty, non-interactive photo cell so all activity text starts at the same position
+- AND other questions, unmatched activities, and Q5 answer-input rows do not gain a photo
 - WHEN the participant opens the preview by mouse, Enter, or Space
-- THEN a labeled native dialog shows the full photo contained within the viewport, traps focus, and leaves the current answer draft intact
+- THEN a labeled native dialog is centered in the viewport and shows the full photo contained within the viewport, traps focus, and leaves the current answer draft intact
 - WHEN the participant closes the dialog with its close button, Escape, or the backdrop
 - THEN focus returns to the preview button; no answer submission or question navigation occurs. The preview does not save or submit answers, Q5 edits continue to use the existing draft-update behavior, and the answer batch is saved only after explicit confirmation.
 - WHEN the answer page is viewed at 320 CSS px width
-- THEN the photo row remains usable without horizontal scrolling
+- THEN the itinerary columns remain aligned, the photo row remains usable, and the page has no horizontal scrolling
 
 - Use a restrained exam-paper visual style with the existing beige, navy, and gold palette, light surfaces, ink text, and subtle decorative framing; use a restrained green accent for question numbers displayed in the answer screen, the selected answer state, the final confirmation label and left border, and the free-response textarea's focus-visible border, 2 CSS px ring at its existing opacity, and outline color. Keep the existing focus selector, 3 CSS px outline width/style/offset, ring width and opacity, and other controls' focus colors unchanged. Keep navigation's current and answered states distinct. Keep spacing consistent and align the answering navigation with the answer content width. Do not use medals, pass/fail imagery, or certificate visuals.
 - Always use the light color palette regardless of the operating system's color-scheme preference.

@@ -1443,6 +1443,22 @@ export default function QuizRunner() {
                                       <span className={styles.timelineDate}>{entry.date}</span>
                                       <span className={styles.timelineTime}>{entry.time}</span>
                                     </div>
+                                    <div
+                                      className={styles.timelinePhoto}
+                                      aria-hidden={photo ? undefined : true}
+                                    >
+                                      {photo && (
+                                        <QuestionPhotoPreview
+                                          photo={photo}
+                                          onOpen={(selectedPhoto, trigger) =>
+                                            setOpenQuestionPhoto({
+                                              photo: selectedPhoto,
+                                              trigger,
+                                            })
+                                          }
+                                        />
+                                      )}
+                                    </div>
                                     <div className={styles.timelineActivity}>
                                       {part ? (
                                         <>
@@ -1487,21 +1503,6 @@ export default function QuizRunner() {
                                             </span>
                                           )}
                                         </>
-                                      ) : photo ? (
-                                        <div className={styles.timelineActivityWithPhoto}>
-                                          <QuestionPhotoPreview
-                                            photo={photo}
-                                            onOpen={(selectedPhoto, trigger) =>
-                                              setOpenQuestionPhoto({
-                                                photo: selectedPhoto,
-                                                trigger,
-                                              })
-                                            }
-                                          />
-                                          <span className={styles.timelineDescription}>
-                                            {entry.activity}
-                                          </span>
-                                        </div>
                                       ) : (
                                         <span className={styles.timelineDescription}>
                                           {entry.activity}

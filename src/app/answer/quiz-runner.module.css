@@ -116,10 +116,14 @@
 
 .timelineEntry {
   display: grid;
-  grid-template-columns: minmax(5.75rem, 0.35fr) minmax(0, 1fr);
+  grid-template-columns: minmax(5.75rem, 0.35fr) 3rem minmax(0, 1fr);
   gap: 0.65rem;
   align-items: start;
   padding: 0.55rem 0;
+}
+
+.timelinePhoto {
+  min-width: 0;
 }
 
 .timelineTime {
@@ -136,18 +140,6 @@
   font-size: 1rem;
   font-weight: 400;
   line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
-.timelineActivityWithPhoto {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 0.5rem;
-}
-
-.timelineActivityWithPhoto > :last-child {
-  min-width: 0;
   overflow-wrap: anywhere;
 }
 
@@ -307,8 +299,8 @@
 
 @media (max-width: 420px) {
   .timelineEntry {
-    grid-template-columns: minmax(5.25rem, 0.4fr) minmax(0, 1fr);
-    gap: 0.5rem;
+    grid-template-columns: minmax(4.25rem, 0.4fr) 3rem minmax(0, 1fr);
+    gap: 0.375rem;
   }
 
   .timelineDate {

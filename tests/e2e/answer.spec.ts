@@ -1269,7 +1269,7 @@ test("@mobile reviews and edits an answer at 320px with a hittable review target
   expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport + 1);
 });
 
-test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", async ({
+test("@mobile aligns the fifth-question itinerary across phone, landscape, and desktop widths", async ({
   page,
 }, testInfo) => {
   await mockParticipantSession(page, "Aki");
@@ -1316,8 +1316,15 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
     expect(box?.width).toBeGreaterThanOrEqual(44);
   }
 
-  for (const width of [375, 390]) {
-    await page.setViewportSize({ width, height: 900 });
+  const viewports = [
+    { width: 320, height: 812 },
+    { width: 375, height: 900 },
+    { width: 390, height: 900 },
+    { width: 568, height: 320 },
+    { width: 1280, height: 900 },
+  ];
+  for (const { width, height } of viewports) {
+    await page.setViewportSize({ width, height });
     await questionControls.nth(4).click();
 
     const fifthQuestion = page.locator("#question-5");
@@ -1342,6 +1349,36 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
       await expect(entry.getByText(time, { exact: true })).toBeVisible();
       await expect(entry).toContainText(activity);
     }
+    const gridMetrics = await itineraryEntries.evaluateAll((entries) =>
+      entries.map((entry) => {
+        const cells = Array.from(entry.children) as HTMLElement[];
+        const photoCell = cells[1];
+        return {
+          cellCount: cells.length,
+          activityLeft: cells[2]?.getBoundingClientRect().left ?? null,
+          hasPreview: Boolean(photoCell?.querySelector("button")),
+          emptyCellHidden: photoCell?.getAttribute("aria-hidden") === "true",
+          emptyCellFocusables: photoCell?.querySelectorAll(
+            'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          ).length,
+        };
+      }),
+    );
+    expect(gridMetrics.every(({ cellCount }) => cellCount === 3)).toBe(true);
+    expect(gridMetrics.map(({ activityLeft }) => activityLeft)).toEqual(
+      Array(gridMetrics.length).fill(gridMetrics[0]?.activityLeft),
+    );
+    expect(gridMetrics.filter(({ hasPreview }) => hasPreview)).toHaveLength(1);
+    for (const { hasPreview, emptyCellHidden, emptyCellFocusables } of gridMetrics) {
+      if (hasPreview) continue;
+      expect(emptyCellHidden).toBe(true);
+      expect(emptyCellFocusables).toBe(0);
+    }
+    await expect(
+      itineraryEntries.nth(0).getByRole("button", {
+        name: "マンダリンオリエンタルホテルのスコーンの写真を拡大表示",
+      }),
+    ).toBeVisible();
     const answerA = fifthQuestion.getByRole("textbox", { name: "A. 2/28 朝の食事" });
     const answerB = fifthQuestion.getByRole("textbox", { name: "B. 3/2 朝の食事" });
     await expect(answerA).toBeVisible();
@@ -1361,7 +1398,9 @@ test("@mobile keeps the fifth-question itinerary readable at 375px and 390px", a
       viewport: document.documentElement.clientWidth,
     }));
     expect(Math.max(widths.document, widths.body)).toBeLessThanOrEqual(widths.viewport + 1);
-    await page.screenshot({ path: testInfo.outputPath(`answer-${width}.png`), fullPage: true });
+    if (width === 375 || width === 390) {
+      await page.screenshot({ path: testInfo.outputPath(`answer-${width}.png`), fullPage: true });
+    }
   }
 });
 
@@ -1424,6 +1463,55 @@ test("@chromium previews the Q5 scone photo accessibly without changing the answ
   const fullImage = dialog.getByRole("img", { name: "マンダリンオリエンタルホテルのスコーン" });
   await expect(fullImage).toBeVisible();
   await expect(dialog.getByRole("button", { name: "写真を閉じる" })).toBeFocused();
+
+  for (const viewport of [
+    { width: 320, height: 812 },
+    { width: 390, height: 844 },
+    { width: 568, height: 320 },
+    { width: 1280, height: 900 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const geometry = await page.evaluate(() => {
+      const dialogElement = document.querySelector("dialog");
+      const closeButton = dialogElement?.querySelector("button");
+      const image = dialogElement?.querySelector("img");
+      if (!dialogElement || !closeButton || !image) return null;
+      const rect = dialogElement.getBoundingClientRect();
+      const closeRect = closeButton.getBoundingClientRect();
+      const imageRect = image.getBoundingClientRect();
+      return {
+        centerX: rect.left + rect.width / 2,
+        centerY: rect.top + rect.height / 2,
+        viewportCenterX: window.innerWidth / 2,
+        viewportCenterY: window.innerHeight / 2,
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+        closeLeft: closeRect.left,
+        closeTop: closeRect.top,
+        closeRight: closeRect.right,
+        closeBottom: closeRect.bottom,
+        imageWidth: imageRect.width,
+        imageHeight: imageRect.height,
+      };
+    });
+    expect(geometry).not.toBeNull();
+    if (!geometry) throw new Error("The photo dialog geometry could not be measured.");
+    expect(Math.abs(geometry.centerX - geometry.viewportCenterX)).toBeLessThanOrEqual(3);
+    expect(Math.abs(geometry.centerY - geometry.viewportCenterY)).toBeLessThanOrEqual(3);
+    expect(geometry.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.top).toBeGreaterThanOrEqual(0);
+    expect(geometry.right).toBeLessThanOrEqual(viewport.width);
+    expect(geometry.bottom).toBeLessThanOrEqual(viewport.height);
+    expect(geometry.closeLeft).toBeGreaterThanOrEqual(0);
+    expect(geometry.closeTop).toBeGreaterThanOrEqual(0);
+    expect(geometry.closeRight).toBeLessThanOrEqual(viewport.width);
+    expect(geometry.closeBottom).toBeLessThanOrEqual(viewport.height);
+    expect(geometry.imageWidth).toBeLessThanOrEqual(viewport.width);
+    expect(geometry.imageHeight).toBeLessThanOrEqual(viewport.height);
+  }
+  await page.setViewportSize({ width: 320, height: 812 });
   const imageBox = await fullImage.boundingBox();
   expect(imageBox?.height).toBeLessThanOrEqual(812 * 0.9 + 1);
   await page.keyboard.press("Tab");
