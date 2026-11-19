@@ -898,6 +898,7 @@ describe("PresentationScreen", () => {
     });
     render(<PresentationScreen />);
     const slide = await screen.findByRole("region", { name: "現在のスライド" });
+    await within(slide).findByText(question.question, { exact: true });
     expect(slide).not.toHaveTextContent("初めて訪れたのは、まだ少し肌寒い春の日でした。");
     expect(slide).not.toHaveTextContent(repeatedClosing);
     expect(slide).toHaveTextContent(question.question);
