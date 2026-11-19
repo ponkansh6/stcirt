@@ -1794,8 +1794,8 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
   const questionRegion = page.getByRole("region", { name: "問5の旅程" });
   const questionTimeline = page.getByRole("list", { name: "旅程" });
   const viewports = [
-    { width: 1920, height: 1080, columns: 2 },
-    { width: 1280, height: 720, columns: 2 },
+    { width: 1920, height: 1080, columns: 1 },
+    { width: 1280, height: 720, columns: 1 },
     { width: 640, height: 360, columns: 1 },
   ];
   const expectTimelineFit = async (timeline: typeof questionTimeline, columns: number) => {
@@ -1817,6 +1817,7 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
         ).length;
       return {
         columns: getComputedStyle(element).gridTemplateColumns.split(/\s+/).length,
+        timelineWidth: element.getBoundingClientRect().width,
         outOfBounds,
         pageCanScroll: document.documentElement.scrollHeight > innerHeight,
       };
@@ -1824,6 +1825,7 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
     expect(layout.columns).toBe(columns);
     expect(layout.outOfBounds).toBe(0);
     expect(layout.pageCanScroll).toBe(false);
+    return layout;
   };
   const settleTimeline = async (timeline: typeof questionTimeline) => {
     await timeline.evaluate(async (element) => {
@@ -1934,7 +1936,10 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
   for (const viewport of viewports) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await settleTimeline(questionTimeline);
-    await expectTimelineFit(questionTimeline, viewport.columns);
+    const layout = await expectTimelineFit(questionTimeline, viewport.columns);
+    if (viewport.width === 1920) {
+      expect(layout.timelineWidth).toBeGreaterThan(1600);
+    }
     if (viewport.width === 1920 || viewport.width === 1280) {
       questionGeometryByViewport.set(viewport.width, await readTimelineGeometry(questionTimeline));
     }
