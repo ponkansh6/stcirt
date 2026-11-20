@@ -1377,7 +1377,7 @@ test("@mobile aligns the fifth-question itinerary across phone, landscape, and d
     expect(gridMetrics.map(({ activityLeft }) => activityLeft)).toEqual(
       Array(gridMetrics.length).fill(gridMetrics[0]?.activityLeft),
     );
-    expect(gridMetrics.filter(({ hasPreview }) => hasPreview)).toHaveLength(3);
+    expect(gridMetrics.filter(({ hasPreview }) => hasPreview)).toHaveLength(6);
     for (const { hasPreview, emptyCellHidden, emptyCellFocusables } of gridMetrics) {
       if (hasPreview) continue;
       expect(emptyCellHidden).toBe(true);
@@ -1387,6 +1387,9 @@ test("@mobile aligns the fifth-question itinerary across phone, landscape, and d
       [0, "マンダリンオリエンタルホテルのスコーンの写真を拡大表示"],
       [1, "フォカッチャパニーニの写真を拡大表示"],
       [3, "アバディーンのボートツアーの写真を拡大表示"],
+      [4, "ローストグースの写真を拡大表示"],
+      [5, "飲茶の写真を拡大表示"],
+      [6, "香港ディズニーランドの写真を拡大表示"],
     ] as const) {
       await expect(
         itineraryEntries.nth(entryIndex).getByRole("button", { name: label }),
