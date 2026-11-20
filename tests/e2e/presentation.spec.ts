@@ -1979,8 +1979,8 @@ test("@chromium Hong Kong itinerary and answer photos fit inside the slide", asy
     });
   await expect(questionRegion).toBeVisible();
   await expect(questionTimeline).toBeVisible();
-  await expect(questionRegion).not.toContainText("舜基は珠美の1年間の香港滞在中");
-  await expect(questionRegion).not.toContainText("3回目の旅程に関して以下を埋めてください。");
+  await expect(questionRegion).toContainText("舜基は珠美の1年間の香港滞在中");
+  await expect(questionRegion).toContainText("3回目の旅程に関して以下を埋めてください。");
   await expect(questionRegion).not.toContainText("解説");
   await expect(questionRegion.getByRole("heading", { level: 1 })).toHaveText(
     new RegExp(`問\\s*${q5.ordinal}`),
