@@ -2197,7 +2197,7 @@
   display: grid;
   width: 100%;
   max-width: 100%;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   justify-items: center;
   gap: var(--spacing-projection-block-1) var(--spacing-projection-inline-2);
   margin: var(--spacing-projection-block-3) auto 0;
@@ -2237,6 +2237,14 @@
 }
 
 .winnerQuestionResults .fifthWinnerQuestion {
+  grid-column: 5;
+}
+
+.winnerQuestionResults .sixthWinnerQuestion {
+  grid-column: 6;
+}
+
+.winnerQuestionResults .seventhWinnerQuestion {
   grid-column: 1 / -1;
   justify-self: center;
   max-width: 100%;
@@ -2272,6 +2280,10 @@
 
 .winnerQuestionMark[aria-label="不正解"] {
   color: var(--color-presentation-a52e32);
+}
+
+.winnerQuestionMark[aria-label="一部正解"] {
+  color: var(--color-presentation-71603d);
 }
 
 .winnerQuestionMark[aria-label="正誤を確認できません"] {

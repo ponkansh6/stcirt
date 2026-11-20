@@ -2691,6 +2691,32 @@ describe("presentation repository", () => {
     });
   });
 
+  it("marks a partial multi-select answer in the winner projection", async () => {
+    await addCurrentSixQuestions();
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({
+        choices: ["A2", "B2", "C2", "D2", "E2", "F2", "G2", "H2"],
+        selectionMode: "multiple",
+        correctIndices: [1, 4],
+      })
+      .where(eq(schema.examQuestions.id, 2));
+
+    const participantId = await addParticipant("Partial multi-select winner");
+    await addSubmission(participantId, [0, 0], 1, "partial-multi", 1, [1, 3]);
+    await startWithAggregate("partial-multi-winner-start");
+    for (let index = 0; index < 19; index += 1) {
+      await operatePresentation(`partial-multi-winner-forward-${index}`, "advance");
+    }
+
+    const projection = await getPublicPresentation();
+    if (projection.state !== "first") throw new Error("Expected first-rank projection");
+    expect(projection.winners[0]?.questionResults[3]).toMatchObject({
+      answer: { kind: "selected", value: "B2、D2" },
+      correctness: "partial",
+    });
+  });
+
   it("scores a multi-select question with no stored correct set as incorrect", async () => {
     await addCurrentSixQuestions();
     await testDb.db

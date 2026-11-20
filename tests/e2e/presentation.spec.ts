@@ -80,7 +80,7 @@ type E2EWinnerQuestionResult = {
     | { kind: "unanswered" }
     | { kind: "legacy" }
     | { kind: "unavailable" };
-  correctness?: "correct" | "incorrect" | "unavailable";
+  correctness?: "correct" | "partial" | "incorrect" | "unavailable";
   normalizedScore?: number | null;
   scoreStatus?: "unavailable";
 };
@@ -987,7 +987,41 @@ test("@chromium enlarged rank content stays inside small canvases with long tied
 }) => {
   const mock = await installAdminApiMock(page);
   mock.setWinnerEntries([
-    { displayName: "とても長い名前の第一位受賞者 花子", score: 10, rank: 1 },
+    {
+      displayName: "とても長い名前の第一位受賞者 花子",
+      score: 10,
+      rank: 1,
+      questionResults: [
+        ...[0, 1, 2, 3].map((position) => ({
+          position,
+          question: `選択問題 ${position + 1}`,
+          answer: { kind: "selected" as const, value: "非公開の回答" },
+          correctness: "correct" as const,
+        })),
+        {
+          position: 4,
+          question: "複数選択問題",
+          answer: { kind: "selected", value: "非公開の回答" },
+          correctness: "partial",
+        },
+        {
+          position: 5,
+          question: "選択問題 6",
+          answer: { kind: "selected", value: "非公開の回答" },
+          correctness: "incorrect",
+        },
+        {
+          position: 6,
+          question: "旅行行程の自由記述",
+          answer: {
+            kind: "freeText",
+            value:
+              "香港旅行の一日目は朝早く空港に向かい、現地に到着してからホテルに荷物を預け、海沿いを散策して昼食を取り、午後は市街地を見学してから夕方に夜景を眺め、翌日は市場を巡って買い物を楽しむ行程です。",
+          },
+          normalizedScore: 1,
+        },
+      ],
+    },
     { displayName: "同点で受賞した長い名前の第一位受賞者 太郎", score: 10, rank: 1 },
     { displayName: "とても長い名前の第二位受賞者", score: 8, rank: 2 },
     { displayName: "同点の第二位受賞者", score: 8, rank: 2 },
@@ -1064,6 +1098,49 @@ test("@chromium enlarged rank content stays inside small canvases with long tied
         `${rank} at ${viewportSize.width}x${viewportSize.height}`,
       ).toBe(false);
       await expect(page.getByTestId("presentation-canvas")).not.toHaveCSS("overflow", "visible");
+
+      if (rank === "first" && viewportSize.width === 800) {
+        const winner = region.locator("article").first();
+        const q5 = winner.locator("li").filter({ hasText: "Q5" });
+        const q6 = winner.locator("li").filter({ hasText: "Q6" });
+        const q7 = winner.locator("li").filter({ hasText: "Q7" });
+        await expect(q5).toBeVisible();
+        await expect(q6).toBeVisible();
+        await expect(q7).toBeVisible();
+        const answerLayout = await winner.locator("ol").evaluate((list) => {
+          const item = (ordinal: number) =>
+            list.querySelector<HTMLElement>(`li:nth-child(${ordinal})`);
+          const firstSixItems = Array.from({ length: 6 }, (_, index) => item(index + 1));
+          const q7Item = item(7);
+          if (firstSixItems.some((answer) => answer === null) || !q7Item) {
+            throw new Error("Expected Q1–Q7 winner answers");
+          }
+          const firstSixRects = firstSixItems.map((answer) =>
+            (answer as HTMLElement).getBoundingClientRect(),
+          );
+          const q7Rect = q7Item.getBoundingClientRect();
+          const listRect = list.getBoundingClientRect();
+          return {
+            firstSixTopRange:
+              Math.max(...firstSixRects.map((rect) => rect.top)) -
+              Math.min(...firstSixRects.map((rect) => rect.top)),
+            firstSixBottom: Math.max(...firstSixRects.map((rect) => rect.bottom)),
+            q7Top: q7Rect.top,
+            q7Left: q7Rect.left,
+            q7Right: q7Rect.right,
+            listLeft: listRect.left,
+            listRight: listRect.right,
+            q7GridColumn: getComputedStyle(q7Item).gridColumn,
+            q7Text: q7Item.textContent ?? "",
+          };
+        });
+        expect(answerLayout.firstSixTopRange).toBeLessThan(1);
+        expect(answerLayout.q7Top).toBeGreaterThan(answerLayout.firstSixBottom);
+        expect(answerLayout.q7GridColumn).toBe("1 / -1");
+        expect(answerLayout.q7Left).toBeGreaterThanOrEqual(answerLayout.listLeft - 1);
+        expect(answerLayout.q7Right).toBeLessThanOrEqual(answerLayout.listRight + 1);
+        expect(answerLayout.q7Text).toContain("香港旅行の一日目は朝早く空港に向かい");
+      }
     }
   }
 });

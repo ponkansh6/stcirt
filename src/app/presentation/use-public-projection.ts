@@ -68,7 +68,7 @@ export type WinnerQuestionResult = {
     | { kind: "unanswered" }
     | { kind: "legacy" }
     | { kind: "unavailable" };
-  correctness?: "correct" | "incorrect" | "unavailable";
+  correctness?: "correct" | "partial" | "incorrect" | "unavailable";
   normalizedScore?: number | null;
   scoreStatus?: "unavailable";
 };

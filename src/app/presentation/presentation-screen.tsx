@@ -477,6 +477,16 @@ function PresentationFrame() {
   );
 }
 
+const winnerQuestionMarks = {
+  correct: { label: "正解", symbol: "○" },
+  partial: { label: "一部正解", symbol: "△" },
+  incorrect: { label: "不正解", symbol: "×" },
+  unavailable: { label: "正誤を確認できません", symbol: "—" },
+} as const satisfies Record<
+  NonNullable<WinnerQuestionResult["correctness"]>,
+  { label: string; symbol: string }
+>;
+
 function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] }) {
   return (
     <ol className={styles.winnerQuestionResults} aria-label="設問別の回答">
@@ -491,6 +501,8 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
               result.position === 2 ? styles.thirdWinnerQuestion : "",
               result.position === 3 ? styles.fourthWinnerQuestion : "",
               result.position === 4 ? styles.fifthWinnerQuestion : "",
+              result.position === 5 ? styles.sixthWinnerQuestion : "",
+              result.position === 6 ? styles.seventhWinnerQuestion : "",
             ]
               .filter(Boolean)
               .join(" ") || undefined
@@ -512,19 +524,9 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
             ) : (
               <span
                 className={styles.winnerQuestionMark}
-                aria-label={
-                  result.correctness === "correct"
-                    ? "正解"
-                    : result.correctness === "incorrect"
-                      ? "不正解"
-                      : "正誤を確認できません"
-                }
+                aria-label={winnerQuestionMarks[result.correctness ?? "unavailable"].label}
               >
-                {result.correctness === "correct"
-                  ? "○"
-                  : result.correctness === "incorrect"
-                    ? "×"
-                    : "—"}
+                {winnerQuestionMarks[result.correctness ?? "unavailable"].symbol}
               </span>
             )}
           </span>

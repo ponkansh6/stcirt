@@ -629,7 +629,7 @@ type WinnerQuestionResult = {
     | { kind: "unanswered" }
     | { kind: "legacy" }
     | { kind: "unavailable" };
-  correctness?: "correct" | "incorrect" | "unavailable";
+  correctness?: "correct" | "partial" | "incorrect" | "unavailable";
   normalizedScore?: number | null;
   scoreStatus?: "unavailable";
 };
@@ -791,6 +791,14 @@ function buildPublicProjection(
             const isCorrect =
               selectedIndices.length === correctIndices.length &&
               selectedIndices.every((index) => correctIndices.includes(index));
+            const isPartialQ5Correct =
+              question.sourceQuestionKey === "it-literacy-002" &&
+              question.selectionMode === "multiple" &&
+              selectedIndices.length === 2 &&
+              new Set(selectedIndices).size === 2 &&
+              correctIndices.length === 2 &&
+              new Set(correctIndices).size === 2 &&
+              selectedIndices.filter((index) => correctIndices.includes(index)).length === 1;
             return {
               position,
               question: questionText,
@@ -804,7 +812,9 @@ function buildPublicProjection(
                 selectedValid && correctValid
                   ? isCorrect
                     ? "correct"
-                    : "incorrect"
+                    : isPartialQ5Correct
+                      ? "partial"
+                      : "incorrect"
                   : "unavailable",
             };
           }

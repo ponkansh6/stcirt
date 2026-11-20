@@ -18,7 +18,7 @@ type WinnerFixture = {
       | { kind: "unanswered" }
       | { kind: "legacy" }
       | { kind: "unavailable" };
-    correctness?: "correct" | "incorrect" | "unavailable";
+    correctness?: "correct" | "partial" | "incorrect" | "unavailable";
     normalizedScore?: number | null;
     scoreStatus?: "unavailable";
   }[];
@@ -3299,6 +3299,12 @@ describe("presentation projection and presenter progression", () => {
                 answer: { kind: "freeText", value: null },
                 normalizedScore: 0.25,
               },
+              {
+                position: 10,
+                question: "部分正解の設問",
+                answer: { kind: "selected", value: "非公開の選択肢" },
+                correctness: "partial",
+              },
             ],
           },
         ],
@@ -3322,6 +3328,9 @@ describe("presentation projection and presenter progression", () => {
     const unavailableRow = within(region).getByText("Q9").closest("li") as HTMLLIElement;
     expect(within(unavailableRow).getByLabelText("正誤を確認できません")).toBeInTheDocument();
     expect(within(unavailableRow).getByText("—")).toBeInTheDocument();
+    const partialRow = within(region).getByText("Q11").closest("li") as HTMLLIElement;
+    expect(within(partialRow).getByLabelText("一部正解")).toBeInTheDocument();
+    expect(within(partialRow).getByText("△")).toBeInTheDocument();
     const missingFreeTextRow = within(region).getByText("Q10").closest("li") as HTMLLIElement;
     expect(within(missingFreeTextRow).getByText("回答を確認できません")).toBeInTheDocument();
     expect(within(missingFreeTextRow).getByText("得点 0.25")).toBeInTheDocument();
@@ -3366,10 +3375,27 @@ describe("presentation projection and presenter progression", () => {
       region.querySelectorAll("[class*='winnerQuestionLabel']"),
       (label) => label.textContent,
     );
-    expect(questionLabels).toEqual(["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10"]);
+    expect(questionLabels).toEqual([
+      "Q1",
+      "Q2",
+      "Q3",
+      "Q4",
+      "Q5",
+      "Q6",
+      "Q7",
+      "Q8",
+      "Q9",
+      "Q10",
+      "Q11",
+    ]);
     const fifthQuestion = within(region).getByText("Q5").closest("li");
-    expect(fifthQuestion).toHaveClass(/fifthWinnerQuestion/);
     expect(fifthQuestion).toHaveClass(/freeTextResult/);
+    expect(fifthQuestion).not.toHaveClass(/seventhWinnerQuestion/);
+    const sixthQuestion = within(region).getByText("Q6").closest("li");
+    expect(sixthQuestion).not.toHaveClass(/seventhWinnerQuestion/);
+    const seventhQuestion = within(region).getByText("Q7").closest("li");
+    expect(seventhQuestion).toHaveClass(/freeTextResult/);
+    expect(seventhQuestion).toHaveClass(/seventhWinnerQuestion/);
     for (const [questionLabel, placementClass] of [
       ["Q1", "firstWinnerQuestion"],
       ["Q2", "secondWinnerQuestion"],
@@ -3378,7 +3404,7 @@ describe("presentation projection and presenter progression", () => {
     ]) {
       const question = within(region).getByText(questionLabel).closest("li");
       expect(question).toHaveClass(new RegExp(placementClass));
-      expect(question).not.toHaveClass(/fifthWinnerQuestion/);
+      expect(question).not.toHaveClass(/seventhWinnerQuestion/);
     }
   });
 
