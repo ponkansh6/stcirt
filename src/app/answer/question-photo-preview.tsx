@@ -8,18 +8,32 @@ export type QuestionPhoto = {
   src: string;
   alt: string;
   label: string;
+  width: number;
+  height: number;
 };
 
 const sconePhoto: QuestionPhoto = {
   src: "/images/questions/q5-mandarin-oriental-scone.jpg",
   alt: "マンダリンオリエンタルホテルのスコーン",
   label: "マンダリンオリエンタルホテルのスコーンの写真",
+  width: 961,
+  height: 1280,
 };
 
 const focacciaPaniniPhoto: QuestionPhoto = {
   src: "/images/questions/q7-focaccia-panini.jpg",
   alt: "フォカッチャパニーニを持つ二人",
   label: "フォカッチャパニーニの写真",
+  width: 960,
+  height: 1280,
+};
+
+const aberdeenBoatTourPhoto: QuestionPhoto = {
+  src: "/images/questions/q5-aberdeen-boat-tour.jpg",
+  alt: "アバディーンのボートで撮影した二人",
+  label: "アバディーンのボートツアーの写真",
+  width: 1280,
+  height: 960,
 };
 
 export function getQuestionPhoto(questionId: number, activity: string): QuestionPhoto | null {
@@ -29,6 +43,9 @@ export function getQuestionPhoto(questionId: number, activity: string): Question
   }
   if (questionId === 5 && normalizedActivity === "香港で評価の高いフォカッチャパニーニを食べる") {
     return focacciaPaniniPhoto;
+  }
+  if (questionId === 5 && normalizedActivity === "アバディーンでボートツアー＆ボートヌードル") {
+    return aberdeenBoatTourPhoto;
   }
   return null;
 }
@@ -52,7 +69,13 @@ export function QuestionPhotoPreview({
         onOpen(photo, buttonRef.current!);
       }}
     >
-      <Image src={photo.src} width={961} height={1280} sizes="48px" alt={photo.alt} />
+      <Image
+        src={photo.src}
+        width={photo.width}
+        height={photo.height}
+        sizes="48px"
+        alt={photo.alt}
+      />
     </button>
   );
 }
@@ -145,8 +168,8 @@ export function QuestionPhotoDialog({
           <Image
             className={styles.fullImage}
             src={photo.src}
-            width={961}
-            height={1280}
+            width={photo.width}
+            height={photo.height}
             sizes="(max-width: 640px) 90vw, 640px"
             alt={photo.alt}
           />

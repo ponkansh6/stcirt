@@ -10,6 +10,8 @@ const photo = {
   src: "/images/questions/q5-mandarin-oriental-scone.jpg",
   alt: "マンダリンオリエンタルホテルのスコーン",
   label: "マンダリンオリエンタルホテルのスコーンの写真",
+  width: 961,
+  height: 1280,
 };
 
 afterEach(() => cleanup());

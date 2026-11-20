@@ -318,7 +318,7 @@ The participant interface MUST support the documented responsive layout, keyboar
 
 #### Scenario: [R5-S5] Preview the supported Q5 itinerary photo accessibly
 
-- WHEN the fifth question contains the activity `マンダリンオリエンタルホテルのスコーンを食べる` or `香港で評価の高いフォカッチャパニーニを食べる`, allowing only trimmed and whitespace-collapsed exact matching
+- WHEN the fifth question contains the activity `マンダリンオリエンタルホテルのスコーンを食べる`, `香港で評価の高いフォカッチャパニーニを食べる`, or `アバディーンでボートツアー＆ボートヌードル`, allowing only trimmed and whitespace-collapsed exact matching
 - THEN the parsed itinerary uses shared date/time, 48 CSS px photo, and activity columns; the supported activity's 48 × 64 CSS px photo preview appears in the photo column, while rows without a supported photo keep an empty, non-interactive photo cell so all activity text starts at the same position
 - AND other questions, unmatched activities, and Q5 answer-input rows do not gain a photo
 - WHEN the participant opens the preview by mouse, Enter, or Space
