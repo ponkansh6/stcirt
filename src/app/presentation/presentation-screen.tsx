@@ -535,6 +535,21 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
 }
 const longChoiceThreshold = 20;
 
+function QuestionHeadingText({ question }: { question: PublicQuestion | PublicAnswerQuestion }) {
+  const opening = "新郎が高校生のころ、";
+  if ((question.id === 7 || question.id === "7") && question.question.startsWith(opening)) {
+    return (
+      <>
+        {opening}
+        <br />
+        {question.question.slice(opening.length)}
+      </>
+    );
+  }
+
+  return question.question;
+}
+
 function hasLongChoice(choices: string[]) {
   return choices.some((choice) => Array.from(choice.trim()).length >= longChoiceThreshold);
 }
@@ -565,7 +580,9 @@ function QuestionPrompt({ question, className }: { question: PublicQuestion; cla
       <p className={styles.ordinal}>
         問 <strong>{question.ordinal}</strong>
       </p>
-      <h1 id="question-heading">{question.question}</h1>
+      <h1 id="question-heading">
+        <QuestionHeadingText question={question} />
+      </h1>
       <ol className={choicesClassName}>
         {question.choices.map((choice, index) => (
           <li key={`${index}-${choice}`}>
@@ -633,7 +650,6 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
 
   if (
     (question.id === 2 || question.id === "2") &&
-    question.ordinal === 2 &&
     question.question.includes("インド") &&
     question.answerType !== "freeText"
   ) {
@@ -725,7 +741,9 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
           問 <strong>{question.ordinal}</strong>
         </p>
         <div className={styles.answerContent}>
-          <h1 id="question-heading">{question.question}</h1>
+          <h1 id="question-heading">
+            <QuestionHeadingText question={question} />
+          </h1>
           <div className={styles.answerReveal}>
             <h2>模範解答</h2>
             <p>{question.expectedAnswer}</p>
@@ -763,7 +781,9 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
         問 <strong>{question.ordinal}</strong>
       </p>
       <div className={styles.answerContent}>
-        <h1 id="question-heading">{question.question}</h1>
+        <h1 id="question-heading">
+          <QuestionHeadingText question={question} />
+        </h1>
         <ol className={choicesClassName}>
           {question.choices.map((choice, index) => {
             const isCorrect = (question.correctIndices ?? [question.correctIndex]).includes(index);

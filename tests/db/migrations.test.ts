@@ -120,6 +120,55 @@ describe("database migrations", () => {
     }
   });
 
+  it("updates the India Uber prompt in migration 0040 and advances its question version", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stcirt-india-wording-migration-"));
+    const client = createClient({ url: `file:${dir}/migration.db` });
+    try {
+      await client.execute(`
+        CREATE TABLE exam_questions (
+          id integer PRIMARY KEY NOT NULL,
+          question_key text NOT NULL,
+          question text NOT NULL,
+          choices text NOT NULL,
+          correct_index integer NOT NULL,
+          question_version text
+        );
+      `);
+      await client.execute(`
+        INSERT INTO exam_questions (id, question_key, question, choices, correct_index, question_version)
+        VALUES (
+          2,
+          'it-literacy-002',
+          'インド出張の時に舜基と珠美が乗ったUberタクシーはどんなタクシーだった？（2つ選択）',
+          '["シートベルトなし","日本語の練習内容紹介","窓が全開","ぶつけても気にせず走行"]',
+          0,
+          'india-uber-multi-v3'
+        )
+      `);
+
+      const migration = readFileSync(
+        join(process.cwd(), "src/lib/db/migrations/0040_india_uber_question_wording.sql"),
+        "utf8",
+      );
+      for (const statement of migration.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.execute(statement);
+      }
+
+      const question = await client.execute(
+        "SELECT question, choices, correct_index, question_version FROM exam_questions WHERE id = 2",
+      );
+      expect(question.rows[0]).toEqual({
+        question: "インド出張の時に舜基と珠美が乗ったのは、どんなUberタクシー？",
+        choices: '["シートベルトなし","日本語の練習内容紹介","窓が全開","ぶつけても気にせず走行"]',
+        correct_index: 0,
+        question_version: "india-uber-multi-v4",
+      });
+    } finally {
+      client.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("preserves anonymous answer rows when migration 0002 adds participant attribution", async () => {
     const dir = mkdtempSync(join(tmpdir(), "stcirt-migration-test-"));
     const client = createClient({ url: `file:${dir}/migration.db` });

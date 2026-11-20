@@ -306,6 +306,28 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("breaks the Q7 question heading after its opening phrase", async () => {
+    setup({
+      projection: {
+        state: "question",
+        question: {
+          id: 7,
+          ordinal: 7,
+          total: 7,
+          question: "新郎が高校生のころ、初めて珠美と出会った場所はどこ？",
+          choices: ["学校", "駅"],
+        },
+      },
+    });
+    render(<PresentationScreen />);
+
+    const heading = await screen.findByRole("heading", {
+      name: "新郎が高校生のころ、初めて珠美と出会った場所はどこ？",
+    });
+    expect(heading.querySelector("br")).toBeInTheDocument();
+    expect(heading.textContent).toBe("新郎が高校生のころ、初めて珠美と出会った場所はどこ？");
+  });
+
   it.each([
     {
       name: "single correct choice",
@@ -2914,9 +2936,9 @@ describe("presentation projection and presenter progression", () => {
       "the India Uber answer slide",
       {
         id: 2,
-        ordinal: 2,
+        ordinal: 5,
         total: 7,
-        question: "インドで利用した乗り物は？",
+        question: "インド出張の時に舜基と珠美が乗ったのは、どんなUberタクシー？",
         choices: ["Uber", "電車"],
         correctIndices: [0, 1],
       },
@@ -3016,9 +3038,9 @@ describe("presentation projection and presenter progression", () => {
       "the legacy selected-index fallback for the India slide",
       {
         id: 2,
-        ordinal: 2,
+        ordinal: 5,
         total: 7,
-        question: "インドで利用した乗り物は？",
+        question: "インド出張の時に舜基と珠美が乗ったのは、どんなUberタクシー？",
         choices: ["Uber"],
         correctIndex: 0,
       },
@@ -3028,9 +3050,9 @@ describe("presentation projection and presenter progression", () => {
       "an India slide without any valid correct index",
       {
         id: 2,
-        ordinal: 2,
+        ordinal: 5,
         total: 7,
-        question: "インドで利用した乗り物は？",
+        question: "インド出張の時に舜基と珠美が乗ったのは、どんなUberタクシー？",
         choices: ["Uber"],
         correctIndices: [4],
       },
