@@ -493,18 +493,42 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
     const heading = document.querySelector<HTMLHeadingElement>("#question-2 h2");
     expect(heading).not.toBeNull();
-    const scrollIntoView = vi.fn();
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     const focus = vi.fn();
-    heading!.scrollIntoView = scrollIntoView;
+    const globalHeader = document.getElementById("answer-global-header");
+    expect(globalHeader).not.toBeNull();
+    vi.spyOn(globalHeader!, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      right: 320,
+      bottom: 64,
+      left: 0,
+      width: 320,
+      height: 64,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(heading!, "getBoundingClientRect").mockReturnValue({
+      top: 500,
+      right: 320,
+      bottom: 540,
+      left: 0,
+      width: 320,
+      height: 40,
+      x: 0,
+      y: 500,
+      toJSON: () => ({}),
+    });
     heading!.focus = focus;
 
     fireEvent.click(screen.getByRole("link", { name: /^第2問へ移動/ }));
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "start" });
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", top: 428 });
     expect(focus).toHaveBeenCalledWith({ preventScroll: true });
-    scrollIntoView.mockClear();
+    scrollTo.mockClear();
     focus.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "第2問へ" }));
-    expect(scrollIntoView).toHaveBeenCalledOnce();
+    expect(scrollTo).toHaveBeenCalledOnce();
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", top: 428 });
     expect(focus).toHaveBeenCalledOnce();
     expect(select).not.toHaveBeenCalled();
     expect(saveAnswers).not.toHaveBeenCalled();

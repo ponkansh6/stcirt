@@ -709,7 +709,15 @@ export default function QuizRunner() {
 
   function jumpToQuestion(questionId: number, focusAnswer = false) {
     const heading = questionRefs.current[questionId];
-    heading?.scrollIntoView({ behavior: "auto", block: "start" });
+    if (heading) {
+      const stickyHeaderHeight =
+        document.getElementById("answer-global-header")?.getBoundingClientRect().height ?? 0;
+      const headingTop = heading.getBoundingClientRect().top + window.scrollY;
+      window.scrollTo({
+        behavior: "auto",
+        top: Math.max(0, headingTop - stickyHeaderHeight - 8),
+      });
+    }
     if (focusAnswer) {
       const section = document.getElementById(`question-${questionId}`);
       const answerInput =
@@ -1230,7 +1238,7 @@ export default function QuizRunner() {
     <>
       <HeaderPortal>
         <nav aria-label="設問へ移動" className={styles.progressNav}>
-          <ol className="grid grid-cols-7 gap-2">
+          <ol className={`grid gap-2 ${styles.progressGrid}`}>
             {quizzes.map(({ question }, index) => {
               const current = currentQuestionId === question.id;
               const selectedCount = multiSelections[question.id]?.length ?? 0;

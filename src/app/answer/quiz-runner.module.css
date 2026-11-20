@@ -12,6 +12,10 @@
   width: 100%;
 }
 
+.progressGrid {
+  grid-template-columns: repeat(auto-fit, minmax(2.75rem, 1fr));
+}
+
 .progressLink {
   position: relative;
   min-height: 2.75rem;

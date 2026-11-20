@@ -1151,7 +1151,7 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   const longOptionRadios = group.getByRole("radio");
   await expect(longOptionRadios).toHaveCount(4);
   const radios = page.getByRole("radio");
-  await expect(radios).toHaveCount(16);
+  await expect(radios).toHaveCount(24);
   await expect(page.getByRole("textbox", { name: "A. 2/28 朝の食事" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "B. 3/2 朝の食事" })).toBeVisible();
   const firstRadio = group.getByRole("radio", { name: /長文の選択肢Aです/ });
@@ -1172,7 +1172,14 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   const radioNames = await radios.evaluateAll((inputs) => [
     ...new Set(inputs.map((input) => (input as HTMLInputElement).name)),
   ]);
-  expect(radioNames).toEqual(["answer-1", "answer-2", "answer-3", "answer-4"]);
+  expect(radioNames).toEqual([
+    "answer-1",
+    "answer-2",
+    "answer-3",
+    "answer-4",
+    "answer-6",
+    "answer-7",
+  ]);
 
   const navigation = page.getByRole("navigation", { name: "設問へ移動" });
   await expect(firstRadio).not.toBeChecked();
@@ -1196,8 +1203,8 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   await expect(navigation.locator("xpath=ancestor::header")).toBeVisible();
   await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "設問へ移動" })).toHaveCount(1);
-  await expect(navigation.getByRole("list").getByRole("listitem")).toHaveCount(6);
-  await expect(navigation.locator("a, button, input")).toHaveCount(6);
+  await expect(navigation.getByRole("list").getByRole("listitem")).toHaveCount(7);
+  await expect(navigation.locator("a, button, input")).toHaveCount(7);
   const targetHeading = page.locator("#question-5 h2");
   await navigation.getByRole("link", { name: /^第5問へ移動/ }).click();
   await expect(targetHeading).toBeFocused();
@@ -1242,7 +1249,7 @@ test("@mobile reviews and edits an answer at 320px with a hittable review target
 
   const review = page.locator('ol[aria-label="回答内容"]');
   const reviewItems = review.getByRole("listitem");
-  await expect(reviewItems).toHaveCount(5);
+  await expect(reviewItems).toHaveCount(7);
   const editQuestionThree = reviewItems
     .nth(2)
     .getByRole("button", { name: "第3問「Question 3?」を編集" });
@@ -1311,8 +1318,8 @@ test("@mobile aligns the fifth-question itinerary across phone, landscape, and d
   await page.goto("/answer");
   const navigation = page.getByRole("navigation", { name: "設問へ移動" });
   const questionControls = navigation.locator("a, button");
-  await expect(questionControls).toHaveCount(6);
-  for (let index = 0; index < 6; index += 1) {
+  await expect(questionControls).toHaveCount(7);
+  for (let index = 0; index < 7; index += 1) {
     const box = await questionControls.nth(index).boundingBox();
     expect(box?.height).toBeGreaterThanOrEqual(44);
     expect(box?.width).toBeGreaterThanOrEqual(44);
