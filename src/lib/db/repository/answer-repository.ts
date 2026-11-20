@@ -549,8 +549,8 @@ async function saveAnswerSubmissionOnce(
     const questionById = new Map(questions.map((question) => [question.id, question]));
     if (
       canonicalAnswers.some((answer) => {
-        const question = questionById.get(answer.questionId);
-        if (!question) return true;
+        // The fixed-length and ordered ID checks above prove every answer has a question.
+        const question = questionById.get(answer.questionId)!;
         if (question.key === "it-literacy-005") {
           const text = "freeTextParts" in answer ? encodeFreeTextParts(answer.freeTextParts) : "";
           return (

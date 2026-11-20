@@ -295,44 +295,48 @@ function restoreSavedAnswers(
       // questions added after its saved prefix.
       const answer = submission.answers.find((candidate) => candidate.questionId === question.id);
       if (!answer && legacyPriorQuestionSet && question.id > submission.answers.length) continue;
-      if (!answer) throw new Error("missing saved answer");
+      // The checks above prove every non-legacy-gap question has a matching answer.
+      const matchedAnswer = answer!;
       if (question.answerType === "freeText") {
-        if (answer.answerKind === "legacy") {
-          if (answer.selectedIndex === null || answer.freeText !== null) {
+        if (matchedAnswer.answerKind === "legacy") {
+          if (matchedAnswer.selectedIndex === null || matchedAnswer.freeText !== null) {
             throw new Error("invalid legacy answer");
           }
           continue;
         }
-        if (answer.answerKind !== "freeText" || answer.selectedIndex !== null) {
+        if (matchedAnswer.answerKind !== "freeText" || matchedAnswer.selectedIndex !== null) {
           throw new Error("invalid free text answer");
         }
         if (question.id === 5) {
-          if (answer.freeTextParts) {
+          if (matchedAnswer.freeTextParts) {
             if (
-              !answer.freeTextParts.a.trim() ||
-              !answer.freeTextParts.b.trim() ||
-              answer.freeTextParts.a.length > 1000 ||
-              answer.freeTextParts.b.length > 1000
+              !matchedAnswer.freeTextParts.a.trim() ||
+              !matchedAnswer.freeTextParts.b.trim() ||
+              matchedAnswer.freeTextParts.a.length > 1000 ||
+              matchedAnswer.freeTextParts.b.length > 1000
             )
               throw new Error("invalid free text parts");
-          } else if (!answer.freeText?.trim() || answer.freeText.trim().length > 1000) {
+          } else if (
+            !matchedAnswer.freeText?.trim() ||
+            matchedAnswer.freeText.trim().length > 1000
+          ) {
             throw new Error("invalid legacy free text answer");
           }
-        } else if (!answer.freeText?.trim() || answer.freeText.trim().length > 1000) {
+        } else if (!matchedAnswer.freeText?.trim() || matchedAnswer.freeText.trim().length > 1000) {
           throw new Error("invalid free text answer");
         }
       } else if (question.selectionMode === "multiple") {
         if (
-          answer.answerKind !== "selected" ||
-          answer.selectedIndex !== null ||
-          answer.selectedIndices?.length !== 2 ||
-          answer.freeText !== null
+          matchedAnswer.answerKind !== "selected" ||
+          matchedAnswer.selectedIndex !== null ||
+          matchedAnswer.selectedIndices?.length !== 2 ||
+          matchedAnswer.freeText !== null
         )
           throw new Error("invalid selected answer");
       } else if (
-        answer.answerKind !== "selected" ||
-        answer.selectedIndex === null ||
-        answer.freeText !== null
+        matchedAnswer.answerKind !== "selected" ||
+        matchedAnswer.selectedIndex === null ||
+        matchedAnswer.freeText !== null
       ) {
         throw new Error("invalid selected answer");
       }

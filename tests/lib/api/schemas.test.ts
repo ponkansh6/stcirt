@@ -123,6 +123,22 @@ describe("publicQuizQuestionSchema", () => {
 });
 
 describe("answerBootstrapSchema", () => {
+  it.each([
+    ["duplicate IDs", [1, 1, 3, 4, 5, 6, 7]],
+    ["out-of-order IDs", [2, 1, 3, 4, 5, 6, 7]],
+  ])("rejects questions with %s", (_label, ids) => {
+    const invalidQuestions = ids.map((id) => ({
+      id,
+      question: `Question ${id}`,
+      choices: ["A", "B", "C", "D"],
+      answerType: "selected" as const,
+    }));
+
+    expect(
+      answerBootstrapSchema.safeParse(bootstrap({ questions: invalidQuestions })).success,
+    ).toBe(false);
+  });
+
   it("rejects an owner bootstrap whose participant ID does not match the owner", () => {
     expect(answerBootstrapSchema.safeParse(bootstrap({ participant: assisted })).success).toBe(
       false,
