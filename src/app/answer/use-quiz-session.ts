@@ -23,7 +23,7 @@ import {
   submitAnswerBatch,
 } from "@/lib/api/client";
 import type { QuizQuestion } from "@/types/quiz";
-import { shuffleChoices } from "@/lib/shuffle";
+import { preserveChoiceOrder } from "@/lib/choice-order";
 import {
   EXAM_QUESTION_COUNT,
   MAX_MULTIPLE_CHOICE_OPTIONS,
@@ -500,7 +500,7 @@ export function useQuizSession() {
         const loadedFromQuestions = (questions: QuizQuestion[]): LoadedQuiz[] =>
           questions.map((question) => ({
             question,
-            shuffled: shuffleChoices(question.choices),
+            shuffled: preserveChoiceOrder(question.choices),
           }));
 
         const restoreDraft = (assistedDraft: AssistedDraft) => {
@@ -804,7 +804,7 @@ export function useQuizSession() {
       }
       const loaded = questions.map((question) => ({
         question,
-        shuffled: shuffleChoices(question.choices),
+        shuffled: preserveChoiceOrder(question.choices),
       }));
       quizzesRef.current = loaded;
       setQuizzes(loaded);
@@ -911,7 +911,7 @@ export function useQuizSession() {
           if (bootstrapQuestions) {
             const loaded = bootstrapQuestions.map((question) => ({
               question,
-              shuffled: shuffleChoices(question.choices),
+              shuffled: preserveChoiceOrder(question.choices),
             }));
             const id = newId();
             quizzesRef.current = loaded;
@@ -1538,7 +1538,7 @@ export function useQuizSession() {
             }
             const loaded = bootstrap.questions!.map((question) => ({
               question,
-              shuffled: shuffleChoices(question.choices),
+              shuffled: preserveChoiceOrder(question.choices),
             }));
             const id = newId();
             quizzesRef.current = loaded;
@@ -1685,7 +1685,7 @@ export function useQuizSession() {
               revisionRef.current = 0;
               const ownerQuizzes = ownerBootstrap.questions!.map((question) => ({
                 question,
-                shuffled: shuffleChoices(question.choices),
+                shuffled: preserveChoiceOrder(question.choices),
               }));
               const newSubmissionId = newId();
               quizzesRef.current = ownerQuizzes;
@@ -2362,7 +2362,7 @@ export function useQuizSession() {
           }
           loaded = questions.map((question) => ({
             question,
-            shuffled: shuffleChoices(question.choices),
+            shuffled: preserveChoiceOrder(question.choices),
           }));
         }
         if (!snapshotIsCurrent()) return;

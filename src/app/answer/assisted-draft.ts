@@ -1,8 +1,8 @@
 import type { QuizQuestion } from "@/types/quiz";
-import type { ShuffledChoices } from "@/lib/shuffle";
+import type { OrderedChoices } from "@/lib/choice-order";
 import { EXAM_QUESTION_COUNT } from "@/lib/constants";
 
-export type LoadedQuiz = { question: QuizQuestion; shuffled: ShuffledChoices };
+export type LoadedQuiz = { question: QuizQuestion; shuffled: OrderedChoices };
 
 export type AssistedDraft = {
   schemaVersion: number;
