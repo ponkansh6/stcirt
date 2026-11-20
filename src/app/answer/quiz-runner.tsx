@@ -1288,7 +1288,7 @@ export default function QuizRunner() {
                     aria-current={current ? "location" : undefined}
                     className={`${styles.progressLink} flex min-h-11 flex-col items-center justify-center rounded-md border border-control-border bg-surface-2 px-1 text-center text-xs font-semibold leading-tight text-muted ${current ? styles.progressCurrent : ""}`}
                   >
-                    <span>第{index + 1}問</span>
+                    <span>{index + 1}</span>
                     <span aria-hidden="true" className={styles.answerProgressSegments}>
                       {answerParts.map(({ label, answered }) => (
                         <span
