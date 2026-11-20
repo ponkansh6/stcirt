@@ -7,6 +7,7 @@
   - 必要な場合の read-only Turso schema drift 確認に必要な外向き通信。
     pre-push 検証で上記操作を行う場合、最初の実行から対象コマンドだけを `sandbox_permissions=require_escalated` で実行する。push が依頼に含まれる場合は、通常の `git push` 自体も最初から `sandbox_permissions=require_escalated` で実行し、通常権限での失敗を試さない。`--force` / `--force-with-lease` / ref deletion など履歴を破壊する push はこの許可に含まず、個別の明示指示が必要。昇格は上記操作に限り、`0.0.0.0` listen、任意の外部通信、不要な権限拡大を許可しない。また、永続的な sandbox / 承認設定の変更を意味しない。
 - **本番 schema drift 検査の明示許可**: ユーザーは、このリポジトリで `scripts/check-prod-schema.sh` による read-only schema drift 検査を実行することを明示許可済み。Turso 接続が必要な場合は、`.env.local` を Node の `--env-file=.env.local` 等で値を表示せずに読み込み、`SCHEMA_FILE=src/lib/db/schema.ts` を指定し、検査スクリプトだけを最初から `sandbox_permissions=require_escalated` で実行する。この許可は schema/table/column の read-only introspection とそのための Turso 通信に限り、migration 適用、schema 書き込み、任意の外向き通信、永続的な sandbox / 承認設定の変更を含まない。`.env.local` の値を出力・ログ・報告へ含めない。
+- **本番 migration 適用の明示許可**: ユーザーは、このリポジトリで依頼された push に含まれる migration を本番 Turso DB に適用することを許可済み。適用前に対象 migration の SQL と journal 履歴を確認し、未適用分を既存の順序で適用する。Turso 接続が必要な場合は `.env.local` を値を表示せずに読み込み、migration 適用コマンドだけを最初から `sandbox_permissions=require_escalated` で実行する。`.env.local` の値を出力・ログ・報告へ含めない。この許可は当該 push に含まれる migration の適用とそのための Turso 通信に限り、任意の外向き通信、他環境への適用、不要な権限拡大、永続的な sandbox / 承認設定の変更を含まない。
 - **`git --no-verify` / `git commit -n` の使用禁止**: pre-commit/pre-push hooks を強制実行。
 - **`HUSKY=0` の使用禁止**: husky hook runner 無効化を禁止。
 - 一時 worktree は指定された検証スクリプトのみが作成する。エージェントは直接作成せず、そこから push しない。
