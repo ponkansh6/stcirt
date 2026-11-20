@@ -129,7 +129,10 @@ check_prod_migrations
 changed_match() { printf '%s\n' "$CHANGED" | grep -qE "$1"; }
 
 NEED_TEST=0; NEED_BUILD=0; NEED_E2E=0; NEED_DRIFT=0
-if changed_match '^(src/|tests/|vitest\.config\.ts$|tsconfig\.json$|package\.json$|scripts/check-coverage-completeness\.mjs$)'; then
+# Vitest excludes tests/e2e/**, but mixed E2E and unit changes still need coverage.
+if printf '%s\n' "$CHANGED" \
+  | grep -v '^tests/e2e/' \
+  | grep -E '^(src/|tests/|vitest\.config\.ts$|tsconfig\.json$|package\.json$|scripts/check-coverage-completeness\.mjs$)' >/dev/null; then
   NEED_TEST=1
 fi
 if changed_match '^(src/|next\.config\.ts$|postcss\.config\.|tsconfig\.json$|package\.json$|vercel\.json$)'; then
