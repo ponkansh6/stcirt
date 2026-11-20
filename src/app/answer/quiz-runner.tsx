@@ -1383,6 +1383,11 @@ export default function QuizRunner() {
               question.id === 5 && question.answerType === "freeText"
                 ? parseTimeline(question.question)
                 : null;
+            const hasTimelinePhotos =
+              timeline?.entries.some(
+                (entry) =>
+                  !entry.answerPart && getQuestionPhoto(question.id, entry.activity) !== null,
+              ) ?? false;
             return (
               <section
                 key={question.id}
@@ -1408,6 +1413,20 @@ export default function QuizRunner() {
                 </h2>
                 {timeline?.description && (
                   <p className={styles.questionDescription}>{timeline.description}</p>
+                )}
+                {hasTimelinePhotos && (
+                  <p className={styles.photoZoomHint}>
+                    <svg
+                      aria-hidden="true"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      className={styles.photoZoomIcon}
+                    >
+                      <circle cx="6.8" cy="6.8" r="4.3" />
+                      <path d="m10 10 3.2 3.2M5.1 6.8h3.4M6.8 5.1v3.4" />
+                    </svg>
+                    写真をタップ／クリックして拡大表示
+                  </p>
                 )}
                 {question.selectionMode === "multiple" && (
                   <p className="mb-4 text-sm font-semibold text-answer-accent" aria-live="polite">

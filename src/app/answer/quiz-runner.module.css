@@ -92,6 +92,26 @@
   overflow-wrap: anywhere;
 }
 
+.photoZoomHint {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: -0.6rem 0 1rem;
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.photoZoomIcon {
+  width: 0.95rem;
+  height: 0.95rem;
+  flex: 0 0 auto;
+  stroke: var(--color-answer-accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
 .timeline {
   min-width: 0;
   overflow-wrap: anywhere;

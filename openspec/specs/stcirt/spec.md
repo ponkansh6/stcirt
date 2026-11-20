@@ -324,6 +324,7 @@ The participant interface MUST support the documented responsive layout, keyboar
 
 - WHEN the fifth question contains the activity `マンダリンオリエンタルホテルのスコーンを食べる`, `香港で評価の高いフォカッチャパニーニを食べる`, or `アバディーンでボートツアー＆ボートヌードル`, allowing only trimmed and whitespace-collapsed exact matching
 - THEN the parsed itinerary uses shared date/time, 48 CSS px photo, and activity columns; the supported activity's 48 × 64 CSS px photo preview appears in the photo column, while rows without a supported photo keep an empty, non-interactive photo cell so all activity text starts at the same position
+- AND when at least one supported photo is present, a compact hint explains that tapping or clicking its photo opens an enlarged view; the hint is absent when the itinerary has no supported photos
 - AND other questions, unmatched activities, and Q5 answer-input rows do not gain a photo
 - WHEN the participant opens the preview by mouse, Enter, or Space
 - THEN a labeled native dialog is centered in the viewport and shows the full photo contained within the viewport, traps focus, and leaves the current answer draft intact
