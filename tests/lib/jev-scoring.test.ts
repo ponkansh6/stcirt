@@ -5,6 +5,7 @@ describe("Q5 independent A/B score", () => {
   it("awards half a point for a keyword hit on each matching part", () => {
     expect(scoreQ5({ a: "新鮮なロブスター", b: "店で食事" }, { a: 0, b: 0 })).toBe(0.5);
     expect(scoreQ5({ a: "不明", b: "フレンチトースト" }, { a: 0, b: 0 })).toBe(0.5);
+    expect(scoreQ5({ a: "不明", b: "西多士" }, { a: 0, b: 0 })).toBe(0.5);
     expect(scoreQ5({ a: "新鮮なロブスター", b: "フレンチトースト" }, { a: 0, b: 0 })).toBe(1);
   });
 
@@ -31,5 +32,6 @@ describe("Q5 independent A/B score", () => {
 
   it("recognizes the requested Japanese variants after Unicode normalization", () => {
     expect(scoreQ5({ a: "ロブスターです", b: "フレンチトースト" }, { a: 0, b: 0 })).toBe(1);
+    expect(scoreQ5({ a: "ロブスターです", b: "香港式の西多士です" }, { a: 0, b: 0 })).toBe(1);
   });
 });

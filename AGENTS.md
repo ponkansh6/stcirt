@@ -34,6 +34,7 @@
 ## 仕様書管理
 
 - **仕様書パス**: `openspec/specs/stcirt/spec.md`
+- **設問IDの対照**: 表示上の第1〜7問に対応する内部 `exam_questions.id` は順に `3, 7, 6, 4, 2, 1, 5`。正本は [`EXAM_QUESTION_DISPLAY_ORDER`](src/lib/constants.ts)。
 - **更新タイミング**: 実装変更と並行して仕様書を更新。
 - **更新ルール**:
   - コンポーネント追加/削除・データモデル変更・API変更・アーキテクチャ変更は仕様書に反映する。

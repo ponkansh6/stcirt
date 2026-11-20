@@ -152,6 +152,43 @@ describe("JEV score adapter", () => {
         question: "3/1 早朝（6:30）に食べたものは何ですか？",
         user_answer: "あの店で食事をしました",
       },
+      questions: {
+        answer_match: {
+          instructions: expect.stringContaining(
+            "ハトシが6〜7点で最も近く、トーストまたはサンドイッチが3〜4点でその次",
+          ),
+        },
+      },
+    });
+  });
+
+  it("sends the ordered A near-miss guidance to JEV", async () => {
+    vi.stubEnv("TYPESAFE_API_KEY", "test-only-key");
+    respond(envelope());
+
+    await gradeFreeResponse("カニ", JEV_QUESTION_VERSION, JEV_RUBRIC_VERSION, "a");
+
+    const [, request] = vi.mocked(fetch).mock.calls[0]!;
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      questions: {
+        answer_match: {
+          instructions: expect.stringContaining(
+            "エビが6〜7点で最も近く、カニが3〜4点でその次。エビは必ずカニより高く",
+          ),
+        },
+      },
+    });
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      state: {
+        expected_answer: "ロブスター（『新鮮な』は必須でなく、ロブスターだけでも正答）",
+      },
+      questions: {
+        answer_match: {
+          instructions: expect.stringContaining(
+            "回答が『ロブスター』だけでも正答であり、『新鮮な』など鮮度の修飾語がなくても一切減点せず",
+          ),
+        },
+      },
     });
   });
 

@@ -1,5 +1,5 @@
 const LOBSTER_ALIASES = ["ロブスター"];
-const FRENCH_TOAST_ALIASES = ["フレンチトースト"];
+const FRENCH_TOAST_ALIASES = ["フレンチトースト", "西多士"];
 const Q5_PART_MAX_SCORE = 0.5;
 
 function normalizeForKeywordComparison(answer: string): string {
