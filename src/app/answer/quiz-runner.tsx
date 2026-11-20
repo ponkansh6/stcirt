@@ -708,16 +708,14 @@ export default function QuizRunner() {
       : "本人";
 
   function jumpToQuestion(questionId: number, focusAnswer = false) {
-    const heading = questionRefs.current[questionId];
-    if (heading) {
-      const stickyHeaderHeight =
-        document.getElementById("answer-global-header")?.getBoundingClientRect().height ?? 0;
-      const headingTop = heading.getBoundingClientRect().top + window.scrollY;
-      window.scrollTo({
-        behavior: "auto",
-        top: Math.max(0, headingTop - stickyHeaderHeight - 8),
-      });
-    }
+    const heading = questionRefs.current[questionId]!;
+    const stickyHeaderHeight =
+      document.getElementById("answer-global-header")?.getBoundingClientRect().height ?? 0;
+    const headingTop = heading.getBoundingClientRect().top + window.scrollY;
+    window.scrollTo({
+      behavior: "auto",
+      top: Math.max(0, headingTop - stickyHeaderHeight - 8),
+    });
     if (focusAnswer) {
       const section = document.getElementById(`question-${questionId}`);
       const answerInput =
