@@ -16,10 +16,19 @@ const sconePhoto: QuestionPhoto = {
   label: "マンダリンオリエンタルホテルのスコーンの写真",
 };
 
+const focacciaPaniniPhoto: QuestionPhoto = {
+  src: "/images/questions/q7-focaccia-panini.jpg",
+  alt: "フォカッチャパニーニを持つ二人",
+  label: "フォカッチャパニーニの写真",
+};
+
 export function getQuestionPhoto(questionId: number, activity: string): QuestionPhoto | null {
   const normalizedActivity = activity.trim().replace(/\s+/g, " ");
   if (questionId === 5 && normalizedActivity === "マンダリンオリエンタルホテルのスコーンを食べる") {
     return sconePhoto;
+  }
+  if (questionId === 5 && normalizedActivity === "香港で評価の高いフォカッチャパニーニを食べる") {
+    return focacciaPaniniPhoto;
   }
   return null;
 }

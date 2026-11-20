@@ -2651,6 +2651,14 @@ describe("presentation projection and presenter progression", () => {
     expect(
       within(answerRegion).getByRole("heading", { name: "フレンチトースト" }),
     ).toBeInTheDocument();
+    const lobsterFigure = within(answerRegion)
+      .getByRole("heading", { name: "新鮮なロブスター" })
+      .closest("figure");
+    const frenchToastFigure = within(answerRegion)
+      .getByRole("heading", { name: "フレンチトースト" })
+      .closest("figure");
+    expect(within(lobsterFigure!).getByText("Aの正解", { exact: true })).toBeInTheDocument();
+    expect(within(frenchToastFigure!).getByText("Bの正解", { exact: true })).toBeInTheDocument();
     expect(
       within(answerRegion).getByRole("img", { name: "写真：新鮮なロブスター" }),
     ).toBeInTheDocument();

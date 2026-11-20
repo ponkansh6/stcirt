@@ -578,7 +578,112 @@ function QuestionPrompt({ question, className }: { question: PublicQuestion; cla
   );
 }
 
+function TaiwanRamenAnswerSlide({ answer }: { answer: string }) {
+  return (
+    <section
+      className={`${styles.question} ${styles.taiwanRamenAnswer}`}
+      aria-labelledby="taiwan-ramen-answer-heading"
+    >
+      <header className={styles.taiwanRamenAnswerHeader}>
+        <p>正解</p>
+        <h1 id="taiwan-ramen-answer-heading">{answer}</h1>
+      </header>
+      <Image
+        src="/images/questions/q1-taiwan-ramen-answer.jpg"
+        width={1240}
+        height={827}
+        alt="台湾料理屋の台湾ラーメン"
+        sizes="(max-width: 900px) 90vw, 75vw"
+        className={styles.taiwanRamenAnswerImage}
+        loading="eager"
+        draggable={false}
+      />
+    </section>
+  );
+}
+
 function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
+  if (question.ordinal === 1 && question.answerType !== "freeText") {
+    const correctIndex = (question.correctIndices ?? [question.correctIndex]).find(
+      (index) =>
+        typeof index === "number" &&
+        Number.isInteger(index) &&
+        index >= 0 &&
+        index < question.choices.length,
+    );
+    const correctAnswer =
+      typeof correctIndex === "number" ? question.choices[correctIndex] : question.correctAnswer;
+    if (correctAnswer === "台湾料理屋のラーメン") {
+      return <TaiwanRamenAnswerSlide answer={correctAnswer} />;
+    }
+  }
+
+  if ((question.id === 7 || question.id === "7") && question.answerType !== "freeText") {
+    const correctIndex = (question.correctIndices ?? [question.correctIndex]).find(
+      (index) =>
+        typeof index === "number" &&
+        Number.isInteger(index) &&
+        index >= 0 &&
+        index < question.choices.length,
+    );
+    const correctAnswer =
+      typeof correctIndex === "number" ? question.choices[correctIndex] : question.correctAnswer;
+    if (correctAnswer) return <SpaceSolarAnswerSlide answer={correctAnswer} />;
+  }
+
+  if (
+    (question.id === 2 || question.id === "2") &&
+    question.ordinal === 2 &&
+    question.question.includes("インド") &&
+    question.answerType !== "freeText"
+  ) {
+    const correctAnswers = (question.correctIndices ?? [question.correctIndex])
+      .filter(
+        (index): index is number =>
+          typeof index === "number" &&
+          Number.isInteger(index) &&
+          index >= 0 &&
+          index < question.choices.length,
+      )
+      .map((index) => question.choices[index]);
+    if (correctAnswers.length > 0) return <IndiaUberAnswerSlide answers={correctAnswers} />;
+  }
+
+  if (
+    (question.id === 1 || question.id === "1") &&
+    question.question.includes("出発前の空港") &&
+    question.answerType !== "freeText"
+  ) {
+    const correctIndex = (question.correctIndices ?? [question.correctIndex]).find(
+      (index) =>
+        typeof index === "number" &&
+        Number.isInteger(index) &&
+        index >= 0 &&
+        index < question.choices.length,
+    );
+    const correctAnswer =
+      typeof correctIndex === "number" ? question.choices[correctIndex] : question.correctAnswer;
+    if (correctAnswer) return <AirportAnswerSlide answer={correctAnswer} />;
+  }
+
+  if (question.answerType !== "freeText") {
+    const correctIndex = (question.correctIndices ?? [question.correctIndex]).find(
+      (index) =>
+        typeof index === "number" &&
+        Number.isInteger(index) &&
+        index >= 0 &&
+        index < question.choices.length,
+    );
+    const correctAnswer =
+      typeof correctIndex === "number" ? question.choices[correctIndex] : question.correctAnswer;
+    const isCurryQuestion =
+      ((question.id === 6 || question.id === "6") &&
+        question.ordinal === 6 &&
+        question.question.includes("カレー")) ||
+      correctAnswer === "ご当地レトルトカレー";
+    if (isCurryQuestion && correctAnswer) return <CurryAnswerSlide answer={correctAnswer} />;
+  }
+
   if (
     (question.id === 4 || question.id === "4") &&
     question.ordinal === 4 &&
@@ -676,6 +781,104 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
   );
 }
 
+function SpaceSolarAnswerSlide({ answer }: { answer: string }) {
+  return (
+    <section
+      className={`${styles.question} ${styles.spaceSolarAnswer}`}
+      aria-labelledby="space-solar-answer-heading"
+    >
+      <header className={styles.spaceSolarAnswerHeader}>
+        <p>正解</p>
+        <h1 id="space-solar-answer-heading">{answer}</h1>
+      </header>
+      <Image
+        src="/images/questions/q2-space-solar-workflow.jpg"
+        width={1376}
+        height={768}
+        sizes="100vw"
+        alt="宇宙太陽光発電の流れ。軌道上の衛星から地上受信局へ電力を送り、電力網を通じて街へ届ける。"
+        loading="eager"
+        draggable={false}
+        className={styles.spaceSolarAnswerImage}
+      />
+    </section>
+  );
+}
+
+function CurryAnswerSlide({ answer }: { answer: string }) {
+  return (
+    <section
+      className={`${styles.question} ${styles.curryAnswer}`}
+      aria-labelledby="curry-answer-heading"
+    >
+      <header className={styles.curryAnswerHeader}>
+        <p>正解</p>
+        <h1 id="curry-answer-heading">{answer}</h1>
+      </header>
+      <Image
+        src="/images/questions/curry-bookshelf-answer.jpg"
+        width={1227}
+        height={492}
+        sizes="100vw"
+        alt="本棚に並んださまざまなカレーの本とレトルトカレー"
+        loading="eager"
+        draggable={false}
+        className={styles.curryAnswerImage}
+      />
+    </section>
+  );
+}
+
+function AirportAnswerSlide({ answer }: { answer: string }) {
+  return (
+    <section
+      className={`${styles.question} ${styles.answerReview} ${styles.airportAnswer}`}
+      aria-labelledby="airport-answer-heading"
+    >
+      <header className={styles.airportAnswerHeader}>
+        <p className={styles.airportAnswerLabel}>正解</p>
+        <h1 id="airport-answer-heading" className={styles.airportAnswerTitle}>
+          {answer}
+        </h1>
+      </header>
+      <div className={styles.airportAnswerFrame}>
+        <Image
+          src="/images/questions/q6-airport-answer.png"
+          fill
+          sizes="100vw"
+          alt="空港で搭乗口へ急ぐ旅行者たちのイラスト"
+          loading="eager"
+          draggable={false}
+          className={styles.airportAnswerImage}
+        />
+      </div>
+    </section>
+  );
+}
+
+function IndiaUberAnswerSlide({ answers }: { answers: string[] }) {
+  return (
+    <section
+      className={`${styles.question} ${styles.indiaUberAnswer}`}
+      aria-labelledby="india-uber-answer-heading"
+    >
+      <header className={styles.indiaUberAnswerHeader}>
+        <p>正解</p>
+        <h1 id="india-uber-answer-heading">{answers.join("・")}</h1>
+      </header>
+      <Image
+        src="/images/questions/q2-india-uber-answer.jpg"
+        width={1376}
+        height={768}
+        alt="車内で親指を立てるインド人運転手。ひらがなを勉強中で、シートベルトをしていない様子が描かれている。"
+        loading="eager"
+        draggable={false}
+        className={styles.indiaUberAnswerImage}
+      />
+    </section>
+  );
+}
+
 function Q4KingGyudonAnswerSlide({ answer }: { answer: string }) {
   return (
     <section
@@ -710,11 +913,13 @@ function Q5PhotoAnswerSlide({
 }) {
   const answers = [
     {
+      label: "Aの正解",
       answer: answerParts.a,
       image: "/images/questions/q5-fresh-lobster.jpg",
       alt: `写真：${answerParts.a}`,
     },
     {
+      label: "Bの正解",
       answer: answerParts.b,
       image: "/images/questions/q5-french-toast.jpg",
       alt: `写真：${answerParts.b}`,
@@ -726,9 +931,12 @@ function Q5PhotoAnswerSlide({
       className={`${styles.question} ${styles.q5PhotoAnswer}`}
       aria-label={`問${questionOrdinal}の正解`}
     >
-      {answers.map(({ answer, image, alt }) => (
+      {answers.map(({ label, answer, image, alt }) => (
         <figure className={styles.q5PhotoAnswerItem} key={image}>
-          <h2 className={styles.q5PhotoAnswerHeading}>{answer}</h2>
+          <div className={styles.q5PhotoAnswerHeader}>
+            <span className={styles.q5PhotoAnswerBadge}>{label}</span>
+            <h2 className={styles.q5PhotoAnswerHeading}>{answer}</h2>
+          </div>
           <div className={styles.q5PhotoAnswerFrame}>
             <Image
               className={styles.q5PhotoAnswerImage}

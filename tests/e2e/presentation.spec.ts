@@ -1957,6 +1957,8 @@ test("@chromium Hong Kong itinerary and answer photos fit inside the slide", asy
   const answerRegion = page.getByRole("region", { name: `問${q5.ordinal}の正解` });
   const lobsterHeading = answerRegion.getByRole("heading", { name: "新鮮なロブスター" });
   const frenchToastHeading = answerRegion.getByRole("heading", { name: "フレンチトースト" });
+  const lobsterCard = lobsterHeading.locator("xpath=ancestor::figure[1]");
+  const frenchToastCard = frenchToastHeading.locator("xpath=ancestor::figure[1]");
   const lobsterImage = answerRegion.getByRole("img", { name: "写真：新鮮なロブスター" });
   const frenchToastImage = answerRegion.getByRole("img", { name: "写真：フレンチトースト" });
   for (const viewport of viewports) {
@@ -1964,6 +1966,8 @@ test("@chromium Hong Kong itinerary and answer photos fit inside the slide", asy
     await expect(answerRegion).toBeVisible();
     await expect(lobsterHeading).toBeVisible();
     await expect(frenchToastHeading).toBeVisible();
+    await expect(lobsterCard.getByText("Aの正解", { exact: true })).toBeVisible();
+    await expect(frenchToastCard.getByText("Bの正解", { exact: true })).toBeVisible();
     await expect(lobsterImage).toBeVisible();
     await expect(frenchToastImage).toBeVisible();
     await expect
