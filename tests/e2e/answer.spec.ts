@@ -1290,6 +1290,8 @@ test("@mobile aligns the fifth-question itinerary across phone, landscape, and d
         "3/2 朝 Bを食べる",
       ].join("\n"),
     }),
+    questionFor(6),
+    questionFor(7),
   );
   await page.route("**/api/answers/bootstrap**", async (route) => {
     await route.fulfill({
@@ -1421,6 +1423,8 @@ test("@chromium previews the Q5 scone photo accessibly without changing the answ
         "3/2 朝 Bを食べる",
       ].join("\n"),
     }),
+    questionFor(6),
+    questionFor(7),
   );
   await page.route("**/api/answers/bootstrap**", async (route) => {
     await route.fulfill({
@@ -1594,6 +1598,7 @@ test("@chromium returns to owner completion after an assisted save and opens tar
       freeTextParts: { a: "本人の回答 A", b: "本人の回答 B" },
     },
     { questionId: 6, answerKind: "selected", selectedIndex: 0, freeText: null },
+    { questionId: 7, answerKind: "selected", selectedIndex: 0, freeText: null },
   ];
   const ownerSubmission = {
     submissionId: "00000000-0000-4000-8000-000000000041",
@@ -1997,6 +2002,7 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
       freeTextParts: { a: "保存済み A revision 1", b: "保存済み B revision 1" },
     },
     { questionId: 6, answerKind: "selected", selectedIndex: 0, freeText: null },
+    { questionId: 7, answerKind: "selected", selectedIndex: 0, freeText: null },
   ];
   await mockParticipantSession(page, "Shared Participant", {
     submissionId,
