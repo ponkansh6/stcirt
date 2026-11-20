@@ -36,6 +36,30 @@ const aberdeenBoatTourPhoto: QuestionPhoto = {
   height: 960,
 };
 
+const roastGoosePhoto: QuestionPhoto = {
+  src: "/images/questions/q5-roast-goose.jpg",
+  alt: "香港のローストグース",
+  label: "ローストグースの写真",
+  width: 941,
+  height: 1051,
+};
+
+const dimSumPhoto: QuestionPhoto = {
+  src: "/images/questions/q5-dim-sum.jpg",
+  alt: "蒸籠に入った飲茶と点心",
+  label: "飲茶の写真",
+  width: 961,
+  height: 1280,
+};
+
+const hongKongDisneylandPhoto: QuestionPhoto = {
+  src: "/images/questions/q5-hong-kong-disneyland.jpg",
+  alt: "香港ディズニーランドの入口で撮影した二人",
+  label: "香港ディズニーランドの写真",
+  width: 960,
+  height: 1280,
+};
+
 export function getQuestionPhoto(questionId: number, activity: string): QuestionPhoto | null {
   const normalizedActivity = activity.trim().replace(/\s+/g, " ");
   if (questionId === 5 && normalizedActivity === "マンダリンオリエンタルホテルのスコーンを食べる") {
@@ -46,6 +70,15 @@ export function getQuestionPhoto(questionId: number, activity: string): Question
   }
   if (questionId === 5 && normalizedActivity === "アバディーンでボートツアー＆ボートヌードル") {
     return aberdeenBoatTourPhoto;
+  }
+  if (questionId === 5 && normalizedActivity === "地元で人気なローストグースを食べる") {
+    return roastGoosePhoto;
+  }
+  if (questionId === 5 && normalizedActivity === "近所で一番の高級飲茶を食べる") {
+    return dimSumPhoto;
+  }
+  if (questionId === 5 && normalizedActivity === "香港ディズニーランドを楽しむ") {
+    return hongKongDisneylandPhoto;
   }
   return null;
 }
