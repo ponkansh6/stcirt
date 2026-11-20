@@ -2885,6 +2885,206 @@ describe("presentation projection and presenter progression", () => {
     expect(choices).not.toHaveAttribute("aria-hidden");
   });
 
+  it.each([
+    [
+      "the Taiwan ramen answer slide",
+      {
+        id: 1,
+        ordinal: 1,
+        total: 7,
+        question: "好きな料理は？",
+        choices: ["台湾料理屋のラーメン", "そば"],
+        correctIndex: 0,
+      },
+      "台湾料理屋の台湾ラーメン",
+    ],
+    [
+      "the space solar answer slide",
+      {
+        id: 7,
+        ordinal: 7,
+        total: 7,
+        question: "宇宙で発電する方法は？",
+        choices: ["宇宙太陽光発電", "風力"],
+        correctIndex: 0,
+      },
+      "宇宙太陽光発電の流れ。軌道上の衛星から地上受信局へ電力を送り、電力網を通じて街へ届ける。",
+    ],
+    [
+      "the India Uber answer slide",
+      {
+        id: 2,
+        ordinal: 2,
+        total: 7,
+        question: "インドで利用した乗り物は？",
+        choices: ["Uber", "電車"],
+        correctIndices: [0, 1],
+      },
+      "車内で親指を立てるインド人運転手。ひらがなを勉強中で、シートベルトをしていない様子が描かれている。",
+    ],
+    [
+      "the airport answer slide",
+      {
+        id: 1,
+        ordinal: 6,
+        total: 7,
+        question: "出発前の空港で何をした？",
+        choices: ["搭乗口へ急いだ", "昼食を食べた"],
+        correctIndex: 0,
+      },
+      "空港で搭乗口へ急ぐ旅行者たちのイラスト",
+    ],
+    [
+      "the curry answer slide",
+      {
+        id: "6",
+        ordinal: 6,
+        total: 7,
+        question: "好きなカレーは？",
+        choices: ["インドカレー", "タイカレー"],
+        correctIndex: 0,
+      },
+      "本棚に並んださまざまなカレーの本とレトルトカレー",
+    ],
+    [
+      "the king gyudon answer slide",
+      {
+        id: 4,
+        ordinal: 4,
+        total: 7,
+        question: "一番大きい牛丼は？",
+        choices: ["キング", "メガ"],
+        correctIndex: 0,
+      },
+      "すき家の牛丼サイズを比較したイラスト。キングはメガ盛りの2倍。",
+    ],
+  ])("renders %s with its answer image", async (_label, question, imageAlt) => {
+    setup({ projection: { state: "answer", question } });
+    render(<PresentationScreen />);
+
+    expect(await screen.findByRole("img", { name: imageAlt })).toBeInTheDocument();
+  });
+
+  it("keeps a free-text question with a special slide id in the standard answer layout", async () => {
+    setup({
+      projection: {
+        state: "answer",
+        question: {
+          id: 7,
+          ordinal: 7,
+          total: 7,
+          question: "自由記述の問題",
+          choices: [],
+          answerType: "freeText",
+          expectedAnswer: "自由な回答",
+        },
+      },
+    });
+    render(<PresentationScreen />);
+
+    expect(await screen.findByRole("heading", { name: "模範解答" })).toBeInTheDocument();
+    expect(screen.getByText("自由な回答")).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "a fallback answer for the space solar slide",
+      {
+        id: 7,
+        ordinal: 7,
+        total: 7,
+        question: "宇宙で発電する方法は？",
+        choices: ["不明"],
+        correctIndex: 4,
+        correctAnswer: "宇宙太陽光発電",
+      },
+      "宇宙太陽光発電の流れ。軌道上の衛星から地上受信局へ電力を送り、電力網を通じて街へ届ける。",
+    ],
+    [
+      "a missing space solar answer",
+      {
+        id: 7,
+        ordinal: 7,
+        total: 7,
+        question: "宇宙で発電する方法は？",
+        choices: ["不明"],
+        correctIndex: 4,
+      },
+      null,
+    ],
+    [
+      "the legacy selected-index fallback for the India slide",
+      {
+        id: 2,
+        ordinal: 2,
+        total: 7,
+        question: "インドで利用した乗り物は？",
+        choices: ["Uber"],
+        correctIndex: 0,
+      },
+      "車内で親指を立てるインド人運転手。ひらがなを勉強中で、シートベルトをしていない様子が描かれている。",
+    ],
+    [
+      "an India slide without any valid correct index",
+      {
+        id: 2,
+        ordinal: 2,
+        total: 7,
+        question: "インドで利用した乗り物は？",
+        choices: ["Uber"],
+        correctIndices: [4],
+      },
+      null,
+    ],
+    [
+      "a fallback answer for the airport slide",
+      {
+        id: 1,
+        ordinal: 6,
+        total: 7,
+        question: "出発前の空港で何をした？",
+        choices: ["不明"],
+        correctIndex: 4,
+        correctAnswer: "搭乗口へ急いだ",
+      },
+      "空港で搭乗口へ急ぐ旅行者たちのイラスト",
+    ],
+    [
+      "an airport slide without a correct answer",
+      {
+        id: 1,
+        ordinal: 6,
+        total: 7,
+        question: "出発前の空港で何をした？",
+        choices: ["不明"],
+        correctIndex: 4,
+      },
+      null,
+    ],
+    [
+      "a king gyudon answer without a valid index",
+      {
+        id: 4,
+        ordinal: 4,
+        total: 7,
+        question: "一番大きい牛丼は？",
+        choices: ["不明"],
+        correctIndex: 4,
+      },
+      null,
+    ],
+  ])("handles %s", async (_label, question, imageAlt) => {
+    setup({ projection: { state: "answer", question } });
+    render(<PresentationScreen />);
+
+    if (imageAlt) {
+      expect(await screen.findByRole("img", { name: imageAlt })).toBeInTheDocument();
+    } else {
+      expect(await screen.findByRole("heading", { name: question.question })).toBeInTheDocument();
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    }
+  });
+
   it("renders one rank label followed by the winner name and score after a forward operation", async () => {
     const api = setup({
       projection: { state: "podium_preview" },

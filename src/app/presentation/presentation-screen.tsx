@@ -962,7 +962,7 @@ function Q5TimelineSlide({
   ariaLabel,
 }: {
   questionOrdinal: number;
-  className?: string;
+  className: string;
   entries: TimelineEntry[];
   ariaLabel: string;
 }) {
@@ -975,7 +975,7 @@ function Q5TimelineSlide({
 
   return (
     <section
-      className={`${styles.question} ${styles.answerReview} ${styles.q5TimelineReview} ${className ?? ""}`}
+      className={`${styles.question} ${styles.answerReview} ${styles.q5TimelineReview} ${className}`}
       aria-label={`問${questionOrdinal}の${ariaLabel}`}
     >
       <h1 className={styles.ordinal}>

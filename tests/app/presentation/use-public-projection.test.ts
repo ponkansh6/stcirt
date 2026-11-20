@@ -143,4 +143,20 @@ describe("isProjectionData statistics payloads", () => {
       ),
     ).toBe(true);
   });
+
+  it.each([
+    ["a fractional legacy index", { correctIndex: 0.5 }],
+    ["a negative legacy index", { correctIndex: -1 }],
+    ["an index beyond the choices", { correctIndex: 2 }],
+    ["a non-array list of correct indices", { correctIndices: "0" }],
+    ["a fractional index in the list", { correctIndices: [0.5] }],
+    ["a negative index in the list", { correctIndices: [-1] }],
+    ["an index beyond the choices in the list", { correctIndices: [2] }],
+  ])("rejects statistics with %s", (_label, correctness) => {
+    expect(
+      isProjectionData(
+        statisticsProjection(selectedStatistics, { ...validQuestion, ...correctness }),
+      ),
+    ).toBe(false);
+  });
 });
