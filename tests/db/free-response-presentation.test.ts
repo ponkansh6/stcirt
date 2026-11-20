@@ -50,11 +50,11 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         key: `it-literacy-00${id}`,
         questionVersion:
           id === 5
-            ? "hong-kong-trip-a-b-v5"
+            ? "hong-kong-trip-a-b-v6"
             : id === 6
-              ? "tamami-university-friends-local-curry-v1"
+              ? "tamami-university-friends-local-curry-v2"
               : id === 7
-                ? "shunki-high-school-microwave-power-v1"
+                ? "shunki-high-school-microwave-power-v2"
                 : `nagano-00${id}-v1`,
         question: `Question ${id}`,
         choices: id === 5 ? [] : ["correct", "incorrect"],
@@ -151,8 +151,8 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       winners: [{ displayName: "fractional-one" }],
     });
     if (winnerProjection.state === "first")
-      expect(winnerProjection.winners[0]?.questionResults[4]).toMatchObject({
-        position: 4,
+      expect(winnerProjection.winners[0]?.questionResults[6]).toMatchObject({
+        position: 6,
         answer: { kind: "freeText", value: "A: answer one\nB: answer one" },
         normalizedScore: 0.75,
       });
@@ -171,7 +171,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     let projection = await getPublicPresentation();
     if (projection.state !== "second") throw new Error("Expected second-rank projection");
     expect(projection.winners[0]).toMatchObject({ displayName: "zero-normalized-score" });
-    expect(projection.winners[0]?.questionResults[4]).toMatchObject({
+    expect(projection.winners[0]?.questionResults[6]).toMatchObject({
       answer: { kind: "freeText", value: "A: answer zero\nB: answer zero" },
       normalizedScore: 0,
     });
@@ -190,7 +190,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       .where(eq(schema.presentationEntries.participantId, participantId));
     projection = await getPublicPresentation();
     if (projection.state !== "second") throw new Error("Expected second-rank projection");
-    expect(projection.winners[0]?.questionResults[4]).toMatchObject({
+    expect(projection.winners[0]?.questionResults[6]).toMatchObject({
       answer: { kind: "freeText", value: "A: answer zero\nB: answer zero" },
       normalizedScore: null,
     });
@@ -199,7 +199,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     projection = await getPublicPresentation();
     if (projection.state !== "first") throw new Error("Expected first-rank projection");
     expect(projection.winners[0]).toMatchObject({ displayName: "maximum-normalized-score" });
-    expect(projection.winners[0]?.questionResults[4]).toMatchObject({
+    expect(projection.winners[0]?.questionResults[6]).toMatchObject({
       answer: { kind: "freeText", value: "A: answer maximum\nB: answer maximum" },
       normalizedScore: 1,
     });
@@ -221,12 +221,12 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         { position: 1 },
         { position: 2 },
         { position: 3 },
+        { position: 4 },
+        { position: 5 },
         {
-          position: 4,
+          position: 6,
           answer: { kind: "freeText", score: 1 },
         },
-        { position: 5 },
-        { position: 6 },
       ],
     });
     expect(parseParticipantResult(result)).toEqual(result);
@@ -256,13 +256,13 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         ),
       })
       .where(eq(schema.presentationEntries.participantId, ungradedParticipant));
-    for (let index = 0; index < 15; index += 1)
+    for (let index = 0; index < 21; index += 1)
       await operatePresentation(`range-boundary-forward-${index}`, "advance");
 
     const projection = await getPublicPresentation();
     expect(projection).toMatchObject({
       state: "statistics",
-      question: { ordinal: 5 },
+      question: { ordinal: 7 },
       statistics: {
         kind: "freeText",
         participantCount: 10,
@@ -299,7 +299,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         ),
       })
       .where(eq(schema.presentationEntries.participantId, participantId));
-    for (let index = 0; index < 15; index += 1)
+    for (let index = 0; index < 21; index += 1)
       await operatePresentation("legacy-score-forward-" + index, "advance");
 
     await expect(getPublicPresentation()).resolves.toMatchObject({
@@ -344,7 +344,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         ),
       })
       .where(eq(schema.presentationEntries.participantId, participantId));
-    for (let index = 0; index < 15; index += 1)
+    for (let index = 0; index < 21; index += 1)
       await operatePresentation(`malformed-q5-content-forward-${index}`, "advance");
 
     await expect(getPublicPresentation()).resolves.toMatchObject({
@@ -384,7 +384,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         ),
       })
       .where(eq(schema.presentationEntries.participantId, participantId));
-    for (let index = 0; index < 15; index += 1)
+    for (let index = 0; index < 21; index += 1)
       await operatePresentation(`mismatched-q5-content-forward-${index}`, "advance");
 
     await expect(getPublicPresentation()).resolves.toMatchObject({
@@ -410,7 +410,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     const participantId = await addParticipant("snapshot-q5-key");
     await addFreeTextSubmission(participantId, 1, "snapshot-key");
     await startWithAggregate("snapshot-q5-key-start");
-    for (let index = 0; index < 15; index += 1)
+    for (let index = 0; index < 21; index += 1)
       await operatePresentation(`snapshot-q5-key-forward-${index}`, "advance");
     const before = await getPublicPresentation();
     expect(before).toMatchObject({
@@ -419,10 +419,10 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     });
     const deckBefore = await getAdminPresentationDeck();
     const q5StatisticsBefore = deckBefore.slides.find(
-      (slide) => slide.state === "statistics" && slide.questionIndex === 4,
+      (slide) => slide.state === "statistics" && slide.questionIndex === 6,
     )?.projection;
     const q5AnswerBefore = deckBefore.slides.find(
-      (slide) => slide.state === "answer" && slide.questionIndex === 4,
+      (slide) => slide.state === "answer" && slide.questionIndex === 6,
     )?.projection;
     expect(q5StatisticsBefore).toMatchObject({
       state: "statistics",
@@ -438,10 +438,10 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     await expect(getPublicPresentation()).resolves.toEqual(before);
     const deckAfter = await getAdminPresentationDeck();
     const q5StatisticsAfter = deckAfter.slides.find(
-      (slide) => slide.state === "statistics" && slide.questionIndex === 4,
+      (slide) => slide.state === "statistics" && slide.questionIndex === 6,
     )?.projection;
     const q5AnswerAfter = deckAfter.slides.find(
-      (slide) => slide.state === "answer" && slide.questionIndex === 4,
+      (slide) => slide.state === "answer" && slide.questionIndex === 6,
     )?.projection;
     expect(q5StatisticsAfter).toEqual(q5StatisticsBefore);
     expect(q5AnswerAfter).toEqual(q5AnswerBefore);
@@ -451,10 +451,10 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     const participantId = await addParticipant("question-five-identity");
     await addFreeTextSubmission(participantId, 1, "identity");
     await startWithAggregate("question-five-identity-start");
-    for (let index = 0; index < 14; index += 1)
+    for (let index = 0; index < 20; index += 1)
       await operatePresentation(`question-five-identity-forward-${index}`, "advance");
     const fifthAnswer = await getPublicPresentation();
-    expect(fifthAnswer).toMatchObject({ state: "answer", question: { ordinal: 5 } });
+    expect(fifthAnswer).toMatchObject({ state: "answer", question: { ordinal: 7 } });
     if (fifthAnswer.state === "answer" && fifthAnswer.question?.answerType === "freeText")
       expect(fifthAnswer.question).not.toHaveProperty("responses");
 
@@ -468,15 +468,9 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     await operatePresentation("question-five-identity-rank-forward-1", "advance");
     await operatePresentation("question-five-identity-rank-forward-2", "advance");
     await operatePresentation("question-five-identity-rank-forward-3", "advance");
-    await operatePresentation("question-five-identity-q6-forward-1", "advance");
-    await operatePresentation("question-five-identity-q6-forward-2", "advance");
-    await operatePresentation("question-five-identity-q6-forward-3", "advance");
-    await operatePresentation("question-five-identity-q7-forward-1", "advance");
-    await operatePresentation("question-five-identity-q7-forward-2", "advance");
-    await operatePresentation("question-five-identity-q7-forward-3", "advance");
     const renamedWinner = await getPublicPresentation();
     const fifthResult =
-      renamedWinner.state === "first" ? renamedWinner.winners[0]?.questionResults[4] : undefined;
+      renamedWinner.state === "first" ? renamedWinner.winners[0]?.questionResults[6] : undefined;
     expect(fifthResult).toMatchObject({
       answer: { kind: "freeText", value: "A: answer identity\nB: answer identity" },
       normalizedScore: 1,
@@ -487,7 +481,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     const participantId = await addParticipant("missing-source");
     await addFreeTextSubmission(participantId, 1, "missing-source");
     await startWithAggregate("missing-source-start");
-    for (let index = 0; index < 14; index += 1)
+    for (let index = 0; index < 20; index += 1)
       await operatePresentation(`missing-source-forward-${index}`, "advance");
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 5));
 
@@ -497,16 +491,10 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     await operatePresentation("missing-source-rank-forward-1", "advance");
     await operatePresentation("missing-source-rank-forward-2", "advance");
     await operatePresentation("missing-source-rank-forward-3", "advance");
-    await operatePresentation("missing-source-q6-forward-1", "advance");
-    await operatePresentation("missing-source-q6-forward-2", "advance");
-    await operatePresentation("missing-source-q6-forward-3", "advance");
-    await operatePresentation("missing-source-q7-forward-1", "advance");
-    await operatePresentation("missing-source-q7-forward-2", "advance");
-    await operatePresentation("missing-source-q7-forward-3", "advance");
     const winnerProjection = await getPublicPresentation();
     const fifthResult =
       winnerProjection.state === "first"
-        ? winnerProjection.winners[0]?.questionResults[4]
+        ? winnerProjection.winners[0]?.questionResults[6]
         : undefined;
     expect(fifthResult).toMatchObject({
       answer: { kind: "freeText", value: "A: answer missing-source\nB: answer missing-source" },
@@ -589,9 +577,9 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         "2": "nagano-002-v1",
         "3": "nagano-003-v1",
         "4": "nagano-004-v1",
-        "5": "hong-kong-trip-a-b-v5",
-        "6": "tamami-university-friends-local-curry-v1",
-        "7": "shunki-high-school-microwave-power-v1",
+        "5": "hong-kong-trip-a-b-v6",
+        "6": "tamami-university-friends-local-curry-v2",
+        "7": "shunki-high-school-microwave-power-v2",
       },
       revision: 1,
     });

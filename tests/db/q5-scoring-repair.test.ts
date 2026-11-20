@@ -22,7 +22,7 @@ import { parseParticipantResult } from "@/lib/participant-results-contract";
 import { JEV_RUBRIC_VERSION, JEV_QUESTION_VERSION } from "@/lib/jev/adapter";
 
 const LEGACY_RUBRIC = "jev-q5-lobster-french-toast-independent-points-v2";
-const CURRENT_QUESTION_VERSION = "hong-kong-trip-a-b-v5";
+const CURRENT_QUESTION_VERSION = "hong-kong-trip-a-b-v6";
 
 describe("Q5 half-point scoring repair", () => {
   let testDb: TestDb;

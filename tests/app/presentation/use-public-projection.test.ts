@@ -132,4 +132,15 @@ describe("isProjectionData statistics payloads", () => {
 
     expect(isProjectionData(projection)).toBe(true);
   });
+
+  it.each([
+    ["a null legacy correct index", { correctIndex: null, correctIndices: null }],
+    ["an explicit empty correct-index list", { correctIndex: null, correctIndices: [] }],
+  ])("accepts statistics with %s", (_label, correctness) => {
+    expect(
+      isProjectionData(
+        statisticsProjection(selectedStatistics, { ...validQuestion, ...correctness }),
+      ),
+    ).toBe(true);
+  });
 });

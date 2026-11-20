@@ -2,7 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import { db } from "../index";
 import { examQuestions } from "../schema";
 import { QuizQuestion, Question } from "@/types/quiz";
-import { EXAM_QUESTION_COUNT } from "@/lib/constants";
+import { EXAM_QUESTION_COUNT, orderExamQuestionsForDisplay } from "@/lib/constants";
 
 export async function getQuestionById(id: number): Promise<Question | null> {
   const [q] = await db.select().from(examQuestions).where(eq(examQuestions.id, id));
@@ -34,11 +34,13 @@ export async function getExamQuestions(): Promise<QuizQuestion[]> {
     .orderBy(asc(examQuestions.id))
     .limit(EXAM_QUESTION_COUNT);
 
-  return rows.map((question) => ({
-    id: question.id,
-    question: question.question,
-    choices: question.choices,
-    answerType: question.key === "it-literacy-005" ? "freeText" : "selected",
-    selectionMode: question.selectionMode === "multiple" ? "multiple" : "single",
-  }));
+  return orderExamQuestionsForDisplay(
+    rows.map((question) => ({
+      id: question.id,
+      question: question.question,
+      choices: question.choices,
+      answerType: question.key === "it-literacy-005" ? "freeText" : "selected",
+      selectionMode: question.selectionMode === "multiple" ? "multiple" : "single",
+    })),
+  );
 }

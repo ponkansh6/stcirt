@@ -225,8 +225,8 @@ describe("legacy answer-set upgrade", () => {
       "2": "nagano-002-v1",
       "3": "nagano-003-v1",
       "4": "nagano-004-v1",
-      "5": "hong-kong-trip-a-b-v5",
-      "6": "tamami-university-friends-local-curry-v1",
+      "5": "hong-kong-trip-a-b-v6",
+      "6": "tamami-university-friends-local-curry-v2",
       "7": "high-school-microwave-power-v1",
     };
     await testDb.db.insert(schema.examQuestions).values(
@@ -304,7 +304,7 @@ describe("legacy answer-set upgrade", () => {
       questionId: 5,
       revision: 1,
       answerText: JSON.stringify({ a: "Current A", b: "Current B" }),
-      questionVersion: "hong-kong-trip-a-b-v5",
+      questionVersion: "hong-kong-trip-a-b-v6",
       state: "graded",
       rawScore: 5,
       normalizedScore: 0.5,

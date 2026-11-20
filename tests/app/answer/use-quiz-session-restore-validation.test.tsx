@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useQuizSession } from "@/app/answer/use-quiz-session";
 
 const mockLatest = vi.hoisted(() => vi.fn());
@@ -41,7 +41,11 @@ describe("useQuizSession saved answer validation", () => {
     vi.restoreAllMocks();
   });
 
-  async function loadSavedSubmission(answers: unknown[], freeTextFifth = false) {
+  async function loadSavedSubmission(
+    answers: unknown[],
+    freeTextFifth = false,
+    questionOrder = [1, 2, 3, 4, 5, 6, 7],
+  ) {
     const submission = {
       submissionId,
       revision: 2,
@@ -68,7 +72,7 @@ describe("useQuizSession saved answer validation", () => {
         return {
           ok: true,
           json: async () => ({
-            questions: [1, 2, 3, 4, 5, 6, 7].map((id) =>
+            questions: questionOrder.map((id) =>
               freeTextFifth && id === 5 ? quiz(id, true) : quiz(id),
             ),
           }),
@@ -159,5 +163,28 @@ describe("useQuizSession saved answer validation", () => {
         ([url, init]) => url === "/api/answers/batch" && init?.method === "POST",
       ),
     ).toBe(false);
+  });
+
+  it("restores saved answer IDs independently of the display order", async () => {
+    const answers = validAnswers().map((answer) =>
+      answer.questionId === 5
+        ? {
+            questionId: 5,
+            answerKind: "freeText",
+            selectedIndex: null,
+            freeText: null,
+            freeTextParts: { a: "回答A", b: "回答B" },
+          }
+        : answer,
+    );
+    const { result } = await loadSavedSubmission(answers, true, [3, 7, 6, 4, 2, 1, 5]);
+    await act(async () => result.current.editAnswers(() => true));
+    await waitFor(() => expect(result.current.quizzes).toHaveLength(7));
+
+    expect(result.current.restoreError).toBeNull();
+    expect(result.current.quizzes.map(({ question }) => question.id)).toEqual([
+      3, 7, 6, 4, 2, 1, 5,
+    ]);
+    expect(Object.keys(result.current.selections).map(Number).sort()).toEqual([1, 2, 3, 4, 6, 7]);
   });
 });

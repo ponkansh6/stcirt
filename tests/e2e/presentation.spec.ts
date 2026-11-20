@@ -1791,9 +1791,7 @@ test("@chromium free-text model answer and published responses share their plann
   await expectNoAccessibilityViolations(page, "presentation free-text answer and responses");
 });
 
-test("@chromium Q5 question and answer timelines fit all rows inside the slide", async ({
-  page,
-}) => {
+test("@chromium Hong Kong itinerary and answer photos fit inside the slide", async ({ page }) => {
   const itinerary = [
     "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
     "2/27 昼 マンダリンオリエンタルホテルのスコーンを食べる",
@@ -1801,15 +1799,15 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
     "2/28 朝 ローカルシーフードレストランでAを食べる",
     "2/28 昼 アバディーンでボートツアー＆ボートヌードル",
     "2/28 夜 地元で人気なローストグースを食べる",
-    "3/1 朝 美味しいエビ入り飲茶を食べる",
+    "3/1 朝 近所で一番の高級飲茶を食べる",
     "3/1 昼夜 香港ディズニーランドを楽しむ",
     "3/2 朝 Bを食べる",
   ].join("\n");
   const q5: PresentationQuestionFixture = {
     ...questions[0],
     id: 5,
-    ordinal: 5,
-    total: 5,
+    ordinal: 7,
+    total: 7,
     question: itinerary,
     choices: [],
     answerType: "freeText",
@@ -1833,7 +1831,7 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
   await signIn(page);
   await startPresentation(page);
   await openPresenter(page);
-  const questionRegion = page.getByRole("region", { name: "問5の旅程" });
+  const questionRegion = page.getByRole("region", { name: `問${q5.ordinal}の旅程` });
   const questionTimeline = page.getByRole("list", { name: "旅程" });
   const viewports = [
     { width: 1920, height: 1080, columns: 1 },
@@ -1883,57 +1881,6 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
       );
     });
   };
-  const readTimelineGeometry = async (timeline: typeof questionTimeline) =>
-    timeline.evaluate((element) => {
-      const rect = (node: Element) => {
-        const bounds = node.getBoundingClientRect();
-        return {
-          x: bounds.x,
-          y: bounds.y,
-          width: bounds.width,
-          height: bounds.height,
-        };
-      };
-      const region = element.closest("section");
-      if (!region) throw new Error("Missing timeline region");
-      const days = Array.from(element.children).filter(
-        (node): node is HTMLElement => node instanceof HTMLElement && node.tagName === "LI",
-      );
-      const dates = days.flatMap((day) =>
-        Array.from(day.querySelectorAll<HTMLElement>("[class*='q5TimelineWhen']"), (when) => ({
-          text: when.textContent?.trim() ?? "",
-          rect: rect(when),
-        })),
-      );
-      const rows = days.flatMap((day) =>
-        Array.from(day.querySelectorAll<HTMLElement>(":scope > ol > li")).map((row) => ({
-          text: row.textContent?.trim() ?? "",
-          rect: rect(row),
-        })),
-      );
-      return { region: rect(region), timeline: rect(element), dates, rows };
-    });
-  const expectMatchingRect = (
-    actual: { x: number; y: number; width: number; height: number },
-    expected: { x: number; y: number; width: number; height: number },
-  ) => {
-    for (const dimension of ["x", "y", "width", "height"] as const) {
-      expect(Math.abs(actual[dimension] - expected[dimension])).toBeLessThan(1);
-    }
-  };
-  const expectMatchingTimelineGeometry = (
-    actual: Awaited<ReturnType<typeof readTimelineGeometry>>,
-    expected: Awaited<ReturnType<typeof readTimelineGeometry>>,
-  ) => {
-    expectMatchingRect(actual.region, expected.region);
-    expectMatchingRect(actual.timeline, expected.timeline);
-    expect(actual.dates.map((date) => date.text)).toEqual(expected.dates.map((date) => date.text));
-    expect(actual.rows).toHaveLength(expected.rows.length);
-    actual.dates.forEach((date, index) =>
-      expectMatchingRect(date.rect, expected.dates[index].rect),
-    );
-    actual.rows.forEach((row, index) => expectMatchingRect(row.rect, expected.rows[index].rect));
-  };
   const readAnswerBlankCohesion = async (marker: import("@playwright/test").Locator) =>
     marker.evaluate((element) => {
       const activity = element.parentElement;
@@ -1953,16 +1900,14 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
         lineHeight,
       };
     });
-  const questionGeometryByViewport = new Map<
-    number,
-    Awaited<ReturnType<typeof readTimelineGeometry>>
-  >();
   await expect(questionRegion).toBeVisible();
   await expect(questionTimeline).toBeVisible();
   await expect(questionRegion).not.toContainText("舜基は珠美の1年間の香港滞在中");
   await expect(questionRegion).not.toContainText("3回目の旅程に関して以下を埋めてください。");
   await expect(questionRegion).not.toContainText("解説");
-  await expect(questionRegion.getByRole("heading", { level: 1 })).toHaveText("問 5");
+  await expect(questionRegion.getByRole("heading", { level: 1 })).toHaveText(
+    new RegExp(`問\\s*${q5.ordinal}`),
+  );
   await expect(questionRegion.getByRole("heading", { name: "3回目の旅程" })).toHaveCount(0);
   await expect(questionTimeline).toHaveAttribute("aria-label", "旅程");
   await expect(questionTimeline.locator("[class*='q5TimelineDay']")).toHaveCount(4);
@@ -1991,9 +1936,6 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
     if (viewport.width === 1920) {
       expect(layout.timelineWidth).toBeGreaterThan(1600);
     }
-    if (viewport.width === 1920 || viewport.width === 1280) {
-      questionGeometryByViewport.set(viewport.width, await readTimelineGeometry(questionTimeline));
-    }
     for (const markerName of ["A", "B"]) {
       const cohesion = await readAnswerBlankCohesion(
         questionTimeline.getByText(markerName, { exact: true }),
@@ -2005,49 +1947,125 @@ test("@chromium Q5 question and answer timelines fit all rows inside the slide",
       expect(cohesion.baselineDifference).toBeLessThan(cohesion.lineHeight * 0.25);
     }
   }
-  await expectNoAccessibilityViolations(page, "Q5 question timeline");
+  await expectNoAccessibilityViolations(page, "Hong Kong question itinerary");
 
   const answerMutation = nextAdminMutation(page);
   await page.locator("main").press("ArrowRight");
   await expect(slideFor(page, "answer")).toBeVisible();
   await answerMutation;
 
-  const answerTimeline = page.getByRole("list", { name: "正解を含む旅程" });
-  const answerRegion = page.getByRole("region", { name: "問5の正解を含む旅程" });
+  const answerRegion = page.getByRole("region", { name: `問${q5.ordinal}の正解` });
+  const lobsterHeading = answerRegion.getByRole("heading", { name: "新鮮なロブスター" });
+  const frenchToastHeading = answerRegion.getByRole("heading", { name: "フレンチトースト" });
+  const lobsterImage = answerRegion.getByRole("img", { name: "写真：新鮮なロブスター" });
+  const frenchToastImage = answerRegion.getByRole("img", { name: "写真：フレンチトースト" });
   for (const viewport of viewports) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await settleTimeline(answerTimeline);
-    await expect(page.getByRole("heading", { name: "3回目の旅程" })).toHaveCount(0);
     await expect(answerRegion).toBeVisible();
-    await expect(answerRegion.getByRole("heading", { level: 1 })).toHaveText("問 5");
-    await expect(answerTimeline.locator("[class*='q5TimelineDay']")).toHaveCount(4);
-    await expect(answerTimeline.locator("[class*='q5TimelineDay'] > ol > li")).toHaveCount(8);
-    await expect(answerTimeline.locator("[class*='q5TimelineDate']")).toHaveText([
-      "2/27",
-      "2/27",
-      "2/28",
-      "2/28",
-      "2/28",
-      "3/1",
-      "3/1",
-      "3/2",
-    ]);
-    await expect(page.locator("strong[class*='q5TimelineAnswer']")).toHaveText([
-      "新鮮なロブスター",
-      "フレンチトースト",
-    ]);
+    await expect(lobsterHeading).toBeVisible();
+    await expect(frenchToastHeading).toBeVisible();
+    await expect(lobsterImage).toBeVisible();
+    await expect(frenchToastImage).toBeVisible();
+    await expect
+      .poll(() =>
+        lobsterImage.evaluate(
+          (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+        ),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        frenchToastImage.evaluate(
+          (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+        ),
+      )
+      .toBe(true);
     await expect(page.getByText(q5.expectedAnswer!)).toHaveCount(0);
     await expect(page.getByRole("heading", { name: "解説" })).toHaveCount(0);
     await expect(page.getByText("非公開の個人回答")).toHaveCount(0);
     await expect(page.getByRole("textbox")).toHaveCount(0);
-
-    await expectTimelineFit(answerTimeline, viewport.columns);
-    const questionGeometry = questionGeometryByViewport.get(viewport.width);
-    if (questionGeometry) {
-      expectMatchingTimelineGeometry(await readTimelineGeometry(answerTimeline), questionGeometry);
+    const photoLayout = await answerRegion.evaluate((region) => {
+      const fitViewport = document.querySelector<HTMLElement>(
+        '[data-testid="presentation-fit-viewport"]',
+      );
+      const canvas = document.querySelector<HTMLElement>('[data-testid="presentation-canvas"]');
+      const headings = Array.from(region.querySelectorAll<HTMLElement>("h2"));
+      const images = Array.from(region.querySelectorAll<HTMLImageElement>("img"));
+      if (!fitViewport || !canvas || headings.length !== 2 || images.length !== 2) {
+        throw new Error("Missing Q5 answer photo layout elements");
+      }
+      const rect = (element: Element) => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          left: bounds.left,
+          right: bounds.right,
+          top: bounds.top,
+          bottom: bounds.bottom,
+          width: bounds.width,
+          height: bounds.height,
+        };
+      };
+      const viewportBounds = rect(fitViewport);
+      const canvasBounds = rect(canvas);
+      const imageData = images.map((image) => ({
+        alt: image.alt,
+        complete: image.complete,
+        naturalWidth: image.naturalWidth,
+        naturalHeight: image.naturalHeight,
+        objectFit: getComputedStyle(image).objectFit,
+        rect: rect(image),
+      }));
+      const headingData = headings.map((heading) => ({
+        text: heading.textContent?.trim() ?? "",
+        rect: rect(heading),
+      }));
+      const outOfBounds = [...headings, ...images]
+        .map((element) => element.getBoundingClientRect())
+        .filter(
+          (bounds) =>
+            bounds.left < viewportBounds.left - 1 ||
+            bounds.right > viewportBounds.right + 1 ||
+            bounds.top < viewportBounds.top - 1 ||
+            bounds.bottom > viewportBounds.bottom + 1,
+        ).length;
+      return {
+        canvasHeight: canvasBounds.height,
+        headingData,
+        imageData,
+        outOfBounds,
+        pageCanScroll: document.documentElement.scrollHeight > innerHeight,
+      };
+    });
+    expect(photoLayout.headingData.map((heading) => heading.text)).toEqual([
+      "新鮮なロブスター",
+      "フレンチトースト",
+    ]);
+    expect(photoLayout.imageData.map((image) => image.alt)).toEqual([
+      "写真：新鮮なロブスター",
+      "写真：フレンチトースト",
+    ]);
+    for (const [index, image] of photoLayout.imageData.entries()) {
+      expect(image.complete).toBe(true);
+      expect(image.naturalWidth).toBeGreaterThan(0);
+      expect(image.naturalHeight).toBeGreaterThan(0);
+      expect(image.objectFit).toBe("contain");
+      expect(image.rect.height / photoLayout.canvasHeight).toBeGreaterThanOrEqual(0.68);
+      expect(image.rect.height / photoLayout.canvasHeight).toBeLessThanOrEqual(0.84);
+      expect(image.naturalWidth / image.naturalHeight).toBeCloseTo(961 / 1280, 2);
+      expect(image.rect.width / image.rect.height).toBeCloseTo(961 / 1280, 2);
+      const heading = photoLayout.headingData[index].rect;
+      expect(heading.bottom).toBeLessThanOrEqual(image.rect.top);
+      expect(
+        Math.abs((heading.left + heading.right) / 2 - (image.rect.left + image.rect.right) / 2),
+      ).toBeLessThan(2);
     }
+    expect(photoLayout.headingData[0].rect.right).toBeLessThanOrEqual(
+      photoLayout.headingData[1].rect.left,
+    );
+    expect(photoLayout.outOfBounds).toBe(0);
+    expect(photoLayout.pageCanScroll).toBe(false);
   }
-  await expectNoAccessibilityViolations(page, "Q5 question and answer timelines");
+  await expectNoAccessibilityViolations(page, "Hong Kong itinerary and answer photos");
 });
 
 test("@chromium every stage keeps its fixture text inside the canvas content bounds", async ({

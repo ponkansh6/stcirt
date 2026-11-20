@@ -15,14 +15,14 @@ import {
 
 describe("api client", () => {
   const examQuestions = () =>
-    [1, 2, 3, 4, 5, 6, 7].map((id) => ({
+    [3, 7, 6, 4, 2, 1, 5].map((id) => ({
       id,
       question: `Q${id}`,
       choices: id === 5 ? [] : ["A", "B", "C", "D"],
       answerType: id === 5 ? "freeText" : "selected",
     }));
 
-  it("fetches the complete ordered exam in one same-origin request", async () => {
+  it("fetches the complete display-ordered exam in one same-origin request", async () => {
     const fetchSpy = vi
       .spyOn(global, "fetch")
       .mockResolvedValueOnce(
@@ -42,8 +42,8 @@ describe("api client", () => {
       questions: [examQuestions()[0], examQuestions()[0], ...examQuestions().slice(2)],
     },
     {
-      label: "out of order IDs",
-      questions: [examQuestions()[1], examQuestions()[0], ...examQuestions().slice(2)],
+      label: "an ID outside the exam set",
+      questions: [...examQuestions().slice(0, 6), { ...examQuestions()[6]!, id: 8 }],
     },
     {
       label: "private answer fields",
@@ -54,7 +54,7 @@ describe("api client", () => {
     {
       label: "choices on a free-text question",
       questions: examQuestions().map((question, index) =>
-        index === 4 ? { ...question, choices: ["private"] } : question,
+        question.id === 5 ? { ...question, choices: ["private"] } : question,
       ),
     },
   ])("rejects $label before returning exam questions", async ({ questions }) => {

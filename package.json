@@ -12,6 +12,7 @@
     "test:ui": "vitest run -c tests/vitest.ui.config.ts",
     "test:e2e": "playwright test",
     "test:e2e:push": "node scripts/run-e2e-push.mjs",
+    "jev:q7:smoke": "node --env-file-if-exists=.env.local --conditions=react-server --require=./scripts/jev-q7-smoke-preload.cjs --import=tsx scripts/jev-q7-smoke.mts",
     "test:coverage": "vitest run --coverage",
     "lint:fast": "oxlint --nextjs-plugin --react-plugin --react-perf-plugin",
     "format:fast": "oxfmt --write .",

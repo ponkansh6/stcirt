@@ -24,11 +24,11 @@ export type PublicQuestion = {
   total: number;
   question: string;
   choices: string[];
+  correctIndex?: number | null;
+  correctIndices?: number[] | null;
 };
 export type PublicAnswerQuestion = PublicQuestion & {
   correctAnswer?: string;
-  correctIndex?: number;
-  correctIndices?: number[] | null;
   explanation?: string | null;
   answerType?: "selected" | "freeText";
   expectedAnswer?: string | null;
@@ -175,6 +175,23 @@ export function isProjectionData(payload: unknown): payload is ProjectionData {
         Array.isArray(question.choices) &&
         question.choices.every((choice) => typeof choice === "string")
       )
+    )
+      return false;
+    if (
+      ("correctIndex" in question &&
+        question.correctIndex !== null &&
+        (!Number.isInteger(question.correctIndex) ||
+          (question.correctIndex as number) < 0 ||
+          (question.correctIndex as number) >= (question.choices as unknown[]).length)) ||
+      ("correctIndices" in question &&
+        question.correctIndices !== null &&
+        (!Array.isArray(question.correctIndices) ||
+          !question.correctIndices.every(
+            (index) =>
+              Number.isInteger(index) &&
+              (index as number) >= 0 &&
+              (index as number) < (question.choices as unknown[]).length,
+          )))
     )
       return false;
     if (!Number.isInteger(stats.participantCount) || (stats.participantCount as number) < 0)

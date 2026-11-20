@@ -61,9 +61,9 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         key: `it-literacy-${String(id).padStart(3, "0")}`,
         questionVersion:
           id === 5
-            ? "hong-kong-trip-a-b-v5"
+            ? "hong-kong-trip-a-b-v6"
             : id === 6
-              ? "tamami-university-friends-local-curry-v1"
+              ? "tamami-university-friends-local-curry-v2"
               : `test-v${id}`,
         question: `Question ${id}`,
         choices: id === 5 ? [] : ["A", "B", "C", "D"],
@@ -191,7 +191,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     }
     await testDb.db
       .update(schema.examQuestions)
-      .set({ questionVersion: "tamami-university-friends-local-curry-v1" })
+      .set({ questionVersion: "tamami-university-friends-local-curry-v2" })
       .where(eq(schema.examQuestions.id, 6));
     await testDb.db.insert(schema.presentationSessions).values({
       id: 1,
@@ -272,7 +272,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         state: "graded",
         rawScore: 1,
         normalizedScore: 1,
-        questionVersion: "hong-kong-trip-a-b-v5",
+        questionVersion: "hong-kong-trip-a-b-v6",
         rubricVersion: JEV_RUBRIC_VERSION,
         gradedAt: new Date(),
       })

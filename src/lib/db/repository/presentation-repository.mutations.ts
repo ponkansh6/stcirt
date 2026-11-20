@@ -37,7 +37,7 @@ import {
 } from "@/lib/jev/adapter";
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
 import { isSqliteLockContention } from "./sqlite-error-classification";
-import { EXAM_QUESTION_COUNT } from "@/lib/constants";
+import { EXAM_QUESTION_COUNT, orderExamQuestionsForDisplay } from "@/lib/constants";
 
 export type PresentationConflictReason =
   | "grading_pending"
@@ -590,7 +590,7 @@ async function ensurePresentationSnapshot(
   await tx.delete(presentationQuestions).where(eq(presentationQuestions.sessionId, 1));
   setOperationPhase?.("insert_questions");
   await tx.insert(presentationQuestions).values(
-    currentQuestions.map((question, position) => ({
+    orderExamQuestionsForDisplay(currentQuestions).map((question, position) => ({
       sessionId: 1,
       position,
       sourceQuestionId: question.id,

@@ -134,6 +134,8 @@ function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
   const questions = integrity.questions;
   const questionIds = questions.map(({ id }) => id);
   const answerIds = submission.answers.map(({ questionId }) => questionId);
+  // Restore-integrity questions are canonical ID order; the loaded quiz list
+  // may use a different display order and answers remain keyed by stable ID.
   if (
     new Set(questionIds).size !== expectedCount ||
     new Set(answerIds).size !== expectedCount ||
@@ -268,10 +270,7 @@ function restoreSavedAnswers(
       submission.answers.length >= 5 &&
       submission.answers.length < EXAM_QUESTION_COUNT &&
       quizzes.length === EXAM_QUESTION_COUNT &&
-      submission.answers.every(({ questionId }, index) => questionId === index + 1) &&
-      quizzes
-        .slice(0, submission.answers.length)
-        .every(({ question }, index) => question.id === index + 1);
+      submission.answers.every(({ questionId }, index) => questionId === index + 1);
     if (
       (expectedSubmissionId !== undefined && submission.submissionId !== expectedSubmissionId) ||
       (submission.answers.length !== EXAM_QUESTION_COUNT && !legacyPriorQuestionSet) ||
@@ -799,8 +798,7 @@ export function useQuizSession() {
       if (!mountedRef.current || sessionEpoch !== sessionEpochRef.current) return null;
       if (
         questions.length !== EXAM_QUESTION_COUNT ||
-        new Set(questions.map(({ id }) => id)).size !== EXAM_QUESTION_COUNT ||
-        questions.some(({ id }, index) => index > 0 && id <= questions[index - 1]!.id)
+        new Set(questions.map(({ id }) => id)).size !== EXAM_QUESTION_COUNT
       ) {
         throw new Error("Invalid exam question batch");
       }
@@ -2337,23 +2335,28 @@ export function useQuizSession() {
       setEditLoadError(null);
       try {
         let loaded = quizzesRef.current;
-        const questionsMatchManifest = (items: LoadedQuiz[]) =>
-          items.length === EXAM_QUESTION_COUNT &&
-          integrity.questions.length <= items.length &&
-          integrity.questions.every((expected, index) => {
-            const question = items[index]!.question;
-            return (
-              expected.id === question.id &&
-              expected.answerType === question.answerType &&
-              expected.choiceCount === question.choices.length
-            );
-          });
+        const questionsMatchManifest = (items: LoadedQuiz[]) => {
+          const questionsById = new Map(
+            items.map(({ question }) => [question.id, question] as const),
+          );
+          return (
+            items.length === EXAM_QUESTION_COUNT &&
+            integrity.questions.length <= items.length &&
+            integrity.questions.every((expected) => {
+              const question = questionsById.get(expected.id);
+              if (!question) return false;
+              return (
+                expected.answerType === question.answerType &&
+                expected.choiceCount === question.choices.length
+              );
+            })
+          );
+        };
         if (!questionsMatchManifest(loaded)) {
           const questions = await fetchExamQuestions();
           if (
             questions.length !== EXAM_QUESTION_COUNT ||
-            new Set(questions.map(({ id }) => id)).size !== EXAM_QUESTION_COUNT ||
-            questions.some(({ id }, index) => index > 0 && id <= questions[index - 1]!.id)
+            new Set(questions.map(({ id }) => id)).size !== EXAM_QUESTION_COUNT
           ) {
             throw new Error("設問データを確認できませんでした。");
           }

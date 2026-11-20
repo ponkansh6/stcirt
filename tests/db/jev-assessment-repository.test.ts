@@ -6,7 +6,7 @@ import * as schema from "@/lib/db/schema";
 const dbRef = vi.hoisted(() => ({ db: null as TestDb["db"] | null }));
 const gradeMock = vi.hoisted(() => vi.fn());
 const rubricVersion = vi.hoisted(() => "jev-q5-lobster-french-toast-independent-points-v2");
-const questionVersion = vi.hoisted(() => "hong-kong-trip-a-b-v5");
+const questionVersion = vi.hoisted(() => "hong-kong-trip-a-b-v6");
 
 vi.mock("@/lib/db", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/db")>();
@@ -74,9 +74,9 @@ describe("durable free-response assessment and restoration", () => {
           id === 5
             ? questionVersion
             : id === 6
-              ? "tamami-university-friends-local-curry-v1"
+              ? "tamami-university-friends-local-curry-v2"
               : id === 7
-                ? "shunki-high-school-microwave-power-v1"
+                ? "shunki-high-school-microwave-power-v2"
                 : `nagano-00${id}-v1`,
         question: `Q${id}`,
         choices: id === 5 ? [] : ["A", "B", "C", "D"],
@@ -144,8 +144,8 @@ describe("durable free-response assessment and restoration", () => {
           "3": "nagano-003-v1",
           "4": "nagano-004-v1",
           "5": questionVersion,
-          "6": "tamami-university-friends-local-curry-v1",
-          "7": "shunki-high-school-microwave-power-v1",
+          "6": "tamami-university-friends-local-curry-v2",
+          "7": "shunki-high-school-microwave-power-v2",
         },
       },
     ]);

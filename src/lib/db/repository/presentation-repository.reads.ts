@@ -647,7 +647,7 @@ type PublicProjectedQuestion = {
   choices: string[];
   answerType: "selected" | "freeText";
   correctAnswer?: string;
-  correctIndex?: number;
+  correctIndex?: number | null;
   correctIndices?: number[] | null;
   explanation?: string | null;
   expectedAnswer?: string | null;
@@ -732,6 +732,9 @@ function buildPublicProjection(
         question: row.question,
         choices: row.choices,
         answerType: row.answerType,
+        ...(row.answerType === "selected"
+          ? { correctIndex: row.correctIndex, correctIndices: row.correctIndices }
+          : {}),
       },
       statistics: buildPresentationStatistics(
         row,

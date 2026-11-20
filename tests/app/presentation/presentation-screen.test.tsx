@@ -307,6 +307,105 @@ describe("presentation projection and presenter progression", () => {
   });
 
   it.each([
+    {
+      name: "single correct choice",
+      question: { correctIndex: 1 },
+      statistics: {
+        kind: "selected",
+        multiple: false,
+        participantCount: 3,
+        validRespondentCount: 3,
+        uncountableCount: 0,
+        choices: [
+          { label: "A", count: 1 },
+          { label: "B", count: 2 },
+        ],
+      },
+      correctLabels: ["B"],
+    },
+    {
+      name: "multiple correct choices",
+      question: { correctIndex: 0, correctIndices: [0, 2] },
+      statistics: {
+        kind: "selected",
+        multiple: true,
+        participantCount: 3,
+        validRespondentCount: 3,
+        uncountableCount: 0,
+        choices: [
+          { label: "A", count: 1 },
+          { label: "B", count: 2 },
+          { label: "C", count: 1 },
+        ],
+      },
+      correctLabels: ["A", "C"],
+    },
+    {
+      name: "legacy selected payload without correctness fields",
+      question: {},
+      statistics: {
+        kind: "selected",
+        multiple: false,
+        participantCount: 1,
+        validRespondentCount: 1,
+        uncountableCount: 0,
+        choices: [{ label: "A", count: 1 }],
+      },
+      correctLabels: [],
+    },
+    {
+      name: "free text",
+      question: {},
+      statistics: {
+        kind: "freeText",
+        participantCount: 2,
+        gradedCount: 2,
+        ungradedCount: 0,
+        uncountableCount: 0,
+        ranges: [{ label: "0–20%", count: 2 }],
+      },
+      correctLabels: [],
+    },
+  ])(
+    "distinguishes correct choice counts for $name",
+    async ({ question, statistics, correctLabels }) => {
+      setup({
+        projection: {
+          state: "statistics",
+          question: {
+            id: 1,
+            ordinal: 1,
+            total: 5,
+            question: "統計の設問",
+            choices: ["A", "B", "C"],
+            ...question,
+          },
+          statistics,
+        },
+      });
+      render(<PresentationScreen />);
+      await screen.findByLabelText("問1の集計結果");
+
+      const correctRows = document.querySelectorAll("[class*='statisticsRowCorrect']");
+      expect(correctRows).toHaveLength(correctLabels.length);
+      expect(
+        correctLabels.every((label) =>
+          Array.from(correctRows).some((row) => row.textContent?.includes(label)),
+        ),
+      ).toBe(true);
+      expect(screen.queryAllByText("正解")).toHaveLength(correctLabels.length);
+      if (statistics.kind === "selected") {
+        for (const label of correctLabels) {
+          const row = within(document.querySelector("[class*='statisticsRows']") as HTMLElement)
+            .getByText(label)
+            .closest("li");
+          expect(row?.className).toContain("statisticsRowCorrect");
+        }
+      }
+    },
+  );
+
+  it.each([
     ["opening", { state: "opening" }, "openingMotion"],
     [
       "question",
@@ -2478,7 +2577,7 @@ describe("presentation projection and presenter progression", () => {
       "2/28 朝 ローカルシーフードレストランでAを食べる",
       "2/28 昼 アバディーンでボートツアー＆ボートヌードル",
       "2/28 夜 地元で人気なローストグースを食べる",
-      "3/1 朝 美味しいエビ入り飲茶を食べる",
+      "3/1 朝 近所で一番の高級飲茶を食べる",
       "3/1 昼夜 香港ディズニーランドを楽しむ",
       "3/2 朝 Bを食べる",
     ].join("\n");
@@ -2545,23 +2644,22 @@ describe("presentation projection and presenter progression", () => {
     fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
     await settled();
 
-    const answerRegion = screen.getByRole("region", { name: "問5の正解を含む旅程" });
-    expect(within(answerRegion).getByRole("heading", { level: 1 })).toHaveTextContent(/問\s*5/);
+    const answerRegion = screen.getByRole("region", { name: "問5の正解" });
     expect(
-      within(answerRegion).queryByRole("heading", { name: "3回目の旅程" }),
+      within(answerRegion).getByRole("heading", { name: "新鮮なロブスター" }),
+    ).toBeInTheDocument();
+    expect(
+      within(answerRegion).getByRole("heading", { name: "フレンチトースト" }),
+    ).toBeInTheDocument();
+    expect(
+      within(answerRegion).getByRole("img", { name: "写真：新鮮なロブスター" }),
+    ).toBeInTheDocument();
+    expect(
+      within(answerRegion).getByRole("img", { name: "写真：フレンチトースト" }),
+    ).toBeInTheDocument();
+    expect(
+      within(answerRegion).queryByRole("list", { name: "正解を含む旅程" }),
     ).not.toBeInTheDocument();
-    const answerTimeline = within(answerRegion).getByRole("list", { name: "正解を含む旅程" });
-    expect(answerTimeline.querySelectorAll("[class*='q5TimelineDate']")).toHaveLength(8);
-    expect(
-      Array.from(
-        answerTimeline.querySelectorAll("[class*='q5TimelineDate']"),
-        (date) => date.textContent,
-      ),
-    ).toEqual(["2/27", "2/27", "2/28", "2/28", "2/28", "3/1", "3/1", "3/2"]);
-    expect(screen.getByText("新鮮なロブスター").closest("strong")).toBeInTheDocument();
-    expect(screen.getByText("フレンチトースト").closest("strong")).toBeInTheDocument();
-    expect(answerTimeline.querySelectorAll("[class*='q5TimelineDay']")).toHaveLength(4);
-    expect(answerTimeline.querySelectorAll("[class*='q5TimelineDay'] > ol > li")).toHaveLength(8);
     expect(
       screen.queryByText("Aは新鮮なロブスター、Bはフレンチトーストです。"),
     ).not.toBeInTheDocument();
@@ -2595,8 +2693,7 @@ describe("presentation projection and presenter progression", () => {
     ["duplicate A markers", "duplicate A marker"],
     ["duplicate markers in the same activity", "same-line duplicate marker"],
     ["a missing B marker", "missing B marker"],
-    ["a missing expected-answer part", "missing part"],
-  ])("falls back to the complete free-text answer when Q5 has %s", async (_label, failure) => {
+  ])("uses the question fallback and shows photos when Q5 has %s", async (_label, failure) => {
     const validItinerary = [
       "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
       "2/27 昼 スコーンを食べる",
@@ -2614,10 +2711,63 @@ describe("presentation projection and presenter progression", () => {
       validItinerary[3] = "2/28 朝 シーフードレストランでAを食べるAを食べる";
     }
     if (failure === "missing B marker") validItinerary[8] = "3/2 朝 朝食を食べる";
-    const expectedAnswerParts =
-      failure === "missing part"
-        ? { a: "新鮮なロブスター", b: " " }
-        : { a: "新鮮なロブスター", b: "フレンチトースト" };
+    const answerQuestion = {
+      id: 5,
+      ordinal: 5,
+      total: 5,
+      question: validItinerary.join("\n"),
+      choices: [],
+      answerType: "freeText" as const,
+      expectedAnswer: "Aは新鮮なロブスター、Bはフレンチトーストです。",
+      expectedAnswerParts: { a: "新鮮なロブスター", b: "フレンチトースト" },
+    };
+    const questionStage = {
+      state: "question" as const,
+      question: {
+        id: answerQuestion.id,
+        ordinal: answerQuestion.ordinal,
+        total: answerQuestion.total,
+        question: answerQuestion.question,
+        choices: answerQuestion.choices,
+      },
+    };
+    const answerStage = { state: "answer" as const, question: answerQuestion };
+    setup({
+      projection: questionStage,
+      admin: { state: "question", questionIndex: 0, questionCount: 1 },
+      deckSlides: [deckSlide("question", 0, questionStage), deckSlide("answer", 0, answerStage)],
+    });
+    render(<PresentationScreen presenterRequested />);
+
+    const fallbackHeading = await screen.findByRole("heading", { name: /舜基は珠美の1年間/ });
+    expect(fallbackHeading).toHaveTextContent(validItinerary[0]);
+    expect(fallbackHeading).toHaveTextContent(validItinerary.at(-1)!);
+    if (failure === "malformed non-empty row") {
+      expect(fallbackHeading).toHaveTextContent("malformed row");
+    }
+    expect(screen.queryByRole("list", { name: "旅程" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("main"), { key: "ArrowRight" });
+    await settled();
+    const answerRegion = screen.getByRole("region", { name: "問5の正解" });
+    expect(
+      within(answerRegion).getByRole("heading", { name: "新鮮なロブスター" }),
+    ).toBeInTheDocument();
+    expect(
+      within(answerRegion).getByRole("heading", { name: "フレンチトースト" }),
+    ).toBeInTheDocument();
+    expect(
+      within(answerRegion).getByRole("img", { name: "写真：新鮮なロブスター" }),
+    ).toBeInTheDocument();
+    expect(
+      within(answerRegion).getByRole("img", { name: "写真：フレンチトースト" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Aは新鮮なロブスター、Bはフレンチトーストです。"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the free-text answer when Q5 is missing an expected-answer part", async () => {
     setup({
       projection: {
         state: "answer",
@@ -2625,36 +2775,63 @@ describe("presentation projection and presenter progression", () => {
           id: 5,
           ordinal: 5,
           total: 5,
-          question: validItinerary.join("\n"),
+          question: "香港旅行の問題",
           choices: [],
           answerType: "freeText",
           expectedAnswer: "Aは新鮮なロブスター、Bはフレンチトーストです。",
-          expectedAnswerParts,
+          expectedAnswerParts: { a: "新鮮なロブスター", b: " " },
         },
       },
     });
     render(<PresentationScreen />);
 
-    const fallbackHeading = await screen.findByRole("heading", { name: /舜基は珠美の1年間/ });
-    expect(fallbackHeading).toHaveTextContent(validItinerary[0]);
-    expect(fallbackHeading).toHaveTextContent(validItinerary.at(-1)!);
-    expect(fallbackHeading).not.toHaveClass(/q5QuestionHeading/);
-    if (failure === "malformed non-empty row") {
-      expect(fallbackHeading).toHaveTextContent("malformed row");
-    }
+    expect(await screen.findByRole("heading", { name: "香港旅行の問題" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "模範解答" })).toBeInTheDocument();
     expect(screen.getByText("Aは新鮮なロブスター、Bはフレンチトーストです。")).toBeInTheDocument();
-    expect(screen.queryByText("3回目の旅程", { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "問5の正解" })).not.toBeInTheDocument();
   });
 
-  it("does not apply Q5 timeline styling to another free-text answer even if parts are present", async () => {
+  it("shows answer photos by their parts after the question moves to position seven", async () => {
+    setup({
+      projection: {
+        state: "answer",
+        question: {
+          id: 5,
+          ordinal: 7,
+          total: 10,
+          question: "香港旅行の問題",
+          choices: [],
+          answerType: "freeText",
+          expectedAnswer: "Aは新鮮なロブスター、Bはフレンチトーストです。",
+          expectedAnswerParts: { a: "新鮮なロブスター", b: "フレンチトースト" },
+        },
+      },
+    });
+    render(<PresentationScreen />);
+
+    const answerRegion = await screen.findByRole("region", { name: "問7の正解" });
+    expect(
+      within(answerRegion).getByRole("heading", { name: "新鮮なロブスター" }),
+    ).toBeInTheDocument();
+    expect(
+      within(answerRegion).getByRole("heading", { name: "フレンチトースト" }),
+    ).toBeInTheDocument();
+    expect(
+      within(answerRegion).getByRole("img", { name: "写真：新鮮なロブスター" }),
+    ).toBeInTheDocument();
+    expect(
+      within(answerRegion).getByRole("img", { name: "写真：フレンチトースト" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps another question in the free-text layout even when answer parts exist", async () => {
     setup({
       projection: {
         state: "answer",
         question: {
           id: 4,
           ordinal: 4,
-          total: 5,
+          total: 7,
           question: "別の自由記述問題",
           choices: [],
           answerType: "freeText",
@@ -2666,8 +2843,9 @@ describe("presentation projection and presenter progression", () => {
     render(<PresentationScreen />);
 
     expect(await screen.findByRole("heading", { name: "別の自由記述問題" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "模範解答" })).toBeInTheDocument();
     expect(screen.getByText("通常の模範解答")).toBeInTheDocument();
-    expect(screen.queryByText("3回目の旅程", { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "問4の正解" })).not.toBeInTheDocument();
   });
 
   it("keeps every multiple-choice answer in an ordered list with its correct marker", async () => {

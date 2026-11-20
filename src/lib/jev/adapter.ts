@@ -63,7 +63,9 @@ export async function gradeFreeResponse(
       model,
       state: {
         question:
-          part === "a" ? "2/28 朝に食べたものは何ですか？" : "3/2 朝に食べたものは何ですか？",
+          part === "a"
+            ? "2/28 朝に食べたものは何ですか？"
+            : "3/1 早朝（6:30）に食べたものは何ですか？",
         expected_answer: part === "a" ? "新鮮なロブスター" : "フレンチトースト",
         user_answer: answer,
       },

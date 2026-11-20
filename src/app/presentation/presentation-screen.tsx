@@ -540,7 +540,8 @@ function hasLongChoice(choices: string[]) {
 }
 
 function QuestionPrompt({ question, className }: { question: PublicQuestion; className: string }) {
-  const parsedQ5Timeline = question.ordinal === 5 ? parseTimeline(question.question) : null;
+  const parsedQ5Timeline =
+    question.id === 5 || question.id === "5" ? parseTimeline(question.question) : null;
   const hasUsableQ5Timeline =
     parsedQ5Timeline?.entries.length === 8 &&
     hasUniqueTimelineAnswerMarkers(parsedQ5Timeline.entries);
@@ -578,29 +579,34 @@ function QuestionPrompt({ question, className }: { question: PublicQuestion; cla
 }
 
 function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
+  if (
+    (question.id === 4 || question.id === "4") &&
+    question.ordinal === 4 &&
+    question.answerType !== "freeText"
+  ) {
+    const correctIndex = (question.correctIndices ?? [question.correctIndex]).find(
+      (index) =>
+        typeof index === "number" &&
+        Number.isInteger(index) &&
+        index >= 0 &&
+        index < question.choices.length,
+    );
+    const correctAnswer =
+      typeof correctIndex === "number" ? question.choices[correctIndex] : undefined;
+    if (correctAnswer) return <Q4KingGyudonAnswerSlide answer={correctAnswer} />;
+  }
+
   if (question.answerType === "freeText") {
-    const parsedTimeline =
-      question.ordinal === 5 &&
-      question.expectedAnswerParts &&
-      typeof question.expectedAnswerParts.a === "string" &&
-      question.expectedAnswerParts.a.trim().length > 0 &&
-      typeof question.expectedAnswerParts.b === "string" &&
-      question.expectedAnswerParts.b.trim().length > 0
-        ? parseTimeline(question.question)
-        : null;
-    const q5Timeline =
-      parsedTimeline?.entries.length === 8 && hasUniqueTimelineAnswerMarkers(parsedTimeline.entries)
-        ? parsedTimeline.entries
-        : null;
     const expectedAnswerParts = question.expectedAnswerParts;
-    if (q5Timeline && expectedAnswerParts) {
+    const q5PhotoAnswers =
+      (question.id === 5 || question.id === "5") &&
+      typeof expectedAnswerParts?.a === "string" &&
+      expectedAnswerParts.a.trim().length > 0 &&
+      typeof expectedAnswerParts.b === "string" &&
+      expectedAnswerParts.b.trim().length > 0;
+    if (q5PhotoAnswers && expectedAnswerParts) {
       return (
-        <Q5TimelineSlide
-          questionOrdinal={question.ordinal}
-          entries={q5Timeline}
-          answerParts={expectedAnswerParts}
-          ariaLabel="正解を含む旅程"
-        />
+        <Q5PhotoAnswerSlide questionOrdinal={question.ordinal} answerParts={expectedAnswerParts} />
       );
     }
 
@@ -670,17 +676,86 @@ function AnswerReview({ question }: { question: PublicAnswerQuestion }) {
   );
 }
 
+function Q4KingGyudonAnswerSlide({ answer }: { answer: string }) {
+  return (
+    <section
+      className={`${styles.question} ${styles.answerReview} ${styles.q4KingGyudonAnswer}`}
+      aria-labelledby="q4-answer-heading"
+    >
+      <header className={styles.q4KingGyudonHeader}>
+        <p className={styles.q4KingGyudonLabel}>正解</p>
+        <h1 id="q4-answer-heading" className={styles.q4KingGyudonTitle}>
+          {answer}
+        </h1>
+      </header>
+      <Image
+        src="/images/questions/q4-king-gyudon-size-chart.jpg"
+        width={1376}
+        height={768}
+        alt="すき家の牛丼サイズを比較したイラスト。キングはメガ盛りの2倍。"
+        loading="eager"
+        draggable={false}
+        className={styles.q4KingGyudonImage}
+      />
+    </section>
+  );
+}
+
+function Q5PhotoAnswerSlide({
+  questionOrdinal,
+  answerParts,
+}: {
+  questionOrdinal: number;
+  answerParts: { a: string; b: string };
+}) {
+  const answers = [
+    {
+      answer: answerParts.a,
+      image: "/images/questions/q5-fresh-lobster.jpg",
+      alt: `写真：${answerParts.a}`,
+    },
+    {
+      answer: answerParts.b,
+      image: "/images/questions/q5-french-toast.jpg",
+      alt: `写真：${answerParts.b}`,
+    },
+  ];
+
+  return (
+    <section
+      className={`${styles.question} ${styles.q5PhotoAnswer}`}
+      aria-label={`問${questionOrdinal}の正解`}
+    >
+      {answers.map(({ answer, image, alt }) => (
+        <figure className={styles.q5PhotoAnswerItem} key={image}>
+          <h2 className={styles.q5PhotoAnswerHeading}>{answer}</h2>
+          <div className={styles.q5PhotoAnswerFrame}>
+            <Image
+              className={styles.q5PhotoAnswerImage}
+              src={image}
+              width={961}
+              height={1280}
+              sizes="(max-width: 640px) 46vw, 34vw"
+              alt={alt}
+              loading="eager"
+              draggable={false}
+            />
+          </div>
+        </figure>
+      ))}
+    </section>
+  );
+}
+
 function Q5TimelineSlide({
   questionOrdinal,
   className,
   entries,
-  answerParts,
   ariaLabel,
 }: {
   questionOrdinal: number;
   className?: string;
   entries: TimelineEntry[];
-  answerParts?: { a: string; b: string };
   ariaLabel: string;
 }) {
   const groups = entries.reduce<{ date: string; entries: TimelineEntry[] }[]>((result, entry) => {
@@ -699,16 +774,11 @@ function Q5TimelineSlide({
         問 <strong>{questionOrdinal}</strong>
       </h1>
       <div className={styles.q5TimelineContent}>
-        <ol
-          className={`${styles.q5Timeline}${answerParts ? ` ${styles.answerReveal}` : ""}`}
-          aria-label={ariaLabel}
-        >
+        <ol className={styles.q5Timeline} aria-label={ariaLabel}>
           {groups.map((group) => (
             <li className={styles.q5TimelineDay} key={group.date}>
               <ol>
                 {group.entries.map((entry, index) => {
-                  const answer =
-                    entry.answerPart && answerParts ? answerParts[entry.answerPart] : null;
                   return (
                     <li className={styles.q5TimelineEntry} key={`${entry.time}-${index}`}>
                       <span className={styles.q5TimelineWhen}>
@@ -716,13 +786,7 @@ function Q5TimelineSlide({
                         <span className={styles.q5TimelineTime}>{entry.time}</span>
                       </span>
                       <span className={styles.q5TimelineActivity}>
-                        {answer ? (
-                          <>
-                            {entry.answerPrefix}
-                            <strong className={styles.q5TimelineAnswer}>{answer}</strong>
-                            {entry.answerSuffix}
-                          </>
-                        ) : entry.answerPart ? (
+                        {entry.answerPart ? (
                           <>
                             {entry.answerPrefix}
                             <span className={styles.q5TimelineBlankGroup}>
@@ -767,18 +831,30 @@ function StatisticsSlide({
         className={styles.statisticsRows}
         aria-label={statistics.kind === "selected" ? "選択肢ごとの回答人数" : "得点区間ごとの人数"}
       >
-        {rows.map((row, index) => (
-          <li className={styles.statisticsRow} key={`${index}-${row.label}`}>
-            <span className={styles.statisticsLabel}>{row.label}</span>
-            <span className={styles.statisticsBarTrack} aria-hidden="true">
-              <span
-                className={styles.statisticsBar}
-                style={{ width: `${(row.count / maxCount) * 100}%` }}
-              />
-            </span>
-            <span className={styles.statisticsCount}>{row.count} 人</span>
-          </li>
-        ))}
+        {rows.map((row, index) => {
+          const isCorrect =
+            statistics.kind === "selected" &&
+            (question.correctIndices ?? [question.correctIndex]).includes(index);
+
+          return (
+            <li
+              className={`${styles.statisticsRow}${isCorrect ? ` ${styles.statisticsRowCorrect}` : ""}`}
+              key={`${index}-${row.label}`}
+            >
+              <span className={styles.statisticsLabel}>
+                <span>{row.label}</span>
+                {isCorrect && <span className={styles.statisticsCorrectLabel}>正解</span>}
+              </span>
+              <span className={styles.statisticsBarTrack} aria-hidden="true">
+                <span
+                  className={styles.statisticsBar}
+                  style={{ width: `${(row.count / maxCount) * 100}%` }}
+                />
+              </span>
+              <span className={styles.statisticsCount}>{row.count} 人</span>
+            </li>
+          );
+        })}
       </ol>
     </section>
   );

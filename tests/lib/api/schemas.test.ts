@@ -11,7 +11,7 @@ const owner = { id: 7, name: "参加者" };
 const assisted = { id: 18, name: "代理回答者" };
 
 const questions = () =>
-  [1, 2, 3, 4, 5, 6, 7].map((id) => ({
+  [3, 7, 6, 4, 2, 1, 5].map((id) => ({
     id,
     question: `Question ${id}`,
     choices: ["A", "B", "C", "D"],
@@ -124,8 +124,8 @@ describe("publicQuizQuestionSchema", () => {
 
 describe("answerBootstrapSchema", () => {
   it.each([
-    ["duplicate IDs", [1, 1, 3, 4, 5, 6, 7]],
-    ["out-of-order IDs", [2, 1, 3, 4, 5, 6, 7]],
+    ["duplicate IDs", [3, 3, 6, 4, 2, 1, 5]],
+    ["an ID outside the exam set", [3, 7, 6, 4, 2, 1, 8]],
   ])("rejects questions with %s", (_label, ids) => {
     const invalidQuestions = ids.map((id) => ({
       id,
@@ -230,8 +230,8 @@ describe("answerBootstrapSchema", () => {
   });
 
   it.each([
-    ["duplicate", [1, 2, 3, 4, 4]],
-    ["out-of-order", [1, 3, 2, 4, 5]],
+    ["duplicate", [3, 7, 6, 4, 2, 2, 5]],
+    ["outside the exam set", [3, 7, 6, 4, 2, 1, 8]],
   ])("rejects %s bootstrap question IDs", (_label, ids) => {
     const invalidQuestions = questions().map((question, index) => ({
       ...question,

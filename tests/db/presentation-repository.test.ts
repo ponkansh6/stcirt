@@ -387,7 +387,7 @@ async function completeConcurrentQ5Assessment(submissionId: string, revision: nu
     .set({
       revision,
       answerText: JSON.stringify({ a: "Q5 answer", b: "Q5 answer" }),
-      questionVersion: "hong-kong-trip-a-b-v5",
+      questionVersion: "hong-kong-trip-a-b-v6",
       state: "graded",
       rawScore: 9,
       normalizedScore: 1,
@@ -475,7 +475,7 @@ describe("presentation repository", () => {
       {
         id: 5,
         key: "it-literacy-005",
-        questionVersion: "hong-kong-trip-a-b-v5",
+        questionVersion: "hong-kong-trip-a-b-v6",
         question: "Question 5",
         choices: [],
         correctIndex: 0,
@@ -500,9 +500,9 @@ describe("presentation repository", () => {
         key: `it-literacy-00${id}`,
         questionVersion:
           id === 5
-            ? "hong-kong-trip-a-b-v5"
+            ? "hong-kong-trip-a-b-v6"
             : id === 6
-              ? "tamami-university-friends-local-curry-v1"
+              ? "tamami-university-friends-local-curry-v2"
               : `nagano-00${id}-v1`,
         question: `Current question ${id}`,
         choices: id === 5 ? [] : [`Correct ${id}`, `Wrong ${id}`],
@@ -519,11 +519,11 @@ describe("presentation repository", () => {
         key: `it-literacy-00${id}`,
         questionVersion:
           id === 5
-            ? "hong-kong-trip-a-b-v5"
+            ? "hong-kong-trip-a-b-v6"
             : id === 6
-              ? "tamami-university-friends-local-curry-v1"
+              ? "tamami-university-friends-local-curry-v2"
               : id === 7
-                ? "shunki-high-school-microwave-power-v1"
+                ? "shunki-high-school-microwave-power-v2"
                 : `nagano-00${id}-v1`,
         question: `Current question ${id}`,
         choices: id === 5 ? [] : [`Correct ${id}`, `Wrong ${id}`],
@@ -537,7 +537,7 @@ describe("presentation repository", () => {
     await testDb.db.insert(schema.examQuestions).values({
       id: 5,
       key: "it-literacy-005",
-      questionVersion: "hong-kong-trip-a-b-v5",
+      questionVersion: "hong-kong-trip-a-b-v6",
       question: "Question 5",
       choices: [],
       correctIndex: 0,
@@ -2670,7 +2670,7 @@ describe("presentation repository", () => {
       .where(eq(schema.presentationEntries.participantId, participantId));
     let projection = await getPublicPresentation();
     if (projection.state !== "first") throw new Error("Expected first-rank projection");
-    expect(projection.winners[0]?.questionResults[1]).toMatchObject({
+    expect(projection.winners[0]?.questionResults[3]).toMatchObject({
       answer: { kind: "selected", value: null },
       correctness: "unavailable",
     });
@@ -2685,7 +2685,7 @@ describe("presentation repository", () => {
       .where(eq(schema.presentationQuestions.sourceQuestionId, 2));
     projection = await getPublicPresentation();
     if (projection.state !== "first") throw new Error("Expected first-rank projection");
-    expect(projection.winners[0]?.questionResults[1]).toMatchObject({
+    expect(projection.winners[0]?.questionResults[3]).toMatchObject({
       answer: { kind: "selected", value: "B1、E1" },
       correctness: "unavailable",
     });
@@ -2917,14 +2917,14 @@ describe("presentation repository", () => {
         id: "partial-question-set",
         participantId: partialQuestionsParticipant,
         questionIds: [1],
-        questionVersions: { "1": "nagano-001-v1", "5": "hong-kong-trip-a-b-v5" },
+        questionVersions: { "1": "nagano-001-v1", "5": "hong-kong-trip-a-b-v6" },
         revision: 1,
       },
       {
         id: "partial-answer-set",
         participantId: partialAnswersParticipant,
         questionIds: [1, 5],
-        questionVersions: { "1": "nagano-001-v1", "5": "hong-kong-trip-a-b-v5" },
+        questionVersions: { "1": "nagano-001-v1", "5": "hong-kong-trip-a-b-v6" },
         revision: 1,
       },
     ]);
@@ -2958,7 +2958,7 @@ describe("presentation repository", () => {
         questionId: 5,
         revision: 1,
         answerText: JSON.stringify({ a: "Q5 partial", b: "Q5 partial" }),
-        questionVersion: "hong-kong-trip-a-b-v5",
+        questionVersion: "hong-kong-trip-a-b-v6",
         state: "graded" as const,
         rawScore: 0,
         normalizedScore: 0,
@@ -3135,8 +3135,8 @@ describe("presentation repository", () => {
       "2": "nagano-002-v1",
       "3": "nagano-003-v1",
       "4": "nagano-004-v1",
-      "5": "hong-kong-trip-a-b-v5",
-      "6": "tamami-university-friends-local-curry-v1",
+      "5": "hong-kong-trip-a-b-v6",
+      "6": "tamami-university-friends-local-curry-v2",
     };
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
@@ -3164,7 +3164,7 @@ describe("presentation repository", () => {
       questionId: 5,
       revision: 1,
       answerText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
-      questionVersion: "hong-kong-trip-a-b-v5",
+      questionVersion: "hong-kong-trip-a-b-v6",
       state: "graded",
       rawScore: 4.5,
       normalizedScore: 0.5,
@@ -3174,7 +3174,7 @@ describe("presentation repository", () => {
     await op("aggregate", "current-six-question-aggregate");
 
     await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toMatchObject(
-      [1, 2, 3, 4, 5, 6].map((id) => ({ sourceQuestionId: id })),
+      [3, 6, 4, 2, 1, 5].map((id) => ({ sourceQuestionId: id })),
     );
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
       { participantId: participant, score: 5.5 },
@@ -3241,8 +3241,8 @@ describe("presentation repository", () => {
         "2": "nagano-002-v1",
         "3": "nagano-003-v1",
         "4": "nagano-004-v1",
-        "5": "hong-kong-trip-a-b-v5",
-        "6": "tamami-university-friends-local-curry-v1",
+        "5": "hong-kong-trip-a-b-v6",
+        "6": "tamami-university-friends-local-curry-v2",
       };
       await testDb.db.insert(schema.examAnswerSubmissions).values({
         id: submissionId,
@@ -3305,8 +3305,8 @@ describe("presentation repository", () => {
       "2": "nagano-002-v1",
       "3": "nagano-003-v1",
       "4": "nagano-004-v1",
-      "5": "hong-kong-trip-a-b-v5",
-      "6": "tamami-university-friends-local-curry-v1",
+      "5": "hong-kong-trip-a-b-v6",
+      "6": "tamami-university-friends-local-curry-v2",
     };
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
@@ -3334,7 +3334,7 @@ describe("presentation repository", () => {
       questionId: 5,
       revision: 1,
       answerText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
-      questionVersion: "hong-kong-trip-a-b-v5",
+      questionVersion: "hong-kong-trip-a-b-v6",
       state: "graded",
       rawScore: 4.5,
       normalizedScore: 0.5,
@@ -3715,7 +3715,7 @@ describe("presentation repository", () => {
     const result = await getParticipantResult(participantId);
     expect(result.state).toBe("visible");
     if (result.state !== "visible") throw new Error("Expected participant result to be visible");
-    expect(result.questions.find(({ position }) => position === 1)).toMatchObject({
+    expect(result.questions.find(({ position }) => position === 3)).toMatchObject({
       answer: { kind: "selected", value: "B2、E2", correctness: "correct" },
     });
 
@@ -3738,7 +3738,7 @@ describe("presentation repository", () => {
       await testDb.db
         .update(schema.presentationQuestions)
         .set({ correctIndices })
-        .where(eq(schema.presentationQuestions.position, 1));
+        .where(eq(schema.presentationQuestions.position, 3));
     };
     const expectQ2Answer = async (value: string, correctness: string, message?: string) => {
       const updatedResult = await getParticipantResult(participantId);
@@ -3747,7 +3747,7 @@ describe("presentation repository", () => {
         throw new Error("Expected participant result to be visible");
       }
       expect(
-        updatedResult.questions.find(({ position }) => position === 1),
+        updatedResult.questions.find(({ position }) => position === 3),
         message,
       ).toMatchObject({ answer: { kind: "selected", value, correctness } });
     };
@@ -4343,7 +4343,7 @@ describe("presentation repository", () => {
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 1));
     await testDb.db
       .update(schema.examAnswerSubmissions)
-      .set({ questionIds: [5], questionVersions: { "5": "hong-kong-trip-a-b-v5" } })
+      .set({ questionIds: [5], questionVersions: { "5": "hong-kong-trip-a-b-v6" } })
       .where(eq(schema.examAnswerSubmissions.id, `submission-${participant}-latest`));
     await testDb.db
       .delete(schema.examSubmissionAnswers)
@@ -4405,7 +4405,7 @@ describe("presentation repository", () => {
       .set({
         answerText: JSON.stringify({ a: "pending response", b: "pending response" }),
         state: "pending",
-        questionVersion: "hong-kong-trip-a-b-v5",
+        questionVersion: "hong-kong-trip-a-b-v6",
         rubricVersion: JEV_RUBRIC_VERSION,
       })
       .where(eq(schema.examAnswerAssessments.submissionId, `submission-${participant}-latest`));
@@ -4507,7 +4507,7 @@ describe("presentation repository", () => {
     expect(sessionBefore[0]).toMatchObject({
       snapshotRevision: 1,
       questionVersions: {
-        "5": "hong-kong-trip-a-b-v5",
+        "5": "hong-kong-trip-a-b-v6",
       },
       rubricVersions: {
         "5": JEV_RUBRIC_VERSION,

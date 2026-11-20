@@ -149,7 +149,7 @@ describe("JEV score adapter", () => {
     const [, request] = vi.mocked(fetch).mock.calls[0]!;
     expect(JSON.parse(String(request?.body))).toMatchObject({
       state: {
-        question: "3/2 朝に食べたものは何ですか？",
+        question: "3/1 早朝（6:30）に食べたものは何ですか？",
         user_answer: "あの店で食事をしました",
       },
     });

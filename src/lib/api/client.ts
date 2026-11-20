@@ -35,8 +35,8 @@ const examQuestionsSchema = z
     if (new Set(ids).size !== ids.length) {
       context.addIssue({ code: "custom", message: "Question IDs must be unique" });
     }
-    if (ids.some((id, index) => index > 0 && id <= ids[index - 1]!)) {
-      context.addIssue({ code: "custom", message: "Questions must be ordered by ID" });
+    if (ids.some((id) => id > EXAM_QUESTION_COUNT)) {
+      context.addIssue({ code: "custom", message: "Question ID is outside the exam set" });
     }
   });
 
