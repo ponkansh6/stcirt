@@ -56,10 +56,15 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
       targetParticipantId: targetId,
     });
     await testDb.db.insert(schema.examQuestions).values(
-      [1, 2, 3, 4, 5].map((id) => ({
+      [1, 2, 3, 4, 5, 6, 7].map((id) => ({
         id,
         key: `it-literacy-${String(id).padStart(3, "0")}`,
-        questionVersion: id === 5 ? "hong-kong-trip-a-b-v5" : `test-v${id}`,
+        questionVersion:
+          id === 5
+            ? "hong-kong-trip-a-b-v5"
+            : id === 6
+              ? "tamami-university-friends-local-curry-v1"
+              : `test-v${id}`,
         question: `Question ${id}`,
         choices: id === 5 ? [] : ["A", "B", "C", "D"],
         correctIndex: 0,
@@ -81,6 +86,8 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         questionId: 5,
         freeTextParts: { a: "  新鮮なロブスター  ", b: " フレンチトースト " },
       },
+      { questionId: 6, selectedIndex: 0 },
+      { questionId: 7, selectedIndex: 0 },
     ];
     const response = await POST(
       new Request("http://localhost/api/answers/batch?scope=assisted", {
@@ -113,7 +120,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     });
     const [submission] = await testDb.db.select().from(schema.examAnswerSubmissions);
     expect(submission).toMatchObject({ id: submissionId, participantId: targetId, revision: 1 });
-    expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(5);
+    expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(7);
     const [assessment] = await testDb.db.select().from(schema.examAnswerAssessments);
     expect(assessment).toMatchObject({
       submissionId,
@@ -129,6 +136,8 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
     const answers = [
       ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
       { questionId: 5, freeTextParts: { a: "新鮮なロブスター", b: "フレンチトースト" } },
+      { questionId: 6, selectedIndex: 0 },
+      { questionId: 7, selectedIndex: 0 },
     ];
     await testDb.db
       .insert(schema.participantResultSettings)
@@ -169,6 +178,8 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         questionId: 5,
         freeTextParts: { a: "新鮮なロブスター", b: "フレンチトースト" },
       },
+      { questionId: 6, selectedIndex: 0 },
+      { questionId: 7, selectedIndex: 0 },
     ];
 
     // Use registered source versions so both explicit snapshots are aggregatable.
@@ -178,6 +189,10 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
         .set({ questionVersion: `nagano-00${questionId}-v1` })
         .where(eq(schema.examQuestions.id, questionId));
     }
+    await testDb.db
+      .update(schema.examQuestions)
+      .set({ questionVersion: "tamami-university-friends-local-curry-v1" })
+      .where(eq(schema.examQuestions.id, 6));
     await testDb.db.insert(schema.presentationSessions).values({
       id: 1,
       state: "not_started",
@@ -234,7 +249,7 @@ describe("POST /api/answers/batch with SQLite persistence", () => {
       .select()
       .from(schema.examSubmissionAnswers)
       .where(eq(schema.examSubmissionAnswers.submissionId, submissionId));
-    expect(savedAnswers).toHaveLength(5);
+    expect(savedAnswers).toHaveLength(7);
     const [pendingAssessment] = await testDb.db
       .select()
       .from(schema.examAnswerAssessments)

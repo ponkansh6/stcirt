@@ -76,7 +76,7 @@ const headers = {
   Origin: "http://localhost",
   Cookie: "stcirt_participant_session=valid-session",
 };
-const answers = [1, 2, 3, 4, 5].map((questionId) => ({ questionId, selectedIndex: 0 }));
+const answers = [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({ questionId, selectedIndex: 0 }));
 
 beforeEach(() => {
   vi.clearAllMocks();

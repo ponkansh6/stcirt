@@ -45,9 +45,9 @@ async function insertQuestion() {
   return q!.id;
 }
 
-async function insertFiveQuestions() {
+async function insertSevenQuestions() {
   await dbRef.db!.insert(schema.examQuestions).values(
-    Array.from({ length: 5 }, (_, index) => ({
+    Array.from({ length: 7 }, (_, index) => ({
       id: index + 1,
       key: `test-${index + 1}`,
       question: `Q${index + 1}?`,
@@ -56,7 +56,7 @@ async function insertFiveQuestions() {
       explanation: null,
     })),
   );
-  return Array.from({ length: 5 }, (_, index) => index + 1);
+  return Array.from({ length: 7 }, (_, index) => index + 1);
 }
 
 function selectedAnswers(questionIds: number[]) {
@@ -298,7 +298,7 @@ describe("answer-repository", () => {
     });
 
     it("restores free-text answers without a selected choice", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const questionId = questionIds[4]!;
       await dbRef
         .db!.update(schema.examQuestions)
@@ -333,7 +333,7 @@ describe("answer-repository", () => {
     });
 
     it("restores selected answers with a null free-text value", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const questionId = questionIds[2]!;
       const participantId = await insertParticipant();
       await insertSubmission({ id: "selected-latest", participantId, questionIds });
@@ -370,7 +370,7 @@ describe("answer-repository", () => {
         freeText: "answer",
       },
     ])("rejects selected answers $label", async ({ selectedIndex, answerKind, freeText }) => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const invalidQuestionId = questionIds[1]!;
       const participantId = await insertParticipant();
       await insertSubmission({ id: "invalid-selected-shape-latest", participantId, questionIds });
@@ -402,7 +402,7 @@ describe("answer-repository", () => {
         answer: { selectedIndex: 0, freeText: "answer", answerKind: "selected" },
       },
     ])("rejects boundary raw rows containing $label", async ({ questionId, answer }) => {
-      const questionIds = [1, 2, 3, 4, 5];
+      const questionIds = [1, 2, 3, 4, 5, 6, 7];
       const rows = questionIds.map((id) => ({
         questionId: id,
         selectedIndex: id === questionId ? answer.selectedIndex : 0,
@@ -418,8 +418,8 @@ describe("answer-repository", () => {
       });
     });
 
-    it("confirms a complete five-question restore without selecting question text", async () => {
-      const questionIds = await insertFiveQuestions();
+    it("confirms a complete seven-question restore without selecting question text", async () => {
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant();
       await insertSubmission({ id: "complete-latest", participantId, questionIds });
       await dbRef.db!.insert(schema.examSubmissionAnswers).values(
@@ -443,11 +443,11 @@ describe("answer-repository", () => {
           selectionMode: "single",
         })),
       });
-      expect(latest?.answers).toHaveLength(5);
+      expect(latest?.answers).toHaveLength(7);
     });
 
     it("rejects restoration when a saved question version differs from the current version", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       await dbRef
         .db!.update(schema.examQuestions)
         .set({ questionVersion: "india-uber-multi-v2" })
@@ -476,7 +476,7 @@ describe("answer-repository", () => {
     });
 
     it("restores answers when the saved question versions match the current versions", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       await dbRef
         .db!.update(schema.examQuestions)
         .set({ questionVersion: "india-uber-multi-v2" })
@@ -507,7 +507,7 @@ describe("answer-repository", () => {
     });
 
     it("keeps restoring historical answers when the saved question version is missing", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       await dbRef
         .db!.update(schema.examQuestions)
         .set({ questionVersion: "india-uber-multi-v2" })
@@ -537,7 +537,7 @@ describe("answer-repository", () => {
     });
 
     it("restores two selections from the current eight-choice multiple question", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       await dbRef
         .db!.update(schema.examQuestions)
         .set({
@@ -576,7 +576,7 @@ describe("answer-repository", () => {
     });
 
     it("rejects duplicate raw rows returned by the repository transaction", async () => {
-      const questionIds = [1, 2, 3, 4, 5];
+      const questionIds = [1, 2, 3, 4, 5, 6, 7];
       const duplicateRows = [1, 1, 2, 3, 4].map((questionId) => ({
         questionId,
         selectedIndex: 0,
@@ -601,20 +601,20 @@ describe("answer-repository", () => {
       },
       {
         label: "missing raw answer rows",
-        questionIds: [1, 2, 3, 4, 5],
+        questionIds: [1, 2, 3, 4, 5, 6, 7],
         answerCount: 4,
         selectedIndex: 2,
       },
       {
         label: "an out-of-range saved selection",
-        questionIds: [1, 2, 3, 4, 5],
+        questionIds: [1, 2, 3, 4, 5, 6, 7],
         answerCount: 5,
         selectedIndex: 99,
       },
     ])(
       "rejects $label in the server restore guarantee",
       async ({ questionIds, answerCount, selectedIndex }) => {
-        const currentQuestionIds = await insertFiveQuestions();
+        const currentQuestionIds = await insertSevenQuestions();
         const participantId = await insertParticipant();
         await insertSubmission({ id: "invalid-latest", participantId, questionIds });
         await dbRef.db!.insert(schema.examSubmissionAnswers).values(
@@ -635,7 +635,7 @@ describe("answer-repository", () => {
     );
 
     it("rejects saved answer kinds that do not match the current question type", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       await dbRef
         .db!.update(schema.examQuestions)
         .set({ key: "it-literacy-005", choices: [] })
@@ -659,7 +659,7 @@ describe("answer-repository", () => {
     });
 
     it("rejects a non-array saved question ID payload", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant();
       await insertSubmission({ id: "non-array-latest", participantId, questionIds });
       await dbRef
@@ -682,18 +682,18 @@ describe("answer-repository", () => {
       expect(latest?.answers).toEqual([]);
     });
 
-    it("rejects an answer row that does not belong to the current five-question projection", async () => {
-      const questionIds = await insertFiveQuestions();
+    it("rejects an answer row that does not belong to the current seven-question projection", async () => {
+      const questionIds = await insertSevenQuestions();
       await dbRef.db!.insert(schema.examQuestions).values({
-        id: 6,
-        key: "test-6",
-        question: "Q6?",
+        id: 8,
+        key: "test-8",
+        question: "Q8?",
         choices: ["A", "B", "C", "D"],
         correctIndex: 0,
         explanation: null,
       });
       const participantId = await insertParticipant();
-      const savedQuestionIds = [...questionIds.slice(0, 4), 6];
+      const savedQuestionIds = [...questionIds.slice(0, 7), 8];
       await insertSubmission({
         id: "outside-projection-latest",
         participantId,
@@ -716,11 +716,11 @@ describe("answer-repository", () => {
     });
 
     it("rejects a unique stored answer ID outside the saved question set", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       await dbRef.db!.insert(schema.examQuestions).values({
-        id: 6,
-        key: "test-6",
-        question: "Q6?",
+        id: 8,
+        key: "test-8",
+        question: "Q8?",
         choices: ["A", "B", "C", "D"],
         correctIndex: 0,
         explanation: null,
@@ -728,7 +728,7 @@ describe("answer-repository", () => {
       const participantId = await insertParticipant();
       await insertSubmission({ id: "foreign-answer-latest", participantId, questionIds });
       await dbRef.db!.insert(schema.examSubmissionAnswers).values(
-        [...questionIds.slice(0, 4), 6].map((questionId) => ({
+        [...questionIds, 8].map((questionId) => ({
           submissionId: "foreign-answer-latest",
           questionId,
           selectedIndex: 0,
@@ -744,8 +744,8 @@ describe("answer-repository", () => {
     });
 
     it("rejects a duplicate-free saved question set in the wrong order", async () => {
-      await insertFiveQuestions();
-      const questionIds = [2, 1, 3, 4, 5];
+      await insertSevenQuestions();
+      const questionIds = [2, 1, 3, 4, 5, 6];
       const participantId = await insertParticipant();
       await insertSubmission({ id: "reordered-latest", participantId, questionIds });
       await dbRef.db!.insert(schema.examSubmissionAnswers).values(
@@ -765,7 +765,7 @@ describe("answer-repository", () => {
     });
 
     it("restores a complete current multi-select answer", async () => {
-      const questionIds = [1, 2, 3, 4, 5];
+      const questionIds = [1, 2, 3, 4, 5, 6, 7];
       const rows = questionIds.map((questionId) => ({
         questionId,
         selectedIndex: questionId === 2 || questionId === 5 ? null : 0,
@@ -798,7 +798,7 @@ describe("answer-repository", () => {
       { label: "too few choices", choices: ["A"] },
       { label: "too many choices", choices: ["A", "B", "C", "D", "E"] },
     ])("rejects selected questions with $label", async ({ choices }) => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       await dbRef
         .db!.update(schema.examQuestions)
         .set({ choices })
@@ -825,7 +825,7 @@ describe("answer-repository", () => {
       { label: "blank text", freeText: "   " },
       { label: "text over the limit", freeText: "x".repeat(1001) },
     ])("rejects free-text answers with $label", async ({ freeText }) => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const questionId = questionIds[4]!;
       await dbRef
         .db!.update(schema.examQuestions)
@@ -850,7 +850,7 @@ describe("answer-repository", () => {
     });
 
     it("rejects a free-text raw row with a missing body", async () => {
-      const questionIds = [1, 2, 3, 4, 5];
+      const questionIds = [1, 2, 3, 4, 5, 6, 7];
       const rows = questionIds.map((questionId) => ({
         questionId,
         selectedIndex: questionId === 5 ? null : 0,
@@ -871,7 +871,7 @@ describe("answer-repository", () => {
       ["A part over the limit", JSON.stringify({ a: "x".repeat(1001), b: "シーフード" })],
       ["B part over the limit", JSON.stringify({ a: "朝飲茶", b: "x".repeat(1001) })],
     ])("rejects Q5 restoration with %s", async (_label, freeText) => {
-      const questionIds = [1, 2, 3, 4, 5];
+      const questionIds = [1, 2, 3, 4, 5, 6, 7];
       const rows = questionIds.map((questionId) => ({
         questionId,
         selectedIndex: questionId === 5 ? null : 0,
@@ -889,7 +889,7 @@ describe("answer-repository", () => {
       { label: "has a legacy answer kind", answerKind: "legacy", selectedIndex: 0 },
       { label: "also has a selected index", answerKind: "freeText", selectedIndex: 0 },
     ])("rejects Q5 parts when the row $label", async ({ answerKind, selectedIndex }) => {
-      const questionIds = [1, 2, 3, 4, 5];
+      const questionIds = [1, 2, 3, 4, 5, 6, 7];
       const rows = questionIds.map((questionId) => ({
         questionId,
         selectedIndex: questionId === 5 ? selectedIndex : 0,
@@ -902,8 +902,8 @@ describe("answer-repository", () => {
       ).resolves.toMatchObject({ answers: [], restoreIntegrity: { status: "invalid" } });
     });
 
-    it("rejects a legacy answer for the revised final free-text question", async () => {
-      const questionIds = await insertFiveQuestions();
+    it("restores a legacy answer for the revised final free-text question", async () => {
+      const questionIds = await insertSevenQuestions();
       const questionId = questionIds[4]!;
       await dbRef
         .db!.update(schema.examQuestions)
@@ -923,8 +923,12 @@ describe("answer-repository", () => {
 
       const latest = await getLatestAnswerSubmission(participantId);
 
-      expect(latest?.restoreIntegrity).toEqual({ status: "invalid" });
-      expect(latest?.answers).toEqual([]);
+      expect(latest?.restoreIntegrity).toMatchObject({ status: "complete" });
+      expect(latest?.answers[4]).toMatchObject({
+        questionId: 5,
+        answerKind: "legacy",
+        selectedIndex: 2,
+      });
     });
 
     it.each([
@@ -972,7 +976,7 @@ describe("answer-repository", () => {
     ])(
       "rejects legacy answers $label",
       async ({ freeTextQuestionId, legacyQuestionId, selectedIndex, freeTextValue }) => {
-        const questionIds = [1, 2, 3, 4, 5];
+        const questionIds = [1, 2, 3, 4, 5, 6, 7];
         const rows = questionIds.map((questionId) => {
           if (questionId === legacyQuestionId) {
             return {
@@ -1097,7 +1101,7 @@ describe("answer-repository", () => {
     });
 
     it("preserves invalid Q5 free-text JSON when reading an older submission", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const questionId = questionIds[4]!;
       await dbRef
         .db!.update(schema.examQuestions)
@@ -1128,7 +1132,7 @@ describe("answer-repository", () => {
 
   describe("saveAnswerSubmission ownership checks", () => {
     it("rejects a submission owned by another participant", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const ownerId = await insertParticipant("existing-owner");
       const callerId = await insertParticipant("existing-caller");
       await insertSubmission({ id: "existing-owned", participantId: ownerId, questionIds });
@@ -1145,7 +1149,7 @@ describe("answer-repository", () => {
     });
 
     it("rejects an idempotent operation when its owner row is missing", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant("missing-operation-owner");
       await insertSubmission({ id: "orphaned-operation-submission", participantId, questionIds });
       await dbRef.db!.insert(schema.examSubmissionOperations).values({
@@ -1187,7 +1191,7 @@ describe("answer-repository", () => {
       }
     });
 
-    it("rejects a new submission when fewer than five exam questions exist", async () => {
+    it("rejects a new submission when fewer than seven exam questions exist", async () => {
       const questionId = await insertQuestion();
       const participantId = await insertParticipant("incomplete-exam");
 
@@ -1209,7 +1213,7 @@ describe("answer-repository", () => {
 
   describe("saveAnswerSubmission question versions", () => {
     it("preserves an unversioned Q5 assessment on insertion and revision", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const questionId = questionIds[4]!;
       await dbRef
         .db!.update(schema.examQuestions)
@@ -1219,6 +1223,7 @@ describe("answer-repository", () => {
       const answers = [
         ...selectedAnswers(questionIds.slice(0, 4)),
         { questionId, freeTextParts: { a: "回答", b: "回答" } },
+        ...selectedAnswers(questionIds.slice(5)),
       ];
 
       await saveAnswerSubmission({
@@ -1248,6 +1253,7 @@ describe("answer-repository", () => {
         answers: [
           ...answers.slice(0, 4),
           { questionId, freeTextParts: { a: "回答を更新", b: "回答を更新" } },
+          ...selectedAnswers(questionIds.slice(5)),
         ],
       });
 
@@ -1399,7 +1405,7 @@ describe("answer-repository", () => {
     }
 
     it("bounds equal-jitter delays per retry-helper invocation and returns 503 after six attempts", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const cases = [
         { label: "lower endpoint", random: () => 0, delays: [13, 25, 50, 100, 200] },
         {
@@ -1453,7 +1459,7 @@ describe("answer-repository", () => {
     });
 
     it("rethrows an unclassified SQLite error without starting recovery", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const failure = Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR" });
       const database = dbRef.db!;
       const transaction = vi.spyOn(database, "transaction");
@@ -1475,7 +1481,7 @@ describe("answer-repository", () => {
     });
 
     it("reports an owner mismatch when recovering an existing operation", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const ownerId = await insertParticipant("operation-owner");
       const otherId = await insertParticipant("operation-caller");
       await insertSubmission({
@@ -1501,7 +1507,7 @@ describe("answer-repository", () => {
     });
 
     it("reports an owner mismatch when recovering a submission without an operation", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const ownerId = await insertParticipant("submission-owner");
       const otherId = await insertParticipant("submission-caller");
       await insertSubmission({
@@ -1526,7 +1532,7 @@ describe("answer-repository", () => {
     });
 
     it("reports an owner mismatch when an operation-less submission changes owner before recovery", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant("owner-before-recovery");
       const newOwnerId = await insertParticipant("owner-after-preflight");
       const submissionId = "owner-changed-before-recovery";
@@ -1561,7 +1567,7 @@ describe("answer-repository", () => {
     });
 
     it("reports a revision conflict when recovery sees a newer submission", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant("revision-owner");
       await insertSubmission({
         id: "newer-submission",
@@ -1586,7 +1592,7 @@ describe("answer-repository", () => {
     });
 
     it("returns the committed result when recovery finds the same operation", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant("committed-operation-owner");
       const input = {
         submissionId: "committed-operation-submission",
@@ -1603,7 +1609,7 @@ describe("answer-repository", () => {
     });
 
     it("retries a busy recovery read and returns the already committed operation", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant("busy-recovery-committed-owner");
       const input = {
         submissionId: "busy-recovery-committed-submission",
@@ -1652,7 +1658,7 @@ describe("answer-repository", () => {
     });
 
     it("maps a persistently busy recovery read to 503 and allows the same ID to retry once", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant("busy-recovery-retry-owner");
       const input = {
         submissionId: "busy-recovery-retry-submission",
@@ -1708,11 +1714,11 @@ describe("answer-repository", () => {
           .select()
           .from(schema.examSubmissionAnswers)
           .where(eq(schema.examSubmissionAnswers.submissionId, input.submissionId)),
-      ).toHaveLength(5);
+      ).toHaveLength(7);
     });
 
     it("preserves non-busy recovery failures as server errors", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const busy = Object.assign(new Error("database is busy"), { code: "SQLITE_BUSY" });
       const ioError = Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR" });
       let calls = 0;
@@ -1741,7 +1747,7 @@ describe("answer-repository", () => {
     });
 
     it("rejects a different payload in the operation replay preflight", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant("payload-owner");
       const input = {
         submissionId: "payload-submission",
@@ -1763,7 +1769,7 @@ describe("answer-repository", () => {
     });
 
     it("classifies exhausted write lock retries when recovery finds the same revision", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant("unchanged-revision-owner");
       await insertSubmission({
         id: "unchanged-revision-submission",
@@ -1787,7 +1793,7 @@ describe("answer-repository", () => {
     });
 
     it("reports a revision conflict when compare-and-swap updates no rows", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant("cas-conflict-owner");
       await insertSubmission({ id: "cas-conflict-submission", participantId, questionIds });
       const transaction = failRevisionCompareAndSwap(true);
@@ -1807,7 +1813,7 @@ describe("answer-repository", () => {
     });
 
     it("reports not found when the submission disappears during compare-and-swap", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const participantId = await insertParticipant("cas-missing-owner");
       await insertSubmission({ id: "cas-missing-submission", participantId, questionIds });
       const transaction = failRevisionCompareAndSwap(false);
@@ -1827,7 +1833,7 @@ describe("answer-repository", () => {
     });
 
     it("recognizes nested busy conflicts after skipping null, primitive, and visited values", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const nestedConflict = Object.assign(new Error("locked"), { code: "SQLITE_BUSY" });
       const wrapper: { cause?: unknown; originalError?: unknown; error?: unknown } = {};
       wrapper.cause = wrapper;
@@ -1852,7 +1858,7 @@ describe("answer-repository", () => {
     });
 
     it("rethrows a recognized SQLite unique conflict when recovery finds no submission", async () => {
-      const questionIds = await insertFiveQuestions();
+      const questionIds = await insertSevenQuestions();
       const conflict = Object.assign(new Error("unique constraint failed: table.key"), {
         code: "SQLITE_CONSTRAINT",
       });

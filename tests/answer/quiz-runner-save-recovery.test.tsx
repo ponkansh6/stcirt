@@ -7,7 +7,7 @@ const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/answer" }));
 
-const quizzes = Array.from({ length: 5 }, (_, index) => ({
+const quizzes = Array.from({ length: 6 }, (_, index) => ({
   question: {
     id: index + 1,
     question: `Question ${index + 1}?`,
@@ -78,7 +78,7 @@ describe("QuizRunner batch answer sheet", () => {
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering", message: "temporary save failure", retryRequired: true },
-        { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, answeredCount: 5, saveAnswers },
+        { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }, answeredCount: 6, saveAnswers },
       ),
     );
     render(<RunnerPage />);
@@ -103,8 +103,8 @@ describe("QuizRunner batch answer sheet", () => {
       session(
         { kind: "answering", message: "save failed" },
         {
-          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-          answeredCount: 5,
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+          answeredCount: 6,
           select,
           saveAnswers,
         },
@@ -117,7 +117,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(screen.getAllByRole("radio").every((radio) => !radio.hasAttribute("disabled"))).toBe(
       true,
     );
-    fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+    fireEvent.click(screen.getByRole("button", { name: "7問の回答を確定する" }));
     expect(saveAnswers).toHaveBeenCalledOnce();
   });
 
@@ -125,7 +125,7 @@ describe("QuizRunner batch answer sheet", () => {
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "refreshing" },
-        { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, answeredCount: 5 },
+        { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }, answeredCount: 6 },
       ),
     );
     render(<RunnerPage />);
@@ -137,14 +137,14 @@ describe("QuizRunner batch answer sheet", () => {
   it("keeps a new-submission draft through 401 reauthentication and waits for explicit save", async () => {
     const login = vi.fn(async () => {});
     const saveAnswers = vi.fn();
-    const selections = { 1: 1, 2: 0, 3: 0, 4: 0, 5: 0 };
+    const selections = { 1: 1, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering", retryRequired: true },
         {
           access: { kind: "reauthentication", participant: { id: 7, name: "参加者" } },
           selections,
-          answeredCount: 5,
+          answeredCount: 6,
           login,
           saveAnswers,
         },
@@ -166,7 +166,7 @@ describe("QuizRunner batch answer sheet", () => {
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering", retryRequired: true },
-        { selections, answeredCount: 5, login, saveAnswers },
+        { selections, answeredCount: 6, login, saveAnswers },
       ),
     );
     view.rerender(<RunnerPage />);

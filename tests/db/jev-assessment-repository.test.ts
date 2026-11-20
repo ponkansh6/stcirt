@@ -46,6 +46,8 @@ describe("durable free-response assessment and restoration", () => {
   const validAnswers = [
     ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
     { questionId: 5, freeTextParts: { a: "  ローカルな朝食  ", b: "  店で食事  " } },
+    { questionId: 6, selectedIndex: 0 },
+    { questionId: 7, selectedIndex: 0 },
   ];
 
   beforeEach(async () => {
@@ -65,10 +67,17 @@ describe("durable free-response assessment and restoration", () => {
       .returning({ id: schema.examParticipants.id });
     participantId = participant!.id;
     await testDb.db.insert(schema.examQuestions).values(
-      [1, 2, 3, 4, 5].map((id) => ({
+      [1, 2, 3, 4, 5, 6, 7].map((id) => ({
         id,
         key: id === 5 ? "it-literacy-005" : `it-literacy-00${id}`,
-        questionVersion: id === 5 ? questionVersion : `nagano-00${id}-v1`,
+        questionVersion:
+          id === 5
+            ? questionVersion
+            : id === 6
+              ? "tamami-university-friends-local-curry-v1"
+              : id === 7
+                ? "shunki-high-school-microwave-power-v1"
+                : `nagano-00${id}-v1`,
         question: `Q${id}`,
         choices: id === 5 ? [] : ["A", "B", "C", "D"],
         correctIndex: 0,
@@ -89,7 +98,12 @@ describe("durable free-response assessment and restoration", () => {
         operationId,
         expectedRevision: 0,
         participantId,
-        answers: [...validAnswers.slice(0, 4), { questionId: 5, selectedIndex: 0 }],
+        answers: [
+          ...validAnswers.slice(0, 4),
+          { questionId: 5, selectedIndex: 0 },
+          validAnswers[5]!,
+          validAnswers[6]!,
+        ],
       }),
     ).rejects.toBeInstanceOf(BatchSubmissionError);
     await expect(
@@ -130,6 +144,8 @@ describe("durable free-response assessment and restoration", () => {
           "3": "nagano-003-v1",
           "4": "nagano-004-v1",
           "5": questionVersion,
+          "6": "tamami-university-friends-local-curry-v1",
+          "7": "shunki-high-school-microwave-power-v1",
         },
       },
     ]);
@@ -197,6 +213,8 @@ describe("durable free-response assessment and restoration", () => {
       answers: [
         ...validAnswers.slice(0, 4),
         { questionId: 5, freeTextParts: { a: "Revised answer", b: "Revised answer" } },
+        validAnswers[5]!,
+        validAnswers[6]!,
       ],
     });
     const [revised] = await testDb.db.select().from(schema.examAnswerAssessments);
@@ -399,6 +417,8 @@ describe("durable free-response assessment and restoration", () => {
       answers: [
         ...validAnswers.slice(0, 4),
         { questionId: 5, freeTextParts: { a: "ロブスター", b: "レストランで食事" } },
+        validAnswers[5]!,
+        validAnswers[6]!,
       ],
     });
     vi.mocked(gradeFreeResponseParts).mockResolvedValueOnce({
@@ -421,6 +441,8 @@ describe("durable free-response assessment and restoration", () => {
       answers: [
         ...validAnswers.slice(0, 4),
         { questionId: 5, freeTextParts: { a: "ロブスター", b: "フレンチトースト" } },
+        validAnswers[5]!,
+        validAnswers[6]!,
       ],
     });
     vi.mocked(gradeFreeResponseParts).mockResolvedValueOnce({
@@ -837,6 +859,8 @@ describe("durable free-response assessment and restoration", () => {
       answers: [
         ...validAnswers.slice(0, 4),
         { questionId: 5, freeTextParts: { a: "Revised answer", b: "Revised answer" } },
+        validAnswers[5]!,
+        validAnswers[6]!,
       ],
     });
     releaseGrade();

@@ -246,6 +246,20 @@
       "when": 1794718408204,
       "tag": "0034_tennis_team_meal_q4_wording",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1794718408205,
+      "tag": "0035_university_friends_curry_q6",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1794718408206,
+      "tag": "0036_high_school_microwave_power_q7",
+      "breakpoints": true
     }
   ]
 }

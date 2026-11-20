@@ -21,6 +21,7 @@ import styles from "./quiz-runner.module.css";
 import { ApiError } from "@/lib/api/client";
 import { HeaderPortal } from "./header-portal";
 import { resolveAnswererDisplay } from "./answerer-display";
+import { EXAM_QUESTION_COUNT } from "@/lib/constants";
 import { runIfSubmissionAllowed } from "./submission-gate";
 import {
   getQuestionPhoto,
@@ -173,7 +174,7 @@ function deriveAnswerUi({
   if (access.kind === "reauthentication") {
     const isComplete = phase.kind === "complete";
     const message = isComplete
-      ? "全5問の回答は記録されています。回答の修正や代理回答を続けるには再ログインしてください。回答は自動送信されません。"
+      ? `全${EXAM_QUESTION_COUNT}問の回答は記録されています。回答の修正や代理回答を続けるには再ログインしてください。回答は自動送信されません。`
       : phase.kind === "answering"
         ? `${phase.message ? `${phase.message} ` : ""}回答案は保持しています。再ログイン後に内容を確認してから、必要な操作を改めて確定してください。`
         : phase.kind === "owner-return-error"
@@ -265,7 +266,7 @@ function deriveAnswerUi({
   if (surface === "loading") {
     return {
       surface,
-      status: "全5問を準備しています…",
+      status: `全${EXAM_QUESTION_COUNT}問を準備しています…`,
       message: "準備が終わるまでお待ちください。",
       statusRole: "status",
       busy: true,
@@ -276,8 +277,7 @@ function deriveAnswerUi({
     return {
       surface,
       status: "問題が足りません",
-      message:
-        "全5問をそろえられないため、検定を開始できません。問題が5問そろったら、もう一度お試しください。",
+      message: `全${EXAM_QUESTION_COUNT}問をそろえられないため、検定を開始できません。問題が${EXAM_QUESTION_COUNT}問そろったら、もう一度お試しください。`,
       statusRole: "alert",
       busy: false,
       primaryAction: null,
@@ -357,11 +357,14 @@ function deriveAnswerUi({
   }
   return {
     surface,
-    status: unansweredCount > 0 ? `未回答 ${unansweredCount}問` : "全5問に回答しました。",
+    status:
+      unansweredCount > 0
+        ? `未回答 ${unansweredCount}問`
+        : `全${EXAM_QUESTION_COUNT}問に回答しました。`,
     message:
       unansweredCount > 0
         ? "未回答の設問へ移動して回答してください。回答は最後にまとめて確定します。"
-        : "回答内容を確認してから、5問をまとめて確定してください。",
+        : `回答内容を確認してから、${EXAM_QUESTION_COUNT}問をまとめて確定してください。`,
     statusRole: "status",
     busy: false,
     primaryAction: unansweredCount === 0 ? "submit" : null,
@@ -1221,13 +1224,13 @@ export default function QuizRunner() {
               ? "未回答の設問に回答してください"
               : hasSavedAnswers
                 ? "修正内容を確定する"
-                : "5問の回答を確定する";
+                : `${EXAM_QUESTION_COUNT}問の回答を確定する`;
 
   return (
     <>
       <HeaderPortal>
         <nav aria-label="設問へ移動" className={styles.progressNav}>
-          <ol className="grid grid-cols-5 gap-2">
+          <ol className="grid grid-cols-7 gap-2">
             {quizzes.map(({ question }, index) => {
               const current = currentQuestionId === question.id;
               const selectedCount = multiSelections[question.id]?.length ?? 0;
@@ -1313,7 +1316,7 @@ export default function QuizRunner() {
               className="border-l-2 border-answer-accent pl-3 text-sm font-bold tabular-nums"
               aria-live="polite"
             >
-              回答済み {answeredCount}/5
+              回答済み {answeredCount}/{EXAM_QUESTION_COUNT}
             </p>
           </div>
           {answerMode === "assisted" && (
@@ -1383,7 +1386,9 @@ export default function QuizRunner() {
               >
                 <p className={`${styles.questionMeta} mb-2 text-sm font-semibold`}>
                   <span className="text-answer-accent">第{index + 1}問</span>{" "}
-                  <span className="font-medium tracking-normal text-muted">/ 全5問</span>
+                  <span className="font-medium tracking-normal text-muted">
+                    / 全{EXAM_QUESTION_COUNT}問
+                  </span>
                 </p>
                 <h2
                   id={questionTitleId}
@@ -1412,7 +1417,9 @@ export default function QuizRunner() {
                   }`}
                 >
                   <legend className="sr-only">
-                    <span className="sr-only">第{index + 1}問 / 全5問：</span>
+                    <span className="sr-only">
+                      第{index + 1}問 / 全{EXAM_QUESTION_COUNT}問：
+                    </span>
                     {question.question}
                   </legend>
                   {question.answerType === "freeText" ? (
@@ -1637,7 +1644,9 @@ export default function QuizRunner() {
           >
             回答内容を確認してください
           </h2>
-          {unanswered.length === 0 && <p className="mt-3 font-semibold">全5問に回答しました。</p>}
+          {unanswered.length === 0 && (
+            <p className="mt-3 font-semibold">全{EXAM_QUESTION_COUNT}問に回答しました。</p>
+          )}
           {unanswered.length > 0 && (
             <div className="mt-4" role="group" aria-label="未回答の設問">
               <ul className="flex flex-wrap gap-2">

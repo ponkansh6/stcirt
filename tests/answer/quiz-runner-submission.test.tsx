@@ -7,7 +7,7 @@ const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/answer" }));
 
-const quizzes = Array.from({ length: 5 }, (_, index) => ({
+const quizzes = Array.from({ length: 7 }, (_, index) => ({
   question: {
     id: index + 1,
     question: `Question ${index + 1}?`,
@@ -73,15 +73,15 @@ describe("QuizRunner batch answer sheet", () => {
     }
   });
 
-  it("records local choice changes and submits one batch only after all five have a choice", async () => {
+  it("records local choice changes and submits one batch only after all seven have an answer", async () => {
     const select = vi.fn();
     const saveAnswers = vi.fn().mockResolvedValue(undefined);
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering" },
         {
-          selections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0 },
-          answeredCount: 5,
+          selections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0, 6: 0, 7: 1 },
+          answeredCount: 7,
           select,
           saveAnswers,
         },
@@ -90,20 +90,20 @@ describe("QuizRunner batch answer sheet", () => {
     render(<RunnerPage />);
     const progressHeader = screen.getByRole("main").querySelector("header");
     expect(progressHeader).not.toBeNull();
-    expect(within(progressHeader as HTMLElement).getByText("回答済み 5/5")).toBeInTheDocument();
+    expect(within(progressHeader as HTMLElement).getByText("回答済み 7/7")).toBeInTheDocument();
     const finalReview = document.querySelector<HTMLElement>(
       '[aria-labelledby="final-check-title"]',
     );
     expect(finalReview).not.toBeNull();
     expect(
-      within(finalReview as HTMLElement).getByText("全5問に回答しました。"),
+      within(finalReview as HTMLElement).getByText("全7問に回答しました。"),
     ).toBeInTheDocument();
     const radios = screen.getAllByRole("radio");
     expect(radios[0]).toBeChecked();
     fireEvent.click(radios[4]!);
     expect(select).toHaveBeenCalledWith(2, 0);
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+      fireEvent.click(screen.getByRole("button", { name: "7問の回答を確定する" }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -118,8 +118,8 @@ describe("QuizRunner batch answer sheet", () => {
         {
           revision: 0,
           submissionId: null,
-          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-          answeredCount: 5,
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 },
+          answeredCount: 7,
         },
       ),
     );

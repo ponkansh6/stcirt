@@ -48,7 +48,7 @@ describe("question-repository", () => {
 
   afterEach(() => testDb.cleanup());
 
-  it("returns the first five questions in order with only public exam fields", async () => {
+  it("returns the six questions in order with only public exam fields", async () => {
     for (let id = 1; id <= 6; id += 1) {
       await testDb.db.insert(schema.examQuestions).values({
         id,
@@ -65,7 +65,7 @@ describe("question-repository", () => {
       .where(sql`${schema.examQuestions.id} = 2`);
 
     const questions = await getExamQuestions();
-    expect(questions.map(({ id }) => id)).toEqual([1, 2, 3, 4, 5]);
+    expect(questions.map(({ id }) => id)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(questions[1]).toMatchObject({ id: 2, selectionMode: "multiple" });
     expect(questions[4]).toEqual({
       id: 5,

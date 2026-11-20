@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { QuizQuestion } from "@/types/quiz";
+import { EXAM_QUESTION_COUNT } from "@/lib/constants";
 import {
   answerBootstrapSchema,
   answerCompletionSnapshotSchema,
@@ -27,7 +28,7 @@ export const quizQuestionSchema = z
   });
 
 const examQuestionsSchema = z
-  .object({ questions: z.array(quizQuestionSchema).length(5) })
+  .object({ questions: z.array(quizQuestionSchema).length(EXAM_QUESTION_COUNT) })
   .strict()
   .superRefine(({ questions }, context) => {
     const ids = questions.map(({ id }) => id);

@@ -7,7 +7,7 @@ const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/answer" }));
 
-const quizzes = Array.from({ length: 5 }, (_, index) => ({
+const quizzes = Array.from({ length: 7 }, (_, index) => ({
   question: {
     id: index + 1,
     question: `Question ${index + 1}?`,
@@ -127,15 +127,15 @@ describe("QuizRunner batch answer sheet", () => {
     }
   });
 
-  it("uses the saved-answer correction label when all five persisted answers are present", () => {
+  it("uses the saved-answer correction label when all seven persisted answers are present", () => {
     const saveAnswers = vi.fn();
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering" },
         {
-          selections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0 },
-          savedSelections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0 },
-          answeredCount: 5,
+          selections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0, 6: 0, 7: 0 },
+          savedSelections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0, 6: 0, 7: 0 },
+          answeredCount: 7,
           saveAnswers,
         },
       ),
@@ -261,8 +261,8 @@ describe("QuizRunner batch answer sheet", () => {
     let currentSession: MutableCompletionSession = session(
       { kind: "answering" },
       {
-        selections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0, 6: 0, 7: 0 },
+        answeredCount: 7,
         saveAnswers,
         submissionId: "submission-1",
       },
@@ -299,7 +299,7 @@ describe("QuizRunner batch answer sheet", () => {
           <RunnerPage />
         </>,
       );
-      fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+      fireEvent.click(screen.getByRole("button", { name: "7問の回答を確定する" }));
       currentSession = { ...currentSession, phase: { kind: "submitting" } };
       rerender(
         <>
@@ -1150,7 +1150,7 @@ describe("QuizRunner batch answer sheet", () => {
   it("reopens a completed answer set for editing with its saved radio answer and neutral copy", async () => {
     const editAnswers = vi.fn();
     const saveAnswers = vi.fn();
-    const savedSelections = { 1: 3, 2: 0, 3: 2, 4: 3, 5: 0 };
+    const savedSelections = { 1: 3, 2: 0, 3: 2, 4: 3, 5: 0, 6: 0, 7: 0 };
     let visibilityRequest = 0;
     vi.stubGlobal(
       "fetch",
@@ -1192,7 +1192,7 @@ describe("QuizRunner batch answer sheet", () => {
         ...currentSession,
         phase: { kind: "answering" },
         selections: { ...savedSelections },
-        answeredCount: 5,
+        answeredCount: 7,
       };
       rerender(<RunnerPage />);
     });
@@ -1527,13 +1527,13 @@ describe("QuizRunner batch answer sheet", () => {
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering" },
-        { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, answeredCount: 5, saveAnswers },
+        { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 }, answeredCount: 7, saveAnswers },
       ),
     );
     render(<RunnerPage />);
 
     expect(fetchMock).not.toHaveBeenCalled();
-    const submit = screen.getByRole("button", { name: "5問の回答を確定する" });
+    const submit = screen.getByRole("button", { name: "7問の回答を確定する" });
     expect(submit).toBeEnabled();
     fireEvent.click(submit);
     expect(saveAnswers).toHaveBeenCalledOnce();
@@ -1575,7 +1575,7 @@ describe("QuizRunner batch answer sheet", () => {
       name: "参加状態の確認が必要です",
     });
     expect(reauthentication).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("全5問の回答は記録されています");
+    expect(screen.getByRole("alert")).toHaveTextContent("全7問の回答は記録されています");
     expect(screen.getByRole("alert")).toHaveTextContent("回答は自動送信されません");
     const reauthenticate = screen.getByRole("button", { name: "再ログインする" });
     expect(reauthenticate).toHaveClass("bg-primary");

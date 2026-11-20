@@ -7,7 +7,7 @@ const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/answer" }));
 
-const quizzes = Array.from({ length: 5 }, (_, index) => ({
+const quizzes = Array.from({ length: 6 }, (_, index) => ({
   question: {
     id: index + 1,
     question: `Question ${index + 1}?`,

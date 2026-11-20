@@ -5,6 +5,49 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("database migrations", () => {
+  it("seeds Q7 with shuffled choices and the matching correct index", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stcirt-q7-migration-"));
+    const client = createClient({ url: `file:${dir}/migration.db` });
+    try {
+      await client.execute(`
+        CREATE TABLE exam_questions (
+          id integer PRIMARY KEY NOT NULL,
+          question_key text NOT NULL,
+          question text NOT NULL,
+          choices text NOT NULL,
+          correct_index integer NOT NULL,
+          correct_indices text,
+          explanation text,
+          question_version text,
+          selection_mode text NOT NULL DEFAULT 'single'
+        );
+      `);
+      const migration = readFileSync(
+        join(process.cwd(), "src/lib/db/migrations/0036_high_school_microwave_power_q7.sql"),
+        "utf8",
+      );
+      for (const statement of migration.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.execute(statement);
+      }
+
+      const result = await client.execute(
+        "SELECT question, choices, correct_index, explanation, question_version FROM exam_questions WHERE id = 7",
+      );
+      expect(result.rows[0]).toEqual({
+        question: "新郎が高校時代に行った課題研究の内容は？",
+        choices:
+          '["電磁誘導を利用したワイヤレス給電","風力発電の羽根の形状による発電効率の変化","宇宙太陽光発電で使われるマイクロ波送電","リニア等で活用される磁気浮上安定性の検証"]',
+        correct_index: 2,
+        explanation:
+          "新郎は高校時代、宇宙太陽光発電で使われるマイクロ波送電について課題研究を行いました。",
+        question_version: "shunki-high-school-microwave-power-v1",
+      });
+    } finally {
+      client.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("updates question two choices in migration 0030 while preserving other questions", async () => {
     const dir = mkdtempSync(join(tmpdir(), "stcirt-india-uber-migration-"));
     const client = createClient({ url: `file:${dir}/migration.db` });

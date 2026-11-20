@@ -15,7 +15,7 @@ import {
 
 describe("api client", () => {
   const examQuestions = () =>
-    [1, 2, 3, 4, 5].map((id) => ({
+    [1, 2, 3, 4, 5, 6, 7].map((id) => ({
       id,
       question: `Q${id}`,
       choices: id === 5 ? [] : ["A", "B", "C", "D"],

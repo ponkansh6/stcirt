@@ -878,7 +878,9 @@ describe("presentation admin console", () => {
     expect(summary).toHaveAttribute("role", "status");
     expect(summary).toHaveTextContent("集計スナップショットを更新しました。");
     expect(summary).toHaveTextContent("集計対象 3 件 · 除外 2 件");
-    expect(summary).toHaveTextContent("質問バージョン不一致 1 件、 Q5 評価バージョン不一致 1 件");
+    expect(summary).toHaveTextContent(
+      "質問バージョン不一致（旧5問セットを含む） 1 件、 Q5 評価バージョン不一致 1 件",
+    );
     expect(summary).toHaveTextContent("参考対象 2 名");
     expect(summary).toHaveTextContent("未一致の参考対象氏名: 未登録名");
     expect(summary.className).not.toContain("aggregateNotUpdated");

@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-Source code for the Stcirt five-question exam, administration and presentation application (Next.js App Router), API endpoints, UI components, and database repositories. Product requirements are in `openspec/specs/stcirt/spec.md`.
+Source code for the Stcirt seven-question exam, administration and presentation application (Next.js App Router), API endpoints, UI components, and database repositories. Product requirements are in `openspec/specs/stcirt/spec.md`.
 
 ## Structure
 

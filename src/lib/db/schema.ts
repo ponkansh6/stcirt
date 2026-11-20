@@ -48,7 +48,7 @@ export const answerLogs = sqliteTable(
   }),
 );
 
-// The exam uses its own fixed five-question set and answer history. The
+// The exam uses its own fixed seven-question set and answer history. The
 // original study tables above remain available but are not queried by STCIRT.
 export const examQuestions = sqliteTable("exam_questions", {
   id: integer("id").primaryKey(),
@@ -135,7 +135,7 @@ export const examAnswerLogs = sqliteTable(
   }),
 );
 
-// A certification submission is the stable five-question answer set. Edits
+// A certification submission is the stable seven-question answer set. Edits
 // update these rows in place; operation rows make retries safe and detect a
 // reused operation ID with a different payload.
 export const examAnswerSubmissions = sqliteTable("exam_answer_submissions", {

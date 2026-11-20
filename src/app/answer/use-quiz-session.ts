@@ -118,10 +118,16 @@ type SelectedAnswer =
 
 function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
   const integrity = submission.restoreIntegrity;
+  const legacyPriorQuestionSet =
+    integrity?.status === "complete" &&
+    integrity.questions.length >= 5 &&
+    integrity.questions.length < EXAM_QUESTION_COUNT &&
+    submission.answers.length === integrity.questions.length;
+  const expectedCount = legacyPriorQuestionSet ? integrity.questions.length : EXAM_QUESTION_COUNT;
   if (
     integrity?.status !== "complete" ||
-    integrity.questions.length !== EXAM_QUESTION_COUNT ||
-    submission.answers.length !== EXAM_QUESTION_COUNT
+    integrity.questions.length !== expectedCount ||
+    submission.answers.length !== expectedCount
   ) {
     return false;
   }
@@ -129,8 +135,9 @@ function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
   const questionIds = questions.map(({ id }) => id);
   const answerIds = submission.answers.map(({ questionId }) => questionId);
   if (
-    new Set(questionIds).size !== EXAM_QUESTION_COUNT ||
-    new Set(answerIds).size !== EXAM_QUESTION_COUNT ||
+    new Set(questionIds).size !== expectedCount ||
+    new Set(answerIds).size !== expectedCount ||
+    questionIds.some((id, index) => id !== index + 1) ||
     questions.some(({ id }, index) => index > 0 && id <= questions[index - 1]!.id) ||
     questions.some(({ answerType, choiceCount, selectionMode }) =>
       answerType === "freeText"
@@ -146,8 +153,8 @@ function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
     return false;
   }
 
-  // Both five-item ID sets are unique, equal in size, and answerIds is a
-  // subset of questionIds, so every question has exactly one matching answer.
+  // Both ID sets are unique and have matching cardinality. Older submissions
+  // may omit the questions added later; those are restored as blank drafts.
   return questions.every(({ id, answerType }, index) => {
     const answer = submission.answers.find(({ questionId }) => questionId === id)!;
     if (answerType === "selected" && questions[index]!.selectionMode === "multiple") {
@@ -176,7 +183,7 @@ function hasCompleteRestoreIntegrity(submission: AnswerSubmission): boolean {
     }
     if (answer.answerKind === "legacy") {
       return (
-        index === EXAM_QUESTION_COUNT - 1 &&
+        id === 5 &&
         Number.isInteger(answer.selectedIndex) &&
         answer.selectedIndex! >= 0 &&
         answer.selectedIndex! < QUIZ_CHOICES_PER_QUESTION &&
@@ -257,9 +264,17 @@ function restoreSavedAnswers(
   legacyAnswerIds: number[];
 } {
   try {
+    const legacyPriorQuestionSet =
+      submission.answers.length >= 5 &&
+      submission.answers.length < EXAM_QUESTION_COUNT &&
+      quizzes.length === EXAM_QUESTION_COUNT &&
+      submission.answers.every(({ questionId }, index) => questionId === index + 1) &&
+      quizzes
+        .slice(0, submission.answers.length)
+        .every(({ question }, index) => question.id === index + 1);
     if (
       (expectedSubmissionId !== undefined && submission.submissionId !== expectedSubmissionId) ||
-      submission.answers.length !== EXAM_QUESTION_COUNT ||
+      (submission.answers.length !== EXAM_QUESTION_COUNT && !legacyPriorQuestionSet) ||
       quizzes.length !== EXAM_QUESTION_COUNT
     ) {
       throw new Error("submission identity or shape mismatch");
@@ -268,7 +283,7 @@ function restoreSavedAnswers(
     const quizQuestionIds = new Set(quizzes.map(({ question }) => question.id));
     if (
       answerQuestionIds.size !== submission.answers.length ||
-      answerQuestionIds.size !== quizQuestionIds.size ||
+      (!legacyPriorQuestionSet && answerQuestionIds.size !== quizQuestionIds.size) ||
       [...answerQuestionIds].some((questionId) => !quizQuestionIds.has(questionId))
     ) {
       throw new Error("question set mismatch");
@@ -276,8 +291,11 @@ function restoreSavedAnswers(
 
     for (const { question } of quizzes) {
       // The validated answer IDs form a duplicate-free subset of the quiz IDs
-      // with the same cardinality, so every quiz has exactly one matching answer.
-      const answer = submission.answers.find((candidate) => candidate.questionId === question.id)!;
+      // with matching cardinality, except a legacy submission may omit the
+      // questions added after its saved prefix.
+      const answer = submission.answers.find((candidate) => candidate.questionId === question.id);
+      if (!answer && legacyPriorQuestionSet && question.id > submission.answers.length) continue;
+      if (!answer) throw new Error("missing saved answer");
       if (question.answerType === "freeText") {
         if (answer.answerKind === "legacy") {
           if (answer.selectedIndex === null || answer.freeText !== null) {
@@ -2317,8 +2335,9 @@ export function useQuizSession() {
         let loaded = quizzesRef.current;
         const questionsMatchManifest = (items: LoadedQuiz[]) =>
           items.length === EXAM_QUESTION_COUNT &&
-          items.every(({ question }, index) => {
-            const expected = integrity.questions[index]!;
+          integrity.questions.length <= items.length &&
+          integrity.questions.every((expected, index) => {
+            const question = items[index]!.question;
             return (
               expected.id === question.id &&
               expected.answerType === question.answerType &&

@@ -9,6 +9,8 @@ Database layer: Drizzle ORM setup with lazy connection initialization, legacy st
 - `index.ts` — Drizzle instance creation + Turso client lazy initialization proxy
 - `schema.ts` — SQLite table definitions for legacy study data, exam questions/submissions/assessments, participants, rate limits, assisted links, presentation snapshots, and result settings
 - `migrations/0001_brainy_lizard.sql` — creates dedicated exam tables and seeds five stable-key IT-literacy sample questions; leaves legacy rows untouched
+- `migrations/0035_university_friends_curry_q6.sql` — adds Q6 about local retort curry
+- `migrations/0036_high_school_microwave_power_q7.sql` — adds Q7 about the high-school microwave power-transmission research
 - `migrations/0002_nifty_eddie_brock.sql` — adds participants, shared rate-limit storage, and a nullable participant reference to answer logs without rewriting historical rows
 - `repository/` — exam reads and writes, atomic batch submissions, durable JEV retry, assisted-participant links, aggregation, and staged result projections
 - `../participants/rate-limit.ts` — Turso-backed failed sign-in windows keyed by HMAC fingerprints

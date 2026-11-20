@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
+import { EXAM_QUESTION_COUNT, QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
 
 export const submitAnswerBatchSchema = z
   .object({
@@ -48,13 +48,17 @@ export const submitAnswerBatchSchema = z
               .strict(),
           ),
       )
-      .length(5),
+      .length(EXAM_QUESTION_COUNT),
   })
   .strict()
-  .refine(({ answers }) => new Set(answers.map((answer) => answer.questionId)).size === 5, {
-    message: "Question IDs must be unique",
-    path: ["answers"],
-  });
+  .refine(
+    ({ answers }) =>
+      new Set(answers.map((answer) => answer.questionId)).size === EXAM_QUESTION_COUNT,
+    {
+      message: "Question IDs must be unique",
+      path: ["answers"],
+    },
+  );
 
 export const answerCompletionSnapshotSchema = z.discriminatedUnion("status", [
   z
@@ -100,6 +104,15 @@ export const answerBatchResultSchema = answerSubmissionIdentitySchema.extend({
   completionSnapshot: answerCompletionSnapshotSchema,
 });
 
+const restoreIntegrityQuestionSchema = z
+  .object({
+    id: z.number().int().positive(),
+    answerType: z.enum(["selected", "freeText"]),
+    choiceCount: z.number().int().nonnegative(),
+    selectionMode: z.enum(["single", "multiple"]).optional(),
+  })
+  .strict();
+
 export const answerSubmissionSchema = answerSubmissionIdentitySchema.extend({
   answers: z.array(
     z.object({
@@ -117,17 +130,9 @@ export const answerSubmissionSchema = answerSubmissionIdentitySchema.extend({
         .object({
           status: z.literal("complete"),
           questions: z
-            .array(
-              z
-                .object({
-                  id: z.number().int().positive(),
-                  answerType: z.enum(["selected", "freeText"]),
-                  choiceCount: z.number().int().nonnegative(),
-                  selectionMode: z.enum(["single", "multiple"]).optional(),
-                })
-                .strict(),
-            )
-            .length(5),
+            .array(restoreIntegrityQuestionSchema)
+            .length(EXAM_QUESTION_COUNT)
+            .or(z.array(restoreIntegrityQuestionSchema).length(EXAM_QUESTION_COUNT - 1)),
         })
         .strict(),
       z.object({ status: z.literal("invalid") }).strict(),
@@ -167,7 +172,7 @@ export const answerBootstrapSchema = z
     completionSnapshot: answerCompletionSnapshotSchema.nullable(),
     questions: z
       .array(publicQuizQuestionSchema)
-      .length(5)
+      .length(EXAM_QUESTION_COUNT)
       .superRefine((questions, context) => {
         const ids = questions.map(({ id }) => id);
         if (new Set(ids).size !== ids.length) {

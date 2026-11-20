@@ -8,7 +8,7 @@ const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/answer" }));
 
-const quizzes = Array.from({ length: 5 }, (_, index) => ({
+const quizzes = Array.from({ length: 6 }, (_, index) => ({
   question: {
     id: index + 1,
     question: `Question ${index + 1}?`,
@@ -172,8 +172,8 @@ describe("QuizRunner batch answer sheet", () => {
         {
           revision: 1,
           submissionId: "submission-1",
-          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-          answeredCount: 5,
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+          answeredCount: 6,
           select,
           saveAnswers,
         },
@@ -188,7 +188,7 @@ describe("QuizRunner batch answer sheet", () => {
     expect(
       screen.getAllByRole("radio").every((radio) => (radio as HTMLInputElement).disabled),
     ).toBe(true);
-    expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "7問の回答を確定する" })).toBeDisabled();
     expect(screen.getByText(/確認できるまで編集はできません/)).toBeVisible();
     expect(select).not.toHaveBeenCalled();
     expect(saveAnswers).not.toHaveBeenCalled();
@@ -202,7 +202,7 @@ describe("QuizRunner batch answer sheet", () => {
         screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).disabled),
       ).toBe(true),
     );
-    expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "7問の回答を確定する" })).toBeEnabled();
   });
 
   it.each([
@@ -217,8 +217,8 @@ describe("QuizRunner batch answer sheet", () => {
         {
           revision: 2,
           submissionId: "submission-2",
-          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-          answeredCount: 5,
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+          answeredCount: 6,
         },
       ),
     );
@@ -228,7 +228,7 @@ describe("QuizRunner batch answer sheet", () => {
       screen.getAllByRole("radio").every((radio) => (radio as HTMLInputElement).disabled),
     ).toBe(true);
     expect(screen.getAllByRole("radio")[0]).toBeChecked();
-    expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "7問の回答を確定する" })).toBeDisabled();
   });
 
   it("locks a saved submission only after a confirmed visible response", async () => {
@@ -590,8 +590,8 @@ describe("QuizRunner batch answer sheet", () => {
         {
           revision: 1,
           submissionId: "scope-submission",
-          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-          answeredCount: 5,
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+          answeredCount: 6,
         },
       ),
     );
@@ -614,8 +614,8 @@ describe("QuizRunner batch answer sheet", () => {
           },
           revision: 1,
           submissionId: "scope-submission",
-          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-          answeredCount: 5,
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+          answeredCount: 6,
         },
       ),
     );
@@ -630,7 +630,7 @@ describe("QuizRunner batch answer sheet", () => {
       ownerLookup.resolve({ ok: true, json: async () => ({ resultsVisible: false }) });
       await ownerLookup.promise;
     });
-    expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "7問の回答を確定する" })).toBeDisabled();
     expect(screen.getByText(/公開状態を確認できません/)).toBeVisible();
 
     await act(async () => {
@@ -638,7 +638,7 @@ describe("QuizRunner batch answer sheet", () => {
       await assistedLookup.promise;
     });
     expect(screen.queryByText(/公開状態を確認できません/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "5問の回答を確定する" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "7問の回答を確定する" })).toBeDisabled();
   });
 
   it("cleans up saved-visibility interval and listener when the answer screen unmounts", () => {
@@ -814,6 +814,7 @@ describe("QuizRunner batch answer sheet", () => {
         2: 2,
         3: 0,
         4: 3,
+        6: 0,
       });
       const [freeResponseParts, setFreeResponseParts] = useState<
         Record<number, { a: string; b: string }>
@@ -832,8 +833,8 @@ describe("QuizRunner batch answer sheet", () => {
           quizzes: quizzesWithFreeText,
           selections,
           freeResponseParts,
-          savedSelections: { 1: 0, 2: 0, 3: 0, 4: 0 },
-          answeredCount: 5,
+          savedSelections: { 1: 0, 2: 0, 3: 0, 4: 0, 6: 0 },
+          answeredCount: 6,
           select: (questionId: number, choiceIndex: number) =>
             setSelections((current) => ({ ...current, [questionId]: choiceIndex })),
           setFreeResponsePart: (questionId: number, part: "a" | "b", value: string) =>
@@ -892,7 +893,7 @@ describe("QuizRunner batch answer sheet", () => {
     fireEvent.click(screen.getByRole("button", { name: "修正内容を確定する" }));
     expect(retryDrafts).toHaveLength(2);
     expect(retryDrafts[1]).toEqual({
-      selections: { 1: 1, 2: 2, 3: 0, 4: 3 },
+      selections: { 1: 1, 2: 2, 3: 0, 4: 3, 6: 0 },
       freeResponseParts: {
         5: {
           a: "競合後も保持する記述回答 A",

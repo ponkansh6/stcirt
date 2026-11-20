@@ -669,7 +669,7 @@ export default function PresentationAdmin() {
                     除外 {aggregationResult.excludedSubmissionCount.toLocaleString("ja-JP")} 件
                   </p>
                   <p>
-                    除外理由別（重複あり）：質問バージョン不一致{" "}
+                    除外理由別（重複あり）：質問バージョン不一致（旧5問セットを含む）{" "}
                     {aggregationResult.excludedReasonCounts.questionVersionMismatch.toLocaleString(
                       "ja-JP",
                     )}{" "}

@@ -8,16 +8,16 @@ const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/answer" }));
 
-const quizzes = Array.from({ length: 5 }, (_, index) => ({
+const quizzes = Array.from({ length: 7 }, (_, index) => ({
   question: {
     id: index + 1,
     question: `Question ${index + 1}?`,
-    choices: ["A", "B", "C", "D"].map((choice) => `${choice}${index + 1}`),
-    answerType: "selected" as const,
+    choices: index === 4 ? [] : ["A", "B", "C", "D"].map((choice) => `${choice}${index + 1}`),
+    answerType: index === 4 ? ("freeText" as const) : ("selected" as const),
   },
   shuffled: {
-    choices: ["C", "A", "D", "B"].map((choice) => `${choice}${index + 1}`),
-    choiceIndices: [2, 0, 3, 1],
+    choices: index === 4 ? [] : ["C", "A", "D", "B"].map((choice) => `${choice}${index + 1}`),
+    choiceIndices: index === 4 ? [] : [2, 0, 3, 1],
   },
 }));
 
@@ -153,11 +153,14 @@ describe("QuizRunner batch answer sheet", () => {
     expect(dialog).not.toBeVisible();
   });
 
-  it("renders five native radio groups, progress navigation, and a disabled final confirmation while unanswered", () => {
+  it("renders six native radio groups, progress navigation, and a disabled final confirmation while unanswered", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "answering" }));
     render(<RunnerPage />);
     expect(screen.getByRole("heading", { name: "しゅんたま検定" })).toBeInTheDocument();
-    expect(screen.getAllByRole("group", { name: /Question [1-5]\?/ })).toHaveLength(5);
+    const questionGroups = screen.getAllByRole("group", { name: /Question [1-7]\?/ });
+    expect(
+      questionGroups.filter((group) => within(group).queryAllByRole("radio").length > 0),
+    ).toHaveLength(6);
     const firstQuestion = document.querySelector<HTMLElement>("#question-1");
     expect(firstQuestion).not.toBeNull();
     expect(
@@ -165,16 +168,18 @@ describe("QuizRunner batch answer sheet", () => {
     ).toBeVisible();
     expect(document.querySelector("#question-1 legend")).toHaveClass("sr-only");
     expect(screen.getByRole("group", { name: /Question 1\?/ })).toBeInTheDocument();
-    expect(screen.getAllByRole("radio")).toHaveLength(20);
+    expect(screen.getAllByRole("radio")).toHaveLength(24);
     const navigation = screen.getByRole("navigation", { name: "設問へ移動" });
     expect(navigation.closest("header")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "ホームへ" })).not.toBeInTheDocument();
-    expect(within(navigation).getByRole("list").querySelectorAll("li")).toHaveLength(5);
+    expect(within(navigation).getByRole("list").querySelectorAll("li")).toHaveLength(7);
     expect(screen.queryByText(/まだ回答していません|回答を選択しています/)).not.toBeInTheDocument();
     expect(
       document.querySelectorAll('fieldset[aria-describedby^="choice-instruction-"]'),
     ).toHaveLength(0);
-    expect(screen.getAllByRole("group", { name: /Question [1-5]\?/ })).toHaveLength(5);
+    expect(
+      questionGroups.filter((group) => within(group).queryAllByRole("radio").length > 0),
+    ).toHaveLength(6);
     const finalReview = document.querySelector<HTMLElement>(
       '[aria-labelledby="final-check-title"]',
     );
@@ -253,7 +258,7 @@ describe("QuizRunner batch answer sheet", () => {
     const main = screen.getByRole("main");
     const liveRegions = main.querySelectorAll('[aria-live], [role="status"], [role="alert"]');
     expect(liveRegions).toHaveLength(1);
-    expect(liveRegions[0]).toHaveTextContent("回答済み 1/5");
+    expect(liveRegions[0]).toHaveTextContent("回答済み 1/7");
     expect(liveRegions[0]).toHaveAttribute("aria-live", "polite");
 
     const finalReview = main.querySelector<HTMLElement>('[aria-labelledby="final-check-title"]');
@@ -305,7 +310,7 @@ describe("QuizRunner batch answer sheet", () => {
       '[aria-labelledby="final-check-title"]',
     );
     expect(finalReview).not.toBeNull();
-    expect(within(finalReview as HTMLElement).queryByText("未回答 4問")).not.toBeInTheDocument();
+    expect(within(finalReview as HTMLElement).queryByText("未回答 5問")).not.toBeInTheDocument();
     expect(
       within(finalReview as HTMLElement).getByRole("group", { name: "未回答の設問" }),
     ).toBeInTheDocument();
@@ -421,7 +426,7 @@ describe("QuizRunner batch answer sheet", () => {
   it("shows loading and switching states without a home link", () => {
     mockUseQuizSession.mockReturnValue(session({ kind: "loading" }));
     const { rerender } = render(<RunnerPage />);
-    expect(screen.getByRole("status")).toHaveTextContent("全5問を準備しています");
+    expect(screen.getByRole("status")).toHaveTextContent("全7問を準備しています");
     expect(screen.queryByRole("link", { name: "ホームへ" })).not.toBeInTheDocument();
 
     mockUseQuizSession.mockReturnValue(

@@ -27,7 +27,7 @@ describe("useQuizSession hook", () => {
     multipleQuestionTwo = false,
     freeTextFourth = false,
   ) =>
-    [1, 2, 3, 4, 5].map((id) =>
+    [1, 2, 3, 4, 5, 6, 7].map((id) =>
       (id === 5 && freeTextFifth) || (id === 4 && freeTextFourth)
         ? { ...question(id), choices: [], answerType: "freeText" as const }
         : id === 2 && multipleQuestionTwo
@@ -41,7 +41,7 @@ describe("useQuizSession hook", () => {
     freeTextFourth = false,
   ) => ({
     status: "complete" as const,
-    questions: [1, 2, 3, 4, 5].map((id) => ({
+    questions: [1, 2, 3, 4, 5, 6, 7].map((id) => ({
       id,
       answerType:
         (id === 5 && freeTextFifth) || (id === 4 && freeTextFourth)
@@ -252,7 +252,7 @@ describe("useQuizSession hook", () => {
       submissionId: draft.submissionId as string,
       revision: draft.revision as number,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 0,
@@ -309,7 +309,7 @@ describe("useQuizSession hook", () => {
       submissionId: canonicalSubmissionId,
       revision: canonicalRevision,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 1,
@@ -353,7 +353,7 @@ describe("useQuizSession hook", () => {
         submissionId,
         revision: 2,
         restoreIntegrity: restoreIntegrity(),
-        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
           questionId,
           answerKind: "selected" as const,
           selectedIndex: 1,
@@ -398,7 +398,7 @@ describe("useQuizSession hook", () => {
     expect(fetchAnswerBootstrap).toHaveBeenCalledWith("owner");
     expect(fetchLatestAnswerSubmission).toHaveBeenCalledTimes(latestCallsBeforeRetry);
     expect(hook.result.current.quizzes.map(({ question: item }) => item.id)).toEqual([
-      1, 2, 3, 4, 5,
+      1, 2, 3, 4, 5, 6, 7,
     ]);
   });
 
@@ -442,10 +442,12 @@ describe("useQuizSession hook", () => {
       questionCallsBeforeRetry + 1,
     );
     expect(fetchLatestAnswerSubmission).toHaveBeenCalledWith("owner");
-    expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([1, 2, 3, 4, 5]);
+    expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([
+      1, 2, 3, 4, 5, 6, 7,
+    ]);
   });
 
-  it("loads five questions, keeps selections local, blocks incomplete submit, then posts one batch", async () => {
+  it("loads seven questions, keeps selections local, blocks incomplete submit, then posts one batch", async () => {
     const fetchMock = setupFetch();
     const observedStates: Array<{
       phase: ReturnType<typeof useQuizSession>["phase"];
@@ -459,7 +461,9 @@ describe("useQuizSession hook", () => {
       return session;
     });
     await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
-    expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([1, 2, 3, 4, 5]);
+    expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([
+      1, 2, 3, 4, 5, 6, 7,
+    ]);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(fetchAnswerBootstrap).toHaveBeenCalledTimes(1);
     expect(fetchAnswerBootstrap).toHaveBeenCalledWith("owner");
@@ -480,7 +484,7 @@ describe("useQuizSession hook", () => {
         ({ phase, saveConfirmed }) => phase.kind === "complete" && !saveConfirmed,
       ),
     ).toBe(false);
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     const posts = fetchMock.mock.calls.filter(
       ([url, init]) => url === "/api/answers/batch" && init?.method === "POST",
     );
@@ -488,9 +492,9 @@ describe("useQuizSession hook", () => {
     const body = JSON.parse(String(posts[0]?.[1]?.body));
     expect(body).toMatchObject({ submissionId, expectedRevision: 0 });
     expect(body.operationId).toMatch(/^[0-9a-f-]{36}$/i);
-    expect(body.answers).toHaveLength(5);
+    expect(body.answers).toHaveLength(7);
     expect(body.answers.map((answer: { questionId: number }) => answer.questionId)).toEqual([
-      1, 2, 3, 4, 5,
+      1, 2, 3, 4, 5, 6, 7,
     ]);
     expect(body.answers.map((answer: { selectedIndex: number }) => answer.selectedIndex)).toEqual(
       result.current.quizzes.map(({ shuffled }) => shuffled.choiceIndices[2]),
@@ -523,7 +527,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 3,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 1,
@@ -557,7 +561,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 3,
       restoreIntegrity: restoreIntegrity(false, true),
-      answers: [1, 2, 3, 4, 5].map((questionId) =>
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) =>
         questionId === 2
           ? {
               questionId,
@@ -580,7 +584,7 @@ describe("useQuizSession hook", () => {
     await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
     expect(result.current.multiSelections[2]).toHaveLength(2);
     expect(result.current.selections[2]).toBeUndefined();
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
   });
 
   it("does not seed a saved bootstrap whose restore integrity is invalid", async () => {
@@ -627,7 +631,9 @@ describe("useQuizSession hook", () => {
     expect(result.current.answerMode).toBe("assisted");
     expect(result.current.access).toEqual({ kind: "ready", participant });
     expect(result.current.assistedParticipant?.participant).toEqual(assistedParticipant);
-    expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([1, 2, 3, 4, 5]);
+    expect(result.current.quizzes.map(({ question: item }) => item.id)).toEqual([
+      1, 2, 3, 4, 5, 6, 7,
+    ]);
   });
 
   it("uses scoped bootstraps for assisted activation and return to owner", async () => {
@@ -635,7 +641,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 1,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 1,
@@ -668,7 +674,7 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.startAssisted("代理参加者"));
     await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
     expect(result.current.answerMode).toBe("assisted");
-    expect(result.current.quizzes).toHaveLength(5);
+    expect(result.current.quizzes).toHaveLength(7);
 
     act(() => result.current.returnToOwner());
     await waitFor(() =>
@@ -688,7 +694,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 1,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 1,
@@ -699,7 +705,7 @@ describe("useQuizSession hook", () => {
       submissionId: "00000000-0000-4000-8000-000000000098",
       revision: 4,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 2,
@@ -863,7 +869,7 @@ describe("useQuizSession hook", () => {
         submissionId: savedSubmissionId,
         revision: savedRevision,
         restoreIntegrity: restoreIntegrity(),
-        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
           questionId,
           answerKind: "selected" as const,
           selectedIndex: 1,
@@ -907,6 +913,8 @@ describe("useQuizSession hook", () => {
         "Question 3?",
         "Question 4?",
         "Question 5?",
+        "Question 6?",
+        "Question 7?",
       ]);
     },
   );
@@ -963,7 +971,7 @@ describe("useQuizSession hook", () => {
       if (url === "/api/participants/session")
         return { ok: true, json: async () => ({ participant }) };
       if (url === "/api/questions/batch") {
-        const batch = [1, 2, 3, 4, 5].map((id) => question(id));
+        const batch = [1, 2, 3, 4, 5, 6, 7].map((id) => question(id));
         return { ok: true, json: async () => ({ questions: batch }) };
       }
       if (url === "/api/answers/batch" && init?.method === "POST") {
@@ -1004,7 +1012,7 @@ describe("useQuizSession hook", () => {
       getSubmission: () => ({
         submissionId,
         revision: 1,
-        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
           questionId,
           answerKind: "selected",
           selectedIndex: 1,
@@ -1020,7 +1028,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.phase.kind).toBe("complete");
 
     await act(async () => result.current.editAnswers(() => true));
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     expect(result.current.selections[1]).toBe(2);
     act(() => result.current.select(1, firstChoice));
     await act(async () => result.current.saveAnswers());
@@ -1051,7 +1059,7 @@ describe("useQuizSession hook", () => {
           json: async () => ({
             submissionId: conflictSubmissionId,
             revision: 3,
-            answers: [1, 2, 3, 4, 5].map((questionId) => ({
+            answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
               questionId,
               answerKind: "selected",
               selectedIndex: 3,
@@ -1085,7 +1093,10 @@ describe("useQuizSession hook", () => {
       makeBootstrap("owner", {
         submissionId,
         revision: 4,
-        restoreIntegrity: restoreIntegrity(true),
+        restoreIntegrity: {
+          ...restoreIntegrity(true),
+          questions: restoreIntegrity(true).questions.slice(0, 6),
+        },
         answers: [
           ...[1, 2, 3, 4].map((questionId) => ({
             questionId,
@@ -1099,6 +1110,7 @@ describe("useQuizSession hook", () => {
             selectedIndex: 2,
             freeText: null,
           },
+          { questionId: 6, answerKind: "selected" as const, selectedIndex: 0, freeText: null },
         ],
       }),
     );
@@ -1118,6 +1130,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.phase.kind).toBe("answering");
     act(() => result.current.setFreeResponsePart(5, "a", "新しい朝飲茶回答"));
     act(() => result.current.setFreeResponsePart(5, "b", "新しいシーフード回答"));
+    act(() => result.current.select(7, 0));
     await act(async () => result.current.saveAnswers());
 
     expect(result.current.phase.kind).toBe("complete");
@@ -1167,7 +1180,7 @@ describe("useQuizSession hook", () => {
         submissionId,
         revision: 1,
         restoreIntegrity: restoreIntegrity(),
-        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
           questionId,
           answerKind: "selected" as const,
           selectedIndex: 1,
@@ -1221,7 +1234,7 @@ describe("useQuizSession hook", () => {
         submissionId,
         revision: 1,
         restoreIntegrity: restoreIntegrity(),
-        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
           questionId,
           answerKind: "selected" as const,
           selectedIndex: 1,
@@ -1376,7 +1389,7 @@ describe("useQuizSession hook", () => {
       message: "回答を確認してください",
       retryRequired: false,
     });
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     act(() => result.current.select(1, 1));
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase.kind).toBe("complete");
@@ -1419,6 +1432,10 @@ describe("useQuizSession hook", () => {
     expect(result.current.answeredCount).toBe(4);
     act(() => result.current.select(3, 0));
     expect(result.current.answeredCount).toBe(5);
+    act(() => result.current.select(6, 0));
+    expect(result.current.answeredCount).toBe(6);
+    act(() => result.current.select(7, 0));
+    expect(result.current.answeredCount).toBe(7);
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase.kind).toBe("complete");
   });
@@ -1493,7 +1510,7 @@ describe("useQuizSession hook", () => {
       getSubmission: () => ({
         submissionId,
         revision: 4,
-        answers: [1, 2, 3, 4, 5].map((questionId) =>
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) =>
           questionId === 2
             ? {
                 questionId,
@@ -1545,7 +1562,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.multiSelections[2]).toEqual(
       [1, 3].map((index) => q2.shuffled.choiceIndices.indexOf(index)),
     );
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     expect(result.current.revision).toBe(4);
   });
 
@@ -1565,7 +1582,7 @@ describe("useQuizSession hook", () => {
         return {
           submissionId,
           revision: 4,
-          answers: [1, 2, 3, 4, 5].map((questionId) =>
+          answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) =>
             questionId === 2
               ? {
                   questionId,
@@ -1617,7 +1634,7 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.refreshSavedAnswers());
 
     expect(result.current.multiSelections[2]).toHaveLength(2);
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     expect(result.current.revision).toBe(4);
   });
 
@@ -1666,14 +1683,14 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.saveAnswers());
     expect(result.current.access).toEqual({ kind: "reauthentication", participant });
     expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     expect(result.current.freeResponseParts[5]).toEqual({ a: "  朝飲茶  ", b: "  シーフード店  " });
 
     const latestCallsBeforeLogin = vi.mocked(fetchLatestAnswerSubmission).mock.calls.length;
     await act(async () => result.current.login("参加者", "1234"));
     expect(result.current.access).toEqual({ kind: "ready", participant });
     expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     expect(result.current.freeResponseParts[5]).toEqual({ a: "  朝飲茶  ", b: "  シーフード店  " });
     expect(vi.mocked(fetchLatestAnswerSubmission)).toHaveBeenCalledTimes(latestCallsBeforeLogin);
     expect(attempts).toHaveLength(1);
@@ -1802,7 +1819,7 @@ describe("useQuizSession hook", () => {
           ]),
       ),
     );
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     expect(posts).toHaveLength(1);
 
     await act(async () => result.current.saveAnswers());
@@ -1813,7 +1830,7 @@ describe("useQuizSession hook", () => {
   });
 
   it("refreshes a saved correction after 401 and retries it explicitly at the latest revision", async () => {
-    const canonicalAnswers = [1, 2, 3, 4, 5].map((questionId) =>
+    const canonicalAnswers = [1, 2, 3, 4, 5, 6, 7].map((questionId) =>
       questionId === 5
         ? {
             questionId,
@@ -1960,7 +1977,7 @@ describe("useQuizSession hook", () => {
       freeTextParts?: { a: string; b: string };
     }[] = [];
     let latestAfterIdChange: Awaited<ReturnType<typeof fetchLatestAnswerSubmission>> = null;
-    const originalAnswers = [1, 2, 3, 4, 5].map((questionId) =>
+    const originalAnswers = [1, 2, 3, 4, 5, 6, 7].map((questionId) =>
       questionId === 5
         ? {
             questionId,
@@ -2178,7 +2195,7 @@ describe("useQuizSession hook", () => {
           json: async () => ({
             submissionId,
             revision: 4,
-            answers: [1, 2, 3, 4, 5].map((questionId) => ({
+            answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
               questionId,
               answerKind: "selected",
               selectedIndex: 0,
@@ -2194,7 +2211,7 @@ describe("useQuizSession hook", () => {
     await answerAll(result);
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase).toMatchObject({ kind: "answering", refreshRequired: true });
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     await act(async () => result.current.refreshSavedAnswers());
     expect(result.current.phase).toMatchObject({
       kind: "answering",
@@ -2202,7 +2219,7 @@ describe("useQuizSession hook", () => {
     });
     expect(result.current.phase).not.toHaveProperty("refreshRequired");
     expect(result.current.revision).toBe(4);
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
   });
 
   it("preserves the local Q5 draft through conflict recovery and explicitly submits it at the canonical revision", async () => {
@@ -2277,7 +2294,7 @@ describe("useQuizSession hook", () => {
     const localFreeResponse = { a: "Bタブ飲茶案", b: "Bタブシーフード案" };
     act(() => result.current.setFreeResponsePart(5, "a", localFreeResponse.a));
     act(() => result.current.setFreeResponsePart(5, "b", localFreeResponse.b));
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
 
     const canonicalSelections: Record<number, number> = {};
     canonicalAnswers = result.current.quizzes
@@ -2312,7 +2329,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.freeResponseParts[5]).toEqual(localFreeResponse);
     expect(result.current.savedSelections).toEqual(canonicalSelections);
     expect(result.current.revision).toBe(canonicalRevision);
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     expect(posts).toHaveLength(1);
 
     await act(async () => result.current.saveAnswers());
@@ -2384,7 +2401,7 @@ describe("useQuizSession hook", () => {
     );
     await waitFor(() => expect(result.current.access.kind).toBe("ready"));
     await waitFor(() => expect(result.current.phase.kind).toBe("answering"));
-    await waitFor(() => expect(result.current.quizzes).toHaveLength(5));
+    await waitFor(() => expect(result.current.quizzes).toHaveLength(7));
     const initialPhase = result.current.phase;
     const initialSelections = result.current.selections;
     act(() => {
@@ -2442,7 +2459,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.phase).toEqual({ kind: "complete" });
     expect(result.current.restoreError).toBeTruthy();
     expect(result.current.saveConfirmed).toBe(false);
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     await act(async () => result.current.editAnswers(() => true));
     expect(result.current.phase).toEqual({ kind: "complete" });
   });
@@ -2532,7 +2549,7 @@ describe("useQuizSession hook", () => {
       getSubmission: () => ({
         submissionId,
         revision: 2,
-        answers: [1, 2, 3, 4, 5].map((questionId) => {
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => {
           const answer =
             questionId === 2 && testCase.multipleQuestionTwo
               ? {
@@ -2591,7 +2608,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 2,
       restoreIntegrity: restoreIntegrity(false, false, true),
-      answers: [1, 2, 3, 4, 5].map((questionId) =>
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) =>
         questionId === 4
           ? {
               questionId,
@@ -2739,7 +2756,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 2,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 0,
@@ -2823,7 +2840,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 2,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 0,
@@ -2869,7 +2886,7 @@ describe("useQuizSession hook", () => {
       makeBootstrap("owner", {
         submissionId,
         revision: 2,
-        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
           questionId,
           answerKind: "selected" as const,
           selectedIndex: 0,
@@ -2892,7 +2909,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 2,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 0,
@@ -2961,7 +2978,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 2,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 1,
@@ -2981,7 +2998,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.submissionId).not.toBeNull();
     expect(result.current.revision).toBe(0);
     expect(result.current.saveConfirmed).toBe(false);
-    expect(result.current.quizzes).toHaveLength(5);
+    expect(result.current.quizzes).toHaveLength(7);
     expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
     expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
@@ -3011,7 +3028,7 @@ describe("useQuizSession hook", () => {
       submissionId: serverSubmissionId,
       revision: 3,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 1,
@@ -3037,7 +3054,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.submissionId).not.toBe(serverSubmissionId);
     expect(result.current.revision).toBe(0);
     expect(result.current.saveConfirmed).toBe(false);
-    expect(result.current.quizzes).toHaveLength(5);
+    expect(result.current.quizzes).toHaveLength(7);
     expect(window.sessionStorage.getItem("stcirt-answer-scope")).toBeNull();
     expect(window.sessionStorage.getItem("stcirt-assisted-answer-draft")).toBeNull();
     expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
@@ -3054,7 +3071,7 @@ describe("useQuizSession hook", () => {
       submissionId: draftSubmissionId,
       revision: draftRevision,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 0,
@@ -3106,7 +3123,7 @@ describe("useQuizSession hook", () => {
       submissionId: canonicalSubmissionId,
       revision: canonicalRevision,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 1,
@@ -3117,7 +3134,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 4,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 2,
@@ -3227,7 +3244,7 @@ describe("useQuizSession hook", () => {
       submissionId: draft.submissionId as string,
       revision: draft.revision as number,
       restoreIntegrity: restoreIntegrity(true, true),
-      answers: [1, 2, 3, 4, 5].map((questionId) =>
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) =>
         questionId === 2
           ? {
               questionId,
@@ -3282,7 +3299,7 @@ describe("useQuizSession hook", () => {
       submissionId: draft.submissionId as string,
       revision: draft.revision as number,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 0,
@@ -3315,7 +3332,7 @@ describe("useQuizSession hook", () => {
     const savedSubmission = {
       submissionId: draft.submissionId as string,
       revision: draft.revision as number,
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 0,
@@ -3372,7 +3389,10 @@ describe("useQuizSession hook", () => {
     const savedSubmission = {
       submissionId: draft.submissionId as string,
       revision: draft.revision as number,
-      restoreIntegrity: restoreIntegrity(true),
+      restoreIntegrity: {
+        ...restoreIntegrity(true),
+        questions: restoreIntegrity(true).questions.slice(0, 6),
+      },
       answers: [
         ...[1, 2, 3, 4].map((questionId) => ({
           questionId,
@@ -3386,6 +3406,7 @@ describe("useQuizSession hook", () => {
           selectedIndex: null,
           freeText,
         },
+        { questionId: 6, answerKind: "selected" as const, selectedIndex: 0, freeText: null },
       ],
     };
     vi.mocked(fetchAnswerBootstrap).mockResolvedValueOnce(
@@ -3436,7 +3457,7 @@ describe("useQuizSession hook", () => {
         submissionId: draft.submissionId as string,
         revision: draft.revision as number,
         restoreIntegrity: restoreIntegrity(true, true),
-        answers: [1, 2, 3, 4, 5].map((questionId) =>
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) =>
           questionId === 2
             ? {
                 questionId,
@@ -3478,7 +3499,7 @@ describe("useQuizSession hook", () => {
       submissionId: "00000000-0000-4000-8000-000000000098",
       revision: 4,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 2,
@@ -3514,7 +3535,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.access).toEqual({ kind: "ready", participant });
     expect(result.current.answerMode).toBe("assisted");
     expect(result.current.phase).toMatchObject({ retryRequired: true });
-    expect(result.current.selections).toEqual({ 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 });
+    expect(result.current.selections).toEqual({ 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1 });
     expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
     expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
@@ -3532,7 +3553,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.phase).toMatchObject({ retryRequired: true });
     expect(result.current.submissionId).toBe(draft.submissionId);
     expect(result.current.revision).toBe(draft.revision);
-    expect(result.current.selections).toEqual({ 1: 1, 2: 1, 3: 1, 4: 1, 5: 1 });
+    expect(result.current.selections).toEqual({ 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1 });
     expect(fetchAnswerBootstrap).toHaveBeenNthCalledWith(bootstrapCallsBeforeLogin + 1, "assisted");
     expect(fetchLatestAnswerSubmission).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/questions/batch")).toBe(false);
@@ -3547,7 +3568,7 @@ describe("useQuizSession hook", () => {
         submissionId: "00000000-0000-4000-8000-000000000098",
         revision: 4,
         ...(integrity === "invalid" ? { restoreIntegrity: { status: "invalid" as const } } : {}),
-        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
           questionId,
           answerKind: "selected" as const,
           selectedIndex: 2,
@@ -3664,7 +3685,7 @@ describe("useQuizSession hook", () => {
     }
     act(() => result.current.setFreeResponsePart(5, "a", "  朝飲茶  "));
     act(() => result.current.setFreeResponsePart(5, "b", "  シーフード店  "));
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
 
     await act(async () => result.current.saveAnswers());
     expect(result.current.phase).toMatchObject({ kind: "answering", retryRequired: true });
@@ -3699,7 +3720,10 @@ describe("useQuizSession hook", () => {
     const savedSubmission = {
       submissionId,
       revision: 3,
-      restoreIntegrity: restoreIntegrity(true),
+      restoreIntegrity: {
+        ...restoreIntegrity(true),
+        questions: restoreIntegrity(true).questions.slice(0, 6),
+      },
       answers: [
         ...[1, 2, 3, 4].map((questionId) => ({
           questionId,
@@ -3713,6 +3737,7 @@ describe("useQuizSession hook", () => {
           selectedIndex: null,
           freeText: "回答を保存しました。",
         },
+        { questionId: 6, answerKind: "selected" as const, selectedIndex: 0, freeText: null },
       ],
     };
     vi.mocked(fetchAnswerBootstrap).mockResolvedValue(makeBootstrap("owner", savedSubmission));
@@ -3739,12 +3764,12 @@ describe("useQuizSession hook", () => {
     await act(async () => result.current.editAnswers(() => true));
     expect(result.current.selections).toEqual(
       Object.fromEntries(
-        result.current.quizzes
-          .slice(0, 4)
-          .map(({ question, shuffled }) => [
-            question.id,
-            shuffled.choiceIndices.indexOf(question.id % 4),
-          ]),
+        [1, 2, 3, 4, 6].map((questionId) => [
+          questionId,
+          result.current.quizzes
+            .find(({ question }) => question.id === questionId)!
+            .shuffled.choiceIndices.indexOf(questionId === 6 ? 0 : questionId % 4),
+        ]),
       ),
     );
     expect(result.current.freeResponses[5]).toBe("回答を保存しました。");
@@ -3778,7 +3803,7 @@ describe("useQuizSession hook", () => {
       makeBootstrap("owner", {
         submissionId,
         revision: 2,
-        answers: [1, 2, 3, 4, 5].map((questionId) => ({
+        answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
           questionId,
           answerKind: "selected" as const,
           selectedIndex: 1,
@@ -3833,7 +3858,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 2,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 1,
@@ -3853,7 +3878,7 @@ describe("useQuizSession hook", () => {
       submissionId,
       revision: 2,
       restoreIntegrity: restoreIntegrity(),
-      answers: [1, 2, 3, 4, 5].map((questionId) => ({
+      answers: [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
         questionId,
         answerKind: "selected" as const,
         selectedIndex: 1,
@@ -3875,7 +3900,7 @@ describe("useQuizSession hook", () => {
     expect(result.current.revision).toBe(2);
     expect(result.current.answeredCount).toBe(0);
     await act(async () => result.current.editAnswers(() => true));
-    expect(result.current.answeredCount).toBe(5);
+    expect(result.current.answeredCount).toBe(7);
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/questions/batch")).toHaveLength(1);
   });
 });

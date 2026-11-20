@@ -10,7 +10,7 @@ describe("GET /api/questions/batch route handler", () => {
   beforeEach(() => vi.mocked(getExamQuestions).mockReset());
 
   it("returns the repository's public exam projection in one response", async () => {
-    const questions = [1, 2, 3, 4, 5].map((id) => ({
+    const questions = [1, 2, 3, 4, 5, 6, 7].map((id) => ({
       id,
       question: `Question ${id}`,
       choices: id === 5 ? [] : ["A", "B", "C", "D"],

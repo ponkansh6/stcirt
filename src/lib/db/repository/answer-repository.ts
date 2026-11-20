@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, lte, or, sql } from "drizzle-orm";
 import { db } from "../index";
 import {
   examAnswerLogs,
@@ -19,7 +19,11 @@ import { scoreQ5 } from "@/lib/jev/scoring";
 import { randomUUID } from "node:crypto";
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
 import { isSqliteLockContention } from "./sqlite-error-classification";
-import { MAX_MULTIPLE_CHOICE_OPTIONS, QUIZ_CHOICES_PER_QUESTION } from "@/lib/constants";
+import {
+  EXAM_QUESTION_COUNT,
+  MAX_MULTIPLE_CHOICE_OPTIONS,
+  QUIZ_CHOICES_PER_QUESTION,
+} from "@/lib/constants";
 
 const SAFE_ASSESSMENT_LOG_REASONS = new Set([
   "jev_validation",
@@ -331,7 +335,7 @@ export async function getLatestAnswerSubmission(participantId: number) {
       })
       .from(examQuestions)
       .orderBy(asc(examQuestions.id))
-      .limit(5);
+      .limit(EXAM_QUESTION_COUNT);
     const restoreQuestions = currentQuestions.map(({ id, key, choiceCount, selectionMode }) => ({
       id,
       answerType: key === "it-literacy-005" ? ("freeText" as const) : ("selected" as const),
@@ -346,11 +350,26 @@ export async function getLatestAnswerSubmission(participantId: number) {
     });
     const storedIds = storedAnswers.map(({ questionId }) => questionId);
     const currentIds = restoreQuestions.map(({ id }) => id);
+    const isLegacyPriorQuestionSubmission =
+      questionIds.length >= 5 &&
+      questionIds.length < currentIds.length &&
+      questionIds.every((id, index) => id === currentIds[index]);
+    const expectedSavedIds = isLegacyPriorQuestionSubmission ? questionIds : currentIds;
     const rawAnswersMatch = storedAnswers.every((answer) => {
       const currentQuestion = restoreQuestions.find(({ id }) => id === answer.questionId);
       if (!currentQuestion) return false;
       if (currentQuestion.answerType === "freeText" && answer.questionId === 5) {
         const parts = decodeFreeTextParts(answer.freeText);
+        if (answer.answerKind === "legacy") {
+          return (
+            answer.selectedIndex !== null &&
+            Number.isInteger(answer.selectedIndex) &&
+            answer.selectedIndex >= 0 &&
+            answer.selectedIndex < QUIZ_CHOICES_PER_QUESTION &&
+            answer.selectedIndices === null &&
+            answer.freeText === null
+          );
+        }
         return (
           answer.answerKind === "freeText" &&
           answer.selectedIndex === null &&
@@ -370,12 +389,12 @@ export async function getLatestAnswerSubmission(participantId: number) {
       );
     });
     const integrityComplete =
-      questionIds.length === 5 &&
+      (questionIds.length === EXAM_QUESTION_COUNT || isLegacyPriorQuestionSubmission) &&
       questionVersionsMatch &&
-      new Set(questionIds).size === 5 &&
-      storedAnswers.length === 5 &&
-      new Set(storedIds).size === 5 &&
-      restoreQuestions.length === 5 &&
+      new Set(questionIds).size === expectedSavedIds.length &&
+      storedAnswers.length === expectedSavedIds.length &&
+      new Set(storedIds).size === expectedSavedIds.length &&
+      restoreQuestions.length === EXAM_QUESTION_COUNT &&
       restoreQuestions.every(({ answerType, choiceCount, selectionMode }) =>
         answerType === "freeText"
           ? choiceCount === 0
@@ -385,16 +404,23 @@ export async function getLatestAnswerSubmission(participantId: number) {
                 ? MAX_MULTIPLE_CHOICE_OPTIONS
                 : QUIZ_CHOICES_PER_QUESTION),
       ) &&
-      questionIds.every((id, index) => id === currentIds[index]) &&
-      storedIds.every((id) => questionIds.includes(id)) &&
+      questionIds.every((id, index) => id === expectedSavedIds[index]) &&
+      storedIds.every((id) => expectedSavedIds.includes(id)) &&
       rawAnswersMatch;
-    const answers = integrityComplete ? restoreSubmissionAnswers(questionIds, storedAnswers) : [];
+    const answers = integrityComplete
+      ? restoreSubmissionAnswers(expectedSavedIds, storedAnswers)
+      : [];
     return {
       submissionId: submission.id,
       revision: submission.revision,
       answers,
       restoreIntegrity: integrityComplete
-        ? { status: "complete" as const, questions: restoreQuestions }
+        ? {
+            status: "complete" as const,
+            questions: isLegacyPriorQuestionSubmission
+              ? restoreQuestions.slice(0, expectedSavedIds.length)
+              : restoreQuestions,
+          }
         : { status: "invalid" as const },
     };
   });
@@ -437,7 +463,7 @@ export function saveAnswerSubmission(
   return promise;
 }
 
-/** Save or revise one fixed five-question answer set atomically. */
+/** Save or revise one fixed seven-question answer set atomically. */
 async function saveAnswerSubmissionOnce(
   input: {
     submissionId: string;
@@ -468,10 +494,13 @@ async function saveAnswerSubmissionOnce(
     if (replay) return replay;
 
     if (
-      input.answers.length !== 5 ||
-      new Set(input.answers.map((answer) => answer.questionId)).size !== 5
+      input.answers.length !== EXAM_QUESTION_COUNT ||
+      new Set(input.answers.map((answer) => answer.questionId)).size !== EXAM_QUESTION_COUNT
     ) {
-      throw new BatchSubmissionError("Exactly five distinct answers are required", 400);
+      throw new BatchSubmissionError(
+        `Exactly ${EXAM_QUESTION_COUNT} distinct answers are required`,
+        400,
+      );
     }
 
     const [submission] = await db
@@ -495,28 +524,28 @@ async function saveAnswerSubmissionOnce(
       })
       .from(examQuestions)
       .orderBy(asc(examQuestions.id))
-      .limit(5);
-    const expectedQuestionIds = submission
-      ? submission.questionIds
-      : examSet.map((question) => question.id);
+      .limit(EXAM_QUESTION_COUNT);
+    const expectedQuestionIds = examSet.map((question) => question.id);
+    const priorQuestionIds = expectedQuestionIds.slice(0, EXAM_QUESTION_COUNT - 1);
+    const isLegacyPriorQuestionSubmission =
+      submission !== undefined &&
+      submission.questionIds.length >= 5 &&
+      submission.questionIds.length < expectedQuestionIds.length &&
+      submission.questionIds.every((id, index) => id === priorQuestionIds[index]);
     if (
-      expectedQuestionIds.length !== 5 ||
+      expectedQuestionIds.length !== EXAM_QUESTION_COUNT ||
+      (submission &&
+        !isLegacyPriorQuestionSubmission &&
+        (submission.questionIds.length !== EXAM_QUESTION_COUNT ||
+          submission.questionIds.some((id, index) => id !== expectedQuestionIds[index]))) ||
       canonicalAnswers.some((answer, index) => answer.questionId !== expectedQuestionIds[index])
     ) {
-      throw new BatchSubmissionError("Answers must match the submission's five questions", 400);
+      throw new BatchSubmissionError(
+        `Answers must match the submission's ${EXAM_QUESTION_COUNT} questions`,
+        400,
+      );
     }
-    const questions = submission
-      ? await db
-          .select({
-            id: examQuestions.id,
-            key: examQuestions.key,
-            selectionMode: examQuestions.selectionMode,
-            choices: examQuestions.choices,
-            questionVersion: examQuestions.questionVersion,
-          })
-          .from(examQuestions)
-          .where(inArray(examQuestions.id, expectedQuestionIds))
-      : examSet;
+    const questions = examSet;
     const questionById = new Map(questions.map((question) => [question.id, question]));
     if (
       canonicalAnswers.some((answer) => {
@@ -591,7 +620,12 @@ async function saveAnswerSubmissionOnce(
             }
             const updated = await tx
               .update(examAnswerSubmissions)
-              .set({ revision, updatedAt: new Date(), questionVersions })
+              .set({
+                revision,
+                updatedAt: new Date(),
+                questionIds: expectedQuestionIds,
+                questionVersions,
+              })
               .where(
                 and(
                   eq(examAnswerSubmissions.id, input.submissionId),

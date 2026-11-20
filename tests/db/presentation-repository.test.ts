@@ -453,7 +453,7 @@ describe("presentation repository", () => {
   beforeEach(async () => {
     testDb = await createTestDb();
     dbRef.db = testDb.db;
-    // Migrations seed the normal seven-question set; these specs use an exact
+    // Migrations seed the normal six-question set; these specs use an exact
     // two-question fixture so stage indexes and question counts stay local.
     await testDb.db.delete(schema.presentationOperations);
     await testDb.db.delete(schema.presentationReferenceSettings);
@@ -493,12 +493,38 @@ describe("presentation repository", () => {
     ]);
   }
 
-  async function addCurrentFiveQuestions() {
+  async function addCurrentSixQuestions() {
     await testDb.db.insert(schema.examQuestions).values(
-      [1, 2, 3, 4, 5].map((id) => ({
+      [1, 2, 3, 4, 5, 6].map((id) => ({
         id,
         key: `it-literacy-00${id}`,
-        questionVersion: id === 5 ? "hong-kong-trip-a-b-v5" : `nagano-00${id}-v1`,
+        questionVersion:
+          id === 5
+            ? "hong-kong-trip-a-b-v5"
+            : id === 6
+              ? "tamami-university-friends-local-curry-v1"
+              : `nagano-00${id}-v1`,
+        question: `Current question ${id}`,
+        choices: id === 5 ? [] : [`Correct ${id}`, `Wrong ${id}`],
+        correctIndex: 0,
+        explanation: `Current explanation ${id}`,
+      })),
+    );
+  }
+
+  async function addCurrentSevenQuestions() {
+    await testDb.db.insert(schema.examQuestions).values(
+      [1, 2, 3, 4, 5, 6, 7].map((id) => ({
+        id,
+        key: `it-literacy-00${id}`,
+        questionVersion:
+          id === 5
+            ? "hong-kong-trip-a-b-v5"
+            : id === 6
+              ? "tamami-university-friends-local-curry-v1"
+              : id === 7
+                ? "shunki-high-school-microwave-power-v1"
+                : `nagano-00${id}-v1`,
         question: `Current question ${id}`,
         choices: id === 5 ? [] : [`Correct ${id}`, `Wrong ${id}`],
         correctIndex: 0,
@@ -563,7 +589,10 @@ describe("presentation repository", () => {
               questionId: question.id,
               ...(question.id === 2 && q2Selections
                 ? { selectedIndices: q2Selections }
-                : { selectedIndex: question.id === 1 ? selectedIndices[0]! : 0 }),
+                : {
+                    selectedIndex:
+                      question.id === 1 ? selectedIndices[0]! : question.id === 6 ? 1 : 0,
+                  }),
             },
       ),
     );
@@ -652,7 +681,7 @@ describe("presentation repository", () => {
   });
 
   it("rejects starting when the snapshot question version map is invalid", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     await op("aggregate", "stale-question-version-aggregate");
     await testDb.db
       .update(schema.presentationSessions)
@@ -672,7 +701,7 @@ describe("presentation repository", () => {
     ["rubricVersions", []],
     ["rubricVersions", "invalid"],
   ] as const)("rejects starting with a non-object %s map (%s)", async (field, value) => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     await op("aggregate", `invalid-${field}-map-aggregate`);
     await testDb.db
       .update(schema.presentationSessions)
@@ -745,7 +774,7 @@ describe("presentation repository", () => {
   });
 
   it("awards half a point per correct Q2 choice", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     await testDb.db
       .update(schema.examQuestions)
       .set({
@@ -779,7 +808,7 @@ describe("presentation repository", () => {
   });
 
   it("scores Q2 with unavailable correct indices as zero", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     await testDb.db
       .update(schema.examQuestions)
       .set({
@@ -807,7 +836,7 @@ describe("presentation repository", () => {
   });
 
   it("keeps full-match scoring for other multiple-choice questions", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     await testDb.db
       .update(schema.examQuestions)
       .set({
@@ -850,7 +879,7 @@ describe("presentation repository", () => {
   });
 
   it("scores other multiple-choice questions with unavailable correct indices as zero", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     await testDb.db
       .update(schema.examQuestions)
       .set({
@@ -2516,7 +2545,7 @@ describe("presentation repository", () => {
   });
 
   it("preserves malformed Q5 JSON as raw text in a newly aggregated snapshot", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     const participantId = await addParticipant("Malformed Q5 snapshot source");
     await addSubmission(participantId, [0, 0]);
     await testDb.db
@@ -2613,7 +2642,7 @@ describe("presentation repository", () => {
   });
 
   it("fails closed for malformed selected and correct multi-select indices in winner answers", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     await testDb.db
       .update(schema.examQuestions)
       .set({
@@ -2625,7 +2654,7 @@ describe("presentation repository", () => {
     const participantId = await addParticipant("Malformed multi-select result");
     await addSubmission(participantId, [0, 0], 1, "multi", 1, [1, 4]);
     await startWithAggregate("malformed-multi-select-start");
-    for (let index = 0; index < 16; index += 1)
+    for (let index = 0; index < 19; index += 1)
       await operatePresentation(`malformed-multi-select-forward-${index}`, "advance");
 
     const [entry] = await testDb.db
@@ -2663,7 +2692,7 @@ describe("presentation repository", () => {
   });
 
   it("scores a multi-select question with no stored correct set as incorrect", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     await testDb.db
       .update(schema.examQuestions)
       .set({
@@ -3082,7 +3111,7 @@ describe("presentation repository", () => {
   );
 
   it("fails aggregation closed when the current Q5 version has no grader mapping", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     const participant = await addParticipant("Unsupported Q5 version");
     await addSubmission(participant, [0, 0]);
     await testDb.db
@@ -3097,21 +3126,22 @@ describe("presentation repository", () => {
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toHaveLength(0);
   });
 
-  it("aggregates the complete current Q1–Q5 set with matching submitted and assessed versions", async () => {
-    await addCurrentFiveQuestions();
-    const participant = await addParticipant("Current five-question participant");
-    const submissionId = "current-five-question-submission";
+  it("aggregates the complete current Q1–Q6 set with matching submitted and assessed versions", async () => {
+    await addCurrentSixQuestions();
+    const participant = await addParticipant("Current six-question participant");
+    const submissionId = "current-six-question-submission";
     const questionVersions = {
       "1": "nagano-001-v1",
       "2": "nagano-002-v1",
       "3": "nagano-003-v1",
       "4": "nagano-004-v1",
       "5": "hong-kong-trip-a-b-v5",
+      "6": "tamami-university-friends-local-curry-v1",
     };
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
       participantId: participant,
-      questionIds: [1, 2, 3, 4, 5],
+      questionIds: [1, 2, 3, 4, 5, 6],
       questionVersions,
       revision: 1,
     });
@@ -3127,6 +3157,7 @@ describe("presentation repository", () => {
         answerKind: "freeText",
         freeText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
       },
+      { submissionId, questionId: 6, selectedIndex: 0 },
     ]);
     await testDb.db.insert(schema.examAnswerAssessments).values({
       submissionId,
@@ -3140,13 +3171,13 @@ describe("presentation repository", () => {
       rubricVersion: JEV_RUBRIC_VERSION,
     });
 
-    await op("aggregate", "current-five-question-aggregate");
+    await op("aggregate", "current-six-question-aggregate");
 
     await expect(testDb.db.select().from(schema.presentationQuestions)).resolves.toMatchObject(
-      [1, 2, 3, 4, 5].map((id) => ({ sourceQuestionId: id })),
+      [1, 2, 3, 4, 5, 6].map((id) => ({ sourceQuestionId: id })),
     );
     await expect(testDb.db.select().from(schema.presentationEntries)).resolves.toMatchObject([
-      { participantId: participant, score: 4.5 },
+      { participantId: participant, score: 5.5 },
     ]);
     await expect(testDb.db.select().from(schema.presentationSessions)).resolves.toMatchObject([
       {
@@ -3157,7 +3188,7 @@ describe("presentation repository", () => {
   });
 
   it("keeps unrounded Q5 floats distinct in snapshot totals and competition ranks", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     const higher = await addParticipant("Higher precise total");
     const lower = await addParticipant("Lower precise total");
     await addSubmission(higher, [0, 0], 1, "higher-precision", 0.804);
@@ -3202,7 +3233,7 @@ describe("presentation repository", () => {
   ])(
     "excludes a submission with a mismatched $name",
     async ({ name, questionVersion, rubricVersion }) => {
-      await addCurrentFiveQuestions();
+      await addCurrentSixQuestions();
       const participant = await addParticipant(`Mismatched ${questionVersion}-${rubricVersion}`);
       const submissionId = "mismatched-q5-assessment-submission";
       const questionVersions = {
@@ -3211,11 +3242,12 @@ describe("presentation repository", () => {
         "3": "nagano-003-v1",
         "4": "nagano-004-v1",
         "5": "hong-kong-trip-a-b-v5",
+        "6": "tamami-university-friends-local-curry-v1",
       };
       await testDb.db.insert(schema.examAnswerSubmissions).values({
         id: submissionId,
         participantId: participant,
-        questionIds: [1, 2, 3, 4, 5],
+        questionIds: [1, 2, 3, 4, 5, 6],
         questionVersions,
         revision: 1,
       });
@@ -3227,6 +3259,7 @@ describe("presentation repository", () => {
           answerKind: "freeText",
           freeText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
         },
+        { submissionId, questionId: 6, selectedIndex: 0 },
       ]);
       await testDb.db.insert(schema.examAnswerAssessments).values({
         submissionId,
@@ -3264,7 +3297,7 @@ describe("presentation repository", () => {
     { name: "an older rubric version", rubricVersions: { "5": "omiwatari-v1" } },
     { name: "a missing rubric version", rubricVersions: {} as Record<string, string> },
   ])("blocks presentation start when the Q5 snapshot has $name", async ({ rubricVersions }) => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     const participant = await addParticipant("Stale snapshot participant");
     const submissionId = "stale-snapshot-submission";
     const questionVersions = {
@@ -3273,11 +3306,12 @@ describe("presentation repository", () => {
       "3": "nagano-003-v1",
       "4": "nagano-004-v1",
       "5": "hong-kong-trip-a-b-v5",
+      "6": "tamami-university-friends-local-curry-v1",
     };
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
       participantId: participant,
-      questionIds: [1, 2, 3, 4, 5],
+      questionIds: [1, 2, 3, 4, 5, 6],
       questionVersions,
       revision: 1,
     });
@@ -3293,6 +3327,7 @@ describe("presentation repository", () => {
         answerKind: "freeText",
         freeText: JSON.stringify({ a: "Q5 current answer", b: "Q5 current answer" }),
       },
+      { submissionId, questionId: 6, selectedIndex: 0 },
     ]);
     await testDb.db.insert(schema.examAnswerAssessments).values({
       submissionId,
@@ -3652,7 +3687,7 @@ describe("presentation repository", () => {
   });
 
   it("restores multiple-choice selections in participant result details", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     await testDb.db
       .update(schema.examQuestions)
       .set({
@@ -3765,7 +3800,7 @@ describe("presentation repository", () => {
   });
 
   it("blocks an answer correction after publication without changing its snapshot", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSevenQuestions();
     const participantId = await addParticipant("Contended participant");
     const submissionId = `submission-${participantId}-latest`;
     const answers = [
@@ -3774,6 +3809,8 @@ describe("presentation repository", () => {
       { questionId: 3, selectedIndex: 0 },
       { questionId: 4, selectedIndex: 0 },
       { questionId: 5, freeTextParts: { a: "Q5 answer", b: "Q5 answer" } },
+      { questionId: 6, selectedIndex: 0 },
+      { questionId: 7, selectedIndex: 0 },
     ];
     await saveAnswerSubmission({
       submissionId,
@@ -3829,7 +3866,7 @@ describe("presentation repository", () => {
   });
 
   it("publishes after an answer update commits first and republishes its explicit aggregate", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSevenQuestions();
     const participantId = await addParticipant("Contended participant");
     const submissionId = `submission-${participantId}-latest`;
     const answers = [
@@ -3838,6 +3875,8 @@ describe("presentation repository", () => {
       { questionId: 3, selectedIndex: 0 },
       { questionId: 4, selectedIndex: 0 },
       { questionId: 5, freeTextParts: { a: "Q5 answer", b: "Q5 answer" } },
+      { questionId: 6, selectedIndex: 0 },
+      { questionId: 7, selectedIndex: 0 },
     ];
     await saveAnswerSubmission({
       submissionId,
@@ -4443,7 +4482,7 @@ describe("presentation repository", () => {
   });
 
   it("preserves a current snapshot and revision when a legacy Q5 answer blocks reaggregation", async () => {
-    await addCurrentFiveQuestions();
+    await addCurrentSixQuestions();
     const currentParticipant = await addParticipant("Current graded answer");
     await addSubmission(currentParticipant, [0, 0]);
     const firstAggregate = await op("aggregate", "legacy-preservation-first-aggregate");

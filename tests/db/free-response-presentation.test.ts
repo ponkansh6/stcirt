@@ -45,10 +45,17 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     await testDb.db.delete(schema.examParticipants);
     await testDb.db.delete(schema.examQuestions);
     await testDb.db.insert(schema.examQuestions).values(
-      [1, 2, 3, 4, 5].map((id) => ({
+      [1, 2, 3, 4, 5, 6, 7].map((id) => ({
         id,
         key: `it-literacy-00${id}`,
-        questionVersion: id === 5 ? "hong-kong-trip-a-b-v5" : `nagano-00${id}-v1`,
+        questionVersion:
+          id === 5
+            ? "hong-kong-trip-a-b-v5"
+            : id === 6
+              ? "tamami-university-friends-local-curry-v1"
+              : id === 7
+                ? "shunki-high-school-microwave-power-v1"
+                : `nagano-00${id}-v1`,
         question: `Question ${id}`,
         choices: id === 5 ? [] : ["correct", "incorrect"],
         correctIndex: 0,
@@ -81,6 +88,8 @@ describe("free-response presentation scoring and immutable snapshots", () => {
       answers: [
         ...answerSet,
         { questionId: 5, freeTextParts: { a: `answer ${suffix}`, b: `answer ${suffix}` } },
+        { questionId: 6, selectedIndex: 0 },
+        { questionId: 7, selectedIndex: 0 },
       ],
     });
     await testDb.db
@@ -110,10 +119,10 @@ describe("free-response presentation scoring and immutable snapshots", () => {
 
     const presentation = await startWithAggregate("fraction-start");
     expect(presentation.entries).toEqual([
-      expect.objectContaining({ displayName: "fractional-one", score: 4.75, rank: 1 }),
+      expect.objectContaining({ displayName: "fractional-one", score: 6.75, rank: 1 }),
       expect.objectContaining({
         displayName: "fractional-two",
-        score: 4.7495,
+        score: 6.7495,
         rank: 2,
       }),
     ]);
@@ -128,7 +137,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         normalizedScore: 0.75,
       }),
     );
-    for (let index = 0; index < 17; index += 1)
+    for (let index = 0; index < 23; index += 1)
       await operatePresentation(`fraction-rank-forward-${index}`, "advance");
     let winnerProjection = await getPublicPresentation();
     expect(winnerProjection).toMatchObject({
@@ -156,7 +165,7 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     await addFreeTextSubmission(participantId, 0, "zero");
     await addFreeTextSubmission(maximumParticipantId, 1, "maximum");
     await startWithAggregate("zero-score-start");
-    for (let index = 0; index < 17; index += 1)
+    for (let index = 0; index < 23; index += 1)
       await operatePresentation(`zero-score-forward-${index}`, "advance");
 
     let projection = await getPublicPresentation();
@@ -205,8 +214,8 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     const result = await getParticipantResult(participantId);
     expect(result).toMatchObject({
       state: "visible",
-      score: 5,
-      maxScore: 5,
+      score: 7,
+      maxScore: 7,
       questions: [
         { position: 0 },
         { position: 1 },
@@ -216,6 +225,8 @@ describe("free-response presentation scoring and immutable snapshots", () => {
           position: 4,
           answer: { kind: "freeText", score: 1 },
         },
+        { position: 5 },
+        { position: 6 },
       ],
     });
     expect(parseParticipantResult(result)).toEqual(result);
@@ -457,6 +468,12 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     await operatePresentation("question-five-identity-rank-forward-1", "advance");
     await operatePresentation("question-five-identity-rank-forward-2", "advance");
     await operatePresentation("question-five-identity-rank-forward-3", "advance");
+    await operatePresentation("question-five-identity-q6-forward-1", "advance");
+    await operatePresentation("question-five-identity-q6-forward-2", "advance");
+    await operatePresentation("question-five-identity-q6-forward-3", "advance");
+    await operatePresentation("question-five-identity-q7-forward-1", "advance");
+    await operatePresentation("question-five-identity-q7-forward-2", "advance");
+    await operatePresentation("question-five-identity-q7-forward-3", "advance");
     const renamedWinner = await getPublicPresentation();
     const fifthResult =
       renamedWinner.state === "first" ? renamedWinner.winners[0]?.questionResults[4] : undefined;
@@ -480,6 +497,12 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     await operatePresentation("missing-source-rank-forward-1", "advance");
     await operatePresentation("missing-source-rank-forward-2", "advance");
     await operatePresentation("missing-source-rank-forward-3", "advance");
+    await operatePresentation("missing-source-q6-forward-1", "advance");
+    await operatePresentation("missing-source-q6-forward-2", "advance");
+    await operatePresentation("missing-source-q6-forward-3", "advance");
+    await operatePresentation("missing-source-q7-forward-1", "advance");
+    await operatePresentation("missing-source-q7-forward-2", "advance");
+    await operatePresentation("missing-source-q7-forward-3", "advance");
     const winnerProjection = await getPublicPresentation();
     const fifthResult =
       winnerProjection.state === "first"
@@ -560,13 +583,15 @@ describe("free-response presentation scoring and immutable snapshots", () => {
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
       participantId: legacyId,
-      questionIds: [1, 2, 3, 4, 5],
+      questionIds: [1, 2, 3, 4, 5, 6, 7],
       questionVersions: {
         "1": "nagano-001-v1",
         "2": "nagano-002-v1",
         "3": "nagano-003-v1",
         "4": "nagano-004-v1",
         "5": "hong-kong-trip-a-b-v5",
+        "6": "tamami-university-friends-local-curry-v1",
+        "7": "shunki-high-school-microwave-power-v1",
       },
       revision: 1,
     });
@@ -578,6 +603,8 @@ describe("free-response presentation scoring and immutable snapshots", () => {
         selectedIndex: answer.selectedIndex,
       })),
       { submissionId, questionId: 5, answerKind: "legacy", selectedIndex: 1 },
+      { submissionId, questionId: 6, answerKind: "selected", selectedIndex: 0 },
+      { submissionId, questionId: 7, answerKind: "selected", selectedIndex: 0 },
     ]);
     const sessionBefore = await testDb.db.select().from(schema.presentationSessions);
     await expect(operatePresentation("legacy-q5-aggregate", "aggregate")).rejects.toBeInstanceOf(

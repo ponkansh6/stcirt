@@ -2,6 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import { db } from "../index";
 import { examQuestions } from "../schema";
 import { QuizQuestion, Question } from "@/types/quiz";
+import { EXAM_QUESTION_COUNT } from "@/lib/constants";
 
 export async function getQuestionById(id: number): Promise<Question | null> {
   const [q] = await db.select().from(examQuestions).where(eq(examQuestions.id, id));
@@ -31,7 +32,7 @@ export async function getExamQuestions(): Promise<QuizQuestion[]> {
     })
     .from(examQuestions)
     .orderBy(asc(examQuestions.id))
-    .limit(5);
+    .limit(EXAM_QUESTION_COUNT);
 
   return rows.map((question) => ({
     id: question.id,

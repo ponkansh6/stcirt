@@ -37,6 +37,7 @@ import {
 } from "@/lib/jev/adapter";
 import { sqliteCauseObjects } from "./sqlite-cause-traversal";
 import { isSqliteLockContention } from "./sqlite-error-classification";
+import { EXAM_QUESTION_COUNT } from "@/lib/constants";
 
 export type PresentationConflictReason =
   | "grading_pending"
@@ -346,6 +347,7 @@ async function ensurePresentationSnapshot(
   };
   const validatedLatestSubmissionByParticipant = new Map<number, ValidatedLatestSubmission>();
   const excludedSubmissionIds = new Set<string>();
+  const legacyExcludedParticipantIds = new Set<number>();
   const excludedReasonCounts = {
     questionVersionMismatch: 0,
     q5AssessmentVersionMismatch: 0,
@@ -367,6 +369,19 @@ async function ensurePresentationSnapshot(
 
     const answers = answersBySubmission.get(submission.id);
     const q5Answer = answers?.get(q5Id);
+    const hasLegacyQuestionSet =
+      currentQuestions.length === EXAM_QUESTION_COUNT &&
+      submission.questionIds.length >= 5 &&
+      submission.questionIds.length < currentQuestions.length &&
+      submission.questionIds.every((id, index) => id === currentQuestions[index]!.id);
+    if (hasLegacyQuestionSet) {
+      // A shorter submission predates a later question and has no saved version
+      // or answer for it. Exclude it instead of treating it as unanswered.
+      excludedReasonCounts.questionVersionMismatch += 1;
+      excludedSubmissionIds.add(submission.id);
+      legacyExcludedParticipantIds.add(submission.participantId);
+      continue;
+    }
     const hasCurrentQuestionSet =
       submission.questionIds.length === currentQuestions.length &&
       currentQuestions.every((question) => submission.questionIds.includes(question.id));
@@ -450,86 +465,88 @@ async function ensurePresentationSnapshot(
     };
   }
 
-  const scored = participants.map((participant) => {
-    const validatedLatest = validatedLatestSubmissionByParticipant.get(participant.id);
-    const submission = validatedLatest?.submission;
-    const answers = submission ? answersBySubmission.get(submission.id) : undefined;
-    const validCompleteSet = validatedLatest !== undefined;
-    const assessment = validatedLatest?.assessment;
-    const answerSnapshot: PresentationAnswerSnapshot[] = currentQuestions.map((question) => {
-      const answer = validCompleteSet ? answers?.get(question.id) : undefined;
-      let freeTextParts: { a: string; b: string } | undefined;
-      if (question.key === "it-literacy-005" && typeof answer?.freeText === "string") {
-        try {
-          const parsed: unknown = JSON.parse(answer.freeText);
-          if (
-            typeof parsed === "object" &&
-            parsed !== null &&
-            "a" in parsed &&
-            "b" in parsed &&
-            typeof parsed.a === "string" &&
-            typeof parsed.b === "string"
-          )
-            freeTextParts = { a: parsed.a, b: parsed.b };
-        } catch {
-          freeTextParts = undefined;
+  const scored = participants
+    .filter(({ id }) => !legacyExcludedParticipantIds.has(id))
+    .map((participant) => {
+      const validatedLatest = validatedLatestSubmissionByParticipant.get(participant.id);
+      const submission = validatedLatest?.submission;
+      const answers = submission ? answersBySubmission.get(submission.id) : undefined;
+      const validCompleteSet = validatedLatest !== undefined;
+      const assessment = validatedLatest?.assessment;
+      const answerSnapshot: PresentationAnswerSnapshot[] = currentQuestions.map((question) => {
+        const answer = validCompleteSet ? answers?.get(question.id) : undefined;
+        let freeTextParts: { a: string; b: string } | undefined;
+        if (question.key === "it-literacy-005" && typeof answer?.freeText === "string") {
+          try {
+            const parsed: unknown = JSON.parse(answer.freeText);
+            if (
+              typeof parsed === "object" &&
+              parsed !== null &&
+              "a" in parsed &&
+              "b" in parsed &&
+              typeof parsed.a === "string" &&
+              typeof parsed.b === "string"
+            )
+              freeTextParts = { a: parsed.a, b: parsed.b };
+          } catch {
+            freeTextParts = undefined;
+          }
         }
-      }
-      const answerKind: PresentationAnswerSnapshot["answerKind"] =
-        answer?.answerKind === "selected" ||
-        answer?.answerKind === "freeText" ||
-        answer?.answerKind === "legacy"
-          ? answer.answerKind
-          : "unanswered";
+        const answerKind: PresentationAnswerSnapshot["answerKind"] =
+          answer?.answerKind === "selected" ||
+          answer?.answerKind === "freeText" ||
+          answer?.answerKind === "legacy"
+            ? answer.answerKind
+            : "unanswered";
+        return {
+          questionId: question.id,
+          answerKind,
+          selectedIndex: answer?.selectedIndex ?? null,
+          ...(answer?.selectedIndices ? { selectedIndices: answer.selectedIndices } : {}),
+          freeText: freeTextParts
+            ? `A: ${freeTextParts.a}\nB: ${freeTextParts.b}`
+            : (answer?.freeText ?? null),
+          ...(freeTextParts ? { freeTextParts } : {}),
+          rawScore: question.key === "it-literacy-005" && assessment ? assessment.rawScore : null,
+          normalizedScore:
+            question.key === "it-literacy-005" && assessment ? assessment.normalizedScore : null,
+        };
+      });
+      const score = validatedLatest
+        ? currentQuestions.reduce((sum, question) => {
+            if (question.key === "it-literacy-005") return sum + validatedLatest.q5Score;
+            const answer = answers?.get(question.id);
+            if (question.key === "it-literacy-002" && question.selectionMode === "multiple") {
+              const selected = answer?.selectedIndices;
+              const correct = question.correctIndices ?? [];
+              const partialScore =
+                Array.isArray(selected) && selected.length === correct.length
+                  ? Math.min(1, correct.filter((index) => selected.includes(index)).length * 0.5)
+                  : 0;
+              return sum + partialScore;
+            }
+            if (question.selectionMode === "multiple") {
+              const selected = answer?.selectedIndices;
+              const correct = question.correctIndices ?? [];
+              return (
+                sum +
+                Number(
+                  Array.isArray(selected) &&
+                    selected.length === correct.length &&
+                    selected.every((index) => correct.includes(index)),
+                )
+              );
+            }
+            return sum + Number(answer?.selectedIndex === question.correctIndex);
+          }, 0)
+        : 0;
       return {
-        questionId: question.id,
-        answerKind,
-        selectedIndex: answer?.selectedIndex ?? null,
-        ...(answer?.selectedIndices ? { selectedIndices: answer.selectedIndices } : {}),
-        freeText: freeTextParts
-          ? `A: ${freeTextParts.a}\nB: ${freeTextParts.b}`
-          : (answer?.freeText ?? null),
-        ...(freeTextParts ? { freeTextParts } : {}),
-        rawScore: question.key === "it-literacy-005" && assessment ? assessment.rawScore : null,
-        normalizedScore:
-          question.key === "it-literacy-005" && assessment ? assessment.normalizedScore : null,
+        participant,
+        answers: answerSnapshot,
+        score,
+        isAggregationTarget: validCompleteSet,
       };
     });
-    const score = validatedLatest
-      ? currentQuestions.reduce((sum, question) => {
-          if (question.key === "it-literacy-005") return sum + validatedLatest.q5Score;
-          const answer = answers?.get(question.id);
-          if (question.key === "it-literacy-002" && question.selectionMode === "multiple") {
-            const selected = answer?.selectedIndices;
-            const correct = question.correctIndices ?? [];
-            const partialScore =
-              Array.isArray(selected) && selected.length === correct.length
-                ? Math.min(1, correct.filter((index) => selected.includes(index)).length * 0.5)
-                : 0;
-            return sum + partialScore;
-          }
-          if (question.selectionMode === "multiple") {
-            const selected = answer?.selectedIndices;
-            const correct = question.correctIndices ?? [];
-            return (
-              sum +
-              Number(
-                Array.isArray(selected) &&
-                  selected.length === correct.length &&
-                  selected.every((index) => correct.includes(index)),
-              )
-            );
-          }
-          return sum + Number(answer?.selectedIndex === question.correctIndex);
-        }, 0)
-      : 0;
-    return {
-      participant,
-      answers: answerSnapshot,
-      score,
-      isAggregationTarget: validCompleteSet,
-    };
-  });
   const markedScored = scored.map((entry) => ({
     ...entry,
     isReference: isReferenceName(entry.participant.displayName),

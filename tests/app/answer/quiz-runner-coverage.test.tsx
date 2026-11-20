@@ -33,7 +33,7 @@ vi.mock("next/link", async (importOriginal) => {
   };
 });
 
-const selectedQuizzes = Array.from({ length: 5 }, (_, index) => ({
+const selectedQuizzes = Array.from({ length: 7 }, (_, index) => ({
   question: {
     id: index + 1,
     question: `設問${index + 1}`,
@@ -376,7 +376,7 @@ describe("QuizRunner remaining coverage states", () => {
         {
           quizzes,
           freeResponseParts: { 5: { a: "回答A", b: "回答B" } },
-          answeredCount: 5,
+          answeredCount: 6,
         },
       ),
     );
@@ -425,7 +425,7 @@ describe("QuizRunner remaining coverage states", () => {
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering" },
-        { quizzes, freeResponseParts: { 5: { a: "回答A", b: "回答B" } }, answeredCount: 5 },
+        { quizzes, freeResponseParts: { 5: { a: "回答A", b: "回答B" } }, answeredCount: 6 },
       ),
     );
     render(<QuizRunner />);
@@ -725,14 +725,19 @@ describe("QuizRunner remaining coverage states", () => {
     ).toHaveProperty("tagName", "TEXTAREA");
   });
 
-  it("reviews all five selected and free-text answers and reflects an edited selection", () => {
+  it("reviews all seven answers including selected and free-text answers and reflects an edited selection", () => {
     const quizzes = selectedQuizzes.map((quiz, index) =>
       index === 1 || index === 3
         ? { ...quiz, question: { ...quiz.question, answerType: "freeText" as const, choices: [] } }
         : quiz,
     );
     function EditableAnswerSheet() {
-      const [selections, setSelections] = useState<Record<number, number>>({ 1: 0, 3: 2, 5: 1 });
+      const [selections, setSelections] = useState<Record<number, number>>({
+        1: 0,
+        3: 2,
+        5: 1,
+        6: 0,
+      });
       const [freeResponses, setFreeResponses] = useState<Record<number, string>>({
         2: "記述回答その二",
         4: "記述回答その四",
@@ -744,7 +749,7 @@ describe("QuizRunner remaining coverage states", () => {
             quizzes,
             selections,
             freeResponses,
-            answeredCount: 5,
+            answeredCount: 6,
             select: (questionId: number, choiceIndex: number) =>
               setSelections((current) => ({ ...current, [questionId]: choiceIndex })),
             setFreeResponse: (questionId: number, value: string) =>
@@ -818,6 +823,8 @@ describe("QuizRunner remaining coverage states", () => {
       [3, { top: 650, bottom: 800 }],
       [4, { top: 800, bottom: 950 }],
       [5, { top: 950, bottom: 1100 }],
+      [6, { top: 1100, bottom: 1250 }],
+      [7, { top: 1250, bottom: 1400 }],
     ]);
     const headerRect = vi
       .spyOn(header, "getBoundingClientRect")
@@ -899,6 +906,7 @@ describe("QuizRunner remaining coverage states", () => {
       questionBounds.set(3, { top: 140, bottom: 500 });
       questionBounds.set(4, { top: 500, bottom: 650 });
       questionBounds.set(5, { top: 650, bottom: 800 });
+      questionBounds.set(6, { top: 800, bottom: 950 });
       act(() => {
         resizeHeader();
         flushFrames();
@@ -916,6 +924,8 @@ describe("QuizRunner remaining coverage states", () => {
       questionBounds.set(3, { top: 80, bottom: 250 });
       questionBounds.set(4, { top: 250, bottom: viewportHeight });
       questionBounds.set(5, { top: viewportHeight, bottom: viewportHeight + 250 });
+      questionBounds.set(6, { top: viewportHeight + 250, bottom: viewportHeight + 500 });
+      questionBounds.set(7, { top: viewportHeight + 500, bottom: viewportHeight + 750 });
       act(() => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
@@ -930,11 +940,13 @@ describe("QuizRunner remaining coverage states", () => {
       questionBounds.set(3, { top: -400, bottom: -300 });
       questionBounds.set(4, { top: -300, bottom: -200 });
       questionBounds.set(5, { top: -200, bottom: -100 });
+      questionBounds.set(6, { top: -100, bottom: 0 });
+      questionBounds.set(7, { top: 0, bottom: 200 });
       act(() => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
       });
-      expect(screen.getByRole("link", { name: /^第5問へ移動/ })).toHaveAttribute(
+      expect(screen.getByRole("link", { name: /^第7問へ移動/ })).toHaveAttribute(
         "aria-current",
         "location",
       );
@@ -944,6 +956,8 @@ describe("QuizRunner remaining coverage states", () => {
       questionBounds.set(3, { top: 700, bottom: 800 });
       questionBounds.set(4, { top: 800, bottom: 900 });
       questionBounds.set(5, { top: 900, bottom: 1000 });
+      questionBounds.set(6, { top: 1000, bottom: 1100 });
+      questionBounds.set(7, { top: 1100, bottom: 1200 });
       act(() => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
@@ -960,6 +974,8 @@ describe("QuizRunner remaining coverage states", () => {
       questionBounds.set(3, { top: 700, bottom: 800 });
       questionBounds.set(4, { top: 800, bottom: 900 });
       questionBounds.set(5, { top: 900, bottom: 1000 });
+      questionBounds.set(6, { top: 1000, bottom: 1100 });
+      questionBounds.set(7, { top: 1100, bottom: 1200 });
       act(() => {
         window.dispatchEvent(new Event("scroll"));
         flushFrames();
@@ -1005,7 +1021,7 @@ describe("QuizRunner remaining coverage states", () => {
     mockUseQuizSession.mockReturnValue(
       session(
         { kind: "answering" },
-        { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, answeredCount: 5 },
+        { selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }, answeredCount: 6 },
       ),
     );
     render(<QuizRunner />);
@@ -1048,7 +1064,7 @@ describe("QuizRunner remaining coverage states", () => {
       '[aria-labelledby="final-check-title"]',
     );
     expect(finalReview).not.toBeNull();
-    expect(within(finalReview as HTMLElement).queryByText("未回答 4問")).not.toBeInTheDocument();
+    expect(within(finalReview as HTMLElement).queryByText("未回答 5問")).not.toBeInTheDocument();
     const submit = screen.getByRole("button", { name: "未回答の設問に回答してください" });
     expect(submit).toBeDisabled();
     expect(document.getElementById("answer-1-0")).toBeChecked();
@@ -1059,17 +1075,24 @@ describe("QuizRunner remaining coverage states", () => {
       session(
         { kind: "answering", publishedLock: true },
         {
-          selections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0 },
-          answeredCount: 5,
+          selections: { 1: 0, 2: 1, 3: 2, 4: 3, 5: 0, 6: 0, 7: 0 },
+          answeredCount: 7,
         },
       ),
     );
     render(<QuizRunner />);
 
-    expect(screen.getByText("全5問に回答しました。", { exact: true })).toBeInTheDocument();
-    const submit = screen.getByRole("button", { name: "5問の回答を確定する" });
+    expect(screen.getByText("全7問に回答しました。", { exact: true })).toBeInTheDocument();
+    const submit = screen.getByRole("button", { name: "7問の回答を確定する" });
     expect(submit).toBeDisabled();
-    for (const [questionId, choiceIndex] of Object.entries({ 1: 0, 2: 1, 3: 2, 4: 3, 5: 0 })) {
+    for (const [questionId, choiceIndex] of Object.entries({
+      1: 0,
+      2: 1,
+      3: 2,
+      4: 3,
+      5: 0,
+      6: 0,
+    })) {
       expect(document.getElementById(`answer-${questionId}-${choiceIndex}`)).toBeChecked();
     }
   });
@@ -1163,8 +1186,8 @@ describe("QuizRunner remaining coverage states", () => {
   ] as const)("keeps the draft visible while %s is in progress", (label, phase) => {
     mockUseQuizSession.mockReturnValue(
       session(phase, {
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     render(<QuizRunner />);

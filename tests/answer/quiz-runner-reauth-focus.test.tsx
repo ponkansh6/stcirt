@@ -7,7 +7,7 @@ const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/answer" }));
 
-const quizzes = Array.from({ length: 5 }, (_, index) => ({
+const quizzes = Array.from({ length: 6 }, (_, index) => ({
   question: {
     id: index + 1,
     question: `Question ${index + 1}?`,
@@ -88,8 +88,8 @@ describe("QuizRunner batch answer sheet", () => {
       session(phase, {
         access,
         login,
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     const { rerender } = render(<RunnerPage />);
@@ -131,8 +131,8 @@ describe("QuizRunner batch answer sheet", () => {
       session(phase, {
         access,
         login,
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     const { rerender } = render(<RunnerPage />);
@@ -176,8 +176,8 @@ describe("QuizRunner batch answer sheet", () => {
       session(phase, {
         access,
         login,
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     const { rerender } = render(<RunnerPage />);
@@ -226,8 +226,8 @@ describe("QuizRunner batch answer sheet", () => {
       session(phase, {
         access,
         login,
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     const { rerender } = render(<RunnerPage />);
@@ -263,8 +263,8 @@ describe("QuizRunner batch answer sheet", () => {
       session(phase, {
         access,
         login,
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     const { rerender } = render(<RunnerPage />);
@@ -309,8 +309,8 @@ describe("QuizRunner batch answer sheet", () => {
       session(phase, {
         access,
         login,
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     const { rerender } = render(<RunnerPage />);
@@ -353,7 +353,7 @@ describe("QuizRunner batch answer sheet", () => {
       participant: { id: 7, name: "参加者" },
     };
     let phase: object = { kind: "answering", retryRequired: true };
-    let selections: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    let selections: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
     let answeredCount = 5;
     const login = vi.fn(() => pendingLogin);
     mockUseQuizSession.mockImplementation(() =>

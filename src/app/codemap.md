@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-Next.js App Router pages and REST API routes for the fixed five-question exam, administrator presentation, public projection, and participant results. Product behavior is specified in `openspec/specs/stcirt/spec.md`.
+Next.js App Router pages and REST API routes for the fixed seven-question exam, administrator presentation, public projection, and participant results. Product behavior is specified in `openspec/specs/stcirt/spec.md`.
 
 ## Structure
 
@@ -12,7 +12,7 @@ Next.js App Router pages and REST API routes for the fixed five-question exam, a
 - `admin/presentation/` — Administrator console and authenticated presenter UI
 - `presentation/` — Public projection and signed-session-gated presenter view
 - `results/` — Authenticated participant's own published result view
-- `api/questions/batch/route.ts` — GET the fixed five-question payload without answer keys
+- `api/questions/batch/route.ts` — GET the fixed seven-question payload without answer keys
 - `api/answers/batch/route.ts` — Authenticated atomic save/correction endpoint
 - `api/answers/latest/route.ts` — Participant-scoped latest saved submission lookup
 - `api/participants/` — Participant session, assisted answer, and result APIs

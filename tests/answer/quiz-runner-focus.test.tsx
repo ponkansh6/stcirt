@@ -8,7 +8,7 @@ const mockUseQuizSession = vi.hoisted(() => vi.fn());
 vi.mock("@/app/answer/use-quiz-session", () => ({ useQuizSession: () => mockUseQuizSession() }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/answer" }));
 
-const quizzes = Array.from({ length: 5 }, (_, index) => ({
+const quizzes = Array.from({ length: 6 }, (_, index) => ({
   question: {
     id: index + 1,
     question: `Question ${index + 1}?`,
@@ -106,14 +106,14 @@ describe("QuizRunner batch answer sheet", () => {
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
       session(currentPhase, {
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
         saveAnswers,
       }),
     );
     const { rerender } = render(<RunnerPage />);
     try {
-      const submitButton = screen.getByRole("button", { name: "5問の回答を確定する" });
+      const submitButton = screen.getByRole("button", { name: "7問の回答を確定する" });
       expect(document.activeElement).not.toBe(submitButton);
       fireEvent.click(submitButton);
       expect(saveAnswers).toHaveBeenCalledOnce();
@@ -173,8 +173,8 @@ describe("QuizRunner batch answer sheet", () => {
       ...session(
         { kind: "answering" },
         {
-          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-          answeredCount: 5,
+          selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+          answeredCount: 6,
           saveAnswers,
         },
       ),
@@ -183,7 +183,7 @@ describe("QuizRunner batch answer sheet", () => {
     mockUseQuizSession.mockImplementation(() => currentSession);
     const { rerender } = render(<RunnerPage />);
     try {
-      fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+      fireEvent.click(screen.getByRole("button", { name: "7問の回答を確定する" }));
       currentSession = { ...currentSession, phase: { kind: "submitting" } };
       rerender(<RunnerPage />);
       const finalCheckHeading = screen.getByRole("heading", {
@@ -239,12 +239,12 @@ describe("QuizRunner batch answer sheet", () => {
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
       session(currentPhase, {
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     const { rerender } = render(<RunnerPage />);
-    fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+    fireEvent.click(screen.getByRole("button", { name: "7問の回答を確定する" }));
 
     currentPhase = { kind: "submitting" };
     rerender(<RunnerPage />);
@@ -274,8 +274,8 @@ describe("QuizRunner batch answer sheet", () => {
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
       session(currentPhase, {
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
         saveAnswers,
       }),
     );
@@ -284,7 +284,7 @@ describe("QuizRunner batch answer sheet", () => {
     externalControl.textContent = "ページ内の別操作";
     document.body.append(externalControl);
     try {
-      fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+      fireEvent.click(screen.getByRole("button", { name: "7問の回答を確定する" }));
       expect(saveAnswers).toHaveBeenCalledOnce();
 
       currentPhase = { kind: "submitting" };
@@ -340,8 +340,8 @@ describe("QuizRunner batch answer sheet", () => {
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
       session(currentPhase, {
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     const { rerender } = render(<RunnerPage />);
@@ -371,12 +371,12 @@ describe("QuizRunner batch answer sheet", () => {
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
       session(currentPhase, {
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     const { rerender } = render(<RunnerPage />);
-    fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+    fireEvent.click(screen.getByRole("button", { name: "7問の回答を確定する" }));
 
     currentPhase = { kind: "submitting" };
     rerender(<RunnerPage />);
@@ -448,13 +448,13 @@ describe("QuizRunner batch answer sheet", () => {
     let currentPhase: object = { kind: "answering" };
     mockUseQuizSession.mockImplementation(() =>
       session(currentPhase, {
-        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-        answeredCount: 5,
+        selections: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+        answeredCount: 6,
       }),
     );
     const { rerender } = render(<RunnerPage />);
 
-    fireEvent.click(screen.getByRole("button", { name: "5問の回答を確定する" }));
+    fireEvent.click(screen.getByRole("button", { name: "7問の回答を確定する" }));
     currentPhase = { kind: "submitting" };
     rerender(<RunnerPage />);
     const finalCheckHeading = screen.getByRole("heading", {

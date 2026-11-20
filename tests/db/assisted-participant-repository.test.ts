@@ -35,7 +35,7 @@ async function completeParticipant(participantId: number, suffix: string) {
   await dbRef.db!.insert(schema.examAnswerSubmissions).values({
     id: `submission-${suffix}`,
     participantId,
-    questionIds: [1, 2, 3, 4, 5],
+    questionIds: [1, 2, 3, 4, 5, 6],
     revision: 1,
   });
 }

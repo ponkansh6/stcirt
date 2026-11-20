@@ -155,7 +155,7 @@ function restoreIntegrity(answers: SavedBatchAnswer[]): RestoreIntegrity {
   );
   return {
     status: "complete",
-    questions: [1, 2, 3, 4, 5].map((id) => ({
+    questions: [1, 2, 3, 4, 5, 6].map((id) => ({
       id,
       answerType: id === 5 && freeTextFifth ? "freeText" : "selected",
       choiceCount: id === 5 && freeTextFifth ? 0 : 4,
@@ -272,7 +272,7 @@ async function mockParticipantSession(
           submission,
           resultsState,
         ),
-        ...(submission === null ? { questions: [1, 2, 3, 4, 5].map(questionFor) } : {}),
+        ...(submission === null ? { questions: [1, 2, 3, 4, 5, 6].map(questionFor) } : {}),
       }),
     });
   });
@@ -390,7 +390,7 @@ async function mockQuestions(page: Page, requests: string[] = []) {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ questions: [1, 2, 3, 4, 5].map(questionFor) }),
+      body: JSON.stringify({ questions: [1, 2, 3, 4, 5, 6].map(questionFor) }),
     });
   });
 }
@@ -413,7 +413,7 @@ test("@chromium result navigation keeps completion visible with link pending unt
   let entrySeeded = false;
   let settingsSeeded = false;
   let releaseHeldNavigationRequest: (() => void) | null = null;
-  const seededQuestionIds = [1, 2, 3, 4, 5].map((position) => 98000 + position);
+  const seededQuestionIds = [1, 2, 3, 4, 5, 6].map((position) => 98000 + position);
 
   try {
     // This E2E owns the ID 1 presentation fixtures it seeds and removes them in finally.
@@ -498,6 +498,7 @@ test("@chromium result navigation keeps completion visible with link pending unt
         freeText: null,
         freeTextParts: { a: "保存済み回答 A", b: "保存済み回答 B" },
       },
+      { questionId: 6, answerKind: "selected", selectedIndex: 0, freeText: null },
     ];
     await mockParticipantSession(
       page,
@@ -522,7 +523,7 @@ test("@chromium result navigation keeps completion visible with link pending unt
           isAggregationTarget: true,
           maxScore: 6,
           score: 0,
-          questions: [1, 2, 3, 4, 5].map((position) => ({
+          questions: [1, 2, 3, 4, 5, 6].map((position) => ({
             position: position - 1,
             question: `Question ${position}?`,
             answer: { kind: "unanswered" },
@@ -825,6 +826,7 @@ test("@chromium saved revisit defers one question batch until correction starts"
         freeText: null,
         freeTextParts: { a: "保存済みの自由記述 A", b: "保存済みの自由記述 B" },
       },
+      { questionId: 6, answerKind: "selected", selectedIndex: 1, freeText: null },
     ],
   });
   await mockQuestions(page, questionRequests);
@@ -872,7 +874,7 @@ test("@chromium direct assisted-new startup uses bootstrap with its public quest
         participant: assisted,
         submission: null,
         completionSnapshot: null,
-        questions: [1, 2, 3, 4, 5].map(questionFor),
+        questions: [1, 2, 3, 4, 5, 6].map(questionFor),
       }),
     });
   });
@@ -960,8 +962,8 @@ test("@chromium root-to-answer flow keeps choices local, blocks an incomplete ba
   await expect(incompleteSubmit).toBeDisabled();
   await answerQuestion(page, 1, "B");
   expect(submitted).toHaveLength(0);
-  for (let id = 2; id <= 5; id += 1) await answerQuestion(page, id, "B");
-  const confirm = page.getByRole("button", { name: "5問の回答を確定する" });
+  for (let id = 2; id <= 6; id += 1) await answerQuestion(page, id, "B");
+  const confirm = page.getByRole("button", { name: "6問の回答を確定する" });
   await expect(confirm).toBeEnabled();
   await confirm.click();
 
@@ -977,11 +979,11 @@ test("@chromium root-to-answer flow keeps choices local, blocks an incomplete ba
   await expectNoAccessibilityViolations(page, "completed answer submission");
   expect(submitted).toHaveLength(1);
   expect(submitted[0].body).toMatchObject({ expectedRevision: 0 });
-  expect(submitted[0].body.answers).toHaveLength(5);
+  expect(submitted[0].body.answers).toHaveLength(6);
   expect(
     submitted[0].body.answers.map((answer: { questionId: number }) => answer.questionId),
-  ).toEqual([1, 2, 3, 4, 5]);
-  expect(submitted[0].body.answers.filter((answer) => "selectedIndex" in answer)).toHaveLength(4);
+  ).toEqual([1, 2, 3, 4, 5, 6]);
+  expect(submitted[0].body.answers.filter((answer) => "selectedIndex" in answer)).toHaveLength(5);
   expect(submitted[0].body.answers[4]).toMatchObject({
     questionId: 5,
     freeTextParts: { a: "自由記載B", b: "自由記載B" },
@@ -1042,7 +1044,7 @@ test("@chromium pending batch preserves accessible motion behavior and locks the
     await startQuiz(page);
     for (let id = 1; id <= 4; id += 1) await answerQuestion(page, id, "B");
     await answerQuestion(page, 5, "pending animation state");
-    await page.getByRole("button", { name: "5問の回答を確定する" }).click();
+    await page.getByRole("button", { name: "6問の回答を確定する" }).click();
     await postStarted;
 
     const submit = page.getByRole("button", { name: "回答を送信しています…" });
@@ -1120,7 +1122,7 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
         participant: owner,
         submission: null,
         completionSnapshot: null,
-        questions: [1, 2, 3, 4, 5].map((id) =>
+        questions: [1, 2, 3, 4, 5, 6].map((id) =>
           makeQuestion({
             id,
             question: longJapaneseQuestion,
@@ -1192,8 +1194,8 @@ test("@mobile supports native radio keyboard operation and reflows long Japanese
   await expect(navigation.locator("xpath=ancestor::header")).toBeVisible();
   await expect(page.getByRole("link", { name: "ホームへ" })).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "設問へ移動" })).toHaveCount(1);
-  await expect(navigation.getByRole("list").getByRole("listitem")).toHaveCount(5);
-  await expect(navigation.locator("a, button, input")).toHaveCount(5);
+  await expect(navigation.getByRole("list").getByRole("listitem")).toHaveCount(6);
+  await expect(navigation.locator("a, button, input")).toHaveCount(6);
   const targetHeading = page.locator("#question-5 h2");
   await navigation.getByRole("link", { name: /^第5問へ移動/ }).click();
   await expect(targetHeading).toBeFocused();
@@ -1305,8 +1307,8 @@ test("@mobile aligns the fifth-question itinerary across phone, landscape, and d
   await page.goto("/answer");
   const navigation = page.getByRole("navigation", { name: "設問へ移動" });
   const questionControls = navigation.locator("a, button");
-  await expect(questionControls).toHaveCount(5);
-  for (let index = 0; index < 5; index += 1) {
+  await expect(questionControls).toHaveCount(6);
+  for (let index = 0; index < 6; index += 1) {
     const box = await questionControls.nth(index).boundingBox();
     expect(box?.height).toBeGreaterThanOrEqual(44);
     expect(box?.width).toBeGreaterThanOrEqual(44);
@@ -1589,6 +1591,7 @@ test("@chromium returns to owner completion after an assisted save and opens tar
       freeText: null,
       freeTextParts: { a: "本人の回答 A", b: "本人の回答 B" },
     },
+    { questionId: 6, answerKind: "selected", selectedIndex: 0, freeText: null },
   ];
   const ownerSubmission = {
     submissionId: "00000000-0000-4000-8000-000000000041",
@@ -1646,7 +1649,7 @@ test("@chromium returns to owner completion after an assisted save and opens tar
           participant,
           assistedSubmission,
         ),
-        ...(assistedSubmission === null ? { questions: [1, 2, 3, 4, 5].map(questionFor) } : {}),
+        ...(assistedSubmission === null ? { questions: [1, 2, 3, 4, 5, 6].map(questionFor) } : {}),
       }),
     });
   });
@@ -1698,7 +1701,7 @@ test("@chromium returns to owner completion after an assisted save and opens tar
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ questions: [1, 2, 3, 4, 5].map(questionFor) }),
+      body: JSON.stringify({ questions: [1, 2, 3, 4, 5, 6].map(questionFor) }),
     });
   });
   await page.route("**/api/answers/latest**", async (route) => {
@@ -1858,7 +1861,7 @@ test("@chromium returns to owner completion after an assisted save and opens tar
     assistedIdentityPost,
   );
 
-  for (let id = 1; id <= 5; id += 1) await answerQuestion(page, id, "B");
+  for (let id = 1; id <= 6; id += 1) await answerQuestion(page, id, "B");
   const ownerReturnBootstrap = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (
@@ -1868,7 +1871,7 @@ test("@chromium returns to owner completion after an assisted save and opens tar
     );
   });
   const beforeOwnerReturn = requestTrace.length;
-  await page.getByRole("button", { name: "5問の回答を確定する" }).click();
+  await page.getByRole("button", { name: "6問の回答を確定する" }).click();
   // Saving an assisted answer returns directly to the owner's completion view.
   await expectResultsWaiting(page);
   await ownerReturnBootstrap;
@@ -1989,6 +1992,7 @@ test("@chromium keeps a stale second-tab draft distinct from the canonical submi
       freeText: null,
       freeTextParts: { a: "保存済み A revision 1", b: "保存済み B revision 1" },
     },
+    { questionId: 6, answerKind: "selected", selectedIndex: 0, freeText: null },
   ];
   await mockParticipantSession(page, "Shared Participant", {
     submissionId,

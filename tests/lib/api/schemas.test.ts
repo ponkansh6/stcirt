@@ -11,7 +11,7 @@ const owner = { id: 7, name: "参加者" };
 const assisted = { id: 18, name: "代理回答者" };
 
 const questions = () =>
-  [1, 2, 3, 4, 5].map((id) => ({
+  [1, 2, 3, 4, 5, 6, 7].map((id) => ({
     id,
     question: `Question ${id}`,
     choices: ["A", "B", "C", "D"],
@@ -52,6 +52,8 @@ describe("submitAnswerBatchSchema", () => {
     const answers = [
       ...[1, 2, 3, 4].map((questionId) => ({ questionId, selectedIndex: 0 })),
       { questionId: 5, freeText: "An answer" },
+      { questionId: 6, selectedIndex: 0 },
+      { questionId: 7, selectedIndex: 0 },
     ];
 
     expect(
@@ -71,6 +73,8 @@ describe("submitAnswerBatchSchema", () => {
       { questionId: 3, selectedIndex: 0 },
       { questionId: 4, selectedIndex: 0 },
       { questionId: 5, freeText: "An answer" },
+      { questionId: 6, selectedIndex: 0 },
+      { questionId: 7, selectedIndex: 0 },
     ];
 
     expect(
@@ -95,6 +99,8 @@ describe("submitAnswerBatchSchema", () => {
       { questionId: 3, selectedIndex: 0 },
       { questionId: 4, selectedIndex: 0 },
       { questionId: 5, freeText: "An answer" },
+      { questionId: 6, selectedIndex: 0 },
+      { questionId: 7, selectedIndex: 0 },
     ];
     expect(
       submitAnswerBatchSchema.safeParse({

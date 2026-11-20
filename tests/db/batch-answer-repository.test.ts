@@ -219,7 +219,7 @@ describe("saveAnswerSubmission", () => {
   const submissionId = "00000000-0000-4000-8000-000000000001";
   const firstOperationId = "00000000-0000-4000-8000-000000000002";
   const secondOperationId = "00000000-0000-4000-8000-000000000003";
-  const answers = Array.from({ length: 5 }, (_, index) => ({
+  const answers = Array.from({ length: 7 }, (_, index) => ({
     questionId: index + 1,
     selectedIndex: index % 4,
   }));
@@ -315,14 +315,14 @@ describe("saveAnswerSubmission", () => {
 
   it.each([
     {
-      label: "answer count other than five",
-      answers: answers.slice(0, 4),
-      message: "Exactly five distinct answers are required",
+      label: "answer count other than seven",
+      answers: answers.slice(0, 5),
+      message: "Exactly 7 distinct answers are required",
     },
     {
       label: "duplicate question IDs",
-      answers: [...answers.slice(0, 4), { questionId: 4, selectedIndex: 1 }],
-      message: "Exactly five distinct answers are required",
+      answers: [...answers.slice(0, 5), { questionId: 4, selectedIndex: 1 }],
+      message: "Exactly 7 distinct answers are required",
     },
     {
       label: "question IDs outside the exam set",
@@ -331,13 +331,19 @@ describe("saveAnswerSubmission", () => {
         { questionId: 2, selectedIndex: 1 },
         { questionId: 3, selectedIndex: 2 },
         { questionId: 4, selectedIndex: 3 },
-        { questionId: 6, selectedIndex: 0 },
+        { questionId: 5, selectedIndex: 0 },
+        { questionId: 6, selectedIndex: 1 },
+        { questionId: 8, selectedIndex: 2 },
       ],
-      message: "Answers must match the submission's five questions",
+      message: "Answers must match the submission's 7 questions",
     },
     {
       label: "free text for a choice question",
-      answers: [...answers.slice(0, 4), { questionId: 5, freeText: "not a choice" }],
+      answers: [
+        ...answers.slice(0, 4),
+        { questionId: 5, freeText: "not a choice" },
+        ...answers.slice(5),
+      ],
       message: "Answer type does not match its question",
     },
     {
@@ -381,6 +387,8 @@ describe("saveAnswerSubmission", () => {
       { questionId: 3, selectedIndex: 2 },
       { questionId: 4, selectedIndex: 3 },
       { questionId: 5, selectedIndex: 0 },
+      { questionId: 6, selectedIndex: 0 },
+      { questionId: 7, selectedIndex: 0 },
     ];
 
     await saveAnswerSubmission({
@@ -415,6 +423,8 @@ describe("saveAnswerSubmission", () => {
       { questionId: 3, selectedIndex: 2 },
       { questionId: 4, selectedIndex: 3 },
       { questionId: 5, selectedIndex: 0 },
+      { questionId: 6, selectedIndex: 0 },
+      { questionId: 7, selectedIndex: 0 },
     ];
 
     await expectInvalidSubmission(
@@ -445,7 +455,7 @@ describe("saveAnswerSubmission", () => {
           operationId: firstOperationId,
           expectedRevision: 0,
           participantId,
-          answers: [...answers.slice(0, 4), { questionId: 5, freeText }],
+          answers: [...answers.slice(0, 4), { questionId: 5, freeText }, ...answers.slice(5)],
         },
         "Answer type does not match its question",
       );
@@ -473,7 +483,7 @@ describe("saveAnswerSubmission", () => {
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
       participantId,
-      questionIds: [1, 2, 3, 4, 5],
+      questionIds: [1, 2, 3, 4, 5, 6],
       revision: 1,
     });
     await testDb.db.delete(schema.examQuestions).where(eq(schema.examQuestions.id, 5));
@@ -486,7 +496,7 @@ describe("saveAnswerSubmission", () => {
         participantId,
         answers,
       },
-      "Answer type does not match its question",
+      "Answers must match the submission's 7 questions",
     );
   });
 
@@ -494,7 +504,7 @@ describe("saveAnswerSubmission", () => {
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
       participantId,
-      questionIds: [2, 1, 3, 4, 5],
+      questionIds: [2, 1, 3, 4, 5, 6],
       revision: 1,
     });
 
@@ -506,11 +516,11 @@ describe("saveAnswerSubmission", () => {
         participantId,
         answers,
       },
-      "Answers must match the submission's five questions",
+      "Answers must match the submission's 7 questions",
     );
   });
 
-  it("creates one five-answer submission and replays the same operation without duplicate writes", async () => {
+  it("creates one seven-answer submission and replays the same operation without duplicate writes", async () => {
     const input = {
       submissionId,
       operationId: firstOperationId,
@@ -529,7 +539,7 @@ describe("saveAnswerSubmission", () => {
       assessmentTarget: null,
     });
 
-    expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(5);
+    expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(7);
     expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);
     expect(await testDb.db.select().from(schema.examAnswerLogs)).toHaveLength(0);
     await expect(getAnswerSubmission(submissionId, participantId)).resolves.toMatchObject({
@@ -573,6 +583,7 @@ describe("saveAnswerSubmission", () => {
       answers: [
         ...answers.slice(0, 4),
         { questionId: 5, freeTextParts: { a: "初回回答", b: "初回回答" } },
+        ...answers.slice(5),
       ],
     };
     const results = await Promise.all([saveAnswerSubmission(input), saveAnswerSubmission(input)]);
@@ -582,7 +593,7 @@ describe("saveAnswerSubmission", () => {
       { submissionId, revision: 1, assessmentTarget: null },
     ]);
     expect(await testDb.db.select().from(schema.examAnswerSubmissions)).toHaveLength(1);
-    expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(5);
+    expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(7);
     expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);
   });
 
@@ -663,7 +674,7 @@ describe("saveAnswerSubmission", () => {
       {
         id: "00000000-0000-4000-8000-000000000010",
         participantId,
-        questionIds: [1, 2, 3, 4, 5],
+        questionIds: [1, 2, 3, 4, 5, 6, 7],
         revision: 1,
         createdAt: updatedAt,
         updatedAt,
@@ -671,7 +682,7 @@ describe("saveAnswerSubmission", () => {
       {
         id: "00000000-0000-4000-8000-000000000011",
         participantId,
-        questionIds: [1, 2, 3, 4, 5],
+        questionIds: [1, 2, 3, 4, 5, 6, 7],
         revision: 2,
         createdAt: updatedAt,
         updatedAt,
@@ -686,7 +697,7 @@ describe("saveAnswerSubmission", () => {
     await expect(getLatestAnswerSubmission(participantId + 1)).resolves.toBeNull();
   });
 
-  it("revises the same five rows and rejects a payload mismatch or stale revision", async () => {
+  it("revises the same seven rows and rejects a payload mismatch or stale revision", async () => {
     await saveAnswerSubmission({
       submissionId,
       operationId: firstOperationId,
@@ -731,7 +742,7 @@ describe("saveAnswerSubmission", () => {
       .select()
       .from(schema.examSubmissionAnswers)
       .orderBy(schema.examSubmissionAnswers.questionId);
-    expect(stored).toHaveLength(5);
+    expect(stored).toHaveLength(7);
     expect(stored.map(({ selectedIndex }) => selectedIndex)).toEqual(
       revisedAnswers.map(({ selectedIndex }) => selectedIndex),
     );
@@ -1038,7 +1049,7 @@ describe("saveAnswerSubmission", () => {
       revision: 1,
       assessmentTarget: null,
     });
-    expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(5);
+    expect(await testDb.db.select().from(schema.examSubmissionAnswers)).toHaveLength(7);
     expect(await testDb.db.select().from(schema.examSubmissionOperations)).toHaveLength(1);
   });
 
@@ -1109,7 +1120,7 @@ describe("saveAnswerSubmission", () => {
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
       participantId,
-      questionIds: [1, 2, 3, 4, 5],
+      questionIds: [1, 2, 3, 4, 5, 6, 7],
       revision: 1,
     });
     const input = {
@@ -1162,7 +1173,7 @@ describe("saveAnswerSubmission", () => {
     await testDb.db.insert(schema.examAnswerSubmissions).values({
       id: submissionId,
       participantId,
-      questionIds: [1, 2, 3, 4, 5],
+      questionIds: [1, 2, 3, 4, 5, 6, 7],
       revision: 1,
     });
     const input = {
@@ -1373,8 +1384,8 @@ describe("saveAnswerSubmission", () => {
       .select()
       .from(schema.examSubmissionAnswers)
       .orderBy(schema.examSubmissionAnswers.questionId);
-    expect(stored).toHaveLength(5);
-    expect(stored.map(({ selectedIndex }) => selectedIndex)).toEqual(Array(5).fill(1));
+    expect(stored).toHaveLength(7);
+    expect(stored.map(({ selectedIndex }) => selectedIndex)).toEqual(Array(7).fill(1));
     expect(
       (
         await testDb.db
@@ -1486,6 +1497,7 @@ describe("saveAnswerSubmission", () => {
     const initialAnswers = [
       ...answers.slice(0, 4),
       { questionId: 5, freeTextParts: { a: "初回回答", b: "初回回答" } },
+      ...answers.slice(5),
     ];
     await saveAnswerSubmission({
       submissionId,
@@ -1515,6 +1527,7 @@ describe("saveAnswerSubmission", () => {
         answers: [
           ...answers.slice(0, 4),
           { questionId: 5, freeTextParts: { a: "修正回答", b: "修正回答" } },
+          ...answers.slice(5),
         ],
       }),
     ).rejects.toThrow();
@@ -1558,9 +1571,9 @@ describe("saveAnswerSubmission", () => {
       .select()
       .from(schema.examSubmissionAnswers)
       .orderBy(schema.examSubmissionAnswers.questionId);
-    expect(stored).toHaveLength(5);
+    expect(stored).toHaveLength(7);
     const storedIndices = stored.map(({ selectedIndex }) => selectedIndex);
-    expect(storedIndices).toEqual(Array(5).fill(1));
+    expect(storedIndices).toEqual(Array(7).fill(1));
     await expect(getAnswerSubmission(submissionId, participantId)).resolves.toMatchObject({
       revision: 2,
     });

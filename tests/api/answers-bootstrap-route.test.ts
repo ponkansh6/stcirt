@@ -38,7 +38,7 @@ import { findParticipantById } from "@/lib/db/repository/participant-repository"
 
 const owner = { id: 42, name: "Owner" };
 const assisted = { id: 77, name: "Assisted" };
-const questions = [1, 2, 3, 4, 5].map((id) => ({
+const questions = [1, 2, 3, 4, 5, 6, 7].map((id) => ({
   id,
   question: `Question ${id}`,
   choices: id === 5 ? [] : ["A", "B", "C", "D"],

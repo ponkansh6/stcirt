@@ -22,7 +22,7 @@ const quiz = (id: number, freeText = false) => ({
   answerType: freeText ? "freeText" : "selected",
 });
 const validAnswers = () =>
-  [1, 2, 3, 4, 5].map((questionId) => ({
+  [1, 2, 3, 4, 5, 6, 7].map((questionId) => ({
     questionId,
     answerKind: "selected",
     selectedIndex: 0,
@@ -48,7 +48,7 @@ describe("useQuizSession saved answer validation", () => {
       answers,
       restoreIntegrity: {
         status: "complete",
-        questions: [1, 2, 3, 4, 5].map((id) => ({
+        questions: [1, 2, 3, 4, 5, 6, 7].map((id) => ({
           id,
           answerType: freeTextFifth && id === 5 ? "freeText" : "selected",
           choiceCount: freeTextFifth && id === 5 ? 0 : 4,
@@ -68,7 +68,7 @@ describe("useQuizSession saved answer validation", () => {
         return {
           ok: true,
           json: async () => ({
-            questions: [1, 2, 3, 4, 5].map((id) =>
+            questions: [1, 2, 3, 4, 5, 6, 7].map((id) =>
               freeTextFifth && id === 5 ? quiz(id, true) : quiz(id),
             ),
           }),
@@ -85,11 +85,11 @@ describe("useQuizSession saved answer validation", () => {
   }
 
   it.each([
-    ["a non-five-answer submission", validAnswers().slice(0, 4), false],
-    ["duplicate question IDs", [...validAnswers().slice(0, 4), { ...validAnswers()[0]! }], false],
+    ["a non-seven-answer submission", validAnswers().slice(0, 6), false],
+    ["duplicate question IDs", [...validAnswers().slice(0, 6), { ...validAnswers()[0]! }], false],
     [
       "an answer for a question outside the loaded exam",
-      [...validAnswers().slice(0, 4), { ...validAnswers()[4]!, questionId: 6 }],
+      [...validAnswers().slice(0, 6), { ...validAnswers()[6]!, questionId: 8 }],
       false,
     ],
     [
@@ -108,6 +108,7 @@ describe("useQuizSession saved answer validation", () => {
       [
         ...validAnswers().slice(0, 4),
         { questionId: 5, answerKind: "legacy", selectedIndex: null, freeText: "unexpected" },
+        ...validAnswers().slice(5),
       ],
       true,
     ],
@@ -116,6 +117,7 @@ describe("useQuizSession saved answer validation", () => {
       [
         ...validAnswers().slice(0, 4),
         { questionId: 5, answerKind: "freeText", selectedIndex: null, freeText: "   " },
+        ...validAnswers().slice(5),
       ],
       true,
     ],
@@ -124,6 +126,7 @@ describe("useQuizSession saved answer validation", () => {
       [
         ...validAnswers().slice(0, 4),
         { questionId: 5, answerKind: "freeText", selectedIndex: null, freeText: "x".repeat(1001) },
+        ...validAnswers().slice(5),
       ],
       true,
     ],
@@ -132,6 +135,7 @@ describe("useQuizSession saved answer validation", () => {
       [
         ...validAnswers().slice(0, 4),
         { questionId: 5, answerKind: "freeText", selectedIndex: 0, freeText: "text" },
+        ...validAnswers().slice(5),
       ],
       true,
     ],
