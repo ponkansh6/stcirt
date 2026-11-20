@@ -314,7 +314,7 @@ describe("presentation projection and presenter progression", () => {
           id: 7,
           ordinal: 7,
           total: 7,
-          question: "新郎が高校生のころ、初めて珠美と出会った場所はどこ？",
+          question: "舜基が高校生のころ、初めて珠美と出会った場所はどこ？",
           choices: ["学校", "駅"],
         },
       },
@@ -322,10 +322,10 @@ describe("presentation projection and presenter progression", () => {
     render(<PresentationScreen />);
 
     const heading = await screen.findByRole("heading", {
-      name: "新郎が高校生のころ、初めて珠美と出会った場所はどこ？",
+      name: "舜基が高校生のころ、初めて珠美と出会った場所はどこ？",
     });
     expect(heading.querySelector("br")).toBeInTheDocument();
-    expect(heading.textContent).toBe("新郎が高校生のころ、初めて珠美と出会った場所はどこ？");
+    expect(heading.textContent).toBe("舜基が高校生のころ、初めて珠美と出会った場所はどこ？");
   });
 
   it.each([
@@ -2591,7 +2591,7 @@ describe("presentation projection and presenter progression", () => {
     expect(screen.queryByText(/秘密の回答者|秘密の参加者回答/)).not.toBeInTheDocument();
   });
 
-  it("shows only the Q5 itinerary before the answer and omits its explanation", async () => {
+  it("shows the Q5 question before its itinerary and omits its explanation", async () => {
     const questionText = [
       "舜基は珠美の1年間の香港滞在中、3回香港に訪問した。3回目の旅程に関して以下を埋めてください。",
       "2/27 昼 マンダリンオリエンタルホテルのスコーンを食べる",
@@ -2642,8 +2642,8 @@ describe("presentation projection and presenter progression", () => {
 
     const questionTimeline = await screen.findByRole("list", { name: "旅程" });
     const questionRegion = screen.getByRole("region", { name: "問5の旅程" });
-    expect(questionRegion).not.toHaveTextContent("舜基は珠美の1年間の香港滞在中");
-    expect(questionRegion).not.toHaveTextContent("3回目の旅程に関して以下を埋めてください。");
+    expect(questionRegion).toHaveTextContent("舜基は珠美の1年間の香港滞在中");
+    expect(questionRegion).toHaveTextContent("3回目の旅程に関して以下を埋めてください。");
     expect(questionRegion).not.toHaveTextContent("解説");
     expect(within(questionRegion).getByRole("heading", { level: 1 })).toHaveTextContent(/問\s*5/);
     expect(
@@ -2706,10 +2706,8 @@ describe("presentation projection and presenter progression", () => {
     expect(within(returnedQuestionRegion).getByRole("heading", { level: 1 })).toHaveTextContent(
       /問\s*5/,
     );
-    expect(returnedQuestionRegion).not.toHaveTextContent("舜基は珠美の1年間の香港滞在中");
-    expect(returnedQuestionRegion).not.toHaveTextContent(
-      "3回目の旅程に関して以下を埋めてください。",
-    );
+    expect(returnedQuestionRegion).toHaveTextContent("舜基は珠美の1年間の香港滞在中");
+    expect(returnedQuestionRegion).toHaveTextContent("3回目の旅程に関して以下を埋めてください。");
     expect(
       within(returnedQuestionTimeline).queryByText("新鮮なロブスター"),
     ).not.toBeInTheDocument();

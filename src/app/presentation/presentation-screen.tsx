@@ -538,7 +538,7 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
 const longChoiceThreshold = 20;
 
 function QuestionHeadingText({ question }: { question: PublicQuestion | PublicAnswerQuestion }) {
-  const opening = "新郎が高校生のころ、";
+  const opening = "舜基が高校生のころ、";
   if ((question.id === 7 || question.id === "7") && question.question.startsWith(opening)) {
     return (
       <>
@@ -571,6 +571,7 @@ function QuestionPrompt({ question, className }: { question: PublicQuestion; cla
       <Q5TimelineSlide
         questionOrdinal={question.ordinal}
         className={className}
+        questionText={parsedQ5Timeline.title}
         entries={parsedQ5Timeline.entries}
         ariaLabel="旅程"
       />
@@ -980,11 +981,13 @@ function Q5PhotoAnswerSlide({
 function Q5TimelineSlide({
   questionOrdinal,
   className,
+  questionText,
   entries,
   ariaLabel,
 }: {
   questionOrdinal: number;
   className: string;
+  questionText: string;
   entries: TimelineEntry[];
   ariaLabel: string;
 }) {
@@ -1003,6 +1006,7 @@ function Q5TimelineSlide({
       <h1 className={styles.ordinal}>
         問 <strong>{questionOrdinal}</strong>
       </h1>
+      <p className={styles.q5TimelinePrompt}>{questionText}</p>
       <div className={styles.q5TimelineContent}>
         <ol className={styles.q5Timeline} aria-label={ariaLabel}>
           {groups.map((group) => (

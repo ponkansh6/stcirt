@@ -891,8 +891,8 @@
 .airportAnswerFrame {
   position: relative;
   justify-self: center;
-  width: 94cqw;
-  height: min(75cqh, 42.1875cqw);
+  width: 84.6cqw;
+  height: min(67.5cqh, 37.96875cqw);
   min-height: 0;
   border: 3px solid var(--color-presentation-fffdf5);
   border-radius: 8px;
@@ -1086,6 +1086,14 @@
 
 .q5TimelineReview > h1:not(.ordinal) {
   max-width: none;
+}
+
+.q5TimelinePrompt {
+  margin: 0 0 clamp(8px, 1cqh, 14px);
+  font-size: clamp(var(--presentation-min-readable-size), 1.8cqw, 2.1rem);
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .q5TimelineContent {
