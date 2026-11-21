@@ -386,7 +386,9 @@ describe("QuizRunner batch answer sheet", () => {
 
     render(<RunnerPage />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("整合性を確認できませんでした");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "保存済みの答案を復元できませんでした。氏名入力からやり直してください。",
+    );
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
   });
@@ -1747,5 +1749,30 @@ describe("QuizRunner batch answer sheet", () => {
     await waitFor(() => expect(publicationRequestCount(fetchMock)).toBe(2));
     expect(screen.queryByRole("button", { name: "代理回答を行う" })).not.toBeInTheDocument();
     expect(resultLink).toBeInTheDocument();
+  });
+
+  it("offers a way back to participant name entry when saved answers cannot be restored", () => {
+    const switchParticipant = vi.fn(async () => {});
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          restoreError: "保存された答案の整合性を確認できません。",
+          switchParticipant,
+        },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "保存済みの答案を復元できませんでした。氏名入力からやり直してください。",
+    );
+    expect(screen.getByRole("button", { name: "氏名入力からやり直す" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "氏名入力からやり直す" }));
+
+    expect(switchParticipant).toHaveBeenCalledOnce();
   });
 });

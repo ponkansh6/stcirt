@@ -775,7 +775,9 @@ describe("QuizRunner batch answer sheet", () => {
       ).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("heading", { name: "回答状態の確認が必要です" })).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("回答を復元できません");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "保存済みの答案を復元できませんでした。氏名入力からやり直してください。",
+    );
     expect(screen.queryByRole("button", { name: "回答を修正する" })).not.toBeInTheDocument();
   });
 

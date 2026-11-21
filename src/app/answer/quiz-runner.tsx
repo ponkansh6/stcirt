@@ -412,6 +412,7 @@ export default function QuizRunner() {
     retryEdit,
     retrySubmissionCheck,
     login,
+    switchParticipant,
   } = useQuizSession();
   const questionRefs = useRef<Record<number, HTMLHeadingElement | null>>({});
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -422,6 +423,7 @@ export default function QuizRunner() {
   const completionHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const completionReauthenticationHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const [currentQuestionId, setCurrentQuestionId] = useState<number | null>(null);
+  const [participantSwitchError, setParticipantSwitchError] = useState<string | null>(null);
   const [openQuestionPhoto, setOpenQuestionPhoto] = useState<{
     photo: QuestionPhoto;
     trigger: HTMLButtonElement;
@@ -997,7 +999,7 @@ export default function QuizRunner() {
         ? visibilityStatus === "unlocked" && visibilityLookupStatus === "settled"
         : visibilityStatus !== "locked");
     const completionGuidance = restoreError
-      ? restoreError
+      ? "保存済みの答案を復元できませんでした。氏名入力からやり直してください。"
       : access.kind === "reauthentication"
         ? ui.message
         : participantResultsAuthExpired
@@ -1061,6 +1063,31 @@ export default function QuizRunner() {
           >
             {announcedCompletionGuidance}
           </p>
+          {restoreError && access.kind === "ready" && (
+            <div className="mt-5 rounded-xl border border-error/30 bg-error/5 p-4">
+              {participantSwitchError && (
+                <p className="mt-2 text-sm text-error" role="alert">
+                  {participantSwitchError}
+                </p>
+              )}
+              <Button
+                className="mt-4"
+                onClick={() => {
+                  setParticipantSwitchError(null);
+                  void switchParticipant().catch((error: unknown) => {
+                    setParticipantSwitchError(
+                      error instanceof Error
+                        ? error.message
+                        : "氏名入力に戻れませんでした。もう一度お試しください。",
+                    );
+                  });
+                }}
+                variant="primary"
+              >
+                氏名入力からやり直す
+              </Button>
+            </div>
+          )}
           {participantResultsStatus === "unknown" &&
             (participantResultsLookupStatus === "error" ||
               participantResultsLookupStatus === "retrying") && (

@@ -538,6 +538,20 @@ function WinnerQuestionBreakdown({ results }: { results: WinnerQuestionResult[] 
 const longChoiceThreshold = 20;
 
 function QuestionHeadingText({ question }: { question: PublicQuestion | PublicAnswerQuestion }) {
+  const indiaUberOpening = "インド出張の時に舜基と珠美が乗ったのは、";
+  if (
+    (question.id === 2 || question.id === "2") &&
+    question.question.startsWith(indiaUberOpening)
+  ) {
+    return (
+      <>
+        {indiaUberOpening}
+        <br />
+        {question.question.slice(indiaUberOpening.length)}
+      </>
+    );
+  }
+
   const opening = "舜基が高校生のころ、";
   if ((question.id === 7 || question.id === "7") && question.question.startsWith(opening)) {
     return (
