@@ -892,7 +892,7 @@
   position: relative;
   justify-self: center;
   width: 84.6cqw;
-  height: min(67.5cqh, 37.96875cqw);
+  height: min(73cqh, 41.0625cqw);
   min-height: 0;
   border: 3px solid var(--color-presentation-fffdf5);
   border-radius: 8px;
@@ -902,13 +902,13 @@
 }
 
 .contentLayer img.airportAnswerImage {
-  object-fit: cover;
-  object-position: center 48%;
+  object-fit: contain;
+  object-position: center;
 }
 
 .airportAnswerFrame img.airportAnswerImage {
-  object-fit: cover;
-  object-position: center 48%;
+  object-fit: contain;
+  object-position: center;
 }
 
 .indiaUberAnswer {
