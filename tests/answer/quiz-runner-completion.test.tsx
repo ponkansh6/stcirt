@@ -1775,4 +1775,52 @@ describe("QuizRunner batch answer sheet", () => {
 
     expect(switchParticipant).toHaveBeenCalledOnce();
   });
+
+  it("shows participant session switch failures and lets the participant retry", async () => {
+    const switchParticipant = vi
+      .fn(async () => {})
+      .mockRejectedValueOnce(new Error("セッションを終了できませんでした。"))
+      .mockRejectedValueOnce("unexpected rejection")
+      .mockResolvedValueOnce();
+    mockUseQuizSession.mockReturnValue(
+      session(
+        { kind: "complete" },
+        {
+          restoreError: "保存された答案の整合性を確認できません。",
+          switchParticipant,
+        },
+      ),
+    );
+
+    render(<RunnerPage />);
+
+    const restartButton = screen.getByRole("button", { name: "氏名入力からやり直す" });
+    fireEvent.click(restartButton);
+
+    expect(
+      await screen.findByText("セッションを終了できませんでした。", { exact: true }),
+    ).toHaveAttribute("role", "alert");
+    expect(restartButton).toBeEnabled();
+    expect(switchParticipant).toHaveBeenCalledOnce();
+
+    fireEvent.click(restartButton);
+
+    expect(
+      await screen.findByText("氏名入力に戻れませんでした。もう一度お試しください。", {
+        exact: true,
+      }),
+    ).toHaveAttribute("role", "alert");
+    expect(switchParticipant).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(restartButton);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("氏名入力に戻れませんでした。もう一度お試しください。", {
+          exact: true,
+        }),
+      ).toBeNull(),
+    );
+    expect(switchParticipant).toHaveBeenCalledTimes(3);
+  });
 });
