@@ -2092,7 +2092,7 @@ export default function PresentationScreen({
                     <section className={styles.opening} aria-labelledby="presentation-title">
                       <div className={styles.openingLockup}>
                         <div className={styles.openingAnchor}>
-                          <p className={styles.openingEdition}>令和八年度第一回</p>
+                          <p className={styles.openingEdition}>令和8年度 第一回</p>
                           <div className={styles.openingTitle}>
                             <h1 id="presentation-title" aria-label="しゅんたま検定">
                               <span>しゅんたま</span>
@@ -2115,7 +2115,7 @@ export default function PresentationScreen({
                           <section className={styles.opening} aria-labelledby="presentation-title">
                             <div className={styles.openingLockup}>
                               <div className={styles.openingAnchor}>
-                                <p className={styles.openingEdition}>令和八年度第一回</p>
+                                <p className={styles.openingEdition}>令和8年度 第一回</p>
                                 <div className={styles.openingTitle}>
                                   <h1 id="presentation-title" aria-label="しゅんたま検定">
                                     <span>しゅんたま</span>
@@ -2139,7 +2139,7 @@ export default function PresentationScreen({
                             <ExamStamp className={styles.openingStamp} />
                             <div className={styles.openingLockup}>
                               <div className={styles.openingAnchor}>
-                                <p className={styles.openingEdition}>令和八年度第一回</p>
+                                <p className={styles.openingEdition}>令和8年度 第一回</p>
                                 <div className={styles.openingTitle}>
                                   <h1 id="opening-title" aria-label="しゅんたま検定">
                                     <span>しゅんたま</span>

@@ -2036,7 +2036,7 @@ function ParticipantForm({
             data-testid="answer-exam-stamp"
           />
           <div className="space-y-1 text-center">
-            <p className="text-base font-semibold tracking-wide">令和八年度第一回</p>
+            <p className="text-base font-semibold tracking-wide">令和8年度 第一回</p>
             <p className="text-2xl font-bold tracking-tight">しゅんたま検定</p>
           </div>
         </div>
