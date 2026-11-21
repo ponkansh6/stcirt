@@ -5,6 +5,53 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("database migrations", () => {
+  it("swaps Q1 choices one and three while keeping the correct answer in migration 0043", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stcirt-q1-choice-order-migration-"));
+    const client = createClient({ url: `file:${dir}/migration.db` });
+    try {
+      await client.execute(`
+        CREATE TABLE exam_questions (
+          id integer PRIMARY KEY NOT NULL,
+          question_key text NOT NULL,
+          choices text NOT NULL,
+          correct_index integer NOT NULL,
+          question_version text
+        );
+      `);
+      await client.execute(`
+        INSERT INTO exam_questions (id, question_key, choices, correct_index, question_version)
+        VALUES (
+          1,
+          'it-literacy-001',
+          '["ラストコール10分前にダッシュしているところを珠美の友達に見られた","手荷物検査の際にプロポーズ用の指輪を珠美に見られそうになった","舜基がボーッとしていて手荷物を空港の飲食店に忘れて遅れそうになった","空港で偶然会社の同僚に遭遇し、旅行の目的を聞かれて焦った"]',
+          0,
+          'proposal-trip-v2'
+        )
+      `);
+
+      const migration = readFileSync(
+        join(process.cwd(), "src/lib/db/migrations/0043_proposal_trip_choice_order.sql"),
+        "utf8",
+      );
+      for (const statement of migration.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.execute(statement);
+      }
+
+      const question = await client.execute(
+        "SELECT choices, correct_index, question_version FROM exam_questions WHERE id = 1",
+      );
+      expect(question.rows[0]).toEqual({
+        choices:
+          '["舜基がボーッとしていて手荷物を空港の飲食店に忘れて遅れそうになった","手荷物検査の際にプロポーズ用の指輪を珠美に見られそうになった","ラストコール10分前にダッシュしているところを珠美の友達に見られた","空港で偶然会社の同僚に遭遇し、旅行の目的を聞かれて焦った"]',
+        correct_index: 2,
+        question_version: "proposal-trip-v3",
+      });
+    } finally {
+      client.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("seeds Q7 with shuffled choices and the matching correct index", async () => {
     const dir = mkdtempSync(join(tmpdir(), "stcirt-q7-migration-"));
     const client = createClient({ url: `file:${dir}/migration.db` });
